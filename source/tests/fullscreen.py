@@ -1,4 +1,4 @@
-# 检查“页面矮一个状态栏”时的补高逻辑。先起好测试服务（见开发说明），再：python3 tests/fullscreen.py
+# 检查“页面矮一个状态栏、底下空一条”时的处理。先起好测试服务（见开发说明），再：python3 tests/fullscreen.py
 import os, time, urllib.request
 from playwright.sync_api import sync_playwright
 MOCK = os.environ.get("KFS_MOCK", "http://127.0.0.1:8787")
@@ -23,9 +23,10 @@ def run(name, viewport_h, inset_top, standalone, login=False):
     pg.goto(BASE)
     pg.get_by_text("进门先报上名来").wait_for(timeout=15000)
     time.sleep(0.7)
-    var = pg.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--kfs-h').trim()")
+    var = pg.evaluate("document.documentElement.getAttribute('data-kfs-gap') || ''")
+    mist = pg.evaluate("getComputedStyle(document.querySelector('.kfs-bottom-mist')).display")
     gate_h = pg.evaluate("(() => { const el = [...document.querySelectorAll('div')].find(d => getComputedStyle(d).position === 'fixed' && d.querySelector('img')); return el ? Math.round(el.getBoundingClientRect().height) : null; })()")
-    res = {"var": var, "gate_h": gate_h}
+    res = {"gap": var, "mist": mist, "gate_h": gate_h}
     if login:
         pg.locator("input[type=email]").fill("qing@example.com"); pg.locator("input[type=password]").fill("correct-horse")
         pg.get_by_role("button", name="进府").click()
@@ -44,15 +45,16 @@ def run(name, viewport_h, inset_top, standalone, login=False):
 
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])
-    a = run("A 你现在这种：页面矮了一个状态栏", 793, 59, True, login=True)
-    ok(a["var"] == "852px" and a["gate_h"] == 852, "门口补到整屏 852")
-    ok(a["app_h"] == 852 and a["input_bottom"] == 852 - 34 - 12, "聊天页补到整屏，输入框落在底部横条上面 12 点")
-    ok(a["scroll_h"] <= 793, "补高以后页面不会被拖着上下晃")
+    a = run("A 你现在这种：页面矮了一个状态栏，底下空一条", 793, 59, True, login=True)
+    ok(a["gap"] == "bottom" and a["mist"] == "block", "量出底下空一条：页面最底下加上淡出")
+    ok(a["gate_h"] == 793 and a["app_h"] == 793, "页面高度不硬补，就是网页够得着的那么高")
+    ok(a["input_bottom"] == 793 - 34 - 12, "输入框完整露出来，没被挤出去")
+    ok(a["scroll_h"] <= 793, "页面不会被拖着上下晃")
     b = run("B 系统正常：页面本来就是整屏", 852, 59, True)
-    ok(b["var"] == "" and b["gate_h"] == 852, "系统正常时不动，照样整屏")
+    ok(b["gap"] == "" and b["mist"] == "none" and b["gate_h"] == 852, "系统正常时不加淡出，照样整屏")
     c_ = run("C 苹果那个毛病：状态栏是实心条", 793, 0, True)
-    ok(c_["var"] == "" and c_["gate_h"] == 793, "状态栏实心的情况不补，免得把输入框挤出屏幕")
+    ok(c_["gap"] == "" and c_["mist"] == "none" and c_["gate_h"] == 793, "状态栏实心的情况不加")
     d = run("D 在 Safari 里打开", 793, 59, False)
-    ok(d["var"] == "" and d["gate_h"] == 793, "在 Safari 里打开不动")
+    ok(d["gap"] == "" and d["mist"] == "none" and d["gate_h"] == 793, "在 Safari 里打开不加")
     browser.close()
 print(f"\n通过 {passed}  失败 {failed}")
