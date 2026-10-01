@@ -37,6 +37,16 @@ html[data-kfs-gap="bottom"] .kfs-bottom-mist {
 html[data-kfs-gap="bottom"][data-kfs-chat] .kfs-bottom-mist {
   opacity: 0;
 }
+/* 量一量屏幕底下（probe.js）：临时把整页撑到屏幕那么高，开封府本体先藏起来 */
+html[data-kfs-probe],
+html[data-kfs-probe] body {
+  height: var(--kfs-probe-h) !important;
+  overflow: hidden !important;
+}
+html[data-kfs-probe] #root {
+  display: none !important;
+}
+
 /* 侧栏最底下那排（头像、新对话）垫一段渐变，同样接上那条 */
 html[data-kfs-gap="bottom"] .kfs-dock-fade {
   background: linear-gradient(to bottom, rgba(214, 220, 205, 0) 0%, #d6dccd 100%);

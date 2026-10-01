@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import MEMES from "../static/memes.json";
 import { store } from "./store.js";
 import { callClaude } from "./cloud.js";
+import { openProbe } from "./probe.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -3901,6 +3902,14 @@ export default function App({ account = {} }) {
           </div>
           {backupNote && <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 8, lineHeight: 1.6 }}>{backupNote}</div>}
           <input ref={importRef} type="file" accept="application/json,.json" onChange={importBackup} style={{ display: "none" }} />
+
+          <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8, marginTop: 22 }}>屏幕</div>
+          <p style={{ fontSize: 12, color: T.inkSoft, lineHeight: 1.6, marginBottom: 10 }}>
+            屏幕最底下那条空白，量一量就知道能不能铺满。量完截个图给我。
+          </p>
+          <button onClick={openProbe} className="kfs-tap" style={chip}>
+            量一量屏幕底下
+          </button>
 
           <div style={{ height: 1, background: "rgba(255,255,255,0.7)", margin: "22px 0 18px" }} />
           <div className="flex flex-wrap" style={{ gap: 8 }}>

@@ -5,6 +5,7 @@ from PIL import Image
 MOCK = os.environ.get("KFS_MOCK", "http://127.0.0.1:8787")
 BASE = os.environ.get("KFS_BASE", "http://127.0.0.1:8080/")
 CHROME = os.environ.get("CHROME_PATH", "/opt/google/chrome/chrome" if os.path.exists("/opt/google/chrome/chrome") else None)
+SHOTS = os.environ.get("KFS_SHOTS", "")
 STRIP = (0xD6, 0xDC, 0xCD)  # 系统在最底下画的那条，颜色取网页底色
 passed = failed = 0
 def ok(c, m):
@@ -64,6 +65,23 @@ def run(name, viewport_h, inset_top, standalone, login=False):
         pg.mouse.click(380, 400); time.sleep(0.8)
         pg.locator(".kfs-composer button", has_text="Sonnet").click(); time.sleep(0.8)
         res["mist_sheet"] = pg.evaluate(MIST)
+        # 账户面板里“量一量屏幕底下”：把整页撑到屏幕高，量出来的数摆出来，关掉后原样回来
+        pg.get_by_role("button", name="关闭").click(); time.sleep(0.5)
+        pg.get_by_role("button", name="打开侧栏").click(); time.sleep(0.8)
+        pg.get_by_role("button", name="头像与设置").click(); time.sleep(0.6)
+        pg.get_by_role("button", name="量一量屏幕底下").click(); time.sleep(0.4)
+        res["probe"] = pg.evaluate("""() => {
+          const p = document.getElementById('kfs-probe');
+          const t = p ? p.innerText : '';
+          return { on: document.documentElement.hasAttribute('data-kfs-probe'), body_h: Math.round(document.body.getBoundingClientRect().height),
+                   root_hidden: getComputedStyle(document.getElementById('root')).display === 'none',
+                   screen: /屏幕高\s*852/.test(t), inner: /innerHeight\s*793/.test(t), gap: /是，空 59/.test(t),
+                   gold: [...p.querySelectorAll('div')].some(d => d.textContent === '金色：页面' && Math.round(d.getBoundingClientRect().top) === 793) };
+        }""")
+        if SHOTS: pg.screenshot(path=os.path.join(SHOTS, f"probe_{name[0]}.png"))
+        pg.get_by_role("button", name="关掉量屏幕").click(); time.sleep(0.4)
+        res["probe_closed"] = pg.evaluate("!document.getElementById('kfs-probe') && !document.documentElement.hasAttribute('data-kfs-probe') && getComputedStyle(document.getElementById('root')).display !== 'none'")
+        res["back_to_sheet"] = pg.get_by_role("button", name="量一量屏幕底下").is_visible()
     c.close()
     print(name, res)
     return res
@@ -83,6 +101,11 @@ with sync_playwright() as p:
     ok(a["drawer_row"]["bottom"] == 793 and a["drawer_row"]["btn"] == 793 - 12, "侧栏最底下那排也沉下去")
     ok(a["mist_sheet"] == "on", "弹出面板时照旧淡出")
     ok(a["scroll_h"] <= 793, "页面不会被拖着上下晃")
+    pr = a["probe"]
+    ok(pr["on"] and pr["root_hidden"] and pr["body_h"] == 852, "量屏幕：整页临时撑到屏幕那么高，开封府本体先藏起来")
+    ok(pr["screen"] and pr["inner"] and pr["gap"], "量屏幕：屏幕高、网页高、空多少都摆出来")
+    ok(pr["gold"], "量屏幕：金色那块正好落在空出来的那条里")
+    ok(a["probe_closed"] and a["back_to_sheet"], "量屏幕：点关掉，原样回到账户面板")
     b = run("B 系统正常：页面本来就是整屏", 852, 59, True, login=True)
     ok(b["gap"] == "" and b["mist"] == "none" and b["gate_h"] == 852, "系统正常时不加淡出，照样整屏")
     ok(b["composer"]["bottom"] == 852 and b["composer"]["btn"] == 852 - 34, "系统正常时输入框铺到屏幕底，按钮让开底下横条")
