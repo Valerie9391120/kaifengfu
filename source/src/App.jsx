@@ -1484,7 +1484,71 @@ function Tile({ icon, label, sub, onClick }) {
   );
 }
 
-function HistoryCard({ index, currentId, onOpenAll, onOpen }) {
+// 长按：手指按住不动 0.45 秒；电脑上右键也算。长按以后松手的那一下不算点击
+function useLongPress(onLong) {
+  const press = useRef(null);
+  const fired = useRef(false);
+  const stop = () => {
+    if (press.current) clearTimeout(press.current.timer);
+    press.current = null;
+  };
+  return {
+    onTouchStart: (e) => {
+      const t = e.touches[0];
+      const el = e.currentTarget;
+      fired.current = false;
+      press.current = {
+        x: t.clientX,
+        y: t.clientY,
+        timer: setTimeout(() => {
+          press.current = null;
+          fired.current = true;
+          onLong(el.getBoundingClientRect());
+        }, 450),
+      };
+    },
+    onTouchMove: (e) => {
+      const p = press.current;
+      if (!p) return;
+      const t = e.touches[0];
+      if (Math.abs(t.clientX - p.x) > 8 || Math.abs(t.clientY - p.y) > 8) stop();
+    },
+    onTouchEnd: stop,
+    onTouchCancel: stop,
+    onContextMenu: (e) => {
+      e.preventDefault();
+      onLong(e.currentTarget.getBoundingClientRect());
+    },
+    onClickCapture: (e) => {
+      if (fired.current) {
+        e.stopPropagation();
+        e.preventDefault();
+        fired.current = false;
+      }
+    },
+  };
+}
+
+function RecentItem({ c, currentId, onOpen, onLongPress }) {
+  const lp = useLongPress((rect) => onLongPress && onLongPress(c, rect));
+  return (
+    <button
+      {...lp}
+      onClick={() => onOpen(c.id)}
+      className="w-full text-left block"
+      style={{ padding: "9px 0", borderTop: "1px solid rgba(255,255,255,0.65)", WebkitTouchCallout: "none" }}
+    >
+      <span className="block truncate" style={{ fontSize: 14, color: c.id === currentId ? T.dai : T.ink }}>
+        {c.title}
+      </span>
+      <span className="block truncate" style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 2 }}>
+        {c.preview}
+      </span>
+    </button>
+  );
+}
+
+function HistoryCard({ index, currentId, onOpenAll, onOpen, onLongPress }) {
   const recent = index.slice(0, 3);
   return (
     <div style={{ ...glass(0.46, 24), borderRadius: 24, padding: "10px 16px 6px" }}>
@@ -1497,21 +1561,7 @@ function HistoryCard({ index, currentId, onOpenAll, onOpen }) {
           聊过的对话会出现在这里
         </p>
       ) : (
-        recent.map((c) => (
-          <button
-            key={c.id}
-            onClick={() => onOpen(c.id)}
-            className="w-full text-left block"
-            style={{ padding: "9px 0", borderTop: "1px solid rgba(255,255,255,0.65)" }}
-          >
-            <span className="block truncate" style={{ fontSize: 14, color: c.id === currentId ? T.dai : T.ink }}>
-              {c.title}
-            </span>
-            <span className="block truncate" style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 2 }}>
-              {c.preview}
-            </span>
-          </button>
-        ))
+        recent.map((c) => <RecentItem key={c.id} c={c} currentId={currentId} onOpen={onOpen} onLongPress={onLongPress} />)
       )}
     </div>
   );
@@ -1726,6 +1776,52 @@ function MsgMenu({ menu, now, busy, onClose, onCopy, onEdit, onRetry }) {
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// 长按一段对话：重命名、删除（删除要点两下）
+function ChatMenu({ menu, onClose, onRename, onDelete }) {
+  const { chat, rect } = menu;
+  const [armed, setArmed] = useState(false);
+  // 长按松手那一下有时会补一个点击，落在遮罩上就把菜单关了；刚弹出来的一小会儿不认
+  const shownAt = useRef(Date.now());
+  const menuW = 200;
+  const menuH = 44 + 2 * 47;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 390;
+  const vh = typeof window !== "undefined" ? Math.max(window.innerHeight, Math.round(document.body.getBoundingClientRect().height) || 0) : 844;
+  let top = rect.bottom + 8;
+  if (top + menuH > vh - 12) top = Math.max(12 + safeTopPx(), rect.top - menuH - 8);
+  const left = Math.max(12, Math.min(rect.left + 12, vw - menuW - 12));
+  return (
+    <div
+      className="absolute inset-0 z-50"
+      onClick={() => Date.now() - shownAt.current > 400 && onClose()}
+      style={{ background: "rgba(20,32,29,0.14)" }}
+    >
+      <div
+        className="kfs-in"
+        role="menu"
+        onClick={(e) => e.stopPropagation()}
+        style={{ position: "fixed", top, left, width: menuW, ...glass(0.86, 30), borderRadius: 22, padding: "4px 0 6px" }}
+      >
+        <div className="truncate" style={{ padding: "10px 18px 6px", fontSize: 12, color: T.inkSoft }}>
+          {chat.title}
+        </div>
+        <button onClick={() => onRename(chat)} role="menuitem" className="w-full flex items-center text-left" style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: T.ink }}>
+          <Icon name="pen" size={19} />
+          重命名
+        </button>
+        <button
+          onClick={() => (armed ? onDelete(chat) : setArmed(true))}
+          role="menuitem"
+          className="w-full flex items-center text-left"
+          style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: "#B4544A" }}
+        >
+          <Icon name="trash" size={19} />
+          {armed ? "再点一次，删掉" : "删除"}
+        </button>
       </div>
     </div>
   );
@@ -2169,7 +2265,42 @@ function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHis }) {
   );
 }
 
-function HistoryPage({ index, currentId, now, onBack, onOpen, onDelete }) {
+function HistoryItem({ c, currentId, now, editing, onOpen, onDelete, onLongPress }) {
+  const lp = useLongPress((rect) => onLongPress && onLongPress(c, rect));
+  return (
+    <div
+      {...lp}
+      className="flex items-center"
+      style={{ ...glass(c.id === currentId ? 0.66 : 0.46, 22), borderRadius: 20, padding: "12px 14px", gap: 8, WebkitTouchCallout: "none" }}
+    >
+      <button className="flex-1 text-left min-w-0" onClick={() => onOpen(c.id)}>
+        <span className="flex items-baseline justify-between" style={{ gap: 8 }}>
+          <span className="truncate" style={{ fontSize: 15, color: T.ink }}>
+            {c.title}
+          </span>
+          <span className="flex-shrink-0" style={{ fontSize: 11, color: T.inkSoft }}>
+            {shortDate(c.updatedAt, now)}
+          </span>
+        </span>
+        <span className="block truncate" style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 3 }}>
+          {c.preview}
+        </span>
+      </button>
+      {editing && (
+        <button
+          onClick={() => onDelete(c.id)}
+          aria-label="删除这段对话"
+          className="kfs-tap flex items-center justify-center flex-shrink-0"
+          style={{ width: 36, height: 36, borderRadius: 999, color: "#B4544A", background: "rgba(255,255,255,0.6)" }}
+        >
+          <Icon name="trash" size={18} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function HistoryPage({ index, currentId, now, onBack, onOpen, onDelete, onLongPress }) {
   const [editing, setEditing] = useState(false);
   return (
     <div className="absolute inset-0 z-40 flex flex-col kfs-page" style={{ background: T.bg }}>
@@ -2195,35 +2326,7 @@ function HistoryPage({ index, currentId, now, onBack, onOpen, onDelete }) {
           </p>
         )}
         {index.map((c) => (
-          <div
-            key={c.id}
-            className="flex items-center"
-            style={{ ...glass(c.id === currentId ? 0.66 : 0.46, 22), borderRadius: 20, padding: "12px 14px", gap: 8 }}
-          >
-            <button className="flex-1 text-left min-w-0" onClick={() => onOpen(c.id)}>
-              <span className="flex items-baseline justify-between" style={{ gap: 8 }}>
-                <span className="truncate" style={{ fontSize: 15, color: T.ink }}>
-                  {c.title}
-                </span>
-                <span className="flex-shrink-0" style={{ fontSize: 11, color: T.inkSoft }}>
-                  {shortDate(c.updatedAt, now)}
-                </span>
-              </span>
-              <span className="block truncate" style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 3 }}>
-                {c.preview}
-              </span>
-            </button>
-            {editing && (
-              <button
-                onClick={() => onDelete(c.id)}
-                aria-label="删除这段对话"
-                className="kfs-tap flex items-center justify-center flex-shrink-0"
-                style={{ width: 36, height: 36, borderRadius: 999, color: "#B4544A", background: "rgba(255,255,255,0.6)" }}
-              >
-                <Icon name="trash" size={18} />
-              </button>
-            )}
-          </div>
+          <HistoryItem key={c.id} c={c} currentId={currentId} now={now} editing={editing} onOpen={onOpen} onDelete={onDelete} onLongPress={onLongPress} />
         ))}
       </div>
     </div>
@@ -2699,6 +2802,8 @@ export default function App({ account = {} }) {
   const [toast, setToast] = useState("");
   const [copySheet, setCopySheet] = useState("");
   const [fillOn, setFillOn] = useState(() => gapInfo().fill);
+  const [chatMenu, setChatMenu] = useState(null); // 长按一段对话弹出来的小菜单
+  const [renaming, setRenaming] = useState(null); // 正在改名的那段对话
   const [usage, setUsage] = useState(null);
   const [monthUsage, setMonthUsage] = useState(null);
   const [sync, setSync] = useState({ pending: 0, syncing: false, offline: false, lastSync: 0 });
@@ -2998,6 +3103,16 @@ export default function App({ account = {} }) {
     store.set("kfs2:index", JSON.stringify(next));
     store.del("kfs2:chat:" + id);
     if (id === chatIdRef.current) newChat();
+  };
+
+  // 改名：只改目录里的名字，聊天内容不动；以后再存这段对话也沿用新名字
+  const renameChat = (id, title) => {
+    const t = String(title || "").trim().slice(0, 40);
+    if (!t) return;
+    const next = indexRef.current.map((c) => (c.id === id ? { ...c, title: t } : c));
+    indexRef.current = next;
+    setIndex(next);
+    store.set("kfs2:index", JSON.stringify(next));
   };
 
   // ---- 光义回话 ----
@@ -3498,6 +3613,22 @@ export default function App({ account = {} }) {
     return () => clearTimeout(t);
   }, [reveal, messages]);
 
+  // ---- 键盘弹出来：外壳变矮了，聊天记录滚到最新那条 ----
+  useEffect(() => {
+    const onKb = (e) => {
+      if (!e.detail || !e.detail.open) return;
+      const el = scrollRef.current;
+      if (!el) return;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          el.scrollTop = el.scrollHeight;
+        })
+      );
+    };
+    window.addEventListener("kfs-kb", onKb);
+    return () => window.removeEventListener("kfs-kb", onKb);
+  }, []);
+
   // ---- 滚到底 ----
   useEffect(() => {
     const el = scrollRef.current;
@@ -3845,7 +3976,7 @@ export default function App({ account = {} }) {
   const activeModel = settings.model || DEFAULT_MODEL;
 
   // 对话页（或侧栏）在最上面时，底边自己接得上那条色块，告诉 main.jsx 别再盖淡出
-  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !menu && !viewer && !copySheet;
+  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming;
   useEffect(() => {
     const r = document.documentElement;
     if (chatOnTop) r.setAttribute("data-kfs-chat", "");
@@ -4014,7 +4145,7 @@ export default function App({ account = {} }) {
     <div
       ref={rootRef}
       className="overflow-hidden select-none"
-      style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "var(--kfs-h, 100dvh)", background: T.bg, fontFamily: SANS, color: T.ink }}
+      style={{ position: "fixed", top: "var(--kfs-kb-top, 0px)", left: 0, width: "100%", height: "var(--kfs-kb-h, var(--kfs-h, 100dvh))", background: T.bg, fontFamily: SANS, color: T.ink }}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -4056,7 +4187,13 @@ export default function App({ account = {} }) {
               onClick={() => setDiaryOpen(true)}
             />
           </div>
-          <HistoryCard index={index} currentId={chatId} onOpenAll={() => setHistoryOpen(true)} onOpen={openChat} />
+          <HistoryCard
+            index={index}
+            currentId={chatId}
+            onOpenAll={() => setHistoryOpen(true)}
+            onOpen={openChat}
+            onLongPress={(chat, rect) => setChatMenu({ chat, rect })}
+          />
         </div>
         <div className="kfs-dock-fade flex items-center justify-between" style={{ padding: "8px 16px max(12px, var(--kfs-sab))" }}>
           <button onClick={() => setSheet("account")} aria-label="头像与设置" className="kfs-tap">
@@ -4094,6 +4231,7 @@ export default function App({ account = {} }) {
 
         {/* 顶栏 */}
         <div
+          onClick={() => memePanel && setMemePanel(false)}
           className="relative z-10 flex items-center flex-shrink-0"
           style={{ ...glass(0.36, 28), borderRadius: 24, margin: "calc(12px + env(safe-area-inset-top)) 12px 0", padding: 6 }}
         >
@@ -4123,7 +4261,13 @@ export default function App({ account = {} }) {
         )}
 
         {/* 消息 */}
-        <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto kfs-scroll" style={{ padding: "8px 14px 12px" }}>
+        {/* 消息区：表情包面板开着时，点这里的空白处就收起来 */}
+        <div
+          ref={scrollRef}
+          onClick={() => memePanel && setMemePanel(false)}
+          className="relative z-10 flex-1 overflow-y-auto kfs-scroll"
+          style={{ padding: "8px 14px 12px" }}
+        >
           {messages.length === 0 && !loading && (
             <div className="h-full flex flex-col items-center justify-center" style={{ gap: 18 }}>
               <p style={{ fontFamily: SERIF, fontSize: 14, letterSpacing: "0.3em", paddingLeft: "0.3em", color: T.inkSoft }}>
@@ -4294,6 +4438,7 @@ export default function App({ account = {} }) {
                 value={input}
                 rows={1}
                 placeholder={dictating ? "正在听你说…" : "说话，我听着"}
+                onFocus={() => memePanel && setMemePanel(false)}
                 onChange={(e) => {
                   setInput(e.target.value);
                   const el = e.target;
@@ -4419,6 +4564,7 @@ export default function App({ account = {} }) {
           onBack={() => setHistoryOpen(false)}
           onOpen={openChat}
           onDelete={deleteChat}
+          onLongPress={(chat, rect) => setChatMenu({ chat, rect })}
         />
       )}
 
@@ -4435,6 +4581,58 @@ export default function App({ account = {} }) {
             retryAt(r.msg.id);
           }}
         />
+      )}
+
+      {chatMenu && (
+        <ChatMenu
+          menu={chatMenu}
+          onClose={() => setChatMenu(null)}
+          onRename={(chat) => {
+            setChatMenu(null);
+            setRenaming({ id: chat.id, title: chat.title || "" });
+          }}
+          onDelete={(chat) => {
+            setChatMenu(null);
+            deleteChat(chat.id);
+          }}
+        />
+      )}
+
+      {renaming && (
+        <Sheet title="重命名" onClose={() => setRenaming(null)}>
+          <input
+            value={renaming.title}
+            onChange={(e) => setRenaming({ ...renaming, title: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                e.preventDefault();
+                renameChat(renaming.id, renaming.title);
+                setRenaming(null);
+              }
+            }}
+            autoFocus
+            maxLength={40}
+            aria-label="新名字"
+            className="kfs-field"
+            style={{ ...field, userSelect: "text", WebkitUserSelect: "text" }}
+          />
+          <div className="flex justify-end" style={{ gap: 8, marginTop: 14 }}>
+            <button onClick={() => setRenaming(null)} className="kfs-tap" style={chip}>
+              取消
+            </button>
+            <button
+              onClick={() => {
+                renameChat(renaming.id, renaming.title);
+                setRenaming(null);
+              }}
+              disabled={!renaming.title.trim()}
+              className="kfs-tap"
+              style={{ ...chipPrimary, opacity: renaming.title.trim() ? 1 : 0.5 }}
+            >
+              保存
+            </button>
+          </div>
+        </Sheet>
       )}
 
       {toast && (

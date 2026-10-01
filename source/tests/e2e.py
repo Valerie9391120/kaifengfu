@@ -30,6 +30,17 @@ def mock(path):
 def shot(page, name):
     page.screenshot(path=f"{SHOTS}/{name}.png")
 
+def long_press(page, locator, hold=0.7):
+    # 真的用手指按住：发触摸事件，不是右键
+    box = locator.bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    cdp = page.context.new_cdp_session(page)
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+    time.sleep(hold)
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    cdp.detach()
+    time.sleep(0.5)
+
 CJK = re.compile(r"[一-鿿]")
 errors = []
 
@@ -112,6 +123,18 @@ with sync_playwright() as p:
     ok(body["messages"][0]["content"][0]["text"].startswith("【开封府附注】"), "头像附注还在第一条")
     ok(body["model"] == "claude-sonnet-4-6" and body["max_tokens"] == 2048, "默认 Sonnet 4.6，回复上限 2048")
 
+    # 表情包面板：点聊天记录的空白处收起；点输入框也收起
+    MEMES_OPEN = "!!document.querySelector('.grid.grid-cols-4')"
+    pa.get_by_role("button", name="表情包").click(); time.sleep(0.4)
+    opened = pa.evaluate(MEMES_OPEN)
+    pa.mouse.click(200, 160); time.sleep(0.4)
+    closed_by_blank = not pa.evaluate(MEMES_OPEN)
+    pa.get_by_role("button", name="表情包").click(); time.sleep(0.4)
+    pa.get_by_placeholder("说话，我听着").click(); time.sleep(0.4)
+    closed_by_typing = not pa.evaluate(MEMES_OPEN)
+    pa.evaluate("document.activeElement && document.activeElement.blur()")
+    ok(opened and closed_by_blank and closed_by_typing, "表情包面板：点聊天记录的空白处、点输入框，都会收起来")
+
     # 等同步
     time.sleep(3)
     rows = mock("/__debug/rows")
@@ -151,6 +174,30 @@ with sync_playwright() as p:
     shot(pa, "09b_api_workspace")
     pa.get_by_role("button", name="关闭").click()
     time.sleep(0.4)
+
+    # 长按侧栏里的一段对话：弹出重命名和删除；改个名字
+    item = pa.locator("button", has_text="收到：老公在吗").first
+    long_press(pa, item)
+    ok(pa.get_by_role("menuitem", name=re.compile("重命名")).is_visible() and pa.get_by_role("menuitem", name=re.compile("删除")).is_visible(),
+       "长按一段对话：弹出重命名和删除")
+    shot(pa, "09c_chat_menu")
+    pa.get_by_role("menuitem", name=re.compile("重命名")).click()
+    box = pa.get_by_label("新名字")
+    box.fill("卿卿的测试对话")
+    pa.get_by_role("button", name="保存").click()
+    time.sleep(0.5)
+    ok(pa.locator("button", has_text="卿卿的测试对话").first.is_visible(), "改了名字，侧栏里立刻换成新名字")
+    # 历史对话页：长按也能弹出来；删除要点两下，第一下只是提醒
+    pa.get_by_role("button", name=re.compile("历史对话")).first.click()
+    time.sleep(0.6)
+    long_press(pa, pa.locator(".kfs-page").get_by_text("卿卿的测试对话").first)
+    pa.get_by_role("menuitem", name=re.compile("删除")).click()
+    armed = pa.get_by_role("menuitem", name=re.compile("再点一次")).is_visible()
+    pa.mouse.click(200, 760); time.sleep(0.4)
+    still = pa.locator(".kfs-page").get_by_text("卿卿的测试对话").first.is_visible()
+    ok(armed and still, "历史对话页长按删除：第一下只提醒“再点一次”，点别处就算了，对话还在")
+    pa.get_by_role("button", name="返回").first.click()
+    time.sleep(0.5)
 
     # 账户：同步状态（侧栏还开着）
     pa.get_by_role("button", name="头像与设置").click()
@@ -197,6 +244,7 @@ with sync_playwright() as p:
     pb.get_by_role("button", name="打开侧栏").click()
     time.sleep(0.6)
     ok(pb.get_by_text("带着 1 份文档").is_visible(), "第二台设备的记忆库里也有名帖")
+    ok(pb.locator("button", has_text="卿卿的测试对话").first.is_visible(), "第一台改的对话名字，第二台也同步过来了")
     pb.get_by_text("日记本").click()
     pb.get_by_text("在一起的第").first.wait_for(timeout=10000)
     time.sleep(0.5)
