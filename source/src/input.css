@@ -15,17 +15,29 @@ body {
   height: 100%;
 }
 
-/* 底部安全区：平时是 iPhone 底下那根横条要让出的高度。
-   有的 iOS 在主屏幕上会在最底下空一条（见 main.jsx），网页本身就够不着横条，这时记成 0，
-   输入框才能直接贴到网页最底边 */
+/* 底部安全区：iPhone 底下那根横条要让出的高度。外壳的高度是 --kfs-h，平时就是 100dvh */
 :root {
   --kfs-sab: env(safe-area-inset-bottom, 0px);
 }
+
+/* 主屏幕底下空一条、但 100vh 够得着屏幕底（见 gap.js 的 "fill"）：
+   html、body、外壳统一撑到屏幕那么高，底下横条照常让开 */
+html[data-kfs-gap="fill"],
+html[data-kfs-gap="fill"] body {
+  height: var(--kfs-fill-h);
+  overflow: hidden;
+}
+html[data-kfs-gap="fill"] {
+  --kfs-h: var(--kfs-fill-h);
+}
+
+/* 空一条、100vh 也够不着（见 gap.js 的 "bottom"）：网页本身就到不了横条那儿，
+   让位记成 0，输入框直接贴到网页最底边 */
 html[data-kfs-gap="bottom"] {
   --kfs-sab: 0px;
 }
 
-/* 空一条的时候，页面底边淡进那条的颜色，接缝看不出来 */
+/* 够不着的时候，页面底边淡进那条的颜色，接缝看不出来 */
 .kfs-bottom-mist {
   display: none;
   transition: opacity 0.3s ease;
@@ -37,6 +49,11 @@ html[data-kfs-gap="bottom"] .kfs-bottom-mist {
 html[data-kfs-gap="bottom"][data-kfs-chat] .kfs-bottom-mist {
   opacity: 0;
 }
+/* 侧栏最底下那排（头像、新对话）垫一段渐变，同样接上那条 */
+html[data-kfs-gap="bottom"] .kfs-dock-fade {
+  background: linear-gradient(to bottom, rgba(214, 220, 205, 0) 0%, #d6dccd 100%);
+}
+
 /* 量一量屏幕底下（probe.js）：临时把整页撑到屏幕那么高，开封府本体先藏起来 */
 html[data-kfs-probe],
 html[data-kfs-probe] body {
@@ -45,9 +62,4 @@ html[data-kfs-probe] body {
 }
 html[data-kfs-probe] #root {
   display: none !important;
-}
-
-/* 侧栏最底下那排（头像、新对话）垫一段渐变，同样接上那条 */
-html[data-kfs-gap="bottom"] .kfs-dock-fade {
-  background: linear-gradient(to bottom, rgba(214, 220, 205, 0) 0%, #d6dccd 100%);
 }
