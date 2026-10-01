@@ -5,6 +5,7 @@ import { callClaude } from "./cloud.js";
 import { openProbe } from "./probe.js";
 import { gapInfo, setFill } from "./gap.js";
 import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
+import SplashDingxiang from "./SplashDingxiang.jsx";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -33,15 +34,7 @@ const SPLASH = {
   paper: "rgb(var(--k-paper))",
   kite: { x: 298, y: 978, w: 266, h: 254 },
 };
-// 丁香的开屏：卿卿画的戴长翅帽的小猪。脸红和白心里的小紫心是两小块透明图，叠在开屏上
-// （位置是它们在原图里的像素，tools/make_dingxiang.py 打印出来的）
-const SPLASH_DX = {
-  img: "./assets/splash-dingxiang.webp",
-  w: 829,
-  h: 1896,
-  heart: { src: "./assets/dx-heart.webp", x: 331, y: 647, w: 169, h: 154 },
-  blush: { src: "./assets/dx-blush.webp", x: 363, y: 1199, w: 241, h: 56 },
-};
+// 丁香的开屏在 SplashDingxiang.jsx：卿卿画的戴长翅帽的小猪，底下一条液态玻璃的滑块
 
 const RAW_BASE =
   "https://raw.githubusercontent.com/Valerie9391120/meme-library/main/";
@@ -211,8 +204,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .kfs-kite { animation: kfsKite 3.4s ease-in-out infinite; transform-origin: 50% 35%; }
 .kfs-kite-away { animation: kfsKiteAway .95s cubic-bezier(.45,0,.2,1) forwards; }
 
-@keyframes kfsDxHint { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
-.kfs-dx-hint { animation: kfsDxHint 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .kfs-in, .kfs-sheet, .kfs-page, .kfs-breath, .kfs-splash-img, .kfs-moonglow, .kfs-kite { animation: none !important; } }
 `;
 
@@ -1482,172 +1473,6 @@ function Splash({ fading, onEnter }) {
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-// 丁香的开屏：先是没脸红的小猪；过半秒底下浮出紫色玻璃滑块；圆钮拉到最右边，
-// 小猪脸红、白心里长出小紫心；手指松开才进门。没拉到头就松手，圆钮弹回去
-function SplashDingxiang({ fading, onEnter }) {
-  const ref = useRef(null);
-  const [box, setBox] = useState({ w: 390, h: 844 });
-  const [ready, setReady] = useState(false);
-  const [pos, setPos] = useState(0);
-  const [dragging, setDragging] = useState(false);
-  const drag = useRef(null);
-  const posRef = useRef(0);
-  const entered = useRef(false);
-  useEffect(() => {
-    const measure = () => ref.current && setBox({ w: ref.current.offsetWidth, h: ref.current.offsetHeight });
-    measure();
-    window.addEventListener("resize", measure);
-    const t = setTimeout(() => setReady(true), 500);
-    return () => {
-      window.removeEventListener("resize", measure);
-      clearTimeout(t);
-    };
-  }, []);
-
-  // 开屏图按 cover 铺满时，脸红和小紫心落在哪
-  const scale = Math.max(box.w / SPLASH_DX.w, box.h / SPLASH_DX.h);
-  const ox = (box.w - SPLASH_DX.w * scale) / 2;
-  const oy = (box.h - SPLASH_DX.h * scale) / 2;
-  const place = (p) => ({ position: "absolute", left: p.x * scale + ox, top: p.y * scale + oy, width: p.w * scale, height: p.h * scale, pointerEvents: "none" });
-
-  // 尺寸和颜色照她画的那张滑块：深紫的底，圆钮是一个浅紫的环，里面一个粗箭头
-  const TRACK_H = 80;
-  const KNOB = 68;
-  const PAD = 6;
-  const SIDE = 18;
-  const max = Math.max(1, box.w - SIDE * 2 - KNOB - PAD * 2);
-  const progress = Math.min(1, pos / max);
-  const done = progress >= 0.985;
-
-  const move = (v) => {
-    const p = Math.max(0, Math.min(max, v));
-    posRef.current = p;
-    setPos(p);
-  };
-  const enter = () => {
-    if (entered.current) return;
-    entered.current = true;
-    onEnter();
-  };
-  const onDown = (e) => {
-    if (fading || entered.current) return;
-    drag.current = { x0: e.clientX, p0: posRef.current };
-    setDragging(true);
-    if (e.currentTarget.setPointerCapture) {
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch (x) {}
-    }
-  };
-  const onMove = (e) => {
-    const d = drag.current;
-    if (d) move(d.p0 + e.clientX - d.x0);
-  };
-  const onUp = () => {
-    if (!drag.current) return;
-    drag.current = null;
-    setDragging(false);
-    if (posRef.current / max >= 0.985) enter();
-    else move(0);
-  };
-
-  return (
-    <div
-      ref={ref}
-      className="absolute inset-0 z-50 overflow-hidden"
-      style={{ background: SPLASH.paper, opacity: fading ? 0 : 1, transition: "opacity .7s ease", pointerEvents: fading ? "none" : "auto" }}
-    >
-      {/* 图和两小块一起慢慢落定，不然还在缩放的时候叠上去会错位 */}
-      <div className="kfs-splash-img absolute inset-0">
-        <img src={SPLASH_DX.img} alt="" draggable={false} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
-        <img
-          src={SPLASH_DX.heart.src}
-          alt=""
-          draggable={false}
-          className="kfs-dx-heart"
-          style={{ ...place(SPLASH_DX.heart), opacity: done ? 1 : 0, transform: done ? "scale(1)" : "scale(.55)", transition: "opacity .25s ease, transform .4s cubic-bezier(.2,1.7,.4,1)" }}
-        />
-        <img
-          src={SPLASH_DX.blush.src}
-          alt=""
-          draggable={false}
-          className="kfs-dx-blush"
-          style={{ ...place(SPLASH_DX.blush), opacity: done ? 1 : 0, transition: "opacity .3s ease" }}
-        />
-      </div>
-
-      {/* 滑块 */}
-      <div
-        className="kfs-dx-track"
-        style={{
-          position: "absolute",
-          left: SIDE,
-          right: SIDE,
-          bottom: "max(24px, calc(4px + var(--kfs-sab)))",
-          height: TRACK_H,
-          borderRadius: TRACK_H / 2,
-          background: "rgba(70,50,104,0.86)", // 垫在发白的亮片上，看着就是她画的那个 #5D4A7A
-          backdropFilter: "blur(14px) saturate(140%)",
-          WebkitBackdropFilter: "blur(14px) saturate(140%)",
-          border: "1px solid rgba(255,255,255,0.16)",
-          boxShadow: "0 12px 30px rgba(62,42,112,0.3), inset 0 1px 0 rgba(255,255,255,0.14)",
-          opacity: ready ? 1 : 0,
-          transform: ready ? "none" : "translateY(18px)",
-          transition: "opacity .5s ease, transform .5s cubic-bezier(.2,.8,.2,1)",
-          pointerEvents: ready ? "auto" : "none",
-        }}
-      >
-        <div
-          aria-hidden="true"
-          className="flex items-center"
-          style={{ position: "absolute", left: PAD + KNOB + 4, top: 0, height: "100%", color: "rgba(156,129,198,0.8)", opacity: Math.max(0, 1 - progress * 3), pointerEvents: "none" }}
-        >
-          {[0, 1, 2].map((i) => (
-            <span key={i} className="kfs-dx-hint" style={{ display: "flex", marginLeft: i ? -16 : 0, animationDelay: `${i * 0.18}s` }}>
-              <Icon name="chevR" size={46} sw={3.4} />
-            </span>
-          ))}
-        </div>
-        <button
-          type="button"
-          role="slider"
-          aria-label="把小猪拉到最右边，进开封府"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(progress * 100)}
-          onPointerDown={onDown}
-          onPointerMove={onMove}
-          onPointerUp={onUp}
-          onPointerCancel={onUp}
-          onKeyDown={(e) => {
-            if (e.key === "ArrowRight" || e.key === "End") move(max);
-            else if (e.key === "ArrowLeft" || e.key === "Home") move(0);
-            else if ((e.key === "Enter" || e.key === " ") && posRef.current / max >= 0.985) enter();
-          }}
-          className="flex items-center justify-center"
-          style={{
-            position: "absolute",
-            left: PAD + pos,
-            top: PAD - 1,
-            width: KNOB,
-            height: KNOB,
-            borderRadius: "50%",
-            background: "rgba(70,50,104,0.45)",
-            border: "8px solid #9C81C6",
-            boxShadow: done ? "0 0 0 7px rgba(255,255,255,0.24), 0 6px 16px rgba(52,34,100,0.3)" : "0 4px 12px rgba(52,34,100,0.22)",
-            color: "#9C81C6",
-            touchAction: "none",
-            WebkitTapHighlightColor: "transparent",
-            transition: dragging ? "box-shadow .2s ease" : "left .4s cubic-bezier(.2,.8,.2,1), box-shadow .2s ease",
-          }}
-        >
-          <Icon name="chevR" size={44} sw={3.4} />
-        </button>
-      </div>
     </div>
   );
 }
