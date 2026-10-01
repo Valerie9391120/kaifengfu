@@ -61,8 +61,8 @@ const link = { fontSize: 12.5, color: INK_SOFT, textDecoration: "underline", tex
 function Screen({ children }) {
   return (
     <div
-      className="relative w-full overflow-hidden flex items-center justify-center"
-      style={{ height: "100dvh", background: PAPER, fontFamily: SANS, color: INK, padding: "0 20px" }}
+      className="overflow-hidden flex items-center justify-center"
+      style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "var(--kfs-h, 100dvh)", background: PAPER, fontFamily: SANS, color: INK, padding: "0 20px" }}
     >
       <img
         src={WALL}
@@ -320,7 +320,7 @@ export default function Gate() {
   }
 
   if (phase === "boot") {
-    return <div style={{ height: "100dvh", background: PAPER }} />;
+    return <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "var(--kfs-h, 100dvh)", background: PAPER }} />;
   }
 
   if (phase === "working") {

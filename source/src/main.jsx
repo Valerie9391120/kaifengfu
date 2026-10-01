@@ -1,28 +1,38 @@
 import { createRoot } from "react-dom/client";
 import Gate from "./Gate.jsx";
 
-// 背景铺到状态栏底下以后，时间和电量会变成白字；顶上垫一层很淡的墨绿，免得看不清
-function TopShade() {
-  return (
-    <div
-      aria-hidden="true"
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        height: "calc(env(safe-area-inset-top) * 1.5)",
-        background: "linear-gradient(to bottom, rgba(30,46,42,0.28) 0%, rgba(30,46,42,0.12) 55%, rgba(30,46,42,0) 100%)",
-        pointerEvents: "none",
-        zIndex: 60,
-      }}
-    />
-  );
+// 主屏幕上的开封府铺到状态栏底下以后，有的 iOS 会把页面算矮一截（正好矮一个状态栏），
+// 屏幕最底下就空出一条。量出来真是这种情况，就把整页补到整块屏幕那么高。
+function safeTop() {
+  const d = document.createElement("div");
+  d.style.cssText = "position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top);visibility:hidden;pointer-events:none";
+  document.body.appendChild(d);
+  const h = d.getBoundingClientRect().height || 0;
+  d.remove();
+  return h;
 }
 
-createRoot(document.getElementById("root")).render(
-  <>
-    <Gate />
-    <TopShade />
-  </>
-);
+export function fitScreen() {
+  const root = document.documentElement;
+  try {
+    const standalone =
+      window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+    const portrait = window.matchMedia("(orientation: portrait)").matches;
+    const full = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+    const top = safeTop();
+    const gap = full - window.innerHeight;
+    if (standalone && top > 0 && gap > 0 && Math.abs(gap - top) <= 3) {
+      root.style.setProperty("--kfs-h", full + "px");
+      return;
+    }
+  } catch (e) {}
+  root.style.removeProperty("--kfs-h");
+}
+
+fitScreen();
+window.addEventListener("resize", fitScreen);
+window.addEventListener("orientationchange", () => setTimeout(fitScreen, 300));
+window.addEventListener("pageshow", fitScreen);
+setTimeout(fitScreen, 500);
+
+createRoot(document.getElementById("root")).render(<Gate />);
