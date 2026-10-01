@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { MEMES } from "./memes.data.js";
+import MEMES from "../static/memes.json";
 import { store } from "./store.js";
 import { callClaude } from "./cloud.js";
 

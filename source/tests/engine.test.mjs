@@ -46,7 +46,7 @@ class FakeLocal {
 
 const salt = newSalt();
 const t0 = Date.now();
-const vault = await deriveVault("浣花溪上见卿卿", salt);
+const vault = await deriveVault("test-passphrase-123", salt);
 console.log("（60万轮钥匙锻造用时", Date.now() - t0, "毫秒）");
 const wrongVault = await deriveVault("暗号不对", salt);
 
