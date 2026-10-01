@@ -1,0 +1,23 @@
+{
+  "name": "kaifengfu",
+  "version": "5.0.0",
+  "private": true,
+  "description": "开封府：只属于两个人的小屋",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:test": "KFS_TEST_URL=http://127.0.0.1:8787 KFS_OUT=dist-test node build.mjs",
+    "mock": "node tests/mock-supabase.mjs",
+    "test:unit": "esbuild tests/engine.test.mjs --bundle --platform=node --format=esm --outfile=.cache/engine.test.mjs --log-level=warning && node .cache/engine.test.mjs",
+    "test:e2e": "python3 tests/e2e.py"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "fake-indexeddb": "^6.2.5",
+    "tailwindcss": "^3.4.19"
+  }
+}

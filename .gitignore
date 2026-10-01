@@ -1,3 +1,7 @@
 node_modules/
+source/node_modules/
 source/dist/
 source/dist-test/
+source/.cache/
+source/tests/shots/
+__pycache__/
