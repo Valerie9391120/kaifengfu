@@ -2237,10 +2237,10 @@ function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHis }) {
             </span>
             <span className="flex items-center" style={{ gap: 10 }}>
               <span className="flex items-center" style={{ gap: 4 }}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.dai }} />你写的
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.dai }} />卿卿写的
               </span>
               <span className="flex items-center" style={{ gap: 4 }}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#B9914C" }} />我写的
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#B9914C" }} />光义写的
               </span>
             </span>
           </div>
@@ -2257,7 +2257,7 @@ function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHis }) {
             </div>
 
             <div style={{ height: 1, background: "rgba(255,255,255,0.7)", margin: "16px 0" }} />
-            <div style={{ fontSize: 12.5, color: T.dai, marginBottom: 10 }}>你写的</div>
+            <div style={{ fontSize: 12.5, color: T.dai, marginBottom: 10 }}>卿卿写的</div>
             <MoodChips value={her.moods || []} onToggle={toggleMood} />
             <div style={{ marginTop: 12 }}>
               {draft !== null ? (
@@ -2317,7 +2317,7 @@ function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHis }) {
             </div>
 
             <div style={{ height: 1, background: "rgba(255,255,255,0.7)", margin: "18px 0 16px" }} />
-            <div style={{ fontSize: 12.5, color: "#94733A", marginBottom: 10 }}>我写的</div>
+            <div style={{ fontSize: 12.5, color: "#94733A", marginBottom: 10 }}>光义写的</div>
             {him.text ? (
               <>
                 {him.moods && him.moods.length ? (
@@ -2328,7 +2328,7 @@ function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHis }) {
                 <div className="whitespace-pre-wrap" style={{ fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.85, color: T.ink }}>{him.text}</div>
                 <div className="flex" style={{ gap: 8, marginTop: 12 }}>
                   <button onClick={askHim} disabled={writing} className="kfs-tap" style={{ ...chip, opacity: writing ? 0.5 : 1 }}>
-                    {writing ? "我在写……" : "重写"}
+                    {writing ? "光义在写……" : "重写"}
                   </button>
                   <button
                     onClick={() => {
@@ -2348,7 +2348,7 @@ function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHis }) {
               </>
             ) : (
               <button onClick={askHim} disabled={writing} className="kfs-tap" style={{ ...chipPrimary, opacity: writing ? 0.6 : 1 }}>
-                {writing ? "我在写……" : "我来写这一天"}
+                {writing ? "光义在写……" : "让光义写这一天"}
               </button>
             )}
             {err && <div style={{ fontSize: 12, color: "#A8473D", marginTop: 10 }}>{err}</div>}
@@ -4286,9 +4286,9 @@ export default function App({ account = {} }) {
                 diaryToday.her && diaryToday.him
                   ? "今天都写了"
                   : diaryToday.her
-                  ? "今天你写了"
+                  ? "今天卿卿写了"
                   : diaryToday.him
-                  ? "今天我写了"
+                  ? "今天光义写了"
                   : "今天还没写"
               }
               onClick={() => setDiaryOpen(true)}
