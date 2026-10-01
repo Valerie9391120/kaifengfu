@@ -62,7 +62,7 @@ function Screen({ children }) {
   return (
     <div
       className="overflow-hidden flex items-center justify-center"
-      style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100dvh", background: PAPER, fontFamily: SANS, color: INK, padding: "0 20px" }}
+      style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "var(--kfs-h, 100dvh)", background: PAPER, fontFamily: SANS, color: INK, padding: "0 20px" }}
     >
       <img
         src={WALL}
@@ -320,7 +320,7 @@ export default function Gate() {
   }
 
   if (phase === "boot") {
-    return <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100dvh", background: PAPER }} />;
+    return <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "var(--kfs-h, 100dvh)", background: PAPER }} />;
   }
 
   if (phase === "working") {

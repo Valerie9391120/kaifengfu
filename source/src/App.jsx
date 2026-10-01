@@ -3,6 +3,7 @@ import MEMES from "../static/memes.json";
 import { store } from "./store.js";
 import { callClaude } from "./cloud.js";
 import { openProbe } from "./probe.js";
+import { gapInfo, setFill } from "./gap.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -1696,7 +1697,8 @@ function MsgMenu({ menu, now, busy, onClose, onCopy, onEdit, onRetry }) {
   const menuW = 196;
   const menuH = 44 + acts.length * 47;
   const vw = typeof window !== "undefined" ? window.innerWidth : 390;
-  const vh = typeof window !== "undefined" ? window.innerHeight : 844;
+  // 撑满屏幕的时候 innerHeight 还是网页以为的那么矮，按整页实际的高来算
+  const vh = typeof window !== "undefined" ? Math.max(window.innerHeight, Math.round(document.body.getBoundingClientRect().height) || 0) : 844;
   let top = rect.top - menuH - 10;
   if (top < 12 + safeTopPx()) top = Math.min(rect.bottom + 10, vh - menuH - 12);
   let left = her ? rect.right - menuW : rect.left;
@@ -2696,6 +2698,7 @@ export default function App({ account = {} }) {
   const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState("");
   const [copySheet, setCopySheet] = useState("");
+  const [fillOn, setFillOn] = useState(() => gapInfo().fill);
   const [usage, setUsage] = useState(null);
   const [monthUsage, setMonthUsage] = useState(null);
   const [sync, setSync] = useState({ pending: 0, syncing: false, offline: false, lastSync: 0 });
@@ -3904,6 +3907,22 @@ export default function App({ account = {} }) {
           <input ref={importRef} type="file" accept="application/json,.json" onChange={importBackup} style={{ display: "none" }} />
 
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8, marginTop: 22 }}>屏幕</div>
+          {gapInfo().canFill && (
+            <div className="flex items-center justify-between" style={{ ...glass(0.5, 16), borderRadius: 16, padding: "10px 14px", marginBottom: 10, gap: 12 }}>
+              <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.5 }}>
+                铺满到屏幕最底下
+                <div style={{ fontSize: 11.5, color: T.inkSoft }}>{fillOn ? "开着：输入框沉到最底下" : "关着：底下留一条，输入框贴着它"}</div>
+              </div>
+              <Toggle
+                on={fillOn}
+                onChange={(v) => {
+                  setFill(v);
+                  setFillOn(v);
+                }}
+                label="铺满到屏幕最底下"
+              />
+            </div>
+          )}
           <p style={{ fontSize: 12, color: T.inkSoft, lineHeight: 1.6, marginBottom: 10 }}>
             屏幕最底下那条空白，量一量就知道能不能铺满。量完截个图给我。
           </p>
@@ -3995,7 +4014,7 @@ export default function App({ account = {} }) {
     <div
       ref={rootRef}
       className="overflow-hidden select-none"
-      style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100dvh", background: T.bg, fontFamily: SANS, color: T.ink }}
+      style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "var(--kfs-h, 100dvh)", background: T.bg, fontFamily: SANS, color: T.ink }}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}

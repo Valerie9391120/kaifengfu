@@ -2,10 +2,9 @@
 // 量一量屏幕底下：看这台手机上网页到底画得到哪儿
 // 有的 iOS 在主屏幕上最底下空一条（见 main.jsx）。网上有人说把整页撑到 100vh 就能铺满，
 // 可在别的手机上，系统给网页的那块地方本身就矮一截，撑多高都画不出去。
-// 这里临时把整页撑到屏幕那么高，在空出来的那条里放两块颜色：
-//   右半边金色：跟着页面走的内容（撑高整页这招管不管用）
-//   左半边粉色：fixed 的内容（固定在屏幕上的东西能不能画到那儿）
-// 两块都看不见，就是系统根本没把那条给网页。截图看一眼就知道。
+// 这里临时把整页撑到屏幕那么高，在原来空着的那一条里铺一块金色：
+// 露出来，说明撑高整页就能铺到底；看不见，就是系统根本没把那条给网页。截图看一眼就知道。
+// （她的手机 2026 年 10 月 1 日量过：金色露出来了。）
 // =====================================================
 
 function fullHeight() {
@@ -43,7 +42,7 @@ export function probeNumbers() {
     top: measure("env(safe-area-inset-top)"),
     bottom: measure("env(safe-area-inset-bottom)"),
     standalone: window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches,
-    gap: document.documentElement.getAttribute("data-kfs-gap") === "bottom",
+    mode: document.documentElement.getAttribute("data-kfs-gap") || "",
   };
 }
 
@@ -60,7 +59,8 @@ export function openProbe() {
   if (document.getElementById("kfs-probe")) return;
   const n = probeNumbers(); // 先量，再把整页撑高
   const full = n.screen;
-  const gap = Math.max(0, full - n.inner);
+  // 已经撑满的话，网页量出来可能不再矮了；这个毛病空的正好是顶上安全区那么高
+  const gap = Math.max(0, full - n.inner) || (n.mode ? n.top : 0);
   const root = document.documentElement;
   root.style.setProperty("--kfs-probe-h", full + "px");
   root.setAttribute("data-kfs-probe", "");
@@ -76,7 +76,7 @@ export function openProbe() {
   );
   card.appendChild(box("font-size:19px;letter-spacing:0.08em;font-family:'Songti SC','STSong',serif;margin-bottom:6px", "量一量屏幕底下"));
   const how = gap
-    ? "看屏幕最底下那一条：右边露出金色，说明撑高整页能铺到底；左边露出粉色，说明固定的东西也能画到底；两边都没颜色、只有灰绿，就是系统没把那条给网页。截个图给我，再点关掉。"
+    ? "看屏幕最底下：露出金色，说明撑高整页就能铺到底；没有金色、只有灰绿，就是系统没把那条给网页。截个图给我，再点关掉。"
     : "这台手机量出来没有空一条，网页本来就铺到底了。截个图给我，再点关掉。";
   card.appendChild(box("font-size:13px;color:rgba(52,74,68,0.8);margin-bottom:10px", how));
 
@@ -92,7 +92,7 @@ export function openProbe() {
     ["顶上安全区", n.top],
     ["底下安全区", n.bottom],
     ["主屏幕打开", n.standalone ? "是" : "否"],
-    ["量出空一条", n.gap ? `是，空 ${gap}` : "否"],
+    ["量出空一条", n.mode === "fill" ? `是，空 ${gap}，已撑满` : n.mode === "bottom" ? `是，空 ${gap}，够不着` : "否"],
   ];
   const grid = box("display:grid;grid-template-columns:1fr auto;column-gap:12px;font-size:13px;font-variant-numeric:tabular-nums");
   rows.forEach(([k, v]) => {
@@ -110,22 +110,12 @@ export function openProbe() {
   card.appendChild(close);
   el.appendChild(card);
 
-  // 网页以为的最底下：贴着布局视口的底边画一条墨绿线
-  el.appendChild(box("position:fixed;left:0;right:0;bottom:0;height:4px;background:#3F6A62;z-index:3"));
-  el.appendChild(box("position:fixed;right:14px;bottom:10px;font-size:12px;color:#3F6A62;z-index:3", "墨绿线：网页以为的最底下"));
   if (gap) {
-    // 右半边：跟着页面走，在整页最底下，正好落在空出来的那条里
+    // 跟着页面走，在整页最底下，正好落在原来空着的那一条里
     el.appendChild(
       box(
-        `position:absolute;right:0;width:50%;bottom:0;height:${gap}px;background:#C9A24B;color:#fff;font-size:13px;display:flex;align-items:center;justify-content:center;z-index:2`,
-        "金色：页面"
-      )
-    );
-    // 左半边：fixed，挪到网页以为的最底下再往下
-    el.appendChild(
-      box(
-        `position:fixed;left:0;width:50%;bottom:${-gap}px;height:${gap}px;background:#D98C9A;color:#fff;font-size:13px;display:flex;align-items:center;justify-content:center;z-index:2`,
-        "粉色：固定"
+        `position:absolute;left:0;right:0;bottom:0;height:${gap}px;background:#C9A24B;color:#fff;font-size:13px;display:flex;align-items:center;justify-content:center`,
+        "金色：原来空着的那一条"
       )
     );
   }
