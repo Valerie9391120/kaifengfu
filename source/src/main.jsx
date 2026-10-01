@@ -1,9 +1,12 @@
 import { createRoot } from "react-dom/client";
 import Gate from "./Gate.jsx";
 import { initGap } from "./gap.js";
+import { initKeyboardFit } from "./keyboard.js";
 
 // iOS 主屏幕底下空一条：一打开就量，能撑满就撑满，够不着就贴底淡出（见 gap.js）
 initGap();
+// 键盘弹出来时，输入框整块贴在键盘上面（见 keyboard.js）
+initKeyboardFit();
 
 // 够不着的时候（data-kfs-gap="bottom"），页面最底下淡进系统画的那条的颜色
 const MIST = "#D6DCCD";

@@ -31,6 +31,11 @@ html[data-kfs-gap="fill"] {
   --kfs-h: var(--kfs-fill-h);
 }
 
+/* 键盘开着（见 keyboard.js）：底下横条被键盘盖住了，不用再让 */
+html[data-kfs-kb] {
+  --kfs-sab: 0px;
+}
+
 /* 空一条、100vh 也够不着（见 gap.js 的 "bottom"）：网页本身就到不了横条那儿，
    让位记成 0，输入框直接贴到网页最底边 */
 html[data-kfs-gap="bottom"] {

@@ -14,6 +14,27 @@ def ok(c, m):
     else: failed += 1; print("FAIL:", m)
 
 STANDALONE = "Object.defineProperty(Navigator.prototype, 'standalone', { get() { return true; } });"
+# 假的“可视区”：浏览器里弹不出 iPhone 的键盘，用它假装键盘弹起来（可视区变矮、往下挪）
+FAKE_KEYBOARD = """(() => {
+  const fake = new EventTarget();
+  let h = null, top = 0;
+  Object.defineProperty(fake, 'height', { get: () => (h == null ? window.innerHeight : h) });
+  Object.defineProperty(fake, 'width', { get: () => window.innerWidth });
+  Object.defineProperty(fake, 'offsetTop', { get: () => top });
+  Object.defineProperty(fake, 'offsetLeft', { get: () => 0 });
+  Object.defineProperty(fake, 'scale', { get: () => 1 });
+  window.__kfsKeyboard = (height, offsetTop) => { h = height; top = offsetTop || 0; fake.dispatchEvent(new Event('resize')); fake.dispatchEvent(new Event('scroll')); };
+  Object.defineProperty(window, 'visualViewport', { get: () => fake, configurable: true });
+})();"""
+KB_STATE = """() => {
+  const root = document.querySelector('.select-none').getBoundingClientRect();
+  const c = document.querySelector('.kfs-composer');
+  const cr = c.getBoundingClientRect();
+  const btn = Math.max(...[...c.querySelectorAll('button')].map(b => b.getBoundingClientRect().bottom));
+  const head = document.querySelector('[aria-label="打开侧栏"]').getBoundingClientRect();
+  return { open: document.documentElement.hasAttribute('data-kfs-kb'), top: Math.round(root.top), bottom: Math.round(root.bottom),
+           composer: Math.round(cr.bottom), btn: Math.round(btn), head: Math.round(head.top) };
+}"""
 MIST = "(() => { const m = document.querySelector('.kfs-bottom-mist'); const s = getComputedStyle(m); return s.display === 'none' ? 'none' : (parseFloat(s.opacity) > 0.5 ? 'on' : 'off'); })()"
 COMPOSER = """() => {
   const c = document.querySelector('.kfs-composer');
@@ -29,13 +50,14 @@ def bottom_color(pg, y):
     px = [im.getpixel((x, im.height - 1)) for x in range(im.width)]
     return tuple(round(sum(p[i] for p in px) / len(px)) for i in range(3))
 
-def run(name, viewport_h, inset_top, standalone, login=False, vh=None):
+def run(name, viewport_h, inset_top, standalone, login=False, vh=None, kb=False):
     urllib.request.urlopen(MOCK + "/__debug/reset").read()
     c = browser.new_context(viewport={"width": 393, "height": viewport_h}, screen={"width": 393, "height": 852},
                             device_scale_factor=2, is_mobile=True, has_touch=True, locale="zh-CN")
     if standalone: c.add_init_script(STANDALONE)
     # 浏览器里没法真的让 100vh 比网页高，用 main.jsx 留的口子告诉它 100vh 量出来是多少
     if vh: c.add_init_script(f"window.__KFS_TEST_VH__ = {vh};")
+    if kb: c.add_init_script(FAKE_KEYBOARD)
     pg = c.new_page()
     cdp = c.new_cdp_session(pg)
     cdp.send("Emulation.setSafeAreaInsetsOverride", {"insets": {"top": inset_top, "bottom": 34, "left": 0, "right": 0}})
@@ -64,6 +86,13 @@ def run(name, viewport_h, inset_top, standalone, login=False, vh=None):
         # 浏览器窗口只有 viewport_h 那么高，撑满时输入框底边在窗口外面，量不了也不用量
         res["seam"] = bottom_color(pg, res["composer"]["bottom"]) if res["composer"]["bottom"] <= viewport_h else None
         res["scroll_h"] = pg.evaluate("document.documentElement.scrollHeight")
+        if kb:
+            # 键盘弹起来：可视区剩上面 447 高、往下挪了 344（照她截图量的），外壳要正好铺在这块里
+            pg.get_by_placeholder("说话，我听着").focus()
+            pg.evaluate("window.__kfsKeyboard(447, 344)"); time.sleep(0.3)
+            res["kb_open"] = pg.evaluate(KB_STATE)
+            pg.evaluate("document.activeElement.blur(); window.__kfsKeyboard(null, 0)"); time.sleep(0.3)
+            res["kb_closed"] = pg.evaluate(KB_STATE)
         # 整页被挪动了（比如收键盘以后），要自己挪回顶上
         pg.evaluate("window.scrollTo(0, 59)"); time.sleep(0.4)
         res["scroll_after"] = pg.evaluate("Math.round(window.scrollY)")
@@ -110,7 +139,7 @@ def near(a, b, tol):
 
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])
-    a = run("A 你的手机：空一条，但 100vh 够得着屏幕底（量过）", 793, 59, True, login=True, vh=852)
+    a = run("A 你的手机：空一条，但 100vh 够得着屏幕底（量过）", 793, 59, True, login=True, vh=852, kb=True)
     ok(a["gap"] == "fill" and a["mist"] == "none" and a["mist_splash"] == "none", "量出空一条、100vh 够得着：撑满，不用淡出")
     ok(a["html_h"] == 852 and a["body_h"] == 852 and a["gate_h"] == 852 and a["app_h"] == 852, "html、body、门口、开封府外壳都撑到屏幕那么高")
     ok(a["composer"]["bottom"] == 852 and a["composer"]["left"] == 0 and a["composer"]["right"] == 393, "输入框整块贴到屏幕最底下")
@@ -118,6 +147,12 @@ with sync_playwright() as p:
     ok(a["mist_chat"] == "none" and a["mist_drawer"] == "none" and a["mist_sheet"] == "none", "撑满以后哪儿都不盖淡出")
     ok(a["drawer_row"]["bottom"] == 852 and a["drawer_row"]["btn"] == 852 - 34, "侧栏最底下那排也到底，让开横条")
     ok(a["scroll_after"] == 0, "整页被挪动了会自己挪回顶上")
+    k = a["kb_open"]
+    ok(k["open"] and k["top"] == 344 and k["bottom"] == 791, f"键盘弹起来：外壳正好铺在键盘上面那块（{k}）")
+    ok(k["composer"] == 791 and k["btn"] == 791 - 8, "键盘弹起来：输入框连同底下那排按钮整块贴在键盘上面")
+    ok(k["head"] >= 344 + 59, "键盘弹起来：顶栏还在屏幕最上面，没被推出去")
+    k2 = a["kb_closed"]
+    ok(not k2["open"] and k2["top"] == 0 and k2["bottom"] == 852 and k2["btn"] == 852 - 34, "收起键盘：外壳回到整屏，按钮重新让开底下横条")
     pr = a["probe"]
     ok(pr["on"] and pr["root_hidden"] and pr["body_h"] == 852, "量屏幕：整页临时撑到屏幕那么高，开封府本体先藏起来")
     ok(pr["screen"] and pr["inner"] and pr["gap"], "量屏幕：屏幕高、网页高、空多少都摆出来")

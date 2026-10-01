@@ -61,8 +61,9 @@ const link = { fontSize: 12.5, color: INK_SOFT, textDecoration: "underline", tex
 function Screen({ children }) {
   return (
     <div
+      data-kfs-kbfit=""
       className="overflow-hidden flex items-center justify-center"
-      style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "var(--kfs-h, 100dvh)", background: PAPER, fontFamily: SANS, color: INK, padding: "0 20px" }}
+      style={{ position: "fixed", top: "var(--kfs-kb-top, 0px)", left: 0, width: "100%", height: "var(--kfs-kb-h, var(--kfs-h, 100dvh))", background: PAPER, fontFamily: SANS, color: INK, padding: "0 20px" }}
     >
       <img
         src={WALL}
