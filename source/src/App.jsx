@@ -130,6 +130,20 @@ const BUBBLE_GLASS = {
   color: "#24332F",
 };
 
+// 输入框贴底，照官方那样沉到最下面：上半截是玻璃，越往下越淡进 #D6DCCD。
+// 这个颜色是聊天背景最底边的颜色，也是网页底色；有的 iOS 在屏幕最底下空出一条系统画的色块（见 main.jsx），
+// 就是这个颜色，所以输入框底边和那条接在一起，看着像一直铺到屏幕底
+const DOCK_GLASS = {
+  background:
+    "linear-gradient(to bottom, rgba(214,220,205,0) calc(100% - 14px), #D6DCCD 100%), " +
+    "linear-gradient(to bottom, rgba(255,255,255,0.44) 0%, rgba(255,255,255,0.3) 52%, rgba(214,220,205,0.6) 100%)",
+  backdropFilter: "blur(30px) saturate(140%)",
+  WebkitBackdropFilter: "blur(30px) saturate(140%)",
+  borderTop: "1px solid rgba(255,255,255,0.72)",
+  boxShadow: "0 -10px 30px rgba(46,68,62,0.1), inset 0 1px 0 rgba(255,255,255,0.7)",
+  borderRadius: "26px 26px 0 0",
+};
+
 const chip = {
   ...glass(0.62, 16),
   borderRadius: 999,
@@ -3825,6 +3839,15 @@ export default function App({ account = {} }) {
   const typing = loading || reveal !== null;
   const rows = useMemo(() => buildRows(messages, reveal), [messages, reveal]);
   const activeModel = settings.model || DEFAULT_MODEL;
+
+  // 对话页（或侧栏）在最上面时，底边自己接得上那条色块，告诉 main.jsx 别再盖淡出
+  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !menu && !viewer && !copySheet;
+  useEffect(() => {
+    const r = document.documentElement;
+    if (chatOnTop) r.setAttribute("data-kfs-chat", "");
+    else r.removeAttribute("data-kfs-chat");
+  }, [chatOnTop]);
+  useEffect(() => () => document.documentElement.removeAttribute("data-kfs-chat"), []);
   const syncLine = !storageOk
     ? "手机本地存档写不进去，记录可能留不住。"
     : sync.offline
@@ -4007,7 +4030,7 @@ export default function App({ account = {} }) {
           </div>
           <HistoryCard index={index} currentId={chatId} onOpenAll={() => setHistoryOpen(true)} onOpen={openChat} />
         </div>
-        <div className="flex items-center justify-between" style={{ padding: "8px 16px calc(18px + env(safe-area-inset-bottom))" }}>
+        <div className="kfs-dock-fade flex items-center justify-between" style={{ padding: "8px 16px max(12px, var(--kfs-sab))" }}>
           <button onClick={() => setSheet("account")} aria-label="头像与设置" className="kfs-tap">
             <Avatar av={avatars.her} who="her" size={40} />
           </button>
@@ -4182,10 +4205,11 @@ export default function App({ account = {} }) {
           </div>
         )}
 
-        {/* 输入框：照官方摆，上面写字，下面一排按钮 */}
+        {/* 输入框：照官方摆，上面写字，下面一排按钮，整块贴着底边。
+            --kfs-sab 平时是底下横条要让的高度，iOS 底下空一条的时候是 0（见 input.css） */}
         <div
-          className="relative z-10 flex-shrink-0"
-          style={{ ...glass(0.4, 30), borderRadius: 26, margin: "0 12px calc(12px + env(safe-area-inset-bottom))", padding: "8px 8px 7px" }}
+          className="kfs-composer relative z-10 flex-shrink-0"
+          style={{ ...DOCK_GLASS, padding: "10px 14px max(8px, var(--kfs-sab))" }}
         >
           {attach.length > 0 && (
             <div className="flex overflow-x-auto kfs-scroll" style={{ gap: 10, padding: "6px 4px 10px" }}>
@@ -4230,7 +4254,7 @@ export default function App({ account = {} }) {
                   {recording.text || "说吧，我听着"}
                 </div>
               </div>
-              <button onClick={sendVoice} className="kfs-tap flex-shrink-0" style={chipPrimary}>
+              <button onClick={sendVoice} className="kfs-tap flex-shrink-0" style={{ ...chipPrimary, boxShadow: "0 3px 8px rgba(48,82,74,0.28)" }}>
                 发送
               </button>
             </div>
@@ -4314,7 +4338,7 @@ export default function App({ account = {} }) {
                     height: 38,
                     borderRadius: 999,
                     background: T.daiGrad,
-                    boxShadow: "0 6px 16px rgba(48,82,74,0.35)",
+                    boxShadow: "0 3px 8px rgba(48,82,74,0.3)",
                   }}
                   >
                     <Icon name="up" color="#fff" size={19} sw={2.1} />
@@ -4330,7 +4354,7 @@ export default function App({ account = {} }) {
                     height: 38,
                     borderRadius: 999,
                     background: T.daiGrad,
-                    boxShadow: "0 6px 16px rgba(48,82,74,0.35)",
+                    boxShadow: "0 3px 8px rgba(48,82,74,0.3)",
                   }}
                   >
                     <Icon name="wave" color="#fff" size={19} sw={2} />

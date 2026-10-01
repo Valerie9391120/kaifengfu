@@ -3,7 +3,10 @@ import Gate from "./Gate.jsx";
 
 // 有的 iOS（26 以后几个版本）把主屏幕上的网页铺到状态栏底下以后，整页会矮一个状态栏，
 // 最底下空出一条系统画的色块，颜色取网页底色，网页本身画不到那里，补高也没用（会把输入框挤出去）。
-// 量出来是这种情况，就在页面最底下加一段淡出，淡进那条色块的颜色，接缝看不出来。
+// 这是 WebKit 自己的毛病（Bug 301108），别人试过各种高度写法也一样。
+// 量出来是这种情况就在 <html> 上记一笔 data-kfs-gap="bottom"：
+// 输入框不再给底下横条让位，直接贴到网页最底边，底色和那条接上（见 App.jsx 的 DOCK_GLASS）；
+// 开屏、门口、日记这些页面，最底下加一段淡出，淡进那条色块的颜色。
 function safeTop() {
   const d = document.createElement("div");
   d.style.cssText = "position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top);visibility:hidden;pointer-events:none";

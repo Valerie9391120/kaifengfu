@@ -15,10 +15,29 @@ body {
   height: 100%;
 }
 
-/* 有的 iOS 在主屏幕上会在最底下空一条（见 main.jsx），页面底边淡进那条的颜色，接缝看不出来 */
+/* 底部安全区：平时是 iPhone 底下那根横条要让出的高度。
+   有的 iOS 在主屏幕上会在最底下空一条（见 main.jsx），网页本身就够不着横条，这时记成 0，
+   输入框才能直接贴到网页最底边 */
+:root {
+  --kfs-sab: env(safe-area-inset-bottom, 0px);
+}
+html[data-kfs-gap="bottom"] {
+  --kfs-sab: 0px;
+}
+
+/* 空一条的时候，页面底边淡进那条的颜色，接缝看不出来 */
 .kfs-bottom-mist {
   display: none;
+  transition: opacity 0.3s ease;
 }
 html[data-kfs-gap="bottom"] .kfs-bottom-mist {
   display: block;
+}
+/* 对话页上输入框贴着底，自己就淡进那条的颜色，不用再盖一层（盖了按钮会发白） */
+html[data-kfs-gap="bottom"][data-kfs-chat] .kfs-bottom-mist {
+  opacity: 0;
+}
+/* 侧栏最底下那排（头像、新对话）垫一段渐变，同样接上那条 */
+html[data-kfs-gap="bottom"] .kfs-dock-fade {
+  background: linear-gradient(to bottom, rgba(214, 220, 205, 0) 0%, #d6dccd 100%);
 }
