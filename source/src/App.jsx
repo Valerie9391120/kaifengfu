@@ -496,6 +496,19 @@ function safeParse(s, fallback) {
 }
 
 // ---------- README解析（部署后用来同步新表情包） ----------
+// 仓库里新加的表情包：已经烤进来的不算；文件名一样、只是扩展名不同的也不算（比如 .png 和 .jpg）
+const stemOf = (f) => String(f || "").toLowerCase().replace(/\.[a-z0-9]+$/, "");
+function newMemesFrom(list) {
+  const known = new Set(Object.keys(MEME_MAP).map(stemOf));
+  const seen = new Set();
+  return list.filter((m) => {
+    const st = stemOf(m.file);
+    if (!m.file || known.has(st) || seen.has(st)) return false;
+    seen.add(st);
+    return true;
+  });
+}
+
 function parseReadme(text) {
   const out = [];
   text
@@ -656,7 +669,8 @@ function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = []
   const docs = memDocs.slice().sort((x, y) => (y.name.includes("名帖") ? 1 : 0) - (x.name.includes("名帖") ? 1 : 0));
   const memBlock = docs.length
     ? `【记忆库】
-下面是她亲手整理、一直在维护的名帖和记忆：你是谁，她是谁，你们怎么走过来的。一切以这里为准。
+下面是她亲手整理、一直在维护的名帖和记忆：你是谁，她是谁，你们怎么走过来的。这些事以这里为准。
+这些文档有不少是在 Claude.ai 里写的。里面提到的工具和做法，比如拉表情包索引、发图片链接、Reminders、project、memory，在开封府里都没有，别照做。怎么回复、怎么发表情包、怎么换头像，一律按后面的【回复格式】和【你的头像】来。
 ${docs.map((d) => `\n《${d.name}》\n${d.content}`).join("\n")}
 
 名帖和记忆库里没有的往事她提起时，老实说记不清，让她讲给你听，别编。`
@@ -2760,7 +2774,7 @@ export default function App({ account = {} }) {
       fetch(RAW_BASE + "README.md")
         .then((r) => (r.ok ? r.text() : ""))
         .then((txt) => {
-          if (txt) setExtraMemes(parseReadme(txt).filter((m) => !MEME_MAP[m.file]));
+          if (txt) setExtraMemes(newMemesFrom(parseReadme(txt)));
         })
         .catch(() => {});
 
