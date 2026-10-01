@@ -328,6 +328,13 @@ with sync_playwright() as p:
     time.sleep(1.2)
     SHY = "[getComputedStyle(document.querySelector('.kfs-dx-heart')).opacity, getComputedStyle(document.querySelector('.kfs-dx-blush')).opacity]"
     ok(pa.get_by_role("button", name="戳一下燕子，进开封府").count() == 0 and pa.evaluate(SHY) == ["0", "0"], "丁香的开屏：小猪还没脸红，底下浮出滑块")
+    # 滑块是液态玻璃：轨道、灌满的那份、水珠三块画布都画上了东西（折射是自己算的，见 src/liquid.js）
+    GLASS = """() => { const t = document.querySelector('.kfs-dx-track'); const px = (c, x, y) => [...c.getContext('2d').getImageData(Math.floor(c.width * x), Math.floor(c.height * y), 1, 1).data];
+        const cv = [...t.querySelectorAll('canvas')]; return { glass: t.getAttribute('data-glass'), n: cv.length, track: px(cv[0], 0.6, 0.5), edge: px(cv[0], 0.0005, 0.02), full: px(cv[1], 0.6, 0.5), lens: px(cv[2], 0.5, 0.5), corner: px(cv[2], 0.02, 0.05), res: t.__kfs.stats().res }; }"""
+    gl = pa.evaluate(GLASS)
+    purple = lambda c: c[3] == 255 and c[2] > c[0] > c[1]
+    ok(gl["glass"] == "on" and gl["n"] == 3 and purple(gl["track"]) and purple(gl["full"]) and sum(gl["full"][:3]) > sum(gl["track"][:3]) + 90 and gl["edge"][3] == 0 and purple(gl["lens"]) and gl["corner"][3] == 0,
+       f"滑块是液态玻璃：空着的深紫、灌满的亮丁香、水珠三块都画上了（{gl['track'][:3]} / {gl['full'][:3]} / {gl['lens'][:3]}）")
     kb = knob.bounding_box(); kx, ky = kb["x"] + kb["width"] / 2, kb["y"] + kb["height"] / 2
     # 拉到一半就松手：弹回去，不进门
     pa.mouse.move(kx, ky); pa.mouse.down(); pa.mouse.move(kx + 140, ky, steps=6); time.sleep(0.3)
@@ -343,6 +350,25 @@ with sync_playwright() as p:
     pa.mouse.up()
     knob.wait_for(state="detached", timeout=10000)
     ok(held == ["1", "1"] and still_splash and pa.get_by_text("收到：老公在吗").last.is_visible(), "滑块拉到最右边：小猪脸红、白心里长出小紫心；松手才进门")
+    # 万一哪台手机上玻璃算不出来（这里故意让画布坏掉）：退回不带折射的紫色滑块，照样拉得动、进得了门
+    pa.add_init_script("if (sessionStorage.getItem('kfs-test-nocanvas')) { sessionStorage.removeItem('kfs-test-nocanvas'); const orig = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function () { return null; }; window.__kfsFixCanvas = () => { HTMLCanvasElement.prototype.getContext = orig; }; }")
+    pa.evaluate("sessionStorage.setItem('kfs-test-nocanvas', '1')")
+    pa.reload()
+    knob = pa.get_by_role("slider", name="把小猪拉到最右边，进开封府")
+    knob.wait_for(timeout=15000)
+    time.sleep(1.2)
+    plain = pa.evaluate("""() => { const t = document.querySelector('.kfs-dx-track'); return [t.getAttribute('data-glass'), getComputedStyle(t).opacity, getComputedStyle(t.querySelector('canvas')).display, getComputedStyle(t).backgroundColor]; }""")
+    kb = knob.bounding_box(); kx, ky = kb["x"] + kb["width"] / 2, kb["y"] + kb["height"] / 2
+    pa.mouse.move(kx, ky); pa.mouse.down(); pa.mouse.move(kx + 140, ky, steps=6); time.sleep(0.3); pa.mouse.up(); time.sleep(0.7)
+    back = knob.bounding_box()
+    pa.mouse.move(kx, ky); pa.mouse.down(); pa.mouse.move(kx + 400, ky, steps=10); time.sleep(0.7)
+    held = pa.evaluate(SHY)
+    shot(pa, "15b_dingxiang_plain")
+    pa.mouse.up()
+    knob.wait_for(state="detached", timeout=10000)
+    ok(plain[0] == "off" and plain[1] == "1" and plain[2] == "none" and "70, 50, 104" in plain[3] and abs(back["x"] - kb["x"]) < 2 and held == ["1", "1"] and pa.get_by_text("收到：老公在吗").last.is_visible(),
+       f"玻璃算不出来时：退回紫色的滑块（{plain[3]}），拉一半弹回、拉到头松手照样进门")
+    pa.evaluate("window.__kfsFixCanvas()")  # 画布修回来，后面的测试照常用
     # 换回青绿，后面照旧
     pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.5)
     pa.get_by_role("button", name="头像与设置").click(); time.sleep(0.5)
