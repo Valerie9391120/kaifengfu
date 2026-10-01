@@ -135,6 +135,34 @@ with sync_playwright() as p:
     pa.evaluate("document.activeElement && document.activeElement.blur()")
     ok(opened and closed_by_blank and closed_by_typing, "表情包面板：点聊天记录的空白处、点输入框，都会收起来")
 
+    # 聊到一半换头像：开头的附注写的是这段对话开头时的头像，换的地方再提示；开头一个字不变，缓存照样命中
+    def opening(body):
+        out = []
+        for b in body["messages"][0]["content"]:
+            out.append(b)
+            if b.get("type") == "text" and b["text"].startswith("【附注结束"):
+                break
+        return out
+    first_opening = opening(mock("/__debug/claude")[0]["body"])
+    pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
+    pa.get_by_role("button", name="头像与设置").click(); time.sleep(0.5)
+    pa.get_by_role("button", name="白兔").click(); time.sleep(0.4)
+    pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+    pa.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.6)
+    ta = pa.get_by_placeholder("说话，我听着")
+    ta.fill("我换了个头像")
+    ta.press("Enter")
+    for _ in range(80):  # 等这句真的发到那边（回话要等她停手两三秒才发）
+        if len(mock("/__debug/claude")) >= 2: break
+        time.sleep(0.25)
+    pa.get_by_text("收到：[开封府提示：卿卿刚刚把头像换成了这张] / 我换了个头像").last.wait_for(timeout=20000)
+    body = mock("/__debug/claude")[-1]["body"]
+    blocks = [b for m in body["messages"] if m["role"] == "user" for b in m["content"]]
+    idx = next((i for i, b in enumerate(blocks) if b.get("type") == "text" and b["text"] == "[开封府提示：卿卿刚刚把头像换成了这张]"), -1)
+    ok(opening(body) == first_opening and first_opening[0]["text"] == "【开封府附注】卿卿用的是默认的“卿”字头像。",
+       "换了头像以后，开头的附注还是对话开头时的默认头像，一个字没变")
+    ok(idx > 0 and blocks[idx + 1].get("type") == "image", "换头像的地方提示“刚刚换成了这张”，新头像的图跟在后面")
+
     # 等同步
     time.sleep(3)
     rows = mock("/__debug/rows")
@@ -176,7 +204,7 @@ with sync_playwright() as p:
     time.sleep(0.4)
 
     # 长按侧栏里的一段对话：弹出重命名和删除；改个名字
-    item = pa.locator("button", has_text="收到：老公在吗").first
+    item = pa.locator("button", has_text="老公在吗").first
     long_press(pa, item)
     ok(pa.get_by_role("menuitem", name=re.compile("重命名")).is_visible() and pa.get_by_role("menuitem", name=re.compile("删除")).is_visible(),
        "长按一段对话：弹出重命名和删除")
