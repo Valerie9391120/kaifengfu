@@ -1656,6 +1656,20 @@ function BubbleRow({ row, avatars, animate, imgs = {}, onOpenPhoto, onLongPress 
   );
 }
 
+// 状态栏有多高（没有刘海区时是 0）
+function safeTopPx() {
+  try {
+    const d = document.createElement("div");
+    d.style.cssText = "position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top);visibility:hidden;pointer-events:none";
+    document.body.appendChild(d);
+    const h = d.getBoundingClientRect().height || 0;
+    d.remove();
+    return h;
+  } catch (e) {
+    return 0;
+  }
+}
+
 function MsgMenu({ menu, now, busy, onClose, onCopy, onEdit, onRetry }) {
   const { row, rect } = menu;
   const her = row.role === "her";
@@ -1669,7 +1683,7 @@ function MsgMenu({ menu, now, busy, onClose, onCopy, onEdit, onRetry }) {
   const vw = typeof window !== "undefined" ? window.innerWidth : 390;
   const vh = typeof window !== "undefined" ? window.innerHeight : 844;
   let top = rect.top - menuH - 10;
-  if (top < 12) top = Math.min(rect.bottom + 10, vh - menuH - 12);
+  if (top < 12 + safeTopPx()) top = Math.min(rect.bottom + 10, vh - menuH - 12);
   let left = her ? rect.right - menuW : rect.left;
   left = Math.max(12, Math.min(left, vw - menuW - 12));
   return (
@@ -4372,7 +4386,7 @@ export default function App({ account = {} }) {
       )}
 
       {toast && (
-        <div className="absolute z-50 kfs-in" style={{ top: 92, left: "50%", transform: "translateX(-50%)", pointerEvents: "none" }}>
+        <div className="absolute z-50 kfs-in" style={{ top: "calc(92px + env(safe-area-inset-top))", left: "50%", transform: "translateX(-50%)", pointerEvents: "none" }}>
           <div style={{ ...glass(0.82, 20), borderRadius: 999, padding: "8px 18px", fontSize: 13, color: T.ink }}>{toast}</div>
         </div>
       )}
