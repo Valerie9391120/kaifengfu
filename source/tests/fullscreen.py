@@ -1,0 +1,58 @@
+# 检查“页面矮一个状态栏”时的补高逻辑。先起好测试服务（见开发说明），再：python3 tests/fullscreen.py
+import os, time, urllib.request
+from playwright.sync_api import sync_playwright
+MOCK = os.environ.get("KFS_MOCK", "http://127.0.0.1:8787")
+BASE = os.environ.get("KFS_BASE", "http://127.0.0.1:8080/")
+CHROME = os.environ.get("CHROME_PATH", "/opt/google/chrome/chrome" if os.path.exists("/opt/google/chrome/chrome") else None)
+passed = failed = 0
+def ok(c, m):
+    global passed, failed
+    if c: passed += 1; print("ok:", m)
+    else: failed += 1; print("FAIL:", m)
+
+STANDALONE = "Object.defineProperty(Navigator.prototype, 'standalone', { get() { return true; } });"
+
+def run(name, viewport_h, inset_top, standalone, login=False):
+    urllib.request.urlopen(MOCK + "/__debug/reset").read()
+    c = browser.new_context(viewport={"width": 393, "height": viewport_h}, screen={"width": 393, "height": 852},
+                            device_scale_factor=2, is_mobile=True, has_touch=True, locale="zh-CN")
+    if standalone: c.add_init_script(STANDALONE)
+    pg = c.new_page()
+    cdp = c.new_cdp_session(pg)
+    cdp.send("Emulation.setSafeAreaInsetsOverride", {"insets": {"top": inset_top, "bottom": 34, "left": 0, "right": 0}})
+    pg.goto(BASE)
+    pg.get_by_text("进门先报上名来").wait_for(timeout=15000)
+    time.sleep(0.7)
+    var = pg.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--kfs-h').trim()")
+    gate_h = pg.evaluate("(() => { const el = [...document.querySelectorAll('div')].find(d => getComputedStyle(d).position === 'fixed' && d.querySelector('img')); return el ? Math.round(el.getBoundingClientRect().height) : null; })()")
+    res = {"var": var, "gate_h": gate_h}
+    if login:
+        pg.locator("input[type=email]").fill("qing@example.com"); pg.locator("input[type=password]").fill("correct-horse")
+        pg.get_by_role("button", name="进府").click()
+        pg.get_by_text("设一句暗号").wait_for(timeout=15000)
+        f = pg.locator("form input"); f.nth(0).fill("test-passphrase-123"); f.nth(1).fill("test-passphrase-123")
+        pg.get_by_role("button", name="设好了").click()
+        k = pg.get_by_role("button", name="戳一下燕子，进开封府"); k.wait_for(timeout=30000); time.sleep(1); k.click()
+        pg.get_by_text("如月之恒，官家在这").wait_for(timeout=10000); time.sleep(0.8)
+        res["app_h"] = pg.evaluate("Math.round(document.querySelector('.select-none').getBoundingClientRect().height)")
+        box = pg.get_by_placeholder("说话，我听着").evaluate("e => { let el = e; while (el && !(el.style && el.style.borderRadius === '26px')) el = el.parentElement; return el ? Math.round(el.getBoundingClientRect().bottom) : null; }")
+        res["input_bottom"] = box
+        res["scroll_h"] = pg.evaluate("document.documentElement.scrollHeight")
+    c.close()
+    print(name, res)
+    return res
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])
+    a = run("A 你现在这种：页面矮了一个状态栏", 793, 59, True, login=True)
+    ok(a["var"] == "852px" and a["gate_h"] == 852, "门口补到整屏 852")
+    ok(a["app_h"] == 852 and a["input_bottom"] == 852 - 34 - 12, "聊天页补到整屏，输入框落在底部横条上面 12 点")
+    ok(a["scroll_h"] <= 793, "补高以后页面不会被拖着上下晃")
+    b = run("B 系统正常：页面本来就是整屏", 852, 59, True)
+    ok(b["var"] == "" and b["gate_h"] == 852, "系统正常时不动，照样整屏")
+    c_ = run("C 苹果那个毛病：状态栏是实心条", 793, 0, True)
+    ok(c_["var"] == "" and c_["gate_h"] == 793, "状态栏实心的情况不补，免得把输入框挤出屏幕")
+    d = run("D 在 Safari 里打开", 793, 59, False)
+    ok(d["var"] == "" and d["gate_h"] == 793, "在 Safari 里打开不动")
+    browser.close()
+print(f"\n通过 {passed}  失败 {failed}")
