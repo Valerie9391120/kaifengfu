@@ -44,6 +44,8 @@ fs.renameSync(`${OUT}/assets/_app.css`, `${OUT}/assets/${cssName}`);
 
 for (const f of ["splash.webp", "kite.webp", "wall.webp"]) fs.copyFileSync(`static/${f}`, `${OUT}/assets/${f}`);
 for (const f of fs.readdirSync("static/icons")) fs.copyFileSync(`static/icons/${f}`, `${OUT}/icons/${f}`);
+// 图标换了，网址后面跟着变：Safari 添加到主屏幕时才不会拿缓存里的旧图
+const iconUrl = (f) => `./icons/${f}?v=${hash(fs.readFileSync(`static/icons/${f}`))}`;
 
 fs.writeFileSync(
   `${OUT}/manifest.webmanifest`,
@@ -58,9 +60,9 @@ fs.writeFileSync(
       background_color: "#D6DCCD",
       theme_color: "#D6DCCD",
       icons: [
-        { src: "./icons/icon-192.png", sizes: "192x192", type: "image/png" },
-        { src: "./icons/icon-512.png", sizes: "512x512", type: "image/png" },
-        { src: "./icons/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+        { src: iconUrl("icon-192.png"), sizes: "192x192", type: "image/png" },
+        { src: iconUrl("icon-512.png"), sizes: "512x512", type: "image/png" },
+        { src: iconUrl("icon-maskable-512.png"), sizes: "512x512", type: "image/png", purpose: "maskable" },
       ],
     },
     null,
@@ -98,8 +100,8 @@ fs.writeFileSync(
 <meta name="referrer" content="no-referrer">
 <title>开封府</title>
 <link rel="manifest" href="./manifest.webmanifest">
-<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
-<link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="${iconUrl("apple-touch-icon.png")}">
+<link rel="icon" type="image/png" sizes="192x192" href="${iconUrl("icon-192.png")}">
 <link rel="preload" as="image" href="./assets/splash.webp">
 <link rel="stylesheet" href="./assets/${cssName}">
 </head>
