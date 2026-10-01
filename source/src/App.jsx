@@ -3963,7 +3963,7 @@ export default function App({ account = {} }) {
     <div
       ref={rootRef}
       className="overflow-hidden select-none"
-      style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "var(--kfs-h, 100dvh)", background: T.bg, fontFamily: SANS, color: T.ink }}
+      style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100dvh", background: T.bg, fontFamily: SANS, color: T.ink }}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}

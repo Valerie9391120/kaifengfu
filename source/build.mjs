@@ -55,8 +55,8 @@ fs.writeFileSync(
       start_url: "./",
       scope: "./",
       display: "standalone",
-      background_color: "#D3DCCD",
-      theme_color: "#D5DFD2",
+      background_color: "#D6DCCD",
+      theme_color: "#D6DCCD",
       icons: [
         { src: "./icons/icon-192.png", sizes: "192x192", type: "image/png" },
         { src: "./icons/icon-512.png", sizes: "512x512", type: "image/png" },
@@ -89,7 +89,7 @@ fs.writeFileSync(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
-<meta name="theme-color" content="#D5DFD2">
+<meta name="theme-color" content="#D6DCCD">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">

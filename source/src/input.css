@@ -6,11 +6,19 @@ html,
 body {
   margin: 0;
   height: 100%;
-  background: #d0d9c7;
+  background: #D6DCCD;
   overscroll-behavior: none;
   -webkit-text-size-adjust: 100%;
 }
 
 #root {
   height: 100%;
+}
+
+/* 有的 iOS 在主屏幕上会在最底下空一条（见 main.jsx），页面底边淡进那条的颜色，接缝看不出来 */
+.kfs-bottom-mist {
+  display: none;
+}
+html[data-kfs-gap="bottom"] .kfs-bottom-mist {
+  display: block;
 }
