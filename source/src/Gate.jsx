@@ -11,12 +11,12 @@ import { localDb } from "./localdb.js";
 import { deriveVault, newSalt, seal, unseal, toB64, fromB64, KDF_ITER, CHECK_TEXT } from "./vault.js";
 import { createEngine } from "./engine.js";
 import { attachEngine } from "./store.js";
+import { THEMES, useTheme } from "./theme.js";
 
-const WALL = "./assets/wall.webp";
-const PAPER = "#D0D9C7";
-const INK = "#24332F";
-const INK_SOFT = "rgba(52,74,68,0.76)";
-const DAI_GRAD = "linear-gradient(140deg,#7BA39B 0%,#3E655E 100%)";
+const PAPER = "rgb(var(--k-paper))";
+const INK = "rgb(var(--k-ink))";
+const INK_SOFT = "rgba(var(--k-soft),0.76)";
+const DAI_GRAD = "linear-gradient(140deg,rgb(var(--k-dai-a)) 0%,rgb(var(--k-dai-b)) 100%)";
 const RED = "#A8473D";
 const SERIF = "'Songti SC','STSong','Noto Serif SC','Source Han Serif SC',serif";
 const SANS = "-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Noto Sans SC',sans-serif";
@@ -30,7 +30,7 @@ const card = {
   backdropFilter: "blur(26px) saturate(160%)",
   WebkitBackdropFilter: "blur(26px) saturate(160%)",
   border: "1px solid rgba(255,255,255,0.75)",
-  boxShadow: "0 18px 50px rgba(42,62,56,0.16), inset 0 1px 0 rgba(255,255,255,0.8)",
+  boxShadow: "0 18px 50px rgba(var(--k-shade),0.16), inset 0 1px 0 rgba(255,255,255,0.8)",
 };
 const input = {
   width: "100%",
@@ -54,11 +54,12 @@ const primary = {
   paddingLeft: "0.2em",
   color: "#fff",
   background: DAI_GRAD,
-  boxShadow: "0 8px 20px rgba(48,82,74,0.32)",
+  boxShadow: "0 8px 20px rgba(var(--k-dai-shade),0.32)",
 };
 const link = { fontSize: 12.5, color: INK_SOFT, textDecoration: "underline", textUnderlineOffset: 3 };
 
 function Screen({ children }) {
+  const theme = useTheme(); // 门口的背景跟着主题走，颜色是 CSS 变量，自己就跟着了
   return (
     <div
       data-kfs-kbfit=""
@@ -66,7 +67,8 @@ function Screen({ children }) {
       style={{ position: "fixed", top: "var(--kfs-kb-top, 0px)", left: 0, width: "100%", height: "var(--kfs-kb-h, var(--kfs-h, 100dvh))", background: PAPER, fontFamily: SANS, color: INK, padding: "0 20px" }}
     >
       <img
-        src={WALL}
+        key={theme}
+        src={THEMES[theme].wall}
         alt=""
         className="absolute pointer-events-none"
         style={{ inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 100%" }}
@@ -99,8 +101,8 @@ function Spinner() {
         width: 30,
         height: 30,
         borderRadius: "50%",
-        border: "3px solid rgba(63,106,98,0.18)",
-        borderTopColor: "#3F6A62",
+        border: "3px solid rgba(var(--k-dai),0.18)",
+        borderTopColor: "rgb(var(--k-dai))",
         animation: "kfsGateSpin 0.9s linear infinite",
         margin: "0 auto",
       }}
@@ -314,7 +316,7 @@ export default function Gate() {
     window.location.reload();
   }
 
-  const style = <style>{`@keyframes kfsGateSpin { to { transform: rotate(360deg); } } .kfs-gate-field::placeholder { color: rgba(52,74,68,.42); }`}</style>;
+  const style = <style>{`@keyframes kfsGateSpin { to { transform: rotate(360deg); } } .kfs-gate-field::placeholder { color: rgba(var(--k-soft),.42); }`}</style>;
 
   if (phase === "ready") {
     return <App account={{ email: session && session.user ? session.user.email : "", signOut }} />;

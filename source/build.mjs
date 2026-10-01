@@ -11,7 +11,6 @@ const SUPABASE_URL = TEST_URL || "https://hrfjammapxnzmtlafykq.supabase.co";
 
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(`${OUT}/assets`, { recursive: true });
-fs.mkdirSync(`${OUT}/icons`, { recursive: true });
 
 const hash = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 10);
 
@@ -42,33 +41,46 @@ const css = fs.readFileSync(`${OUT}/assets/_app.css`);
 const cssName = `app-${hash(css)}.css`;
 fs.renameSync(`${OUT}/assets/_app.css`, `${OUT}/assets/${cssName}`);
 
-for (const f of ["splash.webp", "kite.webp", "wall.webp"]) fs.copyFileSync(`static/${f}`, `${OUT}/assets/${f}`);
-for (const f of fs.readdirSync("static/icons")) fs.copyFileSync(`static/icons/${f}`, `${OUT}/icons/${f}`);
-// 图标换了，网址后面跟着变：Safari 添加到主屏幕时才不会拿缓存里的旧图
-const iconUrl = (f) => `./icons/${f}?v=${hash(fs.readFileSync(`static/icons/${f}`))}`;
+const IMAGES = ["splash.webp", "kite.webp", "wall.webp", "splash-dingxiang.webp", "dx-heart.webp", "dx-blush.webp", "wall-dingxiang.webp"];
+for (const f of IMAGES) fs.copyFileSync(`static/${f}`, `${OUT}/assets/${f}`);
 
-fs.writeFileSync(
-  `${OUT}/manifest.webmanifest`,
-  JSON.stringify(
-    {
-      name: "开封府",
-      short_name: "开封府",
-      lang: "zh-CN",
-      start_url: "./",
-      scope: "./",
-      display: "standalone",
-      background_color: "#D6DCCD",
-      theme_color: "#D6DCCD",
-      icons: [
-        { src: iconUrl("icon-192.png"), sizes: "192x192", type: "image/png" },
-        { src: iconUrl("icon-512.png"), sizes: "512x512", type: "image/png" },
-        { src: iconUrl("icon-maskable-512.png"), sizes: "512x512", type: "image/png", purpose: "maskable" },
-      ],
-    },
-    null,
-    2
-  )
-);
+// 两个入口：从哪个入口“添加到主屏幕”，图标就是哪个，头一回进去就是哪个主题（见 src/theme.js）。
+// 苹果在添加那一刻把图标定死，所以想换图标只能删掉重新从另一个入口添加。
+//   ./            青绿，沙燕图标
+//   ./dingxiang/  丁香，小猪图标（页面里用 <base href="../">，资源还是从上一层拿）
+const ENTRANCES = [
+  { dir: "", icons: "icons", manifest: "manifest.webmanifest", color: "#D6DCCD", splash: "splash.webp" },
+  { dir: "dingxiang", icons: "icons-dingxiang", manifest: "manifest-dingxiang.webmanifest", color: "#EFE2EF", splash: "splash-dingxiang.webp" },
+];
+for (const e of ENTRANCES) {
+  fs.mkdirSync(`${OUT}/${e.icons}`, { recursive: true });
+  for (const f of fs.readdirSync(`static/${e.icons}`)) fs.copyFileSync(`static/${e.icons}/${f}`, `${OUT}/${e.icons}/${f}`);
+  // 图标换了，网址后面跟着变：Safari 添加到主屏幕时才不会拿缓存里的旧图
+  e.icon = (f) => `./${e.icons}/${f}?v=${hash(fs.readFileSync(`static/${e.icons}/${f}`))}`;
+  fs.writeFileSync(
+    `${OUT}/${e.manifest}`,
+    JSON.stringify(
+      {
+        name: "开封府",
+        short_name: "开封府",
+        lang: "zh-CN",
+        id: e.dir ? `./${e.dir}/` : "./",
+        start_url: e.dir ? `./${e.dir}/` : "./",
+        scope: "./",
+        display: "standalone",
+        background_color: e.color,
+        theme_color: e.color,
+        icons: [
+          { src: e.icon("icon-192.png"), sizes: "192x192", type: "image/png" },
+          { src: e.icon("icon-512.png"), sizes: "512x512", type: "image/png" },
+          { src: e.icon("icon-maskable-512.png"), sizes: "512x512", type: "image/png", purpose: "maskable" },
+        ],
+      },
+      null,
+      2
+    )
+  );
+}
 
 // 只许连 Supabase 和表情包仓库；万一页面里混进了坏东西，也送不出去
 const csp = [
@@ -83,15 +95,17 @@ const csp = [
   "form-action 'self'",
 ].join("; ");
 
-fs.writeFileSync(
-  `${OUT}/index.html`,
-  `<!doctype html>
+for (const e of ENTRANCES) {
+  if (e.dir) fs.mkdirSync(`${OUT}/${e.dir}`, { recursive: true });
+  fs.writeFileSync(
+    `${OUT}/${e.dir ? e.dir + "/" : ""}index.html`,
+    `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
-<meta name="theme-color" content="#D6DCCD">
+${e.dir ? '<base href="../">\n' : ""}<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="${e.color}">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -99,10 +113,10 @@ fs.writeFileSync(
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
 <title>开封府</title>
-<link rel="manifest" href="./manifest.webmanifest">
-<link rel="apple-touch-icon" href="${iconUrl("apple-touch-icon.png")}">
-<link rel="icon" type="image/png" sizes="192x192" href="${iconUrl("icon-192.png")}">
-<link rel="preload" as="image" href="./assets/splash.webp">
+<link rel="manifest" href="./${e.manifest}">
+<link rel="apple-touch-icon" href="${e.icon("apple-touch-icon.png")}">
+<link rel="icon" type="image/png" sizes="192x192" href="${e.icon("icon-192.png")}">
+<link rel="preload" as="image" href="./assets/${e.splash}">
 <link rel="stylesheet" href="./assets/${cssName}">
 </head>
 <body>
@@ -112,7 +126,8 @@ fs.writeFileSync(
 </body>
 </html>
 `
-);
+  );
+}
 fs.writeFileSync(`${OUT}/.nojekyll`, "");
 fs.writeFileSync(`${OUT}/robots.txt`, "User-agent: *\nDisallow: /\n");
 

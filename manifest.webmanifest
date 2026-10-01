@@ -2,6 +2,7 @@
   "name": "开封府",
   "short_name": "开封府",
   "lang": "zh-CN",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

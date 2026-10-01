@@ -2,11 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 跟主题走的颜色，写成“红,绿,蓝”三个数，用的时候 rgb(var(--k-ink))、rgba(var(--k-soft),0.5)。
+   默认是青绿；丁香在 <html data-kfs-theme="dingxiang"> 时换一套（见 src/theme.js）。
+   --k-base 是聊天背景最底边的颜色，也是网页底色 */
+:root {
+  --k-ink: 36, 51, 47;
+  --k-soft: 52, 74, 68;
+  --k-dai: 63, 106, 98;
+  --k-dai-a: 123, 163, 155;
+  --k-dai-b: 62, 101, 94;
+  --k-dai-shade: 48, 82, 74;
+  --k-shade: 46, 68, 62;
+  --k-dim: 30, 46, 42;
+  --k-base: 214, 220, 205;
+  --k-paper: 208, 217, 199;
+  --k-bg1: 223, 231, 220;
+  --k-bg2: 213, 223, 210;
+  --k-bg3: 228, 232, 218;
+  --k-glow: 160, 196, 182;
+  --k-glow-light: 242, 246, 238;
+}
+html[data-kfs-theme="dingxiang"] {
+  --k-ink: 48, 38, 70;
+  --k-soft: 84, 68, 118;
+  --k-dai: 112, 88, 176;
+  --k-dai-a: 176, 154, 230;
+  --k-dai-b: 100, 78, 164;
+  --k-dai-shade: 88, 64, 154;
+  --k-shade: 78, 56, 128;
+  --k-dim: 40, 28, 64;
+  --k-base: 239, 226, 239;
+  --k-paper: 238, 227, 240;
+  --k-bg1: 240, 232, 250;
+  --k-bg2: 230, 219, 246;
+  --k-bg3: 243, 234, 244;
+  --k-glow: 198, 176, 244;
+  --k-glow-light: 250, 244, 252;
+}
+
 html,
 body {
   margin: 0;
   height: 100%;
-  background: #D6DCCD;
+  background: rgb(var(--k-base));
   overscroll-behavior: none;
   -webkit-text-size-adjust: 100%;
 }
@@ -56,7 +94,7 @@ html[data-kfs-gap="bottom"][data-kfs-chat] .kfs-bottom-mist {
 }
 /* 侧栏最底下那排（头像、新对话）垫一段渐变，同样接上那条 */
 html[data-kfs-gap="bottom"] .kfs-dock-fade {
-  background: linear-gradient(to bottom, rgba(214, 220, 205, 0) 0%, #d6dccd 100%);
+  background: linear-gradient(to bottom, rgba(var(--k-base), 0) 0%, rgb(var(--k-base)) 100%);
 }
 
 /* 量一量屏幕底下（probe.js）：临时把整页撑到屏幕那么高，开封府本体先藏起来 */
