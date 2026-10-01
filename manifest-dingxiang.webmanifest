@@ -2,25 +2,25 @@
   "name": "开封府",
   "short_name": "开封府",
   "lang": "zh-CN",
-  "id": "./",
-  "start_url": "./",
+  "id": "./dingxiang/",
+  "start_url": "./dingxiang/",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#D6DCCD",
-  "theme_color": "#D6DCCD",
+  "background_color": "#EFE2EF",
+  "theme_color": "#EFE2EF",
   "icons": [
     {
-      "src": "./icons/icon-192.png?v=ba7c5817ef",
+      "src": "./icons-dingxiang/icon-192.png?v=78278706d0",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "./icons/icon-512.png?v=3135a40f26",
+      "src": "./icons-dingxiang/icon-512.png?v=7ec3dbd705",
       "sizes": "512x512",
       "type": "image/png"
     },
     {
-      "src": "./icons/icon-maskable-512.png?v=e360bf5feb",
+      "src": "./icons-dingxiang/icon-maskable-512.png?v=efe12bf11d",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

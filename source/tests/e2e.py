@@ -304,6 +304,69 @@ with sync_playwright() as p:
     time.sleep(0.4)
     shot(pa, "12_synced")
 
+    # ================= 丁香主题 =================
+    # 在账户面板里换：颜色、聊天背景立刻跟着换；图标不会自己变，提示怎么换
+    THEME = "[document.documentElement.getAttribute('data-kfs-theme'), getComputedStyle(document.documentElement).getPropertyValue('--k-dai').replace(/\\s/g, ''), document.querySelector('.kfs-wall').getAttribute('src')]"
+    pa.get_by_role("button", name="头像与设置").click(); time.sleep(0.5)  # 侧栏还开着
+    before = pa.evaluate(THEME)
+    pa.get_by_role("button", name="丁香主题").click(); time.sleep(0.4)
+    after = pa.evaluate(THEME)
+    ok(before == ["qinglv", "63,106,98", "./assets/wall.webp"] and after == ["dingxiang", "112,88,176", "./assets/wall-dingxiang.webp"],
+       f"账户面板里点丁香：颜色和聊天背景立刻换成丁香的（{after}）")
+    ok(pa.get_by_text(re.compile("主屏幕上的图标还是沙燕.*想换成小猪")).is_visible() and pa.get_by_role("button", name="复制丁香入口的网址").is_visible(),
+       "换了主题以后提示：图标不会自己变，给出丁香入口的网址")
+    ok(pa.evaluate("document.querySelector('meta[name=theme-color]').content") == "#EFE2EF", "顶上状态栏的颜色也跟着换")
+    shot(pa, "13_dingxiang_account")
+    pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+    pa.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.6)
+    shot(pa, "14_dingxiang_chat")
+
+    # 重开：主题记在这台手机上；开屏换成小猪和滑块，戳燕子没有了
+    pa.reload()
+    knob = pa.get_by_role("slider", name="把小猪拉到最右边，进开封府")
+    knob.wait_for(timeout=15000)
+    time.sleep(1.2)
+    SHY = "[getComputedStyle(document.querySelector('.kfs-dx-heart')).opacity, getComputedStyle(document.querySelector('.kfs-dx-blush')).opacity]"
+    ok(pa.get_by_role("button", name="戳一下燕子，进开封府").count() == 0 and pa.evaluate(SHY) == ["0", "0"], "丁香的开屏：小猪还没脸红，底下浮出滑块")
+    kb = knob.bounding_box(); kx, ky = kb["x"] + kb["width"] / 2, kb["y"] + kb["height"] / 2
+    # 拉到一半就松手：弹回去，不进门
+    pa.mouse.move(kx, ky); pa.mouse.down(); pa.mouse.move(kx + 140, ky, steps=6); time.sleep(0.3)
+    half = pa.evaluate(SHY)
+    pa.mouse.up(); time.sleep(0.7)
+    back = knob.bounding_box()
+    ok(half == ["0", "0"] and abs(back["x"] - kb["x"]) < 2 and knob.is_visible(), "滑块拉到一半松手：小猪不脸红，圆钮弹回去，不进门")
+    # 拉到最右边：脸红、长出小紫心；手还按着就不进门，松手才进
+    pa.mouse.move(kx, ky); pa.mouse.down(); pa.mouse.move(kx + 400, ky, steps=10); time.sleep(0.7)
+    held = pa.evaluate(SHY)
+    still_splash = knob.is_visible()
+    shot(pa, "15_dingxiang_splash")
+    pa.mouse.up()
+    knob.wait_for(state="detached", timeout=10000)
+    ok(held == ["1", "1"] and still_splash and pa.get_by_text("收到：老公在吗").last.is_visible(), "滑块拉到最右边：小猪脸红、白心里长出小紫心；松手才进门")
+    # 换回青绿，后面照旧
+    pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.5)
+    pa.get_by_role("button", name="头像与设置").click(); time.sleep(0.5)
+    pa.get_by_role("button", name="青绿主题").click(); time.sleep(0.4)
+    ok(pa.evaluate(THEME) == before and pa.get_by_text(re.compile("主屏幕上的图标还是")).count() == 0, "换回青绿：颜色、背景都回来，提示也收了")
+    pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+
+    # 丁香的入口：从这儿添加到主屏幕，图标是小猪，头一回进去就是丁香
+    C = browser.new_context(**iphone)
+    pc = C.new_page()
+    pc.on("pageerror", lambda e: errors.append("C: " + str(e)))
+    pc.goto(BASE + "dingxiang/")
+    pc.get_by_text("进门先报上名来").wait_for(timeout=15000)
+    info = pc.evaluate("""() => ({ theme: document.documentElement.getAttribute('data-kfs-theme'),
+        icon: document.querySelector('link[rel="apple-touch-icon"]').href, manifest: document.querySelector('link[rel="manifest"]').href,
+        wall: document.querySelector('img').currentSrc || document.querySelector('img').src })""")
+    man = json.loads(urllib.request.urlopen(info["manifest"]).read())
+    ok(info["theme"] == "dingxiang" and "/icons-dingxiang/apple-touch-icon.png" in info["icon"] and info["wall"].endswith("/assets/wall-dingxiang.webp"),
+       "丁香的入口：一打开就是丁香色，图标是小猪")
+    ok(man["start_url"] == "./dingxiang/" and all("icons-dingxiang" in i["src"] for i in man["icons"]) and urllib.request.urlopen(info["icon"]).status == 200,
+       "丁香入口的清单：从这儿添加，以后打开的还是丁香的入口")
+    shot(pc, "16_dingxiang_gate")
+    C.close()
+
     # 第二台退出登录
     pb.get_by_role("button", name="打开侧栏").click()
     time.sleep(0.5)

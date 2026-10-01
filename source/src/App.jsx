@@ -4,6 +4,7 @@ import { store } from "./store.js";
 import { callClaude } from "./cloud.js";
 import { openProbe } from "./probe.js";
 import { gapInfo, setFill } from "./gap.js";
+import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -20,17 +21,26 @@ MEME_DATA.forEach((m) => {
 // 开屏：卿卿找的素材，金箔月亮、沙燕风筝、缠枝牡丹（构建时注入）
 const SPLASH_IMG = "./assets/splash.webp";
 const KITE_IMG = "./assets/kite.webp";
-// 聊天背景：卿卿和恩师做的，青纸、一方深青、一群白鸟、云里的山（构建时注入）
-const WALL_IMG = "./assets/wall.webp";
-const WALL = { paper: "#D0D9C7" };
+// 聊天背景跟着主题走（见 theme.js）。青绿那张是卿卿和恩师做的：青纸、一方深青、一群白鸟、云里的山；
+// 丁香那张是她画的：月牙、星星、丝带、丁香枝
+const WALL = { paper: "rgb(var(--k-paper))" };
 const SPLASH = {
   w: 863,
   h: 1822,
   cx: 430,
   cy: 643,
   r: 250,
-  paper: "#D3DCCD",
+  paper: "rgb(var(--k-paper))",
   kite: { x: 298, y: 978, w: 266, h: 254 },
+};
+// 丁香的开屏：卿卿画的戴长翅帽的小猪。脸红和白心里的小紫心是两小块透明图，叠在开屏上
+// （位置是它们在原图里的像素，tools/make_dingxiang.py 打印出来的）
+const SPLASH_DX = {
+  img: "./assets/splash-dingxiang.webp",
+  w: 829,
+  h: 1896,
+  heart: { src: "./assets/dx-heart.webp", x: 331, y: 647, w: 169, h: 154 },
+  blush: { src: "./assets/dx-blush.webp", x: 363, y: 1199, w: 241, h: 56 },
 };
 
 const RAW_BASE =
@@ -96,20 +106,21 @@ const SERIF =
 const SANS =
   "-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Noto Sans SC',sans-serif";
 
-// 青绿主题：颜色都从开屏图里取。纸是天青，墨是燕子的墨绿，金是金箔
-// （之后丁香色主题做好了，再加一套色板）
+// 颜色：跟主题走的都写成 CSS 变量（--k-ink 这些，值在 input.css 里，青绿一套、丁香一套），
+// 换主题不用重画。青绿的颜色从沙燕开屏里取：纸是天青，墨是燕子的墨绿；丁香的从小猪开屏里取。
+// 金色、红色两个主题共用
 const T = {
-  ink: "#24332F",
-  inkSoft: "rgba(52,74,68,0.76)",
-  inkFaint: "rgba(52,74,68,0.48)",
-  dai: "#3F6A62",
-  daiGrad: "linear-gradient(140deg,#7BA39B 0%,#3E655E 100%)",
+  ink: "rgb(var(--k-ink))",
+  inkSoft: "rgba(var(--k-soft),0.76)",
+  inkFaint: "rgba(var(--k-soft),0.48)",
+  dai: "rgb(var(--k-dai))",
+  daiGrad: "linear-gradient(140deg,rgb(var(--k-dai-a)) 0%,rgb(var(--k-dai-b)) 100%)",
   rouge:
     "linear-gradient(140deg,rgba(243,186,196,0.66) 0%,rgba(224,150,168,0.58) 100%)",
   rougeSolid: "linear-gradient(140deg,#E6CC8F 0%,#B9914C 100%)",
   rougeInk: "#45262F",
   gold: "#94733A",
-  bg: "linear-gradient(168deg,#DFE7DC 0%,#D5DFD2 46%,#E4E8DA 100%)",
+  bg: "linear-gradient(168deg,rgb(var(--k-bg1)) 0%,rgb(var(--k-bg2)) 46%,rgb(var(--k-bg3)) 100%)",
 };
 
 const glass = (a = 0.55, blur = 24) => ({
@@ -118,7 +129,7 @@ const glass = (a = 0.55, blur = 24) => ({
   WebkitBackdropFilter: `blur(${blur}px) saturate(165%)`,
   border: "1px solid rgba(255,255,255,0.7)",
   boxShadow:
-    "0 10px 30px rgba(46,68,62,0.12), inset 0 1px 0 rgba(255,255,255,0.75)",
+    "0 10px 30px rgba(var(--k-shade),0.12), inset 0 1px 0 rgba(255,255,255,0.75)",
 });
 
 const BUBBLE_GLASS = {
@@ -128,21 +139,21 @@ const BUBBLE_GLASS = {
   WebkitBackdropFilter: "blur(10px) saturate(150%)",
   border: "1px solid rgba(255,255,255,0.62)",
   boxShadow:
-    "0 6px 20px rgba(42,62,56,0.08), inset 0 1px 1px rgba(255,255,255,0.8), inset 0 -1px 1px rgba(255,255,255,0.2)",
-  color: "#24332F",
+    "0 6px 20px rgba(var(--k-shade),0.08), inset 0 1px 1px rgba(255,255,255,0.8), inset 0 -1px 1px rgba(255,255,255,0.2)",
+  color: "rgb(var(--k-ink))",
 };
 
-// 输入框贴底，照官方那样沉到最下面：上半截是玻璃，越往下越淡进 #D6DCCD。
-// 这个颜色是聊天背景最底边的颜色，也是网页底色；有的 iOS 在屏幕最底下空出一条系统画的色块（见 main.jsx），
+// 输入框贴底，照官方那样沉到最下面：上半截是玻璃，越往下越淡进 --k-base。
+// 这个颜色是聊天背景最底边的颜色，也是网页底色；有的 iOS 在屏幕最底下空出一条系统画的色块（见 gap.js），
 // 就是这个颜色，所以输入框底边和那条接在一起，看着像一直铺到屏幕底
 const DOCK_GLASS = {
   background:
-    "linear-gradient(to bottom, rgba(214,220,205,0) calc(100% - 14px), #D6DCCD 100%), " +
-    "linear-gradient(to bottom, rgba(255,255,255,0.44) 0%, rgba(255,255,255,0.3) 52%, rgba(214,220,205,0.6) 100%)",
+    "linear-gradient(to bottom, rgba(var(--k-base),0) calc(100% - 14px), rgb(var(--k-base)) 100%), " +
+    "linear-gradient(to bottom, rgba(255,255,255,0.44) 0%, rgba(255,255,255,0.3) 52%, rgba(var(--k-base),0.6) 100%)",
   backdropFilter: "blur(30px) saturate(140%)",
   WebkitBackdropFilter: "blur(30px) saturate(140%)",
   borderTop: "1px solid rgba(255,255,255,0.72)",
-  boxShadow: "0 -10px 30px rgba(46,68,62,0.1), inset 0 1px 0 rgba(255,255,255,0.7)",
+  boxShadow: "0 -10px 30px rgba(var(--k-shade),0.1), inset 0 1px 0 rgba(255,255,255,0.7)",
   borderRadius: "26px 26px 0 0",
 };
 
@@ -159,7 +170,7 @@ const chipPrimary = {
   fontSize: 13,
   color: "#fff",
   background: T.daiGrad,
-  boxShadow: "0 6px 16px rgba(48,82,74,0.3)",
+  boxShadow: "0 6px 16px rgba(var(--k-dai-shade),0.3)",
 };
 const field = {
   width: "100%",
@@ -183,14 +194,14 @@ const GLOBAL_CSS = `
 .kfs-sheet { animation: kfsSheet .34s cubic-bezier(.2,.8,.2,1) both; }
 .kfs-page { animation: kfsPage .3s cubic-bezier(.2,.8,.2,1) both; }
 .kfs-breath { animation: kfsBreath 3.2s ease-in-out infinite; }
-.kfs-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: rgba(52,74,68,.55); animation: kfsDot 1.2s infinite; }
+.kfs-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: rgba(var(--k-soft),.55); animation: kfsDot 1.2s infinite; }
 .kfs-scroll { scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .kfs-scroll::-webkit-scrollbar { display: none; }
-.kfs-field::placeholder { color: rgba(52,74,68,.45); }
+.kfs-field::placeholder { color: rgba(var(--k-soft),.45); }
 .kfs-tap { transition: transform .15s ease; }
 .kfs-tap:active { transform: scale(.94); }
 button { -webkit-tap-highlight-color: transparent; }
-button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid rgba(63,106,98,.55); outline-offset: 2px; }
+button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid rgba(var(--k-dai),.55); outline-offset: 2px; }
 @keyframes kfsSplashIn { from { opacity: 0; transform: scale(1.045); } to { opacity: 1; transform: scale(1); } }
 @keyframes kfsGlow { 0%,100% { opacity: .35; transform: scale(.97); } 50% { opacity: .9; transform: scale(1.03); } }
 .kfs-splash-img { animation: kfsSplashIn 2.4s cubic-bezier(.2,.8,.2,1) both; }
@@ -200,6 +211,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .kfs-kite { animation: kfsKite 3.4s ease-in-out infinite; transform-origin: 50% 35%; }
 .kfs-kite-away { animation: kfsKiteAway .95s cubic-bezier(.45,0,.2,1) forwards; }
 
+@keyframes kfsDxHint { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+.kfs-dx-hint { animation: kfsDxHint 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .kfs-in, .kfs-sheet, .kfs-page, .kfs-breath, .kfs-splash-img, .kfs-moonglow, .kfs-kite { animation: none !important; } }
 `;
 
@@ -312,7 +325,8 @@ function Icon({ name, size = 22, color = "currentColor", sw = 1.8 }) {
       height={size}
       viewBox="0 0 24 24"
       fill="none"
-      stroke={color}
+      stroke="currentColor"
+      style={color === "currentColor" ? undefined : { color }}
       strokeWidth={sw}
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -1199,7 +1213,7 @@ function Glows() {
           bottom: -150,
           left: -160,
           borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(242,246,238,0.8) 0%, rgba(242,246,238,0) 66%)",
+          background: "radial-gradient(circle, rgba(var(--k-glow-light),0.8) 0%, rgba(var(--k-glow-light),0) 66%)",
         }}
       />
       <div
@@ -1210,7 +1224,7 @@ function Glows() {
           top: "38%",
           left: "58%",
           borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(160,196,182,0.42) 0%, rgba(160,196,182,0) 66%)",
+          background: "radial-gradient(circle, rgba(var(--k-glow),0.42) 0%, rgba(var(--k-glow),0) 66%)",
         }}
       />
     </div>
@@ -1248,7 +1262,7 @@ function Avatar({ av, who, size = 34 }) {
         borderRadius: "50%",
         background: who === "her" ? T.rougeSolid : T.daiGrad,
         border: "1.5px solid rgba(255,255,255,0.9)",
-        boxShadow: "0 3px 10px rgba(46,68,62,0.18)",
+        boxShadow: "0 3px 10px rgba(var(--k-shade),0.18)",
       }}
     >
       {src ? (
@@ -1286,7 +1300,7 @@ function MemeImg({ file, width = 140 }) {
         display: "block",
         borderRadius: 18,
         border: "1.5px solid rgba(255,255,255,0.8)",
-        boxShadow: "0 8px 22px rgba(46,68,62,0.16)",
+        boxShadow: "0 8px 22px rgba(var(--k-shade),0.16)",
       }}
     />
   );
@@ -1317,7 +1331,7 @@ function Sheet({ title, onClose, children }) {
       className="absolute inset-0 z-40 flex flex-col justify-end"
       onClick={onClose}
       style={{
-        background: "rgba(36,54,49,0.2)",
+        background: "rgba(var(--k-dim),0.2)",
         backdropFilter: "blur(3px)",
         WebkitBackdropFilter: "blur(3px)",
       }}
@@ -1339,7 +1353,7 @@ function Sheet({ title, onClose, children }) {
             height: 5,
             borderRadius: 3,
             margin: "0 auto 12px",
-            background: "rgba(52,74,68,0.22)",
+            background: "rgba(var(--k-soft),0.22)",
           }}
         />
         <div className="flex items-center justify-between" style={{ marginBottom: 18 }}>
@@ -1472,6 +1486,176 @@ function Splash({ fading, onEnter }) {
   );
 }
 
+// 丁香的开屏：先是没脸红的小猪；过半秒底下浮出紫色玻璃滑块；圆钮拉到最右边，
+// 小猪脸红、白心里长出小紫心；手指松开才进门。没拉到头就松手，圆钮弹回去
+function SplashDingxiang({ fading, onEnter }) {
+  const ref = useRef(null);
+  const [box, setBox] = useState({ w: 390, h: 844 });
+  const [ready, setReady] = useState(false);
+  const [pos, setPos] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const drag = useRef(null);
+  const posRef = useRef(0);
+  const entered = useRef(false);
+  useEffect(() => {
+    const measure = () => ref.current && setBox({ w: ref.current.offsetWidth, h: ref.current.offsetHeight });
+    measure();
+    window.addEventListener("resize", measure);
+    const t = setTimeout(() => setReady(true), 500);
+    return () => {
+      window.removeEventListener("resize", measure);
+      clearTimeout(t);
+    };
+  }, []);
+
+  // 开屏图按 cover 铺满时，脸红和小紫心落在哪
+  const scale = Math.max(box.w / SPLASH_DX.w, box.h / SPLASH_DX.h);
+  const ox = (box.w - SPLASH_DX.w * scale) / 2;
+  const oy = (box.h - SPLASH_DX.h * scale) / 2;
+  const place = (p) => ({ position: "absolute", left: p.x * scale + ox, top: p.y * scale + oy, width: p.w * scale, height: p.h * scale, pointerEvents: "none" });
+
+  // 尺寸和颜色照她画的那张滑块：深紫的底，圆钮是一个浅紫的环，里面一个粗箭头
+  const TRACK_H = 80;
+  const KNOB = 68;
+  const PAD = 6;
+  const SIDE = 18;
+  const max = Math.max(1, box.w - SIDE * 2 - KNOB - PAD * 2);
+  const progress = Math.min(1, pos / max);
+  const done = progress >= 0.985;
+
+  const move = (v) => {
+    const p = Math.max(0, Math.min(max, v));
+    posRef.current = p;
+    setPos(p);
+  };
+  const enter = () => {
+    if (entered.current) return;
+    entered.current = true;
+    onEnter();
+  };
+  const onDown = (e) => {
+    if (fading || entered.current) return;
+    drag.current = { x0: e.clientX, p0: posRef.current };
+    setDragging(true);
+    if (e.currentTarget.setPointerCapture) {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch (x) {}
+    }
+  };
+  const onMove = (e) => {
+    const d = drag.current;
+    if (d) move(d.p0 + e.clientX - d.x0);
+  };
+  const onUp = () => {
+    if (!drag.current) return;
+    drag.current = null;
+    setDragging(false);
+    if (posRef.current / max >= 0.985) enter();
+    else move(0);
+  };
+
+  return (
+    <div
+      ref={ref}
+      className="absolute inset-0 z-50 overflow-hidden"
+      style={{ background: SPLASH.paper, opacity: fading ? 0 : 1, transition: "opacity .7s ease", pointerEvents: fading ? "none" : "auto" }}
+    >
+      {/* 图和两小块一起慢慢落定，不然还在缩放的时候叠上去会错位 */}
+      <div className="kfs-splash-img absolute inset-0">
+        <img src={SPLASH_DX.img} alt="" draggable={false} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+        <img
+          src={SPLASH_DX.heart.src}
+          alt=""
+          draggable={false}
+          className="kfs-dx-heart"
+          style={{ ...place(SPLASH_DX.heart), opacity: done ? 1 : 0, transform: done ? "scale(1)" : "scale(.55)", transition: "opacity .25s ease, transform .4s cubic-bezier(.2,1.7,.4,1)" }}
+        />
+        <img
+          src={SPLASH_DX.blush.src}
+          alt=""
+          draggable={false}
+          className="kfs-dx-blush"
+          style={{ ...place(SPLASH_DX.blush), opacity: done ? 1 : 0, transition: "opacity .3s ease" }}
+        />
+      </div>
+
+      {/* 滑块 */}
+      <div
+        className="kfs-dx-track"
+        style={{
+          position: "absolute",
+          left: SIDE,
+          right: SIDE,
+          bottom: "max(24px, calc(4px + var(--kfs-sab)))",
+          height: TRACK_H,
+          borderRadius: TRACK_H / 2,
+          background: "rgba(70,50,104,0.86)", // 垫在发白的亮片上，看着就是她画的那个 #5D4A7A
+          backdropFilter: "blur(14px) saturate(140%)",
+          WebkitBackdropFilter: "blur(14px) saturate(140%)",
+          border: "1px solid rgba(255,255,255,0.16)",
+          boxShadow: "0 12px 30px rgba(62,42,112,0.3), inset 0 1px 0 rgba(255,255,255,0.14)",
+          opacity: ready ? 1 : 0,
+          transform: ready ? "none" : "translateY(18px)",
+          transition: "opacity .5s ease, transform .5s cubic-bezier(.2,.8,.2,1)",
+          pointerEvents: ready ? "auto" : "none",
+        }}
+      >
+        <div
+          aria-hidden="true"
+          className="flex items-center"
+          style={{ position: "absolute", left: PAD + KNOB + 4, top: 0, height: "100%", color: "rgba(156,129,198,0.8)", opacity: Math.max(0, 1 - progress * 3), pointerEvents: "none" }}
+        >
+          {[0, 1, 2].map((i) => (
+            <span key={i} className="kfs-dx-hint" style={{ display: "flex", marginLeft: i ? -16 : 0, animationDelay: `${i * 0.18}s` }}>
+              <Icon name="chevR" size={46} sw={3.4} />
+            </span>
+          ))}
+        </div>
+        <button
+          type="button"
+          role="slider"
+          aria-label="把小猪拉到最右边，进开封府"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(progress * 100)}
+          onPointerDown={onDown}
+          onPointerMove={onMove}
+          onPointerUp={onUp}
+          onPointerCancel={onUp}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowRight" || e.key === "End") move(max);
+            else if (e.key === "ArrowLeft" || e.key === "Home") move(0);
+            else if ((e.key === "Enter" || e.key === " ") && posRef.current / max >= 0.985) enter();
+          }}
+          className="flex items-center justify-center"
+          style={{
+            position: "absolute",
+            left: PAD + pos,
+            top: PAD - 1,
+            width: KNOB,
+            height: KNOB,
+            borderRadius: "50%",
+            background: "rgba(70,50,104,0.45)",
+            border: "8px solid #9C81C6",
+            boxShadow: done ? "0 0 0 7px rgba(255,255,255,0.24), 0 6px 16px rgba(52,34,100,0.3)" : "0 4px 12px rgba(52,34,100,0.22)",
+            color: "#9C81C6",
+            touchAction: "none",
+            WebkitTapHighlightColor: "transparent",
+            transition: dragging ? "box-shadow .2s ease" : "left .4s cubic-bezier(.2,.8,.2,1), box-shadow .2s ease",
+          }}
+        >
+          <Icon name="chevR" size={44} sw={3.4} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SplashByTheme({ theme, fading, onEnter }) {
+  return theme === "dingxiang" ? <SplashDingxiang fading={fading} onEnter={onEnter} /> : <Splash fading={fading} onEnter={onEnter} />;
+}
+
 function DaysCard({ now }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
@@ -1527,7 +1711,7 @@ function Toggle({ on, onChange, label }) {
         height: 28,
         borderRadius: 999,
         padding: 3,
-        background: on ? T.daiGrad : "rgba(96,118,112,0.25)",
+        background: on ? T.daiGrad : "rgba(var(--k-soft),0.25)",
         transition: "background .2s ease",
       }}
     >
@@ -1538,7 +1722,7 @@ function Toggle({ on, onChange, label }) {
           height: 22,
           borderRadius: "50%",
           background: "#fff",
-          boxShadow: "0 2px 6px rgba(30,46,42,0.25)",
+          boxShadow: "0 2px 6px rgba(var(--k-dim),0.25)",
           transform: on ? "translateX(18px)" : "none",
           transition: "transform .2s ease",
         }}
@@ -1685,7 +1869,7 @@ function PhotoImg({ data, onOpen }) {
         maxHeight: 280,
         borderRadius: 18,
         border: "1.5px solid rgba(255,255,255,0.8)",
-        boxShadow: "0 8px 22px rgba(46,68,62,0.16)",
+        boxShadow: "0 8px 22px rgba(var(--k-shade),0.16)",
       }}
     />
   );
@@ -1848,7 +2032,7 @@ function MsgMenu({ menu, now, busy, onClose, onCopy, onEdit, onRetry }) {
   let left = her ? rect.right - menuW : rect.left;
   left = Math.max(12, Math.min(left, vw - menuW - 12));
   return (
-    <div className="absolute inset-0 z-50" onClick={onClose} style={{ background: "rgba(20,32,29,0.14)" }}>
+    <div className="absolute inset-0 z-50" onClick={onClose} style={{ background: "rgba(var(--k-dim),0.14)" }}>
       <div
         className="kfs-in"
         onClick={(e) => e.stopPropagation()}
@@ -1892,7 +2076,7 @@ function ChatMenu({ menu, onClose, onRename, onDelete }) {
     <div
       className="absolute inset-0 z-50"
       onClick={() => Date.now() - shownAt.current > 400 && onClose()}
-      style={{ background: "rgba(20,32,29,0.14)" }}
+      style={{ background: "rgba(var(--k-dim),0.14)" }}
     >
       <div
         className="kfs-in"
@@ -1995,7 +2179,7 @@ function ThinkingRow({ msg, open, onToggle }) {
             padding: "12px 15px",
             borderRadius: 16,
             background: "rgba(255,255,255,0.34)",
-            border: "1px dashed rgba(63,106,98,0.3)",
+            border: "1px dashed rgba(var(--k-dai),0.3)",
             color: T.inkSoft,
             fontFamily: SERIF,
             fontSize: 13.5,
@@ -2142,7 +2326,7 @@ function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHis }) {
   };
 
   const card = { ...glass(0.5, 26), borderRadius: 28, padding: 18 };
-  const legendCell = (lv) => ({ width: 14, height: 14, borderRadius: 4, background: `rgba(63,106,98,${[0.06, 0.12, 0.22, 0.34, 0.48][lv]})` });
+  const legendCell = (lv) => ({ width: 14, height: 14, borderRadius: 4, background: `rgba(var(--k-dai),${[0.06, 0.12, 0.22, 0.34, 0.48][lv]})` });
 
   return (
     <div className="absolute inset-0 z-40 flex flex-col kfs-page" style={{ background: T.bg }}>
@@ -2208,7 +2392,7 @@ function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHis }) {
                   style={{
                     aspectRatio: "1 / 1.1",
                     borderRadius: 13,
-                    background: selected ? "rgba(255,255,255,0.82)" : `rgba(63,106,98,${[0.05, 0.12, 0.22, 0.34, 0.48][lv]})`,
+                    background: selected ? "rgba(255,255,255,0.82)" : `rgba(var(--k-dai),${[0.05, 0.12, 0.22, 0.34, 0.48][lv]})`,
                     border: selected ? `1.5px solid ${T.dai}` : today ? `1.5px dashed ${T.dai}` : "1.5px solid transparent",
                     opacity: future ? 0.32 : 1,
                   }}
@@ -2833,6 +3017,7 @@ function timeAgo(ts) {
 
 export default function App({ account = {} }) {
   const rootRef = useRef(null);
+  const theme = useTheme();
   const [W, setW] = useState(390);
   const drawerW = Math.round(W * 0.82);
 
@@ -2946,8 +3131,6 @@ export default function App({ account = {} }) {
   // ---- 开机 ----
   useEffect(() => {
     (async () => {
-      const t0 = Date.now();
-
       const list = safeParse(await store.get("kfs2:index"), []) || [];
       indexRef.current = list;
       setIndex(list);
@@ -3013,13 +3196,6 @@ export default function App({ account = {} }) {
         })
         .catch(() => {});
 
-      if (!SPLASH_IMG || !KITE_IMG) {
-        const wait = Math.max(0, 1500 - (Date.now() - t0));
-        setTimeout(() => {
-          setSplashFade(true);
-          setTimeout(() => setSplash(false), 700);
-        }, wait);
-      }
     })();
   }, []);
 
@@ -4109,16 +4285,34 @@ export default function App({ account = {} }) {
           <HisAvatarCard av={avatars.him} name={avatarName(avatars.him, false) || "炅"} />
           <div style={{ height: 1, background: "rgba(255,255,255,0.7)", margin: "22px 0 18px" }} />
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>主题色</div>
-          <div className="flex items-center flex-wrap" style={{ gap: 16, marginBottom: 22 }}>
-            <span className="flex items-center" style={{ gap: 8 }}>
-              <span style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(140deg,#BCD4CA,#7FA39A)", border: "2px solid #fff", boxShadow: `0 0 0 2px ${T.dai}` }} />
-              <span style={{ fontSize: 13, color: T.ink }}>青绿</span>
-            </span>
-            <span className="flex items-center" style={{ gap: 8, opacity: 0.5 }}>
-              <span style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(140deg,#DCCFF0,#A58BC9)", border: "2px solid rgba(255,255,255,0.9)" }} />
-              <span style={{ fontSize: 13, color: T.inkSoft }}>丁香，等紫色小猪</span>
-            </span>
+          <div className="flex items-center flex-wrap" style={{ gap: 8, marginBottom: theme === entranceTheme() ? 22 : 10 }}>
+            {[
+              ["qinglv", "linear-gradient(140deg,#BCD4CA,#7FA39A)"],
+              ["dingxiang", "linear-gradient(140deg,#DCCFF0,#A58BC9)"],
+            ].map(([k, g]) => (
+              <button
+                key={k}
+                onClick={() => setTheme(k)}
+                aria-pressed={theme === k}
+                aria-label={`${THEMES[k].label}主题`}
+                className="kfs-tap flex items-center"
+                style={{ ...chip, gap: 8, padding: "5px 14px 5px 6px", backgroundColor: theme === k ? "rgba(255,255,255,0.82)" : chip.backgroundColor }}
+              >
+                <span style={{ width: 26, height: 26, borderRadius: "50%", background: g, border: "2px solid #fff", boxShadow: theme === k ? `0 0 0 2px ${T.dai}` : "none" }} />
+                {THEMES[k].label}
+              </button>
+            ))}
           </div>
+          {theme !== entranceTheme() && (
+            <div style={{ ...glass(0.5, 16), borderRadius: 16, padding: "12px 14px", marginBottom: 22 }}>
+              <p style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.65, marginBottom: 10 }}>
+                主屏幕上的图标还是{THEMES[entranceTheme()].icon}，它不会自己变。想换成{THEMES[theme].icon}：先看下面写着“都已同步”，删掉旧图标，用 Safari 打开{THEMES[theme].label}的入口重新添加，再登录、对暗号。
+              </p>
+              <button onClick={() => copyText(entranceUrl(theme))} className="kfs-tap" style={chip}>
+                复制{THEMES[theme].label}入口的网址
+              </button>
+            </div>
+          )}
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>云端同步</div>
           <div style={{ ...glass(0.5, 16), borderRadius: 16, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6, color: sync.offline || !storageOk ? "#A8473D" : T.ink }}>
             {syncLine}
@@ -4320,21 +4514,18 @@ export default function App({ account = {} }) {
           transform: `translateX(${x}px)`,
           transition: dragX === null ? "transform .35s cubic-bezier(.2,.8,.2,1), border-radius .35s" : "none",
           borderRadius: x > 0 ? 30 : 0,
-          boxShadow: x > 0 ? "-14px 0 40px rgba(42,62,56,0.2)" : "none",
-          background: WALL_IMG ? WALL.paper : T.bg,
+          boxShadow: x > 0 ? "-14px 0 40px rgba(var(--k-shade),0.2)" : "none",
+          background: WALL.paper,
         }}
       >
-        {WALL_IMG ? (
-          <img
-            src={WALL_IMG}
-            alt=""
-            draggable={false}
-            className="absolute pointer-events-none"
-            style={{ top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 100%" }}
-          />
-        ) : (
-          <Glows />
-        )}
+        <img
+          key={theme}
+          src={THEMES[theme].wall}
+          alt=""
+          draggable={false}
+          className="kfs-wall absolute pointer-events-none"
+          style={{ top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 100%" }}
+        />
 
         {/* 顶栏 */}
         <div
@@ -4466,7 +4657,7 @@ export default function App({ account = {} }) {
                   onClick={() => sendMeme(m.file)}
                   aria-label={m.name}
                   className="kfs-tap overflow-hidden"
-                  style={{ aspectRatio: "1 / 1", borderRadius: 16, border: "1.5px solid rgba(255,255,255,0.8)", boxShadow: "0 3px 10px rgba(46,68,62,0.12)" }}
+                  style={{ aspectRatio: "1 / 1", borderRadius: 16, border: "1.5px solid rgba(255,255,255,0.8)", boxShadow: "0 3px 10px rgba(var(--k-shade),0.12)" }}
                 >
                   <img src={memeSrc(m.file)} alt="" loading="lazy" className="w-full h-full object-cover" />
                 </button>
@@ -4503,7 +4694,7 @@ export default function App({ account = {} }) {
                     onClick={() => setAttach((a) => a.filter((q) => q.id !== ph.id))}
                     aria-label="不发这张"
                     className="absolute flex items-center justify-center"
-                    style={{ top: -6, right: -6, width: 22, height: 22, borderRadius: 999, background: "rgba(34,48,44,0.78)" }}
+                    style={{ top: -6, right: -6, width: 22, height: 22, borderRadius: 999, background: "rgba(var(--k-dim),0.78)" }}
                   >
                     <Icon name="x" size={12} color="#fff" sw={2.2} />
                   </button>
@@ -4533,7 +4724,7 @@ export default function App({ account = {} }) {
                   {recording.text || "说吧，我听着"}
                 </div>
               </div>
-              <button onClick={sendVoice} className="kfs-tap flex-shrink-0" style={{ ...chipPrimary, boxShadow: "0 3px 8px rgba(48,82,74,0.28)" }}>
+              <button onClick={sendVoice} className="kfs-tap flex-shrink-0" style={{ ...chipPrimary, boxShadow: "0 3px 8px rgba(var(--k-dai-shade),0.28)" }}>
                 发送
               </button>
             </div>
@@ -4618,7 +4809,7 @@ export default function App({ account = {} }) {
                     height: 38,
                     borderRadius: 999,
                     background: T.daiGrad,
-                    boxShadow: "0 3px 8px rgba(48,82,74,0.3)",
+                    boxShadow: "0 3px 8px rgba(var(--k-dai-shade),0.3)",
                   }}
                   >
                     <Icon name="up" color="#fff" size={19} sw={2.1} />
@@ -4634,7 +4825,7 @@ export default function App({ account = {} }) {
                     height: 38,
                     borderRadius: 999,
                     background: T.daiGrad,
-                    boxShadow: "0 3px 8px rgba(48,82,74,0.3)",
+                    boxShadow: "0 3px 8px rgba(var(--k-dai-shade),0.3)",
                   }}
                   >
                     <Icon name="wave" color="#fff" size={19} sw={2} />
@@ -4764,14 +4955,15 @@ export default function App({ account = {} }) {
         <div
           onClick={() => setViewer(null)}
           className="absolute inset-0 z-50 flex items-center justify-center kfs-in"
-          style={{ background: "rgba(22,34,31,0.74)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
+          style={{ background: "rgba(var(--k-dim),0.74)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
         >
           <img src={viewer} alt="" style={{ maxWidth: "92%", maxHeight: "86%", borderRadius: 18, objectFit: "contain", boxShadow: "0 20px 60px rgba(0,0,0,0.35)" }} />
         </div>
       )}
 
       {splash && (
-        <Splash
+        <SplashByTheme
+          theme={theme}
           fading={splashFade}
           onEnter={() => {
             setSplashFade(true);
