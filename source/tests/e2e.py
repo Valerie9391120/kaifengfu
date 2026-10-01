@@ -181,6 +181,11 @@ with sync_playwright() as p:
     time.sleep(0.6)
     box = pa.evaluate("""() => { const h = [...document.querySelectorAll('div')].find(d => d.textContent.trim() === '日记本' && d.children.length === 0); const page = h.closest('.kfs-page').getBoundingClientRect(); const mon = [...document.querySelectorAll('div')].find(d => d.textContent.trim() === '一' && d.children.length === 0).getBoundingClientRect(); return [page.x, page.width, mon.x]; }""")
     ok(abs(box[0]) < 1 and abs(box[1] - 390) < 1 and box[2] > 20, f"日记页完全展开，周一那一列也在屏幕里（{box}）")
+    gap = pa.evaluate("""() => { const page = document.querySelector('.kfs-page'); const head = page.querySelector('[aria-label="返回"]').closest('div.relative'); const sc = page.querySelector('.kfs-page-scroll');
+        sc.scrollTop = 200; const first = sc.firstElementChild.getBoundingClientRect();
+        return [Math.round(sc.getBoundingClientRect().top - head.getBoundingClientRect().bottom), Math.round(first.top), Math.round(sc.getBoundingClientRect().top)]; }""")
+    pa.evaluate("document.querySelector('.kfs-page-scroll').scrollTop = 0")
+    ok(gap[0] == 12 and gap[1] < gap[2], f"日记往上滑：顶栏底下那道缝留着，日历在缝底下收住（{gap}）")
     pa.get_by_role("button", name=re.compile("甜")).first.click()
     time.sleep(0.5)
     shot(pa, "08_diary")

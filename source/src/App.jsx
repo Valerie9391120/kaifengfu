@@ -2157,7 +2157,11 @@ function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHis }) {
         <div style={{ width: 40 }} />
       </div>
 
-      <div className="relative z-10 flex-1 overflow-y-auto kfs-scroll" style={{ padding: "12px 12px calc(24px + env(safe-area-inset-bottom))" }}>
+      {/* 顶栏和日历之间那道缝留在滚动区外面：往上滑时内容在缝底下就收住，不顶到顶栏 */}
+      <div
+        className="kfs-page-scroll relative z-10 flex-1 overflow-y-auto kfs-scroll"
+        style={{ marginTop: 12, padding: "0 12px calc(24px + env(safe-area-inset-bottom))" }}
+      >
         {/* 月历 */}
         <div style={card}>
           <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
@@ -2413,7 +2417,7 @@ function HistoryPage({ index, currentId, now, onBack, onOpen, onDelete, onLongPr
           {editing ? "完成" : "编辑"}
         </button>
       </div>
-      <div className="relative z-10 flex-1 overflow-y-auto kfs-scroll flex flex-col" style={{ padding: 12, gap: 8 }}>
+      <div className="kfs-page-scroll relative z-10 flex-1 overflow-y-auto kfs-scroll flex flex-col" style={{ marginTop: 12, padding: "0 12px 12px", gap: 8 }}>
         {index.length === 0 && (
           <p className="text-center" style={{ fontSize: 13, color: T.inkSoft, marginTop: 64 }}>
             还没有对话。回去说句话，这里就有了。
