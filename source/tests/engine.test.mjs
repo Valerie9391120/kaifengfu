@@ -2,6 +2,7 @@ import "fake-indexeddb/auto";
 import { deriveVault, newSalt, seal, unseal, rowKeyFor, CHECK_TEXT } from "../src/vault.js";
 import { createEngine, cmpTs, tsMinus, PAGE } from "../src/engine.js";
 import { localDb } from "../src/localdb.js";
+import { explainError } from "../src/errors.js";
 
 let pass = 0, failN = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); } };
@@ -202,6 +203,15 @@ if (vaultSaved === true) {
 } else console.log("（模拟的数据库存不了钥匙对象，留给真浏览器测：", vaultSaved, "）");
 await localDb.wipe();
 ok((await localDb.allKv()).length === 0 && (await localDb.getVault()) === null, "退出登录时本地清得干干净净");
+
+// ---- Anthropic 的报错翻成人话 ----
+ok(explainError(400, { type: "invalid_request_error", message: "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use." }).includes("没绑定工作区"),
+  "key 没绑定工作区：说清去 Console 新建一把、选工作区");
+ok(explainError(401, { type: "authentication_error", message: "invalid x-api-key" }).includes("新建一把"), "key 不对：叫她去换一把");
+ok(explainError(400, { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." }).includes("余额"), "没钱了：叫她去充值");
+ok(explainError(529, { type: "overloaded_error", message: "Overloaded" }).includes("太挤"), "Anthropic 太挤：过会儿再试");
+ok(explainError(401, { type: "kaifengfu", message: "请先登录开封府" }) === "请先登录开封府", "开封府自己的报错原样给");
+ok(explainError(400, { type: "invalid_request_error", message: "something new" }) === "something new", "认不出来的报错原样给");
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);
 process.exit(failN ? 1 : 0);

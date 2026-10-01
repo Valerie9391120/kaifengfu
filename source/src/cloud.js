@@ -4,6 +4,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { SUPABASE_URL, SUPABASE_KEY, FUNCTION_URL } from "./config.js";
+import { explainError } from "./errors.js";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: "kfs-auth" },
@@ -70,7 +71,7 @@ export async function callClaude(body, beta) {
   } catch (e) {
     throw new Error(`后端没回话（${res.status}）`);
   }
-  if (d && d.error) throw new Error(d.error.message || `出错了（${res.status}）`);
+  if (d && d.error) throw new Error(explainError(res.status, d.error));
   if (!res.ok) throw new Error((d && (d.message || d.msg)) || `出错了（${res.status}）`);
   return d;
 }

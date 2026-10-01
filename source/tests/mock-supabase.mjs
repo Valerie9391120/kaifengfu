@@ -6,6 +6,7 @@ const PORT = Number(process.env.MOCK_PORT || 8787);
 const USERS = { "qing@example.com": { id: "11111111-1111-1111-1111-111111111111", password: "correct-horse" } };
 const rows = new Map(); // user_id|key → row
 const claudeLog = [];
+let claudeFail = null; // 测试用：下一次 claude 调用照 Anthropic 的样子报错
 let clock = Date.UTC(2026, 9, 1, 14, 0, 0) * 1000;
 
 const b64url = (s) => Buffer.from(s).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -76,9 +77,14 @@ http
     // ---- 调试用 ----
     if (url.pathname === "/__debug/rows") return send(res, 200, [...rows.values()]);
     if (url.pathname === "/__debug/claude") return send(res, 200, claudeLog);
+    if (url.pathname === "/__debug/claude-fail") {
+      claudeFail = url.searchParams.get("kind") || null;
+      return send(res, 200, { ok: true });
+    }
     if (url.pathname === "/__debug/reset") {
       rows.clear();
       claudeLog.length = 0;
+      claudeFail = null;
       return send(res, 200, { ok: true });
     }
 
@@ -150,6 +156,16 @@ http
       if (!u) return send(res, 401, { type: "error", error: { type: "kaifengfu", message: "请先登录开封府" } });
       const body = JSON.parse((await readBody(req)) || "{}");
       claudeLog.push({ body, beta: req.headers["x-kfs-beta"] || "" });
+      if (claudeFail === "workspace") {
+        claudeFail = null;
+        return send(res, 400, {
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message: "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use.",
+          },
+        });
+      }
       if (body.ping) {
         return send(res, 200, { model: "claude-haiku-4-5-20251001", content: [{ type: "text", text: "在" }], usage: { input_tokens: 12, output_tokens: 1 } });
       }
