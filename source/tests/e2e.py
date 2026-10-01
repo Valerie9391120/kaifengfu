@@ -143,6 +143,12 @@ with sync_playwright() as p:
     ok(pa.get_by_text(re.compile("Haiku 4.5 回了一个“在”")).is_visible(), "API 面板测试连接：通过开封府的后端连上了")
     ok(pa.get_by_text(re.compile(r"约 \$")).first.is_visible(), "API 面板显示上一条和本月的花费")
     shot(pa, "09_api")
+    # key 没绑定工作区（新版 Console 建 key 时没选）：报错翻成人话
+    urllib.request.urlopen(MOCK + "/__debug/claude-fail?kind=workspace").read()
+    pa.get_by_role("button", name="测试连接").click()
+    pa.get_by_text(re.compile("没绑定工作区")).wait_for(timeout=10000)
+    ok(pa.get_by_text(re.compile("没连上：这把 key 没绑定工作区.*Supabase 的密钥柜")).is_visible(), "key 没绑定工作区：报错翻成中文，说清去哪儿改")
+    shot(pa, "09b_api_workspace")
     pa.get_by_role("button", name="关闭").click()
     time.sleep(0.4)
 

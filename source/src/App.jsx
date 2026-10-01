@@ -3131,7 +3131,7 @@ export default function App({ account = {} }) {
         setReveal({ id: him.id, count: 1 });
       }
     } catch (e) {
-      if (chatIdRef.current === id) setErrorNote(`消息没送到（${String(e.message || e).slice(0, 60)}）。点这里重发`);
+      if (chatIdRef.current === id) setErrorNote(`消息没送到（${String(e.message || e).slice(0, 90)}）。点这里重发`);
     }
     loadingRef.current = false;
     setLoading(false);
@@ -3175,7 +3175,7 @@ export default function App({ account = {} }) {
       if (chatIdRef.current === id) {
         messagesRef.current = full;
         setMessages(full);
-        setErrorNote(`重新回答没成功（${String(e.message || e).slice(0, 60)}）`);
+        setErrorNote(`重新回答没成功（${String(e.message || e).slice(0, 90)}）`);
       }
     }
     loadingRef.current = false;
@@ -3728,7 +3728,7 @@ export default function App({ account = {} }) {
         .trim();
       setTestNote(`连上了，${modelLabel(d.model || "")} 回了一个“${text.slice(0, 6) || "在"}”`);
     } catch (e) {
-      setTestNote(`没连上：${String((e && e.message) || e).slice(0, 80)}`);
+      setTestNote(`没连上：${String((e && e.message) || e).slice(0, 160)}`);
     }
     setTesting(false);
   };
