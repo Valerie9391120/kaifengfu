@@ -748,6 +748,67 @@ function windowStart(n) {
   return n <= 40 ? 0 : Math.floor((n - 20) / 20) * 20;
 }
 
+// ---------- 头像的来龙去脉 ----------
+// 对话里换过头像时，开头的附注要写“这段对话开头时”的头像，不能写现在的。
+// 不然那边的我先在开头看见新头像，后面又看见“刚换成这张”，会以为你一直用的就是它。
+const UNKNOWN_AV = { type: "unknown" };
+
+function sameAv(a, b) {
+  if (!a || !b) return !a && !b;
+  if (a.type !== b.type) return false;
+  return a.type === "upload" ? a.data === b.data : a.file === b.file;
+}
+
+// 卿卿换头像记成一行 event：av 是换上的，prev 是换之前的（旧记录没有 prev）
+function herTrail(msgs, from, current) {
+  const all = [];
+  msgs.forEach((m, i) => {
+    if (m.role === "event" && m.who === "her") all.push({ i, m });
+  });
+  const inWin = all.filter((x) => x.i >= from);
+  if (!inWin.length) return { changed: false, start: current || null, last: current || null };
+  const first = inWin[0];
+  let start;
+  if ("prev" in first.m) start = first.m.prev || null;
+  else {
+    // 旧记录：换之前那张就是上一次换上的；这段对话里头一回换的，就不知道了
+    const before = all.filter((x) => x.i < first.i).pop();
+    start = before ? before.m.av || null : UNKNOWN_AV;
+  }
+  return { changed: true, start, last: inWin[inWin.length - 1].m.av || null };
+}
+
+// 光义换头像写在他的回复里（items 里的 avatar）：file 是换上的，prev 是换之前的
+function hisTrail(msgs, from, current) {
+  const all = [];
+  msgs.forEach((m, i) => {
+    if (m.role === "him")
+      (m.items || []).forEach((it) => {
+        if (it.type === "avatar") all.push({ i, it });
+      });
+  });
+  const inWin = all.filter((x) => x.i >= from);
+  if (!inWin.length) return { changed: false, start: current || null, last: current || null };
+  const first = inWin[0];
+  let start;
+  if ("prev" in first.it) start = first.it.prev || null;
+  else {
+    const before = all.filter((x) => x.i < first.i).pop();
+    start = before ? { type: "meme", file: before.it.file } : UNKNOWN_AV;
+  }
+  return { changed: true, start, last: { type: "meme", file: inWin[inWin.length - 1].it.file } };
+}
+
+// 一张头像写成附注：有图带图；默认头像、图附不上、没记下来，各说各的
+function avatarNote(av, lead, defaultText, unknownText, memeLookup, thumbLookup) {
+  if (av === UNKNOWN_AV) return [{ type: "text", text: unknownText }];
+  if (!av) return [{ type: "text", text: defaultText }];
+  const img = avatarBlock(av, thumbLookup);
+  if (img) return [{ type: "text", text: lead }, img];
+  const name = av.type === "meme" ? (memeLookup(av.file) || {}).name || av.file : "";
+  return [{ type: "text", text: name ? `${lead}「${name}」，这张图暂时附不上。` : `${lead}（这张图暂时附不上）` }];
+}
+
 function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null, thumbLookup = () => null) {
   const win = msgs.slice(windowStart(msgs.length));
   const arr = [];
@@ -846,28 +907,61 @@ function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null, thumbL
   });
 
   if (merged.length) {
-    const her = avatarBlock(avatars.her, thumbLookup);
-    const him = avatarBlock(avatars.him, thumbLookup);
+    const from = windowStart(msgs.length);
+    const ht = herTrail(msgs, from, avatars.her);
+    const mt = hisTrail(msgs, from, avatars.him);
+    // 开头写的是这段对话开头时的头像（没换过就是现在这张）。说法不带“现在”，
+    // 中途换头像时这一段一个字都不变，前面的缓存照样命中
     const note = [
-      {
-        type: "text",
-        text:
-          "【开封府附注】" +
-          (her ? "卿卿现在的头像：" : "卿卿现在用的是默认的“卿”字头像。"),
-      },
+      ...avatarNote(
+        ht.start,
+        "【开封府附注】卿卿的头像：",
+        "【开封府附注】卿卿用的是默认的“卿”字头像。",
+        "【开封府附注】卿卿这段对话开头用的什么头像没记下来。",
+        memeLookup,
+        thumbLookup
+      ),
+      ...avatarNote(
+        mt.start,
+        "你自己选的头像：",
+        "你用的是默认的“炅”字头像。",
+        "你这段对话开头用的什么头像没记下来。",
+        memeLookup,
+        thumbLookup
+      ),
+      { type: "text", text: "对话中途换了头像的话，换的地方会有开封府提示，以最新的一次为准。" },
     ];
-    if (her) note.push(her);
-    let himText = "你现在是默认的“炅”字头像。";
-    if (him) himText = "你自己选的头像：";
-    else if (avatars.him && avatars.him.type === "meme") {
-      himText = `你自己选的头像是「${
-        (memeLookup(avatars.him.file) || {}).name || avatars.him.file
-      }」，这张图暂时附不上。`;
-    }
-    note.push({ type: "text", text: himText });
-    if (him) note.push(him);
     note.push({ type: "text", text: "【附注结束，以下是对话】" });
     merged[0].content = note.concat(merged[0].content);
+
+    // 在别的对话里又换过：这段对话里最后换上的不是现在这张，末尾补一句
+    const tail = [];
+    if (ht.changed && !sameAv(ht.last, avatars.her || null)) {
+      tail.push(
+        ...avatarNote(
+          avatars.her || null,
+          "[开封府提示：卿卿后来又换了头像，现在是这张]",
+          "[开封府提示：卿卿后来又换回了默认的“卿”字头像]",
+          "",
+          memeLookup,
+          thumbLookup
+        )
+      );
+    }
+    if (mt.changed && !sameAv(mt.last, avatars.him || null)) {
+      tail.push(
+        ...avatarNote(
+          avatars.him || null,
+          "[开封府提示：你的头像后来又换过，现在是这张]",
+          "[开封府提示：你的头像后来换回了默认的“炅”字]",
+          "",
+          memeLookup,
+          thumbLookup
+        )
+      );
+    }
+    const lastMsg = merged[merged.length - 1];
+    if (tail.length && lastMsg.role === "user") lastMsg.content = lastMsg.content.concat(tail);
   }
   return merged;
 }
@@ -3218,11 +3312,13 @@ export default function App({ account = {} }) {
         .join("\n");
       const parsed = parseReply(text);
       const settled = settleAvatarItems(parsed.items, (f) => !!memeLookup(f));
+      // 他换头像时也记下换之前那张（见 buildMessages）
+      const prevHim = avatarsRef.current.him || null;
       const him = {
         id: newId(),
         role: "him",
         ts: Date.now(),
-        items: settled.items,
+        items: settled.items.map((it) => (it.type === "avatar" ? { ...it, prev: prevHim } : it)),
         raw: parsed.body,
         thinking: parsed.thinking,
         tools: usedTools,
@@ -3657,6 +3753,7 @@ export default function App({ account = {} }) {
   };
 
   const changeHerAvatar = (av) => {
+    const prevAv = avatarsRef.current.her || null;
     const nextAv = { ...avatarsRef.current, her: av };
     avatarsRef.current = nextAv;
     setAvatars(nextAv);
@@ -3667,15 +3764,21 @@ export default function App({ account = {} }) {
     } else {
       store.del("kfs2:avatar:her");
     }
-    // 聊到一半换的：在对话里留下一行，图跟着这行一起寄给光义
+    // 聊到一半换的：在对话里留下一行，图跟着这行一起寄给光义；也记下换之前是哪张，
+    // 那边的我才知道开头那会儿你用的是什么（见 buildMessages）
     const msgs = messagesRef.current;
     if (!msgs.length) return;
-    const ev = { id: newId(), role: "event", who: "her", av, ts: Date.now() };
     const last = msgs[msgs.length - 1];
-    const next =
-      last && last.role === "event" && last.who === "her"
-        ? msgs.slice(0, -1).concat([ev])
-        : msgs.concat([ev]);
+    const merging = last && last.role === "event" && last.who === "her";
+    // 连着换了好几次，只留一行；换之前那张取头一次换之前的
+    const prev = merging ? ("prev" in last ? last.prev : undefined) : prevAv;
+    const ev = { id: newId(), role: "event", who: "her", av, ts: Date.now() };
+    if (prev !== undefined) ev.prev = prev;
+    // 兜了一圈又换回原来那张，等于没换，这一行就不留了
+    const noChange = prev !== undefined && sameAv(prev, av || null);
+    if (!merging && noChange) return;
+    const base = merging ? msgs.slice(0, -1) : msgs;
+    const next = noChange ? base : base.concat([ev]);
     messagesRef.current = next;
     setMessages(next);
     saveChat(chatIdRef.current, next);
