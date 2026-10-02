@@ -1614,13 +1614,16 @@ function SplashByTheme({ theme, fading, onEnter }) {
   return theme === "dingxiang" ? <SplashDingxiang fading={fading} onEnter={onEnter} /> : <Splash fading={fading} onEnter={onEnter} />;
 }
 
+// 侧栏最上面那张卡片。flex-shrink-0 不能丢：侧栏上面那段是竖着排的弹性盒子，东西放不下的时候
+// 会先压这张卡片（它带 overflow-hidden，压得动），“在一起的第几天”就只露半截、纪念日那行整行不见。
+// 不许压，放不下就让那一段自己滚
 function DaysCard({ now }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const today = a.days === 0;
   return (
     <div
-      className="relative overflow-hidden"
+      className="kfs-days relative overflow-hidden flex-shrink-0"
       style={{ ...glass(0.5, 26), borderRadius: 28, padding: "20px 20px 18px" }}
     >
       <div
@@ -1784,10 +1787,13 @@ function RecentItem({ c, currentId, onOpen, onLongPress }) {
   );
 }
 
+// 侧栏里的历史对话：只列最近的两条（卿卿定的），再多的点标题进历史对话页看
+const RECENT_MAX = 2;
+
 function HistoryCard({ index, currentId, onOpenAll, onOpen, onLongPress }) {
-  const recent = index.slice(0, 3);
+  const recent = index.slice(0, RECENT_MAX);
   return (
-    <div style={{ ...glass(0.46, 24), borderRadius: 24, padding: "10px 16px 6px" }}>
+    <div className="kfs-history" style={{ ...glass(0.46, 24), borderRadius: 24, padding: "10px 16px 6px" }}>
       <button onClick={onOpenAll} className="kfs-tap w-full flex items-center justify-between" style={{ padding: "6px 0" }}>
         <span style={{ fontSize: 15, color: T.ink }}>历史对话</span>
         <Icon name="chevR" size={17} color={T.inkSoft} />
@@ -4485,9 +4491,10 @@ export default function App({ account = {} }) {
         <div style={{ padding: "calc(22px + env(safe-area-inset-top)) 22px 12px", fontFamily: SERIF, fontSize: 23, letterSpacing: "0.14em", color: T.ink }}>
           开封府
         </div>
-        <div className="flex-1 overflow-y-auto kfs-scroll flex flex-col" style={{ padding: "4px 16px 16px", gap: 12 }}>
+        {/* 上面这一段（日期、四个方块）放不下的时候自己滚；里面的东西都不许被压（flex-shrink-0） */}
+        <div className="kfs-side-scroll flex-1 overflow-y-auto kfs-scroll flex flex-col" style={{ padding: "4px 16px 12px", gap: 12, minHeight: 0 }}>
           <DaysCard now={now} />
-          <div className="grid grid-cols-2" style={{ gap: 12 }}>
+          <div className="grid grid-cols-2 flex-shrink-0" style={{ gap: 12 }}>
             <Tile icon="doc" label="记忆库" sub={memFiles.length ? `带着 ${enabledDocs} 份文档` : "放文档"} onClick={() => setSheet("memory")} />
             <Tile icon="plug" label="MCP" sub={enabledMcp ? `开着 ${enabledMcp} 个` : `装了 ${(settings.mcps || []).length} 个`} onClick={() => setSheet("mcp")} />
             <Tile icon="key" label="API" sub={monthUsage && monthUsage.month === usageKey() && monthUsage.replies ? `本月约 ${money(monthUsage.cost)}` : "连接与用量"} onClick={() => setSheet("api")} />
@@ -4506,6 +4513,10 @@ export default function App({ account = {} }) {
               onClick={() => setDiaryOpen(true)}
             />
           </div>
+        </div>
+        {/* 历史对话固定在最底下那排（头像、新对话）的正上方，不跟着上面那段滚（卿卿定的位置）。
+            它和底下那排之间隔 12，跟卡片之间的间距一样；屏幕有富余的时候，空在它和四个方块之间 */}
+        <div className="flex-shrink-0" style={{ padding: "0 16px" }}>
           <HistoryCard
             index={index}
             currentId={chatId}
@@ -4514,7 +4525,7 @@ export default function App({ account = {} }) {
             onLongPress={(chat, rect) => setChatMenu({ chat, rect })}
           />
         </div>
-        <div className="kfs-dock-fade flex items-center justify-between" style={{ padding: "8px 16px max(12px, var(--kfs-sab))" }}>
+        <div className="kfs-dock-fade flex items-center justify-between flex-shrink-0" style={{ padding: "12px 16px max(12px, var(--kfs-sab))" }}>
           <button onClick={() => setSheet("account")} aria-label="头像与设置" className="kfs-tap">
             <Avatar av={avatars.her} who="her" size={40} />
           </button>

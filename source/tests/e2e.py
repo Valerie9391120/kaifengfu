@@ -513,6 +513,38 @@ with sync_playwright() as p:
     ok(pa.evaluate(THEME) == before and pa.get_by_text(re.compile("主屏幕上的图标还是")).count() == 0, "换回青绿：颜色、背景都回来，提示也收了")
     pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
 
+    # ================= 侧栏 =================
+    # 再聊两段，一共三段对话。侧栏里：日期那张卡片三行字都在（对话一多它以前会被压扁，“在一起的第几天”只露半截）；
+    # 历史对话只列最近两条，固定在最底下那排（头像、新对话）的正上方，不跟着上面那段滚
+    for t in ["第二段对话", "第三段对话"]:
+        pa.locator("button", has_text="新对话").click(); time.sleep(0.6)  # 侧栏最底下那个，点了侧栏会收起来
+        ta = pa.get_by_placeholder("说话，我听着"); ta.fill(t); ta.press("Enter")
+        pa.get_by_text("收到：" + t).last.wait_for(timeout=20000); time.sleep(1.2)
+        pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
+    SIDE = """() => { const days = document.querySelector('.kfs-days'); const hist = document.querySelector('.kfs-history'); const top = document.querySelector('.kfs-side-scroll'); const dock = document.querySelector('.kfs-dock-fade');
+        const lines = [...days.children].filter((c) => c.textContent.trim()); const b = (el) => el.getBoundingClientRect();
+        return { whole: days.scrollHeight <= days.clientHeight + 1 && lines.length === 3 && b(lines[2]).bottom <= b(days).bottom, daysH: Math.round(b(days).height),
+                 items: [...hist.querySelectorAll('button.text-left')].map((x) => x.firstElementChild.textContent), inTop: top.contains(hist),
+                 histTop: b(hist).top, histBottom: b(hist).bottom, dockTop: b(dock).top, btnTop: b(dock.querySelector('button')).top, topBottom: b(top).bottom,
+                 room: top.scrollHeight - top.clientHeight, scrolled: top.scrollTop }; }"""
+    s = pa.evaluate(SIDE)
+    pa.get_by_role("button", name=re.compile("历史对话")).first.click(); time.sleep(0.6)
+    listed = pa.locator(".kfs-page button.text-left").count()
+    pa.get_by_role("button", name="返回").first.click(); time.sleep(0.5)
+    ok(listed >= 3 and s["items"] == ["第三段对话", "第二段对话"] and s["whole"],
+       f"侧栏：一共 {listed} 段对话，历史对话只列最近两条（{s['items']}）；日期卡片三行字都在卡片里（高 {s['daysH']}）")
+    ok(not s["inTop"] and abs(s["dockTop"] - s["histBottom"]) < 1 and 11 <= s["btnTop"] - s["histBottom"] <= 16 and s["histTop"] >= s["topBottom"] - 1,
+       f"侧栏：历史对话贴在最底下那排的正上方（离头像 {s['btnTop'] - s['histBottom']:.1f}），不在会滚的那一段里")
+    shot(pa, "17_sidebar")
+    # 屏幕矮、上面那段放不下的时候：卡片照样不被压，上面那段自己滚，历史对话不动
+    pa.set_viewport_size({"width": 390, "height": 560}); time.sleep(0.5)
+    pa.evaluate("document.querySelector('.kfs-side-scroll').scrollTop = 9999"); time.sleep(0.3)
+    t = pa.evaluate(SIDE)
+    ok(t["whole"] and t["daysH"] == s["daysH"] and t["room"] > 0 and t["scrolled"] > 0 and abs(t["dockTop"] - t["histBottom"]) < 1 and t["items"] == s["items"],
+       f"侧栏压矮到上面那段放不下（差 {t['room']}）：日期卡片不被压（还是 {t['daysH']} 高），那一段自己滚，历史对话还贴着最底下那排")
+    pa.evaluate("document.querySelector('.kfs-side-scroll').scrollTop = 0")
+    pa.set_viewport_size({"width": 390, "height": 844}); time.sleep(0.4)
+
     # 丁香的入口：从这儿添加到主屏幕，图标是小猪，头一回进去就是丁香
     C = browser.new_context(**iphone)
     pc = C.new_page()
