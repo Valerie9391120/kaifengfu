@@ -115,6 +115,7 @@ const T = {
   rougeInk: "#45262F",
   gold: "#94733A",
   bg: "linear-gradient(168deg,rgb(var(--k-bg1)) 0%,rgb(var(--k-bg2)) 46%,rgb(var(--k-bg3)) 100%)",
+  motto: "rgb(var(--k-motto))",
 };
 
 const glass = (a = 0.55, blur = 24) => ({
@@ -2135,6 +2136,8 @@ function ThinkingRow({ msg, open, onToggle }) {
             maxWidth: "80%",
             padding: "12px 15px",
             borderRadius: 16,
+            // 这一块的样子是卿卿定的：2026 年 10 月 2 日试过把字加深加大、底下垫模糊，她看了对比图说原来的好看。
+            // 别拿对比度的数去改它，要动先拿图问她（见开发说明“看得清，不乱动”）
             background: "rgba(255,255,255,0.34)",
             border: "1px dashed rgba(var(--k-dai),0.3)",
             color: T.inkSoft,
@@ -4451,7 +4454,17 @@ export default function App({ account = {} }) {
     <div
       ref={rootRef}
       className="overflow-hidden select-none"
-      style={{ position: "fixed", top: "var(--kfs-kb-top, 0px)", left: 0, width: "100%", height: "var(--kfs-kb-h, var(--kfs-h, 100dvh))", background: T.bg, fontFamily: SANS, color: T.ink }}
+      // 侧栏开着时对话窗被推到右边、伸出外壳三百多像素。overflow: hidden 只是不让手指滚，
+      // 程序还是滚得动它（scrollIntoView 这类，测试工具点按钮之前就这么滚过），一滚整页连同弹出面板都歪到一边，不会自己回来。
+      // clip 是干脆不当滚动容器；不认 clip 的老浏览器退回类名里的 hidden，再靠下面的 onScroll 挪回去
+      style={{ position: "fixed", top: "var(--kfs-kb-top, 0px)", left: 0, width: "100%", height: "var(--kfs-kb-h, var(--kfs-h, 100dvh))", overflow: "clip", background: T.bg, fontFamily: SANS, color: T.ink }}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        if (e.target === el && (el.scrollLeft || el.scrollTop)) {
+          el.scrollLeft = 0;
+          el.scrollTop = 0;
+        }
+      }}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -4541,17 +4554,28 @@ export default function App({ account = {} }) {
           <IconBtn onClick={() => setDrawerOpen(true)} label="打开侧栏">
             <Icon name="menu" />
           </IconBtn>
-          <div className="flex-1 flex flex-col items-center min-w-0">
+          <div className="relative flex-1 flex flex-col items-center min-w-0">
             <Avatar av={avatars.him} who="him" size={30} />
-            {/* 他的名字：默认“光义”，他自己在回复里改（见 names.js）。换了名字时轻轻冒一下 */}
+            {/* 他的名字：默认“光义”，他自己在回复里改（见 names.js）。换了名字时轻轻冒一下。
+                他回话的时候，名字这一行让给“正在输入…”（叠在同一行上，不另起一行）：顶栏不长高，
+                底下的聊天记录就不会被挤一下又松回去。名字的节点还在，只是字先透明；
+                回完话节点换新的（key 里带着是不是在回话），名字又冒出来，这时候改了名字的话冒出来的就是新名字 */}
             <div
-              key={names.him || HIS_NAME}
+              key={`${typing ? "t" : "n"}:${names.him || HIS_NAME}`}
               className="kfs-his-name kfs-in truncate"
-              style={{ fontSize: 12.5, color: T.ink, marginTop: 2, maxWidth: "100%", padding: "0 6px" }}
+              style={{ fontSize: 12.5, color: typing ? "rgba(var(--k-ink),0)" : T.ink, marginTop: 2, maxWidth: "100%", padding: "0 6px" }}
             >
               {names.him || HIS_NAME}
             </div>
-            {typing && <div style={{ fontSize: 10.5, color: T.inkSoft }}>正在输入…</div>}
+            {typing && (
+              <div
+                role="status"
+                className="kfs-typing kfs-in"
+                style={{ position: "absolute", left: 0, right: 0, bottom: 0, textAlign: "center", fontSize: 12.5, color: T.inkSoft, pointerEvents: "none", whiteSpace: "nowrap" }}
+              >
+                正在输入…
+              </div>
+            )}
           </div>
           <IconBtn onClick={newChat} label="新对话">
             <Icon name="pen" size={20} />
@@ -4580,7 +4604,11 @@ export default function App({ account = {} }) {
         >
           {messages.length === 0 && !loading && (
             <div className="h-full flex flex-col items-center justify-center" style={{ gap: 18 }}>
-              <p style={{ fontFamily: SERIF, fontSize: 14, letterSpacing: "0.3em", paddingLeft: "0.3em", color: T.inkSoft }}>
+              {/* 题字的颜色跟主题走（--k-motto，见 input.css），都是实色，不带透明。
+                  青绿的背景里它正压在那方深青上，原来的淡墨（inkSoft）叠上去只有 3 比 1，看不清；
+                  实墨压在深青上、落到旁边的纸色上都过 4.5 比 1，屏幕高矮不同、字落在哪儿都清楚。
+                  丁香的背景中间是浅的，用轻一档的紫就够 */}
+              <p className="kfs-motto" style={{ fontFamily: SERIF, fontSize: 15, letterSpacing: "0.3em", paddingLeft: "0.3em", color: T.motto }}>
                 如月之恒，官家在这
               </p>
               {memFiles.length === 0 && (
