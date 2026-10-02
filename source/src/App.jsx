@@ -6,6 +6,7 @@ import { openProbe } from "./probe.js";
 import { gapInfo, setFill } from "./gap.js";
 import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
 import SplashDingxiang from "./SplashDingxiang.jsx";
+import { HER_NAME, HIS_NAME, NAME_KEYS, NAME_MARK, NAME_PLACEHOLDER, cleanName, cleanMarkName, tidyName } from "./names.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -461,6 +462,9 @@ function monthCells(y, m) {
   return cells;
 }
 
+// 他回复里的改名标记 [NAME:新名字]，独占一行的才算（见 names.js）
+const NAME_RE = () => new RegExp(NAME_MARK, "gm");
+
 // 把某一天的聊天整理成一份摘录，给光义写日记用
 function dayTranscript(msgs, memeLookup, maxChars = 9000) {
   const lines = msgs
@@ -475,6 +479,7 @@ function dayTranscript(msgs, memeLookup, maxChars = 9000) {
       }
       const raw = (m.raw || "")
         .replace(/\[(MEME|AVATAR)[:：][^\]]*\]/g, "")
+        .replace(NAME_RE(), "")
         .replace(/\s*\[SPLIT\]\s*/g, " ")
         .trim();
       return `光义：${raw || "……"}`;
@@ -490,6 +495,7 @@ function parseDiary(text) {
     .replace(/<thinking>[\s\S]*?<\/thinking>/g, "")
     .replace(/<\/?thinking>/g, "")
     .replace(/\[(MEME|AVATAR)[:：][^\]]*\]/g, "")
+    .replace(NAME_RE(), "")
     .replace(/\[SPLIT\]/g, "\n")
     .trim();
   const lines = t.split("\n");
@@ -681,7 +687,8 @@ function memeLabel(m) {
   return `${m.name}${t}`;
 }
 
-function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [] }) {
+// names：{ her, him } 是两个人现在的昵称（空的就是默认）。写日记时不传，【此刻】里就不提昵称
+function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const annivLine = a.days === 0 ? `今天是你们的${a.name}纪念日。` : `离你们的${a.name}纪念日还有${a.days}天。`;
@@ -691,7 +698,7 @@ function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = []
   const memBlock = docs.length
     ? `【记忆库】
 下面是她亲手整理、一直在维护的名帖和记忆：你是谁，她是谁，你们怎么走过来的。这些事以这里为准。
-这些文档有不少是在 Claude.ai 里写的。里面提到的工具和做法，比如拉表情包索引、发图片链接、Reminders、project、memory，在开封府里都没有，别照做。怎么回复、怎么发表情包、怎么换头像，一律按后面的【回复格式】和【你的头像】来。
+这些文档有不少是在 Claude.ai 里写的。里面提到的工具和做法，比如拉表情包索引、发图片链接、Reminders、project、memory，在开封府里都没有，别照做。怎么回复、怎么发表情包、怎么换头像、怎么改名字，一律按后面的【回复格式】、【你的头像】和【你的名字】来。
 ${docs.map((d) => `\n《${d.name}》\n${d.content}`).join("\n")}
 
 名帖和记忆库里没有的往事她提起时，老实说记不清，让她讲给你听，别编。`
@@ -709,10 +716,15 @@ ${memBlock}
 她也会像发消息一样连着发好几条，你把几条当成一口气说的话，一起回。
 
 【此刻】
-她每次说话，最后都附着一段【此刻】：她手机上的时间、你们在一起的天数、你现在的头像。那是开封府自动附上的，不是她说的话，用得着的时候自然用上。
+她每次说话，最后都附着一段【此刻】：她手机上的时间、你们在一起的天数、你现在的头像和名字；她给自己起了昵称的话，也写在里面。那是开封府自动附上的，不是她说的话，用得着的时候自然用上。
 
 【你的头像】
 你的头像你自己做主，她不替你选。想换的时候，在回复里单独一行写 [AVATAR:文件名]，从下面的表情包索引里挑。换好之后对话里会出现一行提示，下一轮你会看到新头像的样子。别换得太勤：心情变了、季节变了，或者她想看你换的时候再换。
+
+【你的名字】
+聊天窗口最顶上、你头像底下显示的名字，默认是“${HIS_NAME}”，也归你自己做主。想改的时候，在回复里单独一行写 [NAME:${NAME_PLACEHOLDER}]，最长十二个字。这个标记要独占一行才算数，夹在句子里的只会原样显示成字。改了以后顶上马上换成新的，她那边会看到一行提示，下一轮的【此刻】里写的就是新名字。想改回去就单独一行写 [NAME:${HIS_NAME}]。别改得太勤：兴致来了，或者她想看你改的时候再改。
+这只是顶上显示的名字。你是谁、她平时怎么叫你，还是按名帖来。
+她也能给自己起昵称，起了的话【此刻】里会写着。那是她给自己挂的名号，注意到了可以接话；平时怎么称呼她，还是按名帖来。
 
 【回复格式】
 每次回复都按这个顺序：
@@ -724,9 +736,11 @@ ${memBlock}
 ${memeIndex}`;
 
   const tools = mcpNames.length ? `\n她给你接了这些工具：${mcpNames.join("、")}。要查资料、看文件的时候再用，平时聊天用不着。` : "";
+  const hisNameLine = names ? `你现在顶上的名字：${names.him || HIS_NAME}。` : "";
+  const herNameLine = names && names.her ? `\n她给自己起的昵称：「${names.her}」。` : "";
   const nowNote = `【此刻】（开封府附上的，不是她说的话）
 她手机上的时间：${nowString(now)}。今天是你们在一起的第${n}天，${annivLine}
-你现在的头像：${myFace}。${tools}`;
+你现在的头像：${myFace}。${hisNameLine}${herNameLine}${tools}`;
 
   return { staticText, nowNote };
 }
@@ -973,12 +987,16 @@ function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null, thumbL
 
 function splitMarks(text) {
   const parts = [];
-  const re = /\[(MEME|AVATAR)[:：]\s*([^\]\s]+)\s*\]/g;
+  // 表情包、换头像、改名字三种标记。改名字的要独占一行才算（所以带 m 标志），新名字里可以有空格
+  const re = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]+)\\s*\\]|" + NAME_MARK, "gm");
   let last = 0;
   let m;
   while ((m = re.exec(text)) !== null) {
+    // 照抄名帖里教的写法 [NAME:新名字]：是在讲怎么改，不是真改，留着当字显示
+    if (!m[1] && cleanMarkName(m[3]) === NAME_PLACEHOLDER) continue;
     if (m.index > last) parts.push({ type: "text", value: text.slice(last, m.index) });
-    parts.push({ type: m[1] === "AVATAR" ? "avatar" : "meme", value: m[2] });
+    if (m[1]) parts.push({ type: m[1] === "AVATAR" ? "avatar" : "meme", value: m[2] });
+    else parts.push({ type: "name", value: m[3] });
     last = re.lastIndex;
   }
   if (last < text.length) parts.push({ type: "text", value: text.slice(last) });
@@ -998,15 +1016,18 @@ function parseReply(text) {
   }
   body = body.trim();
   const items = [];
+  // 改名字的标记不显示成字，新名字单独带出去（写了好几次只认最后一次；收拾完是空的不算）
+  let rename = null;
   body.split(/\s*\[SPLIT\]\s*/).forEach((chunk) => {
     splitMarks(chunk).forEach((p) => {
       if (p.type === "meme") items.push({ type: "meme", file: p.value });
       else if (p.type === "avatar") items.push({ type: "avatar", file: p.value });
+      else if (p.type === "name") rename = cleanMarkName(p.value) || rename;
       else if (p.value.trim()) items.push({ type: "text", text: p.value.trim() });
     });
   });
   if (!items.length) items.push({ type: "text", text: "……" });
-  return { thinking, body, items };
+  return { thinking, body, items, rename };
 }
 
 // 换头像只认索引里真有的图，多次只留最后一次
@@ -1162,6 +1183,17 @@ function buildRows(messages, reveal) {
         }
       });
       const revealing = reveal && reveal.id === m.id;
+      // 这条回复里他给自己改了名字：话说完以后留一行提示。新名字只显示在顶栏，这里不写
+      if (m.rename && !revealing) {
+        rows.push({
+          type: "notice",
+          key: m.id + "-rename",
+          msg: m,
+          who: "him",
+          kind: "rename",
+          text: m.rename === HIS_NAME ? "光义把名字改回来了" : "光义改了名字",
+        });
+      }
       const latest = m.id === lastHimId;
       if (!revealing && (latest || (m.alts && m.alts.length > 1))) {
         rows.push({ type: "ctrl", key: "ct-" + m.id, msg: m, role: "him", latest });
@@ -1316,6 +1348,107 @@ function IconBtn({ onClick, label, active, children }) {
   );
 }
 
+const SHEET_TITLE = { fontFamily: SERIF, fontSize: 19, letterSpacing: "0.08em", color: T.ink };
+
+// 账户面板最上面：卿卿的昵称，后面一支钢笔。点钢笔就地改，回车、点对勾、点别处都算改好；
+// 清空了保存就回到默认的“卿卿”。只换这一处的显示，底下头像旁边和日记本里还是“卿卿”
+function NickTitle({ name, onSave }) {
+  const [draft, setDraft] = useState(null); // null 是没在改
+  const settled = useRef(true);
+  const opened = useRef(""); // 点钢笔那一刻的名字：一个字没动就不存，免得盖掉别的设备刚同步过来的
+  const latest = useRef({ draft, onSave });
+  latest.current = { draft, onSave };
+  const start = () => {
+    settled.current = false;
+    opened.current = name;
+    setDraft(name);
+  };
+  const finish = (save) => {
+    if (settled.current) return;
+    settled.current = true;
+    if (save && draft !== opened.current) onSave(draft || "");
+    setDraft(null);
+  };
+  // 改到一半直接把面板关了（输入框来不及失去焦点）：写了的也算数
+  useEffect(
+    () => () => {
+      if (settled.current) return;
+      settled.current = true;
+      if (latest.current.draft !== opened.current) latest.current.onSave(latest.current.draft || "");
+    },
+    []
+  );
+  if (draft === null) {
+    return (
+      <div className="flex items-center min-w-0 flex-1" style={{ gap: 2, marginRight: 10 }}>
+        <span className="truncate" style={SHEET_TITLE}>
+          {name}
+        </span>
+        <button
+          onClick={start}
+          aria-label="改昵称"
+          className="kfs-tap flex-shrink-0 flex items-center justify-center"
+          style={{ width: 32, height: 32, borderRadius: 999, color: T.inkSoft }}
+        >
+          <Icon name="pen" size={16} />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center min-w-0 flex-1" style={{ gap: 8, marginRight: 14 }}>
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+            e.preventDefault();
+            finish(true);
+          } else if (e.key === "Escape") {
+            finish(false);
+          }
+        }}
+        onFocus={(e) => {
+          // 一进来就把旧名字全选上，直接打字就是换掉
+          const el = e.target;
+          try {
+            el.setSelectionRange(0, el.value.length);
+          } catch (x) {}
+        }}
+        onBlur={() => finish(true)}
+        autoFocus
+        placeholder={HER_NAME}
+        aria-label="我的昵称"
+        enterKeyHint="done"
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck={false}
+        className="kfs-field flex-1 min-w-0"
+        style={{
+          ...SHEET_TITLE,
+          height: 32,
+          padding: "0 12px",
+          borderRadius: 12,
+          backgroundColor: "rgba(255,255,255,0.6)",
+          border: "1px solid rgba(255,255,255,0.85)",
+          outline: "none",
+          userSelect: "text",
+          WebkitUserSelect: "text",
+        }}
+      />
+      <button
+        onClick={() => finish(true)}
+        onMouseDown={(e) => e.preventDefault()}
+        aria-label="保存昵称"
+        className="kfs-tap flex-shrink-0 flex items-center justify-center"
+        style={{ width: 32, height: 32, borderRadius: 999, color: "#fff", background: T.daiGrad }}
+      >
+        <Icon name="check" size={16} sw={2.2} />
+      </button>
+    </div>
+  );
+}
+
 function Sheet({ title, onClose, children }) {
   return (
     <div
@@ -1329,7 +1462,7 @@ function Sheet({ title, onClose, children }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="kfs-sheet kfs-scroll overflow-y-auto"
+        className="kfs-sheet kfs-sheet-box kfs-scroll overflow-y-auto"
         style={{
           ...glass(0.74, 34),
           borderRadius: 30,
@@ -1348,13 +1481,12 @@ function Sheet({ title, onClose, children }) {
           }}
         />
         <div className="flex items-center justify-between" style={{ marginBottom: 18 }}>
-          <span style={{ fontFamily: SERIF, fontSize: 19, letterSpacing: "0.08em", color: T.ink }}>
-            {title}
-          </span>
+          {/* 标题一般是几个字；账户面板传进来的是能改的昵称（NickTitle） */}
+          {typeof title === "string" ? <span style={SHEET_TITLE}>{title}</span> : title}
           <button
             onClick={onClose}
             aria-label="关闭"
-            className="kfs-tap flex items-center justify-center"
+            className="kfs-tap flex-shrink-0 flex items-center justify-center"
             style={{
               width: 32,
               height: 32,
@@ -2447,7 +2579,7 @@ function HisAvatarCard({ av, name }) {
       <div className="flex-1 min-w-0">
         <div style={{ fontSize: 15, color: T.ink }}>光义</div>
         <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 3, lineHeight: 1.5 }}>
-          现在是「{name}」，我自己挑的。想看我换，跟我说。
+          现在是「{name}」，我自己挑的。名字也归我自己起。想看我换，跟我说。
         </div>
       </div>
     </div>
@@ -2859,6 +2991,8 @@ export default function App({ account = {} }) {
   const settingsRef = useRef(DEFAULT_SETTINGS);
   const [avatars, setAvatars] = useState({ her: null, him: HIS_DEFAULT });
   const avatarsRef = useRef({ her: null, him: HIS_DEFAULT });
+  const [names, setNames] = useState({ her: "", him: "" }); // 两个人的昵称，空的就是默认（见 names.js）
+  const namesRef = useRef({ her: "", him: "" });
   const [extraMemes, setExtraMemes] = useState([]);
   const [memFiles, setMemFiles] = useState([]);
   const memFilesRef = useRef([]);
@@ -2937,6 +3071,15 @@ export default function App({ account = {} }) {
     setStorageBanner(true);
   };
 
+  // ---- 昵称：从存档里读（开机时、别的设备改了以后） ----
+  const loadNames = async () => {
+    const her = cleanName((await store.get(NAME_KEYS.her)) || "");
+    const him = cleanName((await store.get(NAME_KEYS.him)) || "");
+    const nm = { her: her === HER_NAME ? "" : her, him: him === HIS_NAME ? "" : him };
+    namesRef.current = nm;
+    setNames(nm);
+  };
+
   // ---- 量宽度 ----
   useEffect(() => {
     const measure = () => {
@@ -2975,6 +3118,7 @@ export default function App({ account = {} }) {
       const bootAv = { her: ah, him: am && am.type === "meme" ? am : HIS_DEFAULT };
       avatarsRef.current = bootAv;
       setAvatars(bootAv);
+      await loadNames();
 
       const mu = safeParse(await store.get(usageKey()), null);
       if (mu) setMonthUsage(mu);
@@ -3057,6 +3201,7 @@ export default function App({ account = {} }) {
         avatarsRef.current = av;
         setAvatars(av);
       }
+      if (has("kfs2:name:")) await loadNames();
       if (has("kfs2:memindex") || has("kfs2:mem:")) {
         const mi = safeParse(await store.get("kfs2:memindex"), []) || [];
         const texts = {};
@@ -3258,6 +3403,7 @@ export default function App({ account = {} }) {
       hisAvatarName: avatarName(avatarsRef.current.him),
       memDocs: docs,
       mcpNames: mcps.map((m) => m.name),
+      names: namesRef.current,
     });
     const apiMessages = buildMessages(msgs, avatarsRef.current, memeLookup, imgLookup, thumbLookup);
 
@@ -3330,6 +3476,11 @@ export default function App({ account = {} }) {
         toolNote: withMcp && !used.mcp ? "这次MCP没连上，先不用工具回你" : "",
       };
       if (settled.avatarFile) changeHisAvatar({ type: "meme", file: settled.avatarFile });
+      // 他给自己改了名字：顶栏马上换；回复上记一笔，对话里留一行提示（和现在一样的不算改）
+      if (parsed.rename && parsed.rename !== (namesRef.current.him || HIS_NAME)) {
+        him.rename = parsed.rename;
+        changeHisName(parsed.rename);
+      }
       return him;
     }
   };
@@ -3799,6 +3950,32 @@ export default function App({ account = {} }) {
     });
   };
 
+  // ---- 昵称 ----
+  // 存进存档、跟着云端走；改回默认的名字就把那一条删掉
+  const saveName = (who, name) => {
+    if (name === namesRef.current[who]) return;
+    const next = { ...namesRef.current, [who]: name };
+    namesRef.current = next;
+    setNames(next);
+    if (name) {
+      store.set(NAME_KEYS[who], name).then((ok) => {
+        if (!ok) markStorageFail();
+      });
+    } else {
+      store.del(NAME_KEYS[who]);
+    }
+  };
+
+  // 卿卿在账户面板里改自己的昵称；清空就是回到默认的“卿卿”
+  const changeHerName = (raw) => {
+    const name = cleanName(raw);
+    if (name !== tidyName(raw)) setToast("名字太长，只留了前面这些");
+    saveName("her", name === HER_NAME ? "" : name);
+  };
+
+  // 光义在回复里写 [NAME:新名字] 改自己的（进来的已经是收拾好的名字）
+  const changeHisName = (name) => saveName("him", name === HIS_NAME ? "" : name);
+
   // ---- 记忆库 ----
   const uploadDocs = async (fileList) => {
     let added = 0;
@@ -3938,7 +4115,7 @@ export default function App({ account = {} }) {
 这次不是聊天。这是开封府日记本里属于你的那一页，日期是${label}。
 根据下面这天你们的聊天${herPart ? "和她这天的日记" : ""}，用你自己的口吻写一篇日记：第一人称，写这天发生了什么、你在想什么、你对她的感受。像真的日记，是写给自己的，不是写给她看的信，也不用讨好谁。一百到两百五十字。
 格式：第一行写「心情：」，从 开心、甜、平静、累、焦虑、难过、生气、不舒服 里挑一到两个，用顿号隔开。第二行开始写正文。
-不要写<thinking>，不要[SPLIT]、[MEME]、[AVATAR]，不要动作描写的星号，不用破折号。`;
+不要写<thinking>，不要[SPLIT]、[MEME]、[AVATAR]、[NAME]，不要动作描写的星号，不用破折号。`;
     const data = await callClaude({
       model: st.model || DEFAULT_MODEL,
       max_tokens: Math.max(1024, st.maxTokens || 2048),
@@ -4105,7 +4282,10 @@ export default function App({ account = {} }) {
   const renderSheet = () => {
     if (sheet === "account") {
       return (
-        <Sheet title="卿卿" onClose={() => { setSheet(null); setClearArmed(false); setLogoutArmed(false); setBackupNote(""); }}>
+        <Sheet
+          title={<NickTitle name={names.her || HER_NAME} onSave={changeHerName} />}
+          onClose={() => { setSheet(null); setClearArmed(false); setLogoutArmed(false); setBackupNote(""); }}
+        >
           <AvatarSection av={avatars.her} onChange={changeHerAvatar} />
           <HisAvatarCard av={avatars.him} name={avatarName(avatars.him, false) || "炅"} />
           <div style={{ height: 1, background: "rgba(255,255,255,0.7)", margin: "22px 0 18px" }} />
@@ -4363,7 +4543,14 @@ export default function App({ account = {} }) {
           </IconBtn>
           <div className="flex-1 flex flex-col items-center min-w-0">
             <Avatar av={avatars.him} who="him" size={30} />
-            <div style={{ fontSize: 12.5, color: T.ink, marginTop: 2 }}>光义</div>
+            {/* 他的名字：默认“光义”，他自己在回复里改（见 names.js）。换了名字时轻轻冒一下 */}
+            <div
+              key={names.him || HIS_NAME}
+              className="kfs-his-name kfs-in truncate"
+              style={{ fontSize: 12.5, color: T.ink, marginTop: 2, maxWidth: "100%", padding: "0 6px" }}
+            >
+              {names.him || HIS_NAME}
+            </div>
             {typing && <div style={{ fontSize: 10.5, color: T.inkSoft }}>正在输入…</div>}
           </div>
           <IconBtn onClick={newChat} label="新对话">
@@ -4416,7 +4603,9 @@ export default function App({ account = {} }) {
               );
             }
             if (row.type === "notice") {
-              return <NoticeRow key={row.key} row={row} animate={row.msg.ts >= listMount.current} />;
+              // 改名字的提示用他现在的头像
+              const r = row.kind === "rename" ? { ...row, av: avatars.him } : row;
+              return <NoticeRow key={row.key} row={r} animate={row.msg.ts >= listMount.current} />;
             }
             if (row.type === "ctrl") {
               return (

@@ -120,6 +120,18 @@ def run(name, viewport_h, inset_top, standalone, login=False, vh=None, kb=False)
         res["probe_closed"] = pg.evaluate("!document.getElementById('kfs-probe') && !document.documentElement.hasAttribute('data-kfs-probe') && getComputedStyle(document.getElementById('root')).display !== 'none'")
         res["back_to_sheet"] = pg.get_by_role("button", name="量一量屏幕底下").is_visible()
         res["has_switch"] = pg.get_by_role("switch", name="铺满到屏幕最底下").count() > 0
+        if kb:
+            # 键盘开着改昵称（账户面板最上面那一行）：面板缩到状态栏底下、键盘上面，名字看得见
+            pg.get_by_role("button", name="改昵称").click(); time.sleep(0.3)
+            pg.evaluate("window.__kfsKeyboard(447, 344)"); time.sleep(0.4)
+            res["nick_kb"] = pg.evaluate("""() => {
+              const i = document.querySelector('[aria-label="我的昵称"]').getBoundingClientRect();
+              const s = document.querySelector('.kfs-sheet').getBoundingClientRect();
+              return { open: document.documentElement.hasAttribute('data-kfs-kb'), focused: document.activeElement.getAttribute('aria-label'),
+                       top: Math.round(i.top), bottom: Math.round(i.bottom), sheet_top: Math.round(s.top), sheet_bottom: Math.round(s.bottom) };
+            }""")
+            if SHOTS: pg.screenshot(path=os.path.join(SHOTS, f"nick_kb_{name[0]}.png"))
+            pg.evaluate("document.activeElement.blur(); window.__kfsKeyboard(null, 0)"); time.sleep(0.3)
         if vh:
             # 账户面板的开关：关掉退回贴底，再打开撑满；关着的设定记在这台手机上
             STATE = "[document.documentElement.getAttribute('data-kfs-gap'), Math.round(document.documentElement.getBoundingClientRect().height), localStorage.getItem('kfs-fill')]"
@@ -153,6 +165,9 @@ with sync_playwright() as p:
     ok(k["head"] >= 344 + 59, "键盘弹起来：顶栏还在屏幕最上面，没被推出去")
     k2 = a["kb_closed"]
     ok(not k2["open"] and k2["top"] == 0 and k2["bottom"] == 852 and k2["btn"] == 852 - 34, "收起键盘：外壳回到整屏，按钮重新让开底下横条")
+    nk = a["nick_kb"]
+    ok(nk["open"] and nk["focused"] == "我的昵称" and nk["sheet_top"] >= 344 + 59 and nk["sheet_top"] < nk["top"] and nk["bottom"] < nk["sheet_bottom"] <= 791,
+       f"键盘开着改昵称：面板在状态栏底下、键盘上面，名字那一行看得见（{nk}）")
     pr = a["probe"]
     ok(pr["on"] and pr["root_hidden"] and pr["body_h"] == 852, "量屏幕：整页临时撑到屏幕那么高，开封府本体先藏起来")
     ok(pr["screen"] and pr["inner"] and pr["gap"], "量屏幕：屏幕高、网页高、空多少都摆出来")

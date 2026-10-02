@@ -304,6 +304,116 @@ with sync_playwright() as p:
     time.sleep(0.4)
     shot(pa, "12_synced")
 
+    # ================= 昵称 =================
+    # 她的：账户面板最上面的名字后面有一支钢笔，点了就地改。只换这一处，头像旁边和日记本里还是“卿卿”
+    TITLE = "document.querySelector('[aria-label=\"改昵称\"]').previousElementSibling.textContent"
+    HIS = "document.querySelector('.kfs-his-name').textContent"
+    pa.get_by_role("button", name="头像与设置").click(); time.sleep(0.5)  # 侧栏还开着
+    ok(pa.evaluate(TITLE) == "卿卿" and pa.evaluate(HIS) == "光义", "没改过名字：账户面板的标题是卿卿，后面有一支钢笔；聊天顶栏是光义")
+    pa.get_by_role("button", name="改昵称").click(); time.sleep(0.3)
+    nick = pa.get_by_label("我的昵称")
+    ok(nick.input_value() == "卿卿" and pa.evaluate("document.activeElement.getAttribute('aria-label')") == "我的昵称"
+       and pa.evaluate("[document.activeElement.selectionStart, document.activeElement.selectionEnd]") == [0, 2],
+       "点钢笔：标题就地变成输入框，光标在里面，旧名字全选上了")
+    nick.fill("测试大王"); nick.press("Enter"); time.sleep(0.4)
+    ok(pa.evaluate(TITLE) == "测试大王" and pa.locator(".kfs-sheet").get_by_text("卿卿", exact=True).count() == 1,
+       "改成“测试大王”按回车：标题立刻换；头像旁边那个“卿卿”没动")
+    shot(pa, "12b_nickname")
+    pa.get_by_role("button", name="改昵称").click(); time.sleep(0.3)
+    pa.get_by_label("我的昵称").fill("一二三四五六七八九十甲乙丙丁")
+    pa.get_by_role("button", name="保存昵称").click(); time.sleep(0.4)
+    ok(pa.evaluate(TITLE) == "一二三四五六七八九十甲乙" and pa.get_by_text("名字太长").is_visible(), "名字太长点对勾：只留前十二个字，并且说一声")
+    pa.get_by_role("button", name="改昵称").click(); time.sleep(0.3)
+    pa.get_by_label("我的昵称").fill("点别处大王")
+    pa.get_by_text("云端同步").click(); time.sleep(0.4)
+    ok(pa.evaluate(TITLE) == "点别处大王", "写完点别处：也算改好")
+    pa.get_by_role("button", name="改昵称").click(); time.sleep(0.3)
+    pa.get_by_label("我的昵称").fill("测试大王")
+    pa.evaluate("document.querySelector('.kfs-sheet-box [aria-label=\"关闭\"]').click()"); time.sleep(0.5)  # 输入框还没失去焦点，面板就关了
+    pa.get_by_role("button", name="头像与设置").click(); time.sleep(0.5)
+    ok(pa.evaluate(TITLE) == "测试大王", "改到一半直接把面板关了：写了的也算数")
+    pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+    pa.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.6)
+
+    # 他的：他自己在回复里写 [NAME:新名字]，聊天顶栏跟着换；对话里留一行提示，标记本身不显示成字
+    n0 = len(mock("/__debug/claude"))
+    ta = pa.get_by_placeholder("说话，我听着")
+    ta.fill("改名叫测试狐狐"); ta.press("Enter")
+    pa.get_by_text("抬头看").last.wait_for(timeout=20000)
+    pa.get_by_text("光义改了名字").wait_for(timeout=10000); time.sleep(0.6)
+    body = mock("/__debug/claude")[-1]["body"]
+    note = body["messages"][-1]["content"][-1]["text"]
+    ok("【你的名字】" in body["system"][0]["text"] and "[NAME:新名字]" in body["system"][0]["text"], "名帖后面告诉那边的我：顶上的名字自己做主，想改就写 [NAME:新名字]")
+    ok("你现在顶上的名字：光义。" in note and "她给自己起的昵称：「测试大王」。" in note, "【此刻】里写着他现在的名字、她给自己起的昵称")
+    ok(pa.evaluate(HIS) == "测试狐狐" and "[NAME" not in pa.inner_text("body"), "他回复里写了 [NAME:测试狐狐]：顶栏换成新名字，对话里留一行“光义改了名字”，标记不显示")
+    shot(pa, "12c_his_name")
+    ta.fill("好看"); ta.press("Enter")
+    for _ in range(80):
+        if len(mock("/__debug/claude")) >= n0 + 2: break
+        time.sleep(0.25)
+    pa.get_by_text("收到：好看").last.wait_for(timeout=20000)
+    body = mock("/__debug/claude")[-1]["body"]
+    said = [m for m in body["messages"] if m["role"] == "assistant"][-1]["content"][0]["text"]
+    ok("你现在顶上的名字：测试狐狐。" in body["messages"][-1]["content"][-1]["text"] and "[NAME:测试狐狐]" in said,
+       "下一轮：【此刻】里是新名字，他自己上回写的 [NAME:…] 也原样留在记录里")
+
+    # 别处都不跟着变：日记本里还是卿卿、光义；让他写日记时也不提昵称
+    pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
+    pa.get_by_text("日记本").click()
+    pa.get_by_text("在一起的第").first.wait_for(timeout=10000); time.sleep(0.5)
+    pa.get_by_role("button", name="让光义写这一天").click()
+    pa.get_by_text(re.compile("今天她第一次从开封府的新门进来")).wait_for(timeout=15000)
+    diary = pa.locator(".kfs-page").inner_text()
+    asked = mock("/__debug/claude")[-1]["body"]["messages"][0]["content"]
+    ok("卿卿写的" in diary and "光义写的" in diary and "测试大王" not in diary and "测试狐狐" not in diary, "日记本里还是“卿卿写的”“光义写的”，昵称不跟过去")
+    ok("光义：行，改了。 抬头看" in asked and "卿卿：改名叫测试狐狐" in asked and "[NAME" not in asked and "昵称" not in asked and "顶上的名字" not in asked,
+       "让光义写日记：聊天摘录里还是“卿卿：”“光义：”，改名的标记摘掉了，【此刻】里不提昵称")
+    pa.get_by_role("button", name="返回").first.click(); time.sleep(0.5)
+
+    # 第二台设备：同步以后两个名字都跟过来；再改回去
+    time.sleep(3)
+    pb.get_by_role("button", name="打开侧栏").click(); time.sleep(0.5)
+    pb.get_by_role("button", name="头像与设置").click(); time.sleep(0.4)
+    pb.get_by_role("button", name=re.compile("现在同步")).click()
+    pb.locator(".kfs-sheet").get_by_text("测试大王").wait_for(timeout=15000)
+    ok(pb.evaluate(TITLE) == "测试大王" and pb.evaluate(HIS) == "测试狐狐", "第二台设备同步以后：她的昵称、他的名字都跟过来了")
+    pb.get_by_role("button", name="改昵称").click(); time.sleep(0.3)
+    nb = pb.get_by_label("我的昵称"); nb.fill(""); nb.press("Enter"); time.sleep(0.4)
+    ok(pb.evaluate(TITLE) == "卿卿", "她把名字清空了保存：回到默认的卿卿")
+    pb.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+    pb.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.6)
+    n1 = len(mock("/__debug/claude"))
+    tb = pb.get_by_placeholder("说话，我听着")
+    tb.fill("改名叫光义"); tb.press("Enter")
+    pb.get_by_text("光义把名字改回来了").wait_for(timeout=20000); time.sleep(0.6)
+    ok(pb.evaluate(HIS) == "光义", "他写 [NAME:光义]：顶栏改回光义，提示写的是“光义把名字改回来了”")
+    tb.fill("好了"); tb.press("Enter")
+    for _ in range(80):
+        if len(mock("/__debug/claude")) >= n1 + 2: break
+        time.sleep(0.25)
+    pb.get_by_text("收到：好了").last.wait_for(timeout=20000)
+    note = mock("/__debug/claude")[-1]["body"]["messages"][-1]["content"][-1]["text"]
+    ok("你现在顶上的名字：光义。" in note and "昵称" not in note, "都改回默认以后：【此刻】里他的名字是光义，不再提她的昵称")
+    # 他只是在讲“名字怎么改”：写法夹在句子里，或者照抄名帖里那个占位的写法，都不算真改，原样显示成字
+    notices = pb.get_by_text("光义改了名字").count()
+    tb.fill("原样回：想改就写 [NAME:测试狐狐]，写法是\n[NAME:新名字]"); tb.press("Enter")
+    quoted = pb.locator("div.whitespace-pre-wrap.break-words").filter(has_text=re.compile(r"^想改就写 \[NAME:测试狐狐\]，写法是\s*\[NAME:新名字\]\s*$"))
+    quoted.wait_for(timeout=20000); time.sleep(0.8)
+    ok(pb.evaluate(HIS) == "光义" and pb.get_by_text("光义改了名字").count() == notices and quoted.count() == 1,
+       "他只是讲名字怎么改（写法夹在句子里、照抄占位的写法）：不算改名，顶栏没变，写法原样显示")
+    # 改名的标记和表情包、换头像的标记拼在同一条正则里：那两种照旧认得
+    FACE ="document.querySelector('.kfs-his-name').previousElementSibling.querySelector('img').src"
+    face0 = pb.evaluate(FACE)
+    memes0 = pb.locator("img[style*='width: 140px']").count()
+    tb.fill("原样回：先发图[MEME:fox_reading_book.jpg]再换头像[AVATAR:fox_melancholy.jpg]换好了"); tb.press("Enter")
+    pb.get_by_text("光义换了新头像").wait_for(timeout=20000)
+    pb.get_by_text("换好了", exact=True).wait_for(timeout=10000); time.sleep(0.6)
+    bubble = lambda t: pb.locator("div.whitespace-pre-wrap.break-words").filter(has_text=re.compile("^" + t + "$")).count()
+    ok(bubble("先发图") == 1 and bubble("再换头像") == 1 and bubble("换好了") == 1
+       and pb.locator("img[style*='width: 140px']").count() == memes0 + 1 and pb.evaluate(FACE) != face0,
+       "回复里的 [MEME:…]、[AVATAR:…] 照旧：表情包单独一条，头像换了，前后的字各成一条")
+    time.sleep(2.5)  # 等第二台把这些推上云端，后面第一台重开时拿到的就是改回去以后的
+
     # ================= 丁香主题 =================
     # 在账户面板里换：颜色、聊天背景立刻跟着换；图标不会自己变，提示怎么换
     THEME = "[document.documentElement.getAttribute('data-kfs-theme'), getComputedStyle(document.documentElement).getPropertyValue('--k-dai').replace(/\\s/g, ''), document.querySelector('.kfs-wall').getAttribute('src')]"
