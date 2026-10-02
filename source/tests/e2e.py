@@ -15,6 +15,9 @@ CHROME = os.environ.get("CHROME_PATH", "/opt/google/chrome/chrome" if os.path.ex
 PASS = "test-passphrase-123"
 os.makedirs(SHOTS, exist_ok=True)
 urllib.request.urlopen(MOCK + "/__debug/reset").read()
+# KFS_OLD_PATH=1：装作信箱那张表还没建，整套都走老路（claude 函数）。两条路都得过
+if os.environ.get("KFS_OLD_PATH"):
+    urllib.request.urlopen(MOCK + "/__debug/mail-setup?table=missing").read()
 
 passed, failed = 0, 0
 def ok(cond, msg):

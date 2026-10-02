@@ -132,3 +132,83 @@ export const pushLedger = {
     if (error) throw ledgerError(error);
   },
 };
+
+// ---------- 信箱：替她等回话的那条路（见 mail.js） ----------
+
+// 登录凭证至少还得能用这么多秒：小后端要拿着它等上两分多钟，等完还要往信箱里放东西。快到期了就先换一张新的
+export async function freshToken(seconds) {
+  const { data } = await supabase.auth.getSession();
+  const s = data && data.session;
+  if (s && s.expires_at && s.expires_at - Date.now() / 1000 < seconds) await supabase.auth.refreshSession();
+}
+
+// 把一回传话交给 push 函数去等。成了回 { type: "reply", job, result }。出了岔子抛带 code 的错：
+//   auth         没登录、登录过期
+//   refused      小后端没接（message 是它的原话，reason 是它给的缘故）：这一回根本没开始办
+//   unreachable  没连上，或者连到一半断了：办没办不知道，得去信箱里看
+//   gateway      回来的东西读不懂（函数那头崩了、超时了）：办没办也不知道
+export async function callReply(payload, { signal } = {}) {
+  const { data } = await supabase.auth.getSession();
+  const token = data && data.session && data.session.access_token;
+  if (!token) throw coded("auth", "登录过期了，重新登录一下");
+  let res;
+  try {
+    res = await fetch(PUSH_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, apikey: SUPABASE_KEY },
+      body: JSON.stringify(payload),
+      signal,
+    });
+  } catch (e) {
+    throw coded("unreachable", "连不上开封府的后端，看看网络");
+  }
+  let d = null;
+  let read = true;
+  try {
+    d = await res.json();
+  } catch (e) {
+    read = false; // 回话读到一半断了，或者回来的不是 JSON
+  }
+  if (res.ok && d && d.type === "reply" && d.result && typeof d.result === "object") return d;
+  if (d && d.type === "error" && d.error && d.error.type === "kaifengfu") {
+    if (res.status === 401 || res.status === 403) throw coded("auth", d.error.message || "请先登录开封府");
+    // 旧的那份代码不肯接的时候不带 code（它不认识这个动作，或者嫌寄来的东西太长）
+    throw Object.assign(coded("refused", d.error.message || `小后端说不行（${res.status}）`), { reason: d.error.code || "old" });
+  }
+  if (res.status === 401) throw coded("auth", "登录过期了，重新登录一下");
+  // 没有 push 这个函数；或者有，里面却不是开封府的那份代码（答了一句别的）
+  if (res.status === 404 || (res.ok && read)) throw Object.assign(coded("refused", "push 函数还接不了回话"), { reason: "nofn" });
+  if (res.ok) throw coded("unreachable", "回话读到一半断了");
+  throw coded("gateway", `小后端出错了（${res.status}）`);
+}
+
+// 信箱（mailbox 表）：小后端把封好的回话放在这儿，手机来取，取走就删。只读写得到自己的行
+const boxError = (error) => {
+  const text = String((error && error.message) || "");
+  const missing = error && (error.code === "PGRST205" || error.code === "42P01" || (/mailbox/.test(text) && /not find|does not exist/i.test(text)));
+  return missing ? coded("notable", "库房里还没有信箱") : coded("refused", text || "信箱出错了");
+};
+const BOX_COLS = "job,state,note,sealed,created_at,beat_at,done_at";
+export const mailbox = {
+  // 信箱里现在有的（放得早的排前面）
+  async list() {
+    const { data, error } = await supabase.from("mailbox").select(BOX_COLS).order("created_at", { ascending: true });
+    if (error) throw boxError(error);
+    return data || [];
+  },
+  // 某一回的那一格；没有就回 null
+  async get(job) {
+    const { data, error } = await supabase.from("mailbox").select(BOX_COLS).eq("job", job);
+    if (error) throw boxError(error);
+    return (data && data[0]) || null;
+  },
+  async remove(job) {
+    const { error } = await supabase.from("mailbox").delete().eq("job", job);
+    if (error) throw boxError(error);
+  },
+  // 只看这张表在不在（通知面板用）
+  async probe() {
+    const { error } = await supabase.from("mailbox").select("job").limit(1);
+    if (error) throw boxError(error);
+  },
+};

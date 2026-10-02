@@ -168,14 +168,26 @@ export function describePush(state) {
   const setup = state.setup;
   lines.push(`系统的许可：${{ granted: "允许了", denied: "拒绝了", default: "还没问过" }[state.permission] || state.permission}`);
   lines.push(`登记簿：${{ ok: "有", missing: "还没建", error: "读不到" }[setup.table] || "没查"}`);
-  lines.push(`小后端：${{ ok: "接上了", unreachable: "连不上", auth: "没登录", refused: "不肯答" }[setup.fn] || "没查"}`);
+  lines.push(`小后端：${{ ok: "接上了", unreachable: "连不上", auth: "没登录", refused: "不肯答", wrong: "里面不是开封府的那份代码" }[setup.fn] || "没查"}`);
   lines.push(`钥匙：${{ ok: "放好了", missing: "还没放", bad: "不对" }[setup.keys] || "还看不到"}`);
   if (setup.say) lines.push(`它说：${setup.say}`);
+  lines.push(`替你等回话：${{ ok: "会", old: "这份代码还不会" }[setup.relay] || "还看不到"}；信箱：${{ ok: "有", missing: "还没建", error: "读不到" }[setup.mail] || "没查"}`);
   lines.push(`服务线程：${state.worker === "ok" ? "在" : state.worker || "还没起"}`);
   lines.push(`这台设备的门牌号：${state.host ? serviceName(state.host) + "给的（" + state.host + "）" : "还没有"}`);
   lines.push(`这台设备开过通知：${yes(state.flag)}；登记簿里一共 ${state.devices} 台`);
   if (state.last) lines.push(`上一回发：${new Date(state.last.at).toLocaleString("zh-CN", { hour12: false })}，状态 ${state.last.status}${state.last.note ? "，" + state.last.note : ""}`);
   return lines;
+}
+
+// 上一回回话是怎么到的（mail.js 的 status），说成一行；还没回过话就回空
+export function describeMail(status) {
+  if (!status) return "";
+  const parts = [];
+  const last = status.last;
+  if (last && last.path === "new") parts.push(`上一回回话：小后端等的，${last.via === "mailbox" ? "从信箱里取的" : "当面交到的"}`);
+  if (last && last.path === "old") parts.push(`上一回回话：网页自己等的${last.why ? "（" + last.why + "）" : ""}`);
+  if (status.off) parts.push(`小后端这会儿没接回话${status.why ? "（" + status.why + "）" : ""}，过几分钟再试它`);
+  return parts.join("；");
 }
 
 // ---------- 从通知回来 ----------

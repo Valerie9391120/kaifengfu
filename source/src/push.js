@@ -5,7 +5,7 @@
 // 这里管的是这台设备这一头：注册服务工作线程（sw.js）、问她要通知的许可、向推送服务订一个“门牌号”、
 // 把门牌号记进登记簿（push_subs 表），小后端照着登记簿发。
 // =====================================================
-import { callPush, pushLedger } from "./cloud.js";
+import { callPush, pushLedger, mailbox } from "./cloud.js";
 import { PUSH_FLAG, PUSH_KEY, b64uToBytes, sameKey, pushSupport, isStandalone, subscriptionKey, subscriptionRow, entrancePage, pushHostOf, readNoticeMark, noticeMarkOfUrl } from "./notify.js";
 
 const local = {
@@ -160,9 +160,11 @@ export async function checkPush() {
     support,
     standalone: isStandalone(window),
     permission: support.ok ? Notification.permission : "",
-    // 她在 Supabase 要做的三样，各自好了没有：ok 好了；别的是没好的缘故
-    setup: { table: "", fn: "", keys: "", say: "" },
+    // 她在 Supabase 要做的三样，各自好了没有：ok 好了；别的是没好的缘故。
+    // 后两样是“他的回话也敲她”要的：relay 是 push 函数会不会替她等回话（ok 会；old 还是旧的那份代码），mail 是信箱那张表
+    setup: { table: "", fn: "", keys: "", say: "", relay: "", mail: "" },
     ready: false, // 三样都好了
+    replyReady: false, // 他的回话也能敲她了（push 函数是新的、信箱建好了）
     away: false, // 开过通知的设备，这会儿连不上后端
     serverKey: "",
     on: false,
@@ -185,13 +187,20 @@ export async function checkPush() {
       await new Promise((done) => setTimeout(done, 900));
       k = await callPush({ op: "key" });
     }
-    state.setup.fn = "ok";
-    if (k.configured) {
-      state.setup.keys = "ok";
-      state.serverKey = k.publicKey;
+    if (!k || typeof k.configured !== "boolean") {
+      // 有 push 这个函数，答的却不是开封府那份代码该答的话（多半是建函数的时候里面还是 Supabase 给的样板）
+      state.setup.fn = "wrong";
+      state.setup.say = String((k && (k.message || k.msg)) || "").slice(0, 120);
     } else {
-      state.setup.keys = (k.missing || []).length >= 3 ? "missing" : "bad";
-      state.setup.say = k.message || "";
+      state.setup.fn = "ok";
+      state.setup.relay = Array.isArray(k.can) && k.can.includes("reply") ? "ok" : "old";
+      if (k.configured) {
+        state.setup.keys = "ok";
+        state.serverKey = k.publicKey;
+      } else {
+        state.setup.keys = (k.missing || []).length >= 3 ? "missing" : "bad";
+        state.setup.say = k.message || "";
+      }
     }
   } catch (e) {
     state.setup.fn = e.code === "auth" ? "auth" : e.code === "refused" ? "refused" : "unreachable";
@@ -212,6 +221,13 @@ export async function checkPush() {
   };
   let rows = await readLedger();
   state.ready = state.setup.fn === "ok" && state.setup.keys === "ok" && state.setup.table === "ok";
+  try {
+    await mailbox.probe();
+    state.setup.mail = "ok";
+  } catch (e) {
+    state.setup.mail = e.code === "notable" ? "missing" : "error";
+  }
+  state.replyReady = state.ready && state.setup.relay === "ok" && state.setup.mail === "ok";
   // 这台设备开过通知（那时候三样都是好的），现在却连不上：是这会儿的网络，不是她在 Supabase 少做了什么
   state.away = state.flag && (state.setup.fn === "unreachable" || state.setup.table === "error");
   if (!state.ready) return state;

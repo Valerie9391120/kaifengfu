@@ -1,16 +1,17 @@
 // 测试用：在 Node 里跑真的 push 函数（supabase/push_function.ts，一个字不改），再配一个假的推送服务。
 // 假推送服务照苹果文档里写的规矩验每一次请求，同时扮演那台设备：拿设备的私钥把通知解开。
 // 解密这一头是照 RFC 8291 的步骤用 node:crypto 一步一步另写的，和函数里用 WebCrypto 写的加密不是同一段代码。
+// 替她等回话那一半还要两样：假的信箱（mailbox 表）、假的 Anthropic。
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { transformSync } from "esbuild";
+import { transformSync, buildSync } from "esbuild";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = path.join(HERE, "..", "supabase", "push_function.ts");
 // 函数文件本身不往外交东西；测试要摸里面的零件，就在转出来的那份末尾补一行 export
-const INTERNALS = ["b64uEncode", "b64uDecode", "checkVapid", "vapidToken", "encryptPayload", "pushHost", "safePage", "tidy"];
+const INTERNALS = ["b64uEncode", "b64uDecode", "checkVapid", "vapidToken", "encryptPayload", "pushHost", "safePage", "tidy", "previewOf", "clip", "bannerOf", "hasCache", "withoutCache", "hasMcp", "withoutMcp", "askUpstream", "sealWith", "fine"];
 
 export const b64u = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 export const unb64u = (s) => Buffer.from(String(s).replace(/-/g, "+").replace(/_/g, "/"), "base64");
@@ -48,6 +49,17 @@ export async function loadSource(relative) {
   fs.mkdirSync(dir, { recursive: true });
   const out = path.join(dir, `${path.basename(relative, ".js")}.${process.pid}.${++seq}.mjs`);
   fs.writeFileSync(out, js);
+  const mod = await import(pathToFileURL(out).href);
+  fs.rmSync(out, { force: true });
+  return mod;
+}
+
+// src/ 里引着别的文件的（mail.js、reply.js 这些）：连它引的一起打成一个文件再引进来
+export async function loadBundle(relative) {
+  const dir = path.join(HERE, "..", ".cache");
+  fs.mkdirSync(dir, { recursive: true });
+  const out = path.join(dir, `${path.basename(relative).replace(/\W+/g, "_")}.${process.pid}.${++seq}.mjs`);
+  buildSync({ entryPoints: [path.join(HERE, "..", relative)], bundle: true, format: "esm", platform: "node", target: "es2022", outfile: out, logLevel: "silent" });
   const mod = await import(pathToFileURL(out).href);
   fs.rmSync(out, { force: true });
   return mod;
@@ -135,7 +147,15 @@ export function createLedgerTable() {
     if (method === "GET") {
       const sel = (params.get("select") || "*") === "*" ? SUB_COLS : params.get("select").split(",");
       for (const c of sel) if (!SUB_COLS.includes(c)) return { status: 400, body: { code: "42703", message: `column push_subs.${c} does not exist` } };
-      return { status: 200, body: mine.map((r) => Object.fromEntries(sel.map((c) => [c, r[c] === undefined ? null : r[c]]))) };
+      const order = params.get("order");
+      if (order && order !== "updated_at.desc") return { status: 400, body: { message: "bad order: " + order } };
+      let list = order ? mine.slice().sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0)) : mine;
+      const limit = params.get("limit");
+      if (limit !== null) {
+        if (!/^[1-9]\d*$/.test(limit)) return { status: 400, body: { message: "bad limit: " + limit } };
+        list = list.slice(0, Number(limit));
+      }
+      return { status: 200, body: list.map((r) => Object.fromEntries(sel.map((c) => [c, r[c] === undefined ? null : r[c]]))) };
     }
     if (method === "POST") {
       const list = [].concat(JSON.parse(bodyText || "[]"));
@@ -166,12 +186,121 @@ export function createLedgerTable() {
   return { rows, state, handle, all: () => [...rows.values()] };
 }
 
-// ---------- 假的 Supabase（只有函数用得着的两样：问“这是谁”、登记簿），单元测试里用 ----------
+// ---------- 假的信箱（mailbox 表，照 PostgREST 的规矩） ----------
+// 和登记簿一样，每一行只认它的主人。建表那段 SQL（supabase/mailbox.sql）里写的几条约束这里照着拦
+const MAIL_COLS = ["user_id", "job", "state", "note", "sealed", "created_at", "beat_at", "done_at"];
+
+export function createMailTable() {
+  const rows = new Map(); // user_id|job → 行
+  // missing：还没建表；down：库房这会儿出岔子（一律 503）；failPatch：往后这么多回“改”不成（503）
+  const state = { missing: false, down: false, failPatch: 0 };
+  const log = []; // 每一回读写：{ method, query, user }
+  function handle(method, params, userId, bodyText) {
+    log.push({ method, query: params.toString(), user: userId || "" });
+    if (state.missing) return { status: 404, body: { code: "PGRST205", details: null, hint: null, message: "Could not find the table 'public.mailbox' in the schema cache" } };
+    if (state.down) return { status: 503, body: { message: "upstream connect error" } };
+    if (!userId) return { status: 401, body: { code: "42501", message: "permission denied for table mailbox" } };
+    const filters = {};
+    for (const col of ["job", "state"]) {
+      const v = params.get(col);
+      if (v === null) continue;
+      if (!v.startsWith("eq.")) return { status: 400, body: { message: "bad filter: " + v } };
+      filters[col] = v.slice(3);
+    }
+    const mine = [...rows.values()].filter((r) => r.user_id === userId && Object.entries(filters).every(([c, v]) => r[c] === v));
+    if (method === "GET") {
+      const sel = (params.get("select") || "*") === "*" ? MAIL_COLS : params.get("select").split(",");
+      for (const c of sel) if (!MAIL_COLS.includes(c)) return { status: 400, body: { code: "42703", message: `column mailbox.${c} does not exist` } };
+      const order = params.get("order");
+      if (order && order !== "created_at.asc") return { status: 400, body: { message: "bad order: " + order } };
+      let list = order ? mine.slice().sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0)) : mine;
+      const limit = params.get("limit");
+      if (limit !== null) {
+        if (!/^[1-9]\d*$/.test(limit)) return { status: 400, body: { message: "bad limit: " + limit } };
+        list = list.slice(0, Number(limit));
+      }
+      return { status: 200, body: list.map((r) => Object.fromEntries(sel.map((c) => [c, r[c] === undefined ? null : r[c]]))) };
+    }
+    const bad = (r) =>
+      !/^[A-Za-z0-9_-]{8,64}$/.test(r.job || "") || !["working", "done"].includes(r.state) || typeof r.note !== "string" || r.note.length < 1 || r.note.length > 4000 || (r.sealed != null && (typeof r.sealed !== "string" || r.sealed.length > 4000000));
+    if (method === "POST") {
+      const list = [].concat(JSON.parse(bodyText || "[]"));
+      for (const r of list) {
+        if (r.user_id && r.user_id !== userId) return { status: 403, body: { code: "42501", message: 'new row violates row-level security policy for table "mailbox"' } };
+        for (const c of Object.keys(r)) if (!MAIL_COLS.includes(c)) return { status: 400, body: { code: "PGRST204", message: `Could not find the '${c}' column of 'mailbox' in the schema cache` } };
+        const now = new Date().toISOString();
+        const row = { state: "working", sealed: null, created_at: now, beat_at: now, done_at: null, ...r, user_id: userId };
+        if (bad(row)) return { status: 400, body: { code: "23514", message: 'new row for relation "mailbox" violates check constraint' } };
+        const key = userId + "|" + row.job;
+        if (rows.has(key)) return { status: 409, body: { code: "23505", message: 'duplicate key value violates unique constraint "mailbox_pkey"' } };
+        rows.set(key, row);
+      }
+      return { status: 201 };
+    }
+    if (method === "PATCH") {
+      if (state.failPatch > 0) {
+        state.failPatch--;
+        return { status: 503, body: { message: "upstream connect error" } };
+      }
+      const patch = JSON.parse(bodyText || "{}");
+      for (const c of Object.keys(patch)) if (!MAIL_COLS.includes(c)) return { status: 400, body: { code: "PGRST204", message: `Could not find the '${c}' column of 'mailbox' in the schema cache` } };
+      for (const r of mine) if (bad({ ...r, ...patch })) return { status: 400, body: { code: "23514", message: 'new row for relation "mailbox" violates check constraint' } };
+      for (const r of mine) Object.assign(r, patch, { user_id: userId });
+      return { status: 204 };
+    }
+    if (method === "DELETE") {
+      for (const r of mine) rows.delete(r.user_id + "|" + r.job);
+      return { status: 204 };
+    }
+    return { status: 405, body: { message: "method not allowed" } };
+  }
+  return { rows, state, log, handle, all: () => [...rows.values()] };
+}
+
+// ---------- 假的 Anthropic ----------
+// 函数去敲 https://api.anthropic.com/v1/messages 的时候由它来答。
+// script 里排着接下来几回怎么答（一回用掉一个），排完了就照 answer 答。一回的写法：
+//   { status, json } 照这个答；{ status, text } 答一段不是 JSON 的东西；{ fail: "…" } 根本连不上；
+//   { hang: true } 一直不答，等到函数那头等不下去（它带着限时的信号来）；{ wait: 一个 Promise } 等它好了再答（后面跟上面任意一种）
+// 也可以放一个函数 (body, call) => 上面这种写法
+export function createFakeAnthropic() {
+  const calls = []; // 每一回：{ body, beta, key, version }
+  const script = [];
+  const hello = (body) => ({ status: 200, json: { id: "msg_test", type: "message", role: "assistant", model: body.model, content: [{ type: "text", text: "<thinking>（测试心声）</thinking>\n收到" }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 } } });
+  const self = { calls, script, answer: hello, receive, reset };
+  async function receive(url, init = {}) {
+    const headers = Object.fromEntries(Object.entries(init.headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
+    const body = JSON.parse(init.body);
+    const call = { body, beta: headers["anthropic-beta"] || "", key: headers["x-api-key"] || "", version: headers["anthropic-version"] || "" };
+    calls.push(call);
+    let plan = script.length ? script.shift() : self.answer;
+    if (typeof plan === "function") plan = await plan(body, call);
+    const gaveUp = () =>
+      new Promise((_, reject) => {
+        const stop = () => reject(new DOMException("The operation timed out.", "TimeoutError"));
+        if (init.signal && init.signal.aborted) stop();
+        else if (init.signal) init.signal.addEventListener("abort", stop);
+      });
+    if (plan.wait) await Promise.race([plan.wait, gaveUp()]);
+    if (plan.hang) return gaveUp();
+    if (plan.fail) throw new TypeError(plan.fail);
+    return new Response(plan.text !== undefined ? plan.text : JSON.stringify(plan.json), { status: plan.status, headers: { "content-type": "application/json" } });
+  }
+  function reset() {
+    calls.length = 0;
+    script.length = 0;
+    self.answer = hello;
+  }
+  return self;
+}
+
+// ---------- 假的 Supabase（只有函数用得着的三样：问“这是谁”、登记簿、信箱），单元测试里用 ----------
 export const FAKE_SUPABASE = "http://supabase.test";
 
 export function createFakeSupabase() {
   const tokens = new Map(); // 登录凭证 → 人
   const table = createLedgerTable();
+  const mail = createMailTable();
   const seen = []; // 函数来问过什么
   async function receive(url, init = {}) {
     const u = new URL(url);
@@ -184,9 +313,13 @@ export function createFakeSupabase() {
       const r = table.handle(init.method || "GET", u.searchParams, user && user.id, init.body);
       return reply(r.status, r.body);
     }
+    if (u.pathname === "/rest/v1/mailbox") {
+      const r = mail.handle(init.method || "GET", u.searchParams, user && user.id, init.body);
+      return reply(r.status, r.body);
+    }
     return reply(404, { message: "not found" });
   }
-  return { tokens, table, seen, receive };
+  return { tokens, table, mail, seen, receive };
 }
 
 // ---------- 假的推送服务 ----------
@@ -250,9 +383,9 @@ export function createFakePush() {
     return done(201);
   }
 
-  // 接管 fetch：去推送服务的拦下来自己答；给了假的 Supabase 就把去它那儿的也接上；别的照常放行
+  // 接管 fetch：去推送服务的拦下来自己答；给了假的 Supabase、假的 Anthropic 就把去它们那儿的也接上；别的照常放行
   const real = globalThis.fetch;
-  function install(supabase) {
+  function install(supabase, anthropic) {
     globalThis.fetch = (input, init) => {
       const url = typeof input === "string" ? input : input.url;
       let host = "";
@@ -261,6 +394,7 @@ export function createFakePush() {
       } catch (e) {}
       if (PUSH_HOST.test(host)) return receive(url, init);
       if (supabase && url.startsWith(FAKE_SUPABASE + "/")) return supabase.receive(url, init);
+      if (anthropic && host === "api.anthropic.com") return anthropic.receive(url, init);
       return real(input, init);
     };
   }
