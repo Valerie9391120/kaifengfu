@@ -128,6 +128,10 @@ ${e.dir ? '<base href="../">\n' : ""}<meta name="viewport" content="width=device
 `
   );
 }
+// 通知用的服务工作线程：原样放到根上，名字不带指纹（浏览器按这个固定的网址找它、查它更新没有）。
+// 它管得着的范围是它所在的目录，放在根上两个入口才都在里面
+fs.copyFileSync("src/sw.js", `${OUT}/sw.js`);
+
 fs.writeFileSync(`${OUT}/.nojekyll`, "");
 fs.writeFileSync(`${OUT}/robots.txt`, "User-agent: *\nDisallow: /\n");
 
@@ -135,4 +139,5 @@ const size = (p) => (fs.statSync(p).size / 1024).toFixed(0) + " KB";
 console.log(`打包完成 → ${OUT}/`);
 console.log(`  ${jsName}  ${size(`${OUT}/assets/${jsName}`)}`);
 console.log(`  ${cssName}  ${size(`${OUT}/assets/${cssName}`)}`);
+console.log(`  sw.js  ${size(`${OUT}/sw.js`)}`);
 console.log(`  连接：${SUPABASE_URL}`);

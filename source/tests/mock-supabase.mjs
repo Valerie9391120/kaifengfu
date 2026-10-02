@@ -1,6 +1,8 @@
-// 假的 Supabase：登录、库房（kv 表，照 PostgREST 的规矩）、claude 函数
+// 假的 Supabase：登录、库房（kv 表，照 PostgREST 的规矩）、claude 函数、通知（登记簿 push_subs 表、push 函数）
 // node tests/mock-supabase.mjs  （端口 8787）
+// push 函数跑的是真的那一份（supabase/push_function.ts，一个字不改）；它要去敲的推送服务是假的，见 push-harness.mjs
 import http from "node:http";
+import { loadPushFunction, pushEnv, createFakePush, createLedgerTable, makeVapidKeys } from "./push-harness.mjs";
 
 const PORT = Number(process.env.MOCK_PORT || 8787);
 const USERS = { "qing@example.com": { id: "11111111-1111-1111-1111-111111111111", password: "correct-horse" } };
@@ -8,6 +10,30 @@ const rows = new Map(); // user_id|key → row
 const claudeLog = [];
 let claudeFail = null; // 测试用：下一次 claude 调用照 Anthropic 的样子报错
 let clock = Date.UTC(2026, 9, 1, 14, 0, 0) * 1000;
+
+// ---- 通知 ----
+const ledger = createLedgerTable();
+const fakePush = createFakePush();
+fakePush.install();
+const pushFn = await loadPushFunction();
+let pushFnState = "ok"; // ok 部署了；missing 还没建这个函数（照 Supabase 网关那样回 404，不带跨域的头）；missing-cors 同上但带着头
+function pushSecrets(text) {
+  // 她在 Supabase 的 Secrets 里一次贴好几行“名字=值”，这里照着收
+  for (const k of ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"]) delete pushEnv[k];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const m = /^\s*([A-Z_][A-Z0-9_]*)\s*=(.*)$/.exec(line);
+    if (m) pushEnv[m[1]] = m[2];
+  }
+}
+function pushReset() {
+  ledger.rows.clear();
+  ledger.state.missing = false;
+  fakePush.reset();
+  pushFnState = "ok";
+  for (const k of Object.keys(pushEnv)) delete pushEnv[k];
+  Object.assign(pushEnv, { SUPABASE_URL: `http://127.0.0.1:${PORT}`, SUPABASE_ANON_KEY: "sb_publishable_test", ALLOWED_EMAIL: "qing@example.com" });
+}
+pushReset();
 
 const b64url = (s) => Buffer.from(s).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 function jwt(user) {
@@ -72,6 +98,11 @@ const readBody = (req) =>
 http
   .createServer(async (req, res) => {
     const url = new URL(req.url, "http://x");
+    // push 函数还没建：网关回 404，浏览器先来打招呼的那一下就过不去
+    if (url.pathname === "/functions/v1/push" && pushFnState !== "ok") {
+      res.writeHead(404, { ...(pushFnState === "missing-cors" ? cors : {}), "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ code: "NOT_FOUND", message: "Requested function was not found" }));
+    }
     if (req.method === "OPTIONS") return send(res, 204);
 
     // ---- 调试用 ----
@@ -85,7 +116,45 @@ http
       rows.clear();
       claudeLog.length = 0;
       claudeFail = null;
+      pushReset();
       return send(res, 200, { ok: true });
+    }
+    // ---- 通知的调试口 ----
+    // 看：登记簿、送到设备上的通知（已经解开）、每一次敲推送服务的门
+    if (url.pathname === "/__debug/push") {
+      return send(res, 200, {
+        rows: ledger.all(),
+        delivered: fakePush.delivered.map((d) => ({ endpoint: d.endpoint, json: d.json, text: d.text, claims: d.claims, ttl: d.ttl, urgency: d.urgency })),
+        log: fakePush.log.map((x) => ({ endpoint: x.endpoint, status: x.status, reason: x.reason, size: x.size })),
+        secrets: ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"].filter((k) => pushEnv[k]),
+        publicKey: pushEnv.VAPID_PUBLIC_KEY || "",
+      });
+    }
+    // 领一台假设备（一个门牌号加两把公开钥匙）。key 是订阅时用的服务器公钥：真的推送服务会记着，换了钥匙就不收
+    if (url.pathname === "/__debug/push-device") {
+      const dev = fakePush.addDevice(url.searchParams.get("mode") || "ok");
+      dev.serverKey = url.searchParams.get("key") || null;
+      return send(res, 200, { endpoint: dev.endpoint, p256dh: dev.p256dh, auth: dev.auth });
+    }
+    // 改一台假设备的脾气：gone 是门牌号作废
+    if (url.pathname === "/__debug/push-mode") {
+      const dev = fakePush.devices.get(url.searchParams.get("endpoint"));
+      if (dev) dev.mode = url.searchParams.get("mode") || "ok";
+      return send(res, 200, { ok: !!dev });
+    }
+    // 她在 Supabase 做到哪一步了：table=missing 还没建表；fn=missing 还没建函数；都不写就是恢复
+    if (url.pathname === "/__debug/push-setup") {
+      ledger.state.missing = url.searchParams.get("table") === "missing";
+      pushFnState = url.searchParams.get("fn") || "ok";
+      return send(res, 200, { ok: true });
+    }
+    // 往密钥柜里贴（正文是那几行“名字=值”）；make=1 是现生成一对贴进去
+    if (url.pathname === "/__debug/push-secrets") {
+      if (url.searchParams.get("make")) {
+        const k = makeVapidKeys();
+        pushSecrets(`VAPID_PUBLIC_KEY=${k.publicKey}\nVAPID_PRIVATE_KEY=${k.privateKey}\nVAPID_SUBJECT=mailto:qing@example.com`);
+      } else pushSecrets(await readBody(req));
+      return send(res, 200, { ok: true, publicKey: pushEnv.VAPID_PUBLIC_KEY || "" });
     }
 
     // ---- 登录 ----
@@ -148,6 +217,23 @@ http
         }
         return send(res, 201);
       }
+    }
+
+    // ---- 通知的登记簿 ----
+    if (url.pathname === "/rest/v1/push_subs") {
+      const u = userFromAuth(req);
+      const r = ledger.handle(req.method, url.searchParams, u && u.id, await readBody(req));
+      return send(res, r.status, r.status === 204 ? undefined : r.body);
+    }
+
+    // ---- push 函数：把这次敲门原样交给真的那份代码 ----
+    if (url.pathname === "/functions/v1/push") {
+      const headers = {};
+      for (const k of ["authorization", "apikey", "content-type", "origin"]) if (req.headers[k]) headers[k] = req.headers[k];
+      const body = req.method === "POST" ? await readBody(req) : undefined;
+      const out = await pushFn.handler(new Request(`http://127.0.0.1:${PORT}${req.url}`, { method: req.method, headers, body }));
+      res.writeHead(out.status, Object.fromEntries(out.headers));
+      return res.end(await out.text());
     }
 
     // ---- claude 函数 ----
