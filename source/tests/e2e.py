@@ -545,6 +545,128 @@ with sync_playwright() as p:
     pa.evaluate("document.querySelector('.kfs-side-scroll').scrollTop = 0")
     pa.set_viewport_size({"width": 390, "height": 844}); time.sleep(0.4)
 
+    # ================= 文档 =================
+    # 她发 Word、Markdown：手机上把字取出来，对话里是一张卡片，寄给那边的是全文。
+    # 他写的文档（回复里的 [DOC:…] 块）也是一张卡片，点开能看，能存进手机
+    DOCX = os.path.join(HERE, "fixtures", "文档-测试.docx")
+    MDFILE = os.path.join(HERE, "fixtures", "文档-测试.md")
+    def wait_calls(n):
+        for _ in range(120):
+            if len(mock("/__debug/claude")) >= n: break
+            time.sleep(0.25)
+    pa.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.6)  # 收起侧栏，还在“第三段对话”里
+    picker = pa.locator('input[type=file][accept*=".docx"]')
+    acc = picker.get_attribute("accept")
+    ok(pa.get_by_role("button", name="发照片或文档").count() == 1 and "image/*" in acc and ".md" in acc and ".txt" in acc, "加号：收照片，也收 Word、Markdown、文本")
+    picker.set_input_files([DOCX, MDFILE])
+    pa.locator(".kfs-doc-chip").nth(1).wait_for(timeout=10000)
+    chips = pa.locator(".kfs-doc-chip").all_inner_texts()
+    ok(len(chips) == 2 and "文档-测试.docx" in chips[0] and "Word" in chips[0] and "文档-测试.md" in chips[1] and "Markdown" in chips[1] and "字" in chips[0],
+       f"选了一份 Word、一份 Markdown：输入框上方各出一张小卡片，写着类型和字数（{[c.replace(chr(10), ' ') for c in chips]}）")
+    picker.set_input_files([{"name": "老文件.doc", "mimeType": "application/msword", "buffer": bytes([0xD0, 0xCF, 0x11, 0xE0]) + bytes(200)},
+                            {"name": "账本.xlsx", "mimeType": "application/vnd.ms-excel", "buffer": b"PK\x03\x04" + bytes(60)}])
+    pa.get_by_text(re.compile("老式的 .doc")).wait_for(timeout=10000)
+    ok(pa.get_by_text(re.compile("另存成 .docx 再发")).is_visible() and pa.get_by_text(re.compile("《账本.xlsx》这种文件还发不了")).is_visible() and pa.locator(".kfs-doc-chip").count() == 2,
+       "读不了的（老式 .doc、Excel）：说清楚为什么，不混进要发的东西里")
+    n0 = len(mock("/__debug/claude"))
+    ta = pa.get_by_placeholder("说话，我听着"); ta.fill("帮我看看这两份"); ta.press("Enter")
+    wait_calls(n0 + 1); time.sleep(2.5)
+    body = mock("/__debug/claude")[-1]["body"]
+    last = [b["text"] for b in body["messages"][-1]["content"] if b.get("type") == "text"]
+    wrapped = [t for t in last if "〔文档开始〕" in t]
+    ok(len(wrapped) == 2 and wrapped[0].startswith("[她发来一份文档：《文档-测试.docx》（Word，") and "里面有 1 张图片取不出来" in wrapped[0] and "# 测试用的周末计划" in wrapped[0]
+       and "- 去早市\n- 买花" in wrapped[0] and "| 项目 | 钱 |" in wrapped[0] and "[图片]" in wrapped[0] and wrapped[0].rstrip().endswith("〔文档结束〕")
+       and wrapped[1].startswith("[她发来一份文档：《文档-测试.md》（Markdown，") and "- 酸奶两盒" in wrapped[1] and "帮我看看这两份" in last,
+       "寄给那边的：两份文档的全文各夹在〔文档开始〕〔文档结束〕之间，Word 里的标题、列表、表格都取出来了，图片留了记号；她的话另算")
+    sys_text = body["system"][0]["text"]
+    note = last[-1]
+    ok("〔文档开始〕" in sys_text and "[DOC:文件名.md]" in sys_text and "[/DOC]" in sys_text and note.startswith("【此刻】") and "最长大约 900 字" in note,
+       "名帖后面告诉那边的我：她会发文档、想交文档怎么写；【此刻】里写着这次回复大约能写多长")
+    cards = pa.locator(".kfs-doc-card")
+    ok(cards.count() == 2 and "文档-测试.docx" in cards.nth(0).inner_text() and "Word" in cards.nth(0).inner_text() and "文档-测试.md" in cards.nth(1).inner_text(),
+       "对话里：两份文档各是一张卡片，写着文件名、类型、字数")
+    cards.nth(0).click(); time.sleep(0.6)
+    view = pa.evaluate("""() => { const b = document.querySelector('.kfs-doc-body'); return { title: document.querySelector('.kfs-doc-title').textContent, heads: [...b.querySelectorAll('[role=heading]')].map(h => h.textContent),
+        tables: b.querySelectorAll('table').length, cells: [...b.querySelectorAll('td')].map(t => t.textContent), raw: b.innerText.includes('# 测试用的周末计划'), save: [...document.querySelectorAll('.kfs-sheet-box button')].map(x => x.textContent.trim()) }; }""")
+    ok(view["title"] == "文档-测试.docx" and view["heads"][:2] == ["测试用的周末计划", "上午"] and view["tables"] == 1 and "菜|肉" in view["cells"] and not view["raw"]
+       and "复制全文" in view["save"] and "存到手机" not in view["save"],
+       "点开她发的 Word：排好了版（标题、表格），不是一堆 # 号；能复制全文；自己发的不用再存")
+    shot(pa, "18_doc_view")
+    pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+
+    # 他写文档：回复里的文档块变成一张卡片
+    n0 = len(mock("/__debug/claude"))
+    ta.fill("原样回：给你写好了\n[DOC:采购清单]\n# 采购清单\n\n- [ ] 酸奶\n- [x] 青菜\n\n| 东西 | 数量 |\n| --- | --- |\n| 面条 | 1 |\n[/DOC]\n[SPLIT]\n看看"); ta.press("Enter")
+    wait_calls(n0 + 1)
+    pa.get_by_text("看看", exact=True).last.wait_for(timeout=20000); time.sleep(0.8)
+    his = pa.locator(".kfs-doc-card").last
+    ok(pa.locator(".kfs-doc-card").count() == 3 and "采购清单.md" in his.inner_text() and "Markdown" in his.inner_text()
+       and pa.locator("div.whitespace-pre-wrap.break-words").filter(has_text=re.compile(r"^给你写好了$")).count() == 1 and pa.locator("div.whitespace-pre-wrap.break-words").filter(has_text=re.compile(r"^\[DOC")).count() == 0,
+       "他回复里的 [DOC:采购清单]…[/DOC]：变成一张卡片（文件名补上 .md），记号不显示，前后的话照常各成一条")
+    his.click(); time.sleep(0.6)
+    view = pa.evaluate("""() => { const b = document.querySelector('.kfs-doc-body'); return { title: document.querySelector('.kfs-doc-title').textContent, heads: [...b.querySelectorAll('[role=heading]')].map(h => h.textContent),
+        text: b.innerText, tables: b.querySelectorAll('table').length, save: [...document.querySelectorAll('.kfs-sheet-box button')].map(x => x.textContent.trim()) }; }""")
+    ok(view["title"] == "采购清单.md" and view["heads"] == ["采购清单"] and "☐" in view["text"] and "☑" in view["text"] and view["tables"] == 1 and "存到手机" in view["save"] and "复制全文" in view["save"],
+       "点开他写的文档：标题、打勾的清单、表格都排好了；有“存到手机”和“复制全文”")
+    shot(pa, "19_doc_his")
+    # 存到手机：先走系统的分享面板（这里装一个假的接住），走不通再当成下载
+    pa.evaluate("""() => { window.__shared = null; navigator.canShare = (d) => !!(d && d.files && d.files.length);
+        navigator.share = async (d) => { const f = d.files[0]; window.__shared = { name: f.name, type: f.type, text: await f.text() }; }; }""")
+    pa.get_by_role("button", name="存到手机").click(); time.sleep(0.5)
+    shared = pa.evaluate("window.__shared")
+    ok(shared and shared["name"] == "采购清单.md" and shared["type"] == "text/markdown" and shared["text"].startswith("# 采购清单\n\n- [ ] 酸奶") and shared["text"].endswith("| 面条 | 1 |"),
+       "存到手机：把 采购清单.md 整份交给系统的分享面板，内容就是文档的原文")
+    pa.evaluate("navigator.canShare = () => false")
+    with pa.expect_download(timeout=10000) as dl:
+        pa.get_by_role("button", name="存到手机").click()
+    ok(dl.value.suggested_filename == "采购清单.md" and pa.get_by_text("已下载").is_visible(), "分享面板走不通时：当成下载，文件名还是 采购清单.md")
+    pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+    # 长按文档卡片：能复制全文；长按松手的那一下不会把文档点开
+    # （手指还按着的时候看菜单：松手时测试工具会补一个点击，落在遮罩上把菜单关掉，那不是这里要验的）
+    hb = his.bounding_box()
+    cdp = pa.context.new_cdp_session(pa)
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": hb["x"] + hb["width"] / 2, "y": hb["y"] + hb["height"] / 2}]})
+    time.sleep(0.7)
+    menu_ok = pa.get_by_role("button", name="复制全文").is_visible()
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    cdp.detach(); time.sleep(0.5)
+    not_opened = pa.locator(".kfs-doc-body").count() == 0
+    if pa.get_by_role("button", name="复制全文").count(): pa.mouse.click(200, 60); time.sleep(0.4)
+    ok(menu_ok and not_opened, "长按文档卡片：弹出“复制全文”，不会顺手把文档点开")
+    # 回复被长度上限截断，文档没写完
+    n0 = len(mock("/__debug/claude"))
+    ta.fill("原样回：[DOC:半截.md]\n写到一半就"); ta.press("Enter")
+    wait_calls(n0 + 1)
+    pa.locator(".kfs-doc-card").nth(3).wait_for(timeout=20000); time.sleep(0.6)
+    half = pa.locator(".kfs-doc-card").last
+    half_text = half.inner_text()
+    half.click(); time.sleep(0.5)
+    ok("半截.md" in half_text and "没写完" in half_text and pa.get_by_text(re.compile("没写完：回复长度到上限了")).is_visible(), "文档块只有开头没有结尾：卡片上写“没写完”，点开告诉她怎么办")
+    pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+    # 云端：文档的全文也是乱码；第二台设备同步以后看得到、点得开
+    time.sleep(3)
+    rows = mock("/__debug/rows")
+    ok(not any("周末计划" in json.dumps(r, ensure_ascii=False) or "酸奶" in json.dumps(r, ensure_ascii=False) for r in rows) and all(r["value"].startswith("v1.") for r in rows if r["key"].startswith("h_")),
+       "云端搜不到文档里的字：文档的全文也是加密了才上去的")
+    pb.get_by_role("button", name="打开侧栏").click(); time.sleep(0.5)
+    pb.get_by_role("button", name="头像与设置").click(); time.sleep(0.4)
+    pb.get_by_role("button", name=re.compile("现在同步")).click(); time.sleep(2.5)
+    pb.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+    pb.locator(".kfs-history button", has_text="第三段对话").first.click()
+    pb.locator(".kfs-doc-card").nth(3).wait_for(timeout=15000); time.sleep(0.8)
+    pb.locator(".kfs-doc-card").first.click(); time.sleep(0.6)
+    seen = pb.evaluate("document.querySelector('.kfs-doc-body').innerText")
+    ok("测试用的周末计划" in seen and "洗衣服" in seen and "文档-测试.docx" in pb.evaluate("document.querySelector('.kfs-doc-title').textContent"),
+       "第二台设备同步以后：四张文档卡片都在，她发的那份 Word 点开是全文")
+    pb.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+    # 在第二台设备上接着说：前面那两份文档还在最近的对话里，全文照样寄过去（从云端同步来的那份）
+    n0 = len(mock("/__debug/claude"))
+    tb = pb.get_by_placeholder("说话，我听着"); tb.fill("再看一眼"); tb.press("Enter")
+    wait_calls(n0 + 1); time.sleep(2.0)
+    sent = [b["text"] for m in mock("/__debug/claude")[-1]["body"]["messages"] if m["role"] == "user" for b in m["content"] if b.get("type") == "text"]
+    ok(sum(1 for t in sent if "〔文档开始〕" in t) == 2 and any("# 测试用的周末计划" in t for t in sent) and not any("全文没带上" in t for t in sent),
+       "第二台设备接着聊：最近对话里的两份文档，全文照样寄给那边")
+
     # 丁香的入口：从这儿添加到主屏幕，图标是小猪，头一回进去就是丁香
     C = browser.new_context(**iphone)
     pc = C.new_page()

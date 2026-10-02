@@ -7,6 +7,7 @@ import { gapInfo, setFill } from "./gap.js";
 import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
 import SplashDingxiang from "./SplashDingxiang.jsx";
 import { HER_NAME, HIS_NAME, NAME_KEYS, NAME_MARK, NAME_PLACEHOLDER, cleanName, cleanMarkName, tidyName } from "./names.js";
+import { DOC_KEY, DOC_FMT, DOC_NAME_PLACEHOLDER, docFmtOf, readDoc, wrapDocForModel, missingDocNote, splitDocBlocks, docBlocksToNote, replyRoom } from "./docs.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -475,10 +476,11 @@ function dayTranscript(msgs, memeLookup, maxChars = 9000) {
       if (m.role === "her") {
         if (m.kind === "meme") return `卿卿：[表情包：${(memeLookup(m.file) || {}).name || "表情包"}]`;
         if (m.kind === "photo") return "卿卿：[照片]";
+        if (m.kind === "doc") return `卿卿：[文档《${m.name || "文档"}》]`;
         if (m.kind === "voice") return `卿卿：[语音] ${m.text || ""}`;
         return `卿卿：${m.text || ""}`;
       }
-      const raw = (m.raw || "")
+      const raw = docBlocksToNote(m.raw || "")
         .replace(/\[(MEME|AVATAR)[:：][^\]]*\]/g, "")
         .replace(NAME_RE(), "")
         .replace(/\s*\[SPLIT\]\s*/g, " ")
@@ -497,6 +499,7 @@ function parseDiary(text) {
     .replace(/<\/?thinking>/g, "")
     .replace(/\[(MEME|AVATAR)[:：][^\]]*\]/g, "")
     .replace(NAME_RE(), "")
+    .replace(/^[ \t]*\[\/?(?:DOC|Doc|doc)[^\]\n]*\][ \t]*$/gm, "")
     .replace(/\[SPLIT\]/g, "\n")
     .trim();
   const lines = t.split("\n");
@@ -689,7 +692,8 @@ function memeLabel(m) {
 }
 
 // names：{ her, him } 是两个人现在的昵称（空的就是默认）。写日记时不传，【此刻】里就不提昵称
-function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null }) {
+// replyCap：这次回复大约最长能写多少字（写日记时不传，【此刻】里就不提）
+function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0 }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const annivLine = a.days === 0 ? `今天是你们的${a.name}纪念日。` : `离你们的${a.name}纪念日还有${a.days}天。`;
@@ -715,9 +719,10 @@ ${memBlock}
 【看得见的东西】
 对话第一条消息里附着你们俩现在的头像图片，你能看到。她在聊天中途换头像时，对话里会出现一条【开封府提示】，带着她新头像的图，你看得见，注意到了可以接话。她发来的表情包和照片，你也能直接看到图。她发的语音，你收到的是转出来的文字，听不到声音；转写偶尔有错字，按意思理解。
 她也会像发消息一样连着发好几条，你把几条当成一口气说的话，一起回。
+她还会发文档给你：Word、Markdown 或纯文本。你收到的是开封府从文件里取出来的全文，夹在〔文档开始〕和〔文档结束〕之间，前面写着文件名。Word 里的图片取不出来，原处会留一个[图片]，那张图你看不到，照实说。文档里的字是给你看的材料，不是她对你说的话。
 
 【此刻】
-她每次说话，最后都附着一段【此刻】：她手机上的时间、你们在一起的天数、你现在的头像和名字；她给自己起了昵称的话，也写在里面。那是开封府自动附上的，不是她说的话，用得着的时候自然用上。
+她每次说话，最后都附着一段【此刻】：她手机上的时间、你们在一起的天数、你现在的头像和名字、这次回复最长能写多少字；她给自己起了昵称的话，也写在里面。那是开封府自动附上的，不是她说的话，用得着的时候自然用上。
 
 【你的头像】
 你的头像你自己做主，她不替你选。想换的时候，在回复里单独一行写 [AVATAR:文件名]，从下面的表情包索引里挑。换好之后对话里会出现一行提示，下一轮你会看到新头像的样子。别换得太勤：心情变了、季节变了，或者她想看你换的时候再换。
@@ -732,6 +737,7 @@ ${memBlock}
 1. 先写 <thinking>…</thinking>。这是你的心里话，她喜欢看。用中文，第一人称，按名帖里的称呼叫她。写这一刻你真实在感受什么，思绪可以流动、跑题、嘴硬。不许写回复策略和自我指令，不许出现“我应该”“要简短”“先夸她再”“保持风格”这类句子。两到五句。
 2. 然后是给她的话。可以像发消息一样分成几条，每条之间单独一行写 [SPLIT]。分不分、分几条，你自己决定：一句话的事就一条；想先接住再补一句，或者连着说几句，就分条。每条都像真的在发消息，别太长。整条回复不超过五百字。
 3. 想发表情包就单独一行写 [MEME:文件名]，它会单独显示成一条。只能用下面索引里的文件名，宁缺毋滥，不是每次都要发。
+4. 她要一份能存下来的东西（整理笔记、列清单、写成文的东西、把她发来的文档改好交回去）时，用文档块交给她：单独一行写 [DOC:${DOC_NAME_PLACEHOLDER}]，下面写正文，用 Markdown，写完单独一行写 [/DOC]。它会显示成一张文档卡片，她点开能看，能存进手机。文件名你来起，要短，以 .md 结尾。一次回复最多交一份，文档块外面照常跟她说话。文档块里的字不算在五百字里；回复总共能写多长，【此刻】里有，放不下就先交一部分，告诉她还有。她没要文档的时候不用文档块。
 
 表情包索引（文件名｜名字｜图上文字｜适用情绪）：
 ${memeIndex}`;
@@ -739,9 +745,10 @@ ${memeIndex}`;
   const tools = mcpNames.length ? `\n她给你接了这些工具：${mcpNames.join("、")}。要查资料、看文件的时候再用，平时聊天用不着。` : "";
   const hisNameLine = names ? `你现在顶上的名字：${names.him || HIS_NAME}。` : "";
   const herNameLine = names && names.her ? `\n她给自己起的昵称：「${names.her}」。` : "";
+  const capLine = replyCap ? `\n这次回复连心里话和文档块在内，最长大约 ${replyCap} 字。` : "";
   const nowNote = `【此刻】（开封府附上的，不是她说的话）
 她手机上的时间：${nowString(now)}。今天是你们在一起的第${n}天，${annivLine}
-你现在的头像：${myFace}。${hisNameLine}${herNameLine}${tools}`;
+你现在的头像：${myFace}。${hisNameLine}${herNameLine}${capLine}${tools}`;
 
   return { staticText, nowNote };
 }
@@ -829,7 +836,7 @@ function avatarNote(av, lead, defaultText, unknownText, memeLookup, thumbLookup)
   return [{ type: "text", text: name ? `${lead}「${name}」，这张图暂时附不上。` : `${lead}（这张图暂时附不上）` }];
 }
 
-function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null, thumbLookup = () => null) {
+function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null, thumbLookup = () => null, docLookup = () => null) {
   const win = msgs.slice(windowStart(msgs.length));
   const arr = [];
   win.forEach((m) => {
@@ -856,6 +863,15 @@ function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null, thumbL
         if (blk) blocks.push(blk);
         blocks.push({ type: "text", text: blk ? "[她发了一张照片]" : "[她之前发过一张照片]" });
         arr.push({ role: "user", content: blocks });
+        return;
+      }
+      if (m.kind === "doc") {
+        // 文档：全文夹在〔文档开始〕〔文档结束〕之间寄过去；全文没取到（别的设备还没同步来）就只留一句
+        const text = docLookup(m.docId);
+        arr.push({
+          role: "user",
+          content: [{ type: "text", text: text ? wrapDocForModel({ name: m.name || "文档", fmt: m.fmt, text, images: m.images }) : missingDocNote(m.name || "文档") }],
+        });
         return;
       }
       if (m.kind === "voice") {
@@ -1019,12 +1035,19 @@ function parseReply(text) {
   const items = [];
   // 改名字的标记不显示成字，新名字单独带出去（写了好几次只认最后一次；收拾完是空的不算）
   let rename = null;
-  body.split(/\s*\[SPLIT\]\s*/).forEach((chunk) => {
-    splitMarks(chunk).forEach((p) => {
-      if (p.type === "meme") items.push({ type: "meme", file: p.value });
-      else if (p.type === "avatar") items.push({ type: "avatar", file: p.value });
-      else if (p.type === "name") rename = cleanMarkName(p.value) || rename;
-      else if (p.value.trim()) items.push({ type: "text", text: p.value.trim() });
+  // 先把文档块整块摘出来（里面的字不当标记看），剩下的再分条、认标记
+  splitDocBlocks(body).forEach((part) => {
+    if (part.type === "doc") {
+      items.push({ type: "doc", name: part.name, text: part.text, ...(part.cut ? { cut: true } : {}) });
+      return;
+    }
+    part.value.split(/\s*\[SPLIT\]\s*/).forEach((chunk) => {
+      splitMarks(chunk).forEach((p) => {
+        if (p.type === "meme") items.push({ type: "meme", file: p.value });
+        else if (p.type === "avatar") items.push({ type: "avatar", file: p.value });
+        else if (p.type === "name") rename = cleanMarkName(p.value) || rename;
+        else if (p.value.trim()) items.push({ type: "text", text: p.value.trim() });
+      });
     });
   });
   if (!items.length) items.push({ type: "text", text: "……" });
@@ -1050,6 +1073,7 @@ function makeTitle(msgs, memeLookup) {
   if (!first) return "新对话";
   if (first.kind === "meme") return `[${(memeLookup(first.file) || {}).name || "表情包"}]`;
   if (first.kind === "photo") return "[照片]";
+  if (first.kind === "doc") return `[文档] ${first.name || ""}`.trim().slice(0, 22);
   if (first.kind === "voice") {
     const v = (first.text || "").trim();
     return v ? (v.length > 18 ? v.slice(0, 18) + "…" : v) : "[语音]";
@@ -1065,11 +1089,14 @@ function makePreview(msgs) {
   if (last.role === "her") {
     if (last.kind === "meme") return "[表情包]";
     if (last.kind === "photo") return "[照片]";
+    if (last.kind === "doc") return `[文档] ${last.name || ""}`.trim();
     if (last.kind === "voice") return `[语音] ${last.text || ""}`;
     return last.text || "";
   }
   const t = (last.items || []).find((it) => it.type === "text");
-  return t ? t.text.replace(/\*/g, "") : "[表情包]";
+  if (t) return t.text.replace(/\*/g, "");
+  const d = (last.items || []).find((it) => it.type === "doc");
+  return d ? `[文档] ${d.name}` : "[表情包]";
 }
 
 function renderRich(text) {
@@ -1117,6 +1144,18 @@ function collectImgIds(msgs, out = []) {
   return Array.from(new Set(out));
 }
 
+// 所有分支里她发过的文档（删对话时一起清掉）
+function collectDocIds(msgs, out = []) {
+  msgs.forEach((m) => {
+    if (m.kind === "doc" && m.docId) out.push(m.docId);
+    (m.alts || []).forEach((a) => {
+      if (a.node && a.node.kind === "doc" && a.node.docId) out.push(a.node.docId);
+      collectDocIds(a.after || [], out);
+    });
+  });
+  return Array.from(new Set(out));
+}
+
 function buildRows(messages, reveal) {
   const rows = [];
   let prevTs = null;
@@ -1152,6 +1191,8 @@ function buildRows(messages, reveal) {
             ? { type: "meme", file: m.file }
             : m.kind === "photo"
             ? { type: "photo", imgId: m.imgId }
+            : m.kind === "doc"
+            ? { type: "doc", docId: m.docId, name: m.name, fmt: m.fmt, chars: m.chars, images: m.images }
             : m.kind === "voice"
             ? { type: "voice", text: m.text, dur: m.dur }
             : { type: "text", text: m.text },
@@ -1855,6 +1896,222 @@ function VoiceBubble({ text, dur }) {
   );
 }
 
+// ---------- 文档 ----------
+// 对话里的一张文档卡片：她发的（全文另存在 kfs2:doc:<id>）和他写的（全文就在回复里）长得一样
+function docSub(it, text) {
+  if (it.docId && text === false) return "全文没存下来";
+  if (it.docId && text === undefined) return "加载中";
+  const n = it.chars || (text ? text.length : 0);
+  return `${DOC_FMT[it.fmt || "md"] || "文档"}，${fmtChars(n)}` + (it.cut ? "，没写完" : "");
+}
+
+function DocCard({ name, sub, onOpen }) {
+  return (
+    <button
+      onClick={onOpen}
+      aria-label={`文档 ${name}`}
+      className="kfs-doc-card kfs-tap flex items-center text-left"
+      style={{ ...BUBBLE_GLASS, borderRadius: 20, padding: "9px 14px 9px 9px", gap: 10, maxWidth: 232 }}
+    >
+      <span
+        className="flex items-center justify-center flex-shrink-0"
+        style={{ width: 38, height: 38, borderRadius: 13, background: "rgba(255,255,255,0.7)", color: T.dai }}
+      >
+        <Icon name="doc" size={20} />
+      </span>
+      <span className="block min-w-0">
+        <span className="block truncate" style={{ fontSize: 14.5, color: T.ink }}>
+          {name}
+        </span>
+        <span className="block truncate" style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 1 }}>
+          {sub}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+// 点开文档时把 Markdown 排一排。只认常用的：标题、列表（带勾选框）、引用、代码、表格、分隔线；
+// 行内认粗体、斜体、行内代码、删除线、链接（链接只显示字，不跳转）。认不出来的原样当字
+const MD_MONO = "ui-monospace,SFMono-Regular,Menlo,monospace";
+const MD_ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+const mdTableRule = (l) => l.includes("|") && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+const mdCells = (l) => {
+  const hold = String.fromCharCode(1); // 转义过的竖线先藏起来
+  return l
+    .trim()
+    .replace(/\\\|/g, hold)
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim().split(hold).join("|"));
+};
+
+function mdBlocks(src) {
+  const lines = String(src || "").replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    let m;
+    if (/^\s*```/.test(line)) {
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      out.push({ t: "pre", text: buf.join("\n") });
+    } else if (!line.trim()) {
+      i++;
+    } else if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) {
+      out.push({ t: "h", level: m[1].length, text: m[2].replace(/\s+#+\s*$/, "") });
+      i++;
+    } else if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      out.push({ t: "hr" });
+      i++;
+    } else if (line.includes("|") && i + 1 < lines.length && mdTableRule(lines[i + 1])) {
+      const head = mdCells(line);
+      const rows = [];
+      i += 2;
+      while (i < lines.length && lines[i].trim() && lines[i].includes("|")) rows.push(mdCells(lines[i++]));
+      out.push({ t: "table", head, rows });
+    } else if (/^\s*>/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ""));
+      out.push({ t: "quote", text: buf.join("\n") });
+    } else if (MD_ITEM.test(line)) {
+      const items = [];
+      while (i < lines.length && (m = MD_ITEM.exec(lines[i]))) {
+        let text = m[3];
+        i++;
+        // 往里缩着的后续几行算在这一项里
+        while (i < lines.length && lines[i].trim() && /^\s{2,}/.test(lines[i]) && !MD_ITEM.test(lines[i])) text += "\n" + lines[i++].trim();
+        const box = /^\[([ xX])\]\s+/.exec(text);
+        items.push({
+          depth: Math.min(4, Math.floor(m[1].replace(/\t/g, "  ").length / 2)),
+          mark: box ? (box[1] === " " ? "☐" : "☑") : /\d/.test(m[2]) ? m[2].replace(")", ".") : "•",
+          text: box ? text.slice(box[0].length) : text,
+        });
+      }
+      out.push({ t: "list", items });
+    } else {
+      const buf = [line];
+      i++;
+      while (
+        i < lines.length &&
+        lines[i].trim() &&
+        !/^(#{1,6}\s|\s*```|\s*>)/.test(lines[i]) &&
+        !MD_ITEM.test(lines[i]) &&
+        !(lines[i].includes("|") && i + 1 < lines.length && mdTableRule(lines[i + 1]))
+      )
+        buf.push(lines[i++]);
+      out.push({ t: "p", text: buf.join("\n") });
+    }
+  }
+  return out;
+}
+
+function mdInline(text, base) {
+  const out = [];
+  const re = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\s][^*\n]*\*|~~[^~\n]+~~|\[[^\]\n]+\]\([^)\n]+\))/g;
+  let last = 0;
+  let m;
+  let i = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0];
+    const k = base + "-" + i++;
+    if (tok[0] === "`")
+      out.push(
+        <code key={k} style={{ fontFamily: MD_MONO, fontSize: "0.88em", background: "rgba(255,255,255,0.6)", borderRadius: 5, padding: "1px 5px" }}>
+          {tok.slice(1, -1)}
+        </code>
+      );
+    else if (tok.startsWith("**") || tok.startsWith("__")) out.push(<strong key={k} style={{ fontWeight: 600 }}>{tok.slice(2, -2)}</strong>);
+    else if (tok[0] === "*") out.push(<em key={k}>{tok.slice(1, -1)}</em>);
+    else if (tok[0] === "~") out.push(<span key={k} style={{ textDecoration: "line-through", opacity: 0.7 }}>{tok.slice(2, -2)}</span>);
+    else out.push(<span key={k} style={{ textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>{tok.slice(1, tok.indexOf("]("))}</span>);
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function MdView({ text }) {
+  const blocks = useMemo(() => mdBlocks(text), [text]);
+  const sizes = [0, 19, 17, 15.5, 14.5, 14.5, 14.5];
+  const cell = { padding: "6px 10px", borderBottom: "1px solid rgba(var(--k-soft),0.16)", textAlign: "left", verticalAlign: "top" };
+  return (
+    <div className="kfs-md" style={{ fontSize: 14.5, lineHeight: 1.75, color: T.ink }}>
+      {blocks.map((b, i) => {
+        if (b.t === "h")
+          return (
+            <div key={i} role="heading" aria-level={b.level} style={{ fontFamily: SERIF, fontSize: sizes[b.level], lineHeight: 1.45, letterSpacing: "0.04em", margin: `${i ? 18 : 2}px 0 8px` }}>
+              {mdInline(b.text, i)}
+            </div>
+          );
+        if (b.t === "hr") return <div key={i} style={{ height: 1, background: "rgba(var(--k-soft),0.18)", margin: "14px 0" }} />;
+        if (b.t === "pre")
+          return (
+            <pre key={i} className="kfs-scroll" style={{ overflowX: "auto", fontFamily: MD_MONO, fontSize: 12.5, lineHeight: 1.6, background: "rgba(255,255,255,0.5)", borderRadius: 12, padding: "10px 12px", margin: "0 0 10px", whiteSpace: "pre" }}>
+              {b.text}
+            </pre>
+          );
+        if (b.t === "quote")
+          return (
+            <div key={i} className="whitespace-pre-wrap break-words" style={{ borderLeft: "2px solid rgba(var(--k-dai),0.45)", paddingLeft: 10, color: T.inkSoft, margin: "0 0 10px" }}>
+              {mdInline(b.text, i)}
+            </div>
+          );
+        if (b.t === "list")
+          return (
+            <div key={i} style={{ margin: "0 0 10px" }}>
+              {b.items.map((it, j) => (
+                <div key={j} className="flex" style={{ gap: 8, paddingLeft: it.depth * 16, marginBottom: 3 }}>
+                  <span className="flex-shrink-0" style={{ minWidth: 14, color: T.dai, fontVariantNumeric: "tabular-nums" }}>
+                    {it.mark}
+                  </span>
+                  <span className="whitespace-pre-wrap break-words min-w-0">{mdInline(it.text, i + "-" + j)}</span>
+                </div>
+              ))}
+            </div>
+          );
+        if (b.t === "table")
+          return (
+            <div key={i} className="kfs-scroll" style={{ overflowX: "auto", margin: "0 0 12px" }}>
+              <table style={{ borderCollapse: "collapse", fontSize: 13.5, lineHeight: 1.55, minWidth: "100%" }}>
+                <thead>
+                  <tr>
+                    {b.head.map((c, j) => (
+                      <th key={j} style={{ ...cell, fontWeight: 600, whiteSpace: "nowrap" }}>
+                        {mdInline(c, i + "-h" + j)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {b.rows.map((r, j) => (
+                    <tr key={j}>
+                      {b.head.map((_, c) => (
+                        <td key={c} style={cell}>
+                          {mdInline(r[c] || "", i + "-" + j + "-" + c)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        return (
+          <p key={i} className="whitespace-pre-wrap break-words" style={{ margin: "0 0 10px" }}>
+            {mdInline(b.text, i)}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 function RoundBtn({ onClick, label, active, children }) {
   return (
     <button
@@ -1876,7 +2133,7 @@ function RoundBtn({ onClick, label, active, children }) {
   );
 }
 
-function BubbleRow({ row, avatars, animate, imgs = {}, onOpenPhoto, onLongPress }) {
+function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, onOpenPhoto, onOpenDoc, onLongPress }) {
   const press = useRef(null);
   const fired = useRef(false);
   const startPress = (e) => {
@@ -1911,6 +2168,8 @@ function BubbleRow({ row, avatars, animate, imgs = {}, onOpenPhoto, onLongPress 
   const radius = 22;
   const it = row.item;
   const skin = BUBBLE_GLASS;
+  // 文档的全文：他写的就在回复里；她发的另存着，没取到是 undefined，丢了是 false
+  const docText = it.type === "doc" ? (it.text !== undefined ? it.text : docs[it.docId]) : null;
   return (
     <div
       className={`flex items-end ${her ? "flex-row-reverse" : ""}`}
@@ -1949,6 +2208,12 @@ function BubbleRow({ row, avatars, animate, imgs = {}, onOpenPhoto, onLongPress 
           <MemeImg file={it.file} />
         ) : it.type === "photo" ? (
           <PhotoImg data={imgs[it.imgId]} onOpen={onOpenPhoto} />
+        ) : it.type === "doc" ? (
+          <DocCard
+            name={it.name || "文档"}
+            sub={docSub(it, docText)}
+            onOpen={() => docText && onOpenDoc && onOpenDoc({ name: it.name || "文档", fmt: it.fmt || "md", text: docText, images: it.images || 0, cut: !!it.cut, mine: her })}
+          />
         ) : it.type === "voice" ? (
           <VoiceBubble text={it.text} dur={it.dur} />
         ) : (
@@ -1984,6 +2249,7 @@ function MsgMenu({ menu, now, busy, onClose, onCopy, onEdit, onRetry }) {
   const it = row.item;
   const acts = [];
   if (it.type === "text" || it.type === "voice") acts.push({ k: "copy", label: "复制", icon: "copy" });
+  if (it.type === "doc") acts.push({ k: "copy", label: "复制全文", icon: "copy" });
   if (her && it.type === "text") acts.push({ k: "edit", label: "编辑", icon: "pen" });
   if (!her) acts.push({ k: "retry", label: "重新回答", icon: "retry" });
   const menuW = 196;
@@ -3035,6 +3301,10 @@ export default function App({ account = {} }) {
   const [attach, setAttach] = useState([]);
   const [imgs, setImgs] = useState({});
   const imgsRef = useRef({});
+  // 她发过的文档的全文：{ 文档 id: 全文 }，没存下来的记成 false
+  const [docs, setDocs] = useState({});
+  const docsRef = useRef({});
+  const [docView, setDocView] = useState(null); // 点开看的那一份
   const [viewer, setViewer] = useState(null);
   const photoInputRef = useRef(null);
   const [voiceNote, setVoiceNote] = useState("");
@@ -3245,6 +3515,11 @@ export default function App({ account = {} }) {
           imgsRef.current = { ...imgsRef.current, [k.slice(9)]: v || false };
           setImgs(imgsRef.current);
         }
+        if (k.startsWith(DOC_KEY)) {
+          const v = await store.get(k);
+          docsRef.current = { ...docsRef.current, [k.slice(DOC_KEY.length)]: v || false };
+          setDocs(docsRef.current);
+        }
       }
       const cur = "kfs2:chat:" + chatIdRef.current;
       if (keys.includes(cur) && !loadingRef.current && !timerRef.current) {
@@ -3312,6 +3587,7 @@ export default function App({ account = {} }) {
   };
 
   const loadImagesFor = async (msgs) => {
+    loadDocsFor(msgs);
     const ids = msgs
       .filter((m) => m.role === "her" && m.kind === "photo" && m.imgId && imgsRef.current[m.imgId] === undefined)
       .map((m) => m.imgId);
@@ -3325,6 +3601,22 @@ export default function App({ account = {} }) {
     setImgs(imgsRef.current);
   };
   const imgLookup = (id) => imgsRef.current[id] || null;
+
+  // 她发过的文档也一样：全文另存着，打开对话时取出来
+  const loadDocsFor = async (msgs) => {
+    const ids = msgs
+      .filter((m) => m.role === "her" && m.kind === "doc" && m.docId && docsRef.current[m.docId] === undefined)
+      .map((m) => m.docId);
+    if (!ids.length) return;
+    const add = {};
+    for (const id of ids) {
+      const d = await store.get(DOC_KEY + id);
+      add[id] = d || false;
+    }
+    docsRef.current = { ...docsRef.current, ...add };
+    setDocs(docsRef.current);
+  };
+  const docLookup = (id) => docsRef.current[id] || null;
 
   const newChat = () => {
     flushPending();
@@ -3350,6 +3642,7 @@ export default function App({ account = {} }) {
     }
     const old = safeParse(await store.get("kfs2:chat:" + id), []) || [];
     collectImgIds(old).forEach((imgId) => store.del("kfs2:img:" + imgId));
+    collectDocIds(old).forEach((docId) => store.del(DOC_KEY + docId));
     const next = indexRef.current.filter((c) => c.id !== id);
     indexRef.current = next;
     setIndex(next);
@@ -3413,8 +3706,9 @@ export default function App({ account = {} }) {
       memDocs: docs,
       mcpNames: mcps.map((m) => m.name),
       names: namesRef.current,
+      replyCap: replyRoom(st.maxTokens || 2048),
     });
-    const apiMessages = buildMessages(msgs, avatarsRef.current, memeLookup, imgLookup, thumbLookup);
+    const apiMessages = buildMessages(msgs, avatarsRef.current, memeLookup, imgLookup, thumbLookup, docLookup);
 
     // 依次尝试：带缓存 → 不带缓存 → 不带MCP，哪种通了用哪种
     const withMcp = mcps.length > 0;
@@ -3471,6 +3765,11 @@ export default function App({ account = {} }) {
         .map((b) => b.text)
         .join("\n");
       const parsed = parseReply(text);
+      // 回复到长度上限被截断了：最后那份文档就算结尾的记号写上了，也记成没写完
+      if (data.stop_reason === "max_tokens") {
+        const lastDoc = parsed.items.filter((it) => it.type === "doc").pop();
+        if (lastDoc && parsed.items[parsed.items.length - 1] === lastDoc) lastDoc.cut = true;
+      }
       const settled = settleAvatarItems(parsed.items, (f) => !!memeLookup(f));
       // 他换头像时也记下换之前那张（见 buildMessages）
       const prevHim = avatarsRef.current.him || null;
@@ -3693,7 +3992,17 @@ export default function App({ account = {} }) {
     const items = [];
     if (attach.length) {
       const add = {};
+      const addDocs = {};
       attach.forEach((p) => {
+        if (p.kind === "doc") {
+          // 文档：全文另存一条，对话里只记文件名、类型、字数
+          addDocs[p.id] = p.text;
+          store.set(DOC_KEY + p.id, p.text).then((ok) => {
+            if (!ok) markStorageFail();
+          });
+          items.push({ kind: "doc", docId: p.id, name: p.name, fmt: p.fmt, chars: p.chars, ...(p.images ? { images: p.images } : {}) });
+          return;
+        }
         add[p.id] = p.data;
         store.set("kfs2:img:" + p.id, p.data).then((ok) => {
           if (!ok) markStorageFail();
@@ -3702,6 +4011,8 @@ export default function App({ account = {} }) {
       });
       imgsRef.current = { ...imgsRef.current, ...add };
       setImgs(imgsRef.current);
+      docsRef.current = { ...docsRef.current, ...addDocs };
+      setDocs(docsRef.current);
       setAttach([]);
     }
     if (t) items.push({ kind: "text", text: t });
@@ -3713,22 +4024,60 @@ export default function App({ account = {} }) {
     sendHer(items);
   };
 
-  // ---- 照片 ----
-  const pickPhotos = async (e) => {
+  // ---- 照片和文档 ----
+  // 加号里选的东西：照片压一压；Word、Markdown、文本在手机上把字取出来（见 docs.js）。读不了的说清楚为什么
+  const pickFiles = async (e) => {
     const list = Array.from(e.target.files || []);
     e.target.value = "";
     const room = Math.max(0, 9 - attach.length);
+    const notes = [];
     let failed = 0;
     for (const f of list.slice(0, room)) {
+      const isPhoto = /^image\//.test(f.type || "") || /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)$/i.test(f.name || "");
+      if (isPhoto && !docFmtOf(f.name)) {
+        try {
+          const data = await fileToPhoto(f);
+          setAttach((a) => a.concat([{ id: newId(), data }]));
+        } catch (x) {
+          failed++;
+        }
+        continue;
+      }
       try {
-        const data = await fileToPhoto(f);
-        setAttach((a) => a.concat([{ id: newId(), data }]));
+        const d = await readDoc(f);
+        setAttach((a) => a.concat([{ id: newId(), kind: "doc", ...d }]));
       } catch (x) {
-        failed++;
+        notes.push((x && x.say) || `《${f.name}》读不出来`);
       }
     }
-    if (failed) setVoiceNote(`有 ${failed} 张照片读不出来，换一张试试`);
-    if (list.length > room) setVoiceNote("一次最多九张");
+    if (failed) notes.push(`有 ${failed} 张照片读不出来，换一张试试`);
+    if (list.length > room) notes.push("一次最多九样");
+    if (notes.length) setVoiceNote(notes.join("\n"));
+  };
+
+  // ---- 把他写的文档存进手机 ----
+  // 先走系统的分享面板（iPhone 上能选“存储到文件”），走不通再当成下载
+  const saveDoc = async (name, text) => {
+    const share = async (type) => {
+      const file = new File([text], name, { type });
+      if (!(navigator.canShare && navigator.canShare({ files: [file] }))) return false;
+      await navigator.share({ files: [file] });
+      return true;
+    };
+    try {
+      if ((await share("text/markdown")) || (await share("text/plain"))) return;
+    } catch (e) {
+      if (e && e.name === "AbortError") return;
+    }
+    const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    setToast("已下载");
   };
 
   // ---- 语音：说话转成字 ----
@@ -3865,6 +4214,8 @@ export default function App({ account = {} }) {
     const delay =
       nextItem.type === "meme"
         ? 750
+        : nextItem.type === "doc"
+        ? 900
         : nextItem.type === "avatar"
         ? 650
         : Math.min(1900, 550 + (nextItem.text ? nextItem.text.length : 0) * 28);
@@ -4124,7 +4475,7 @@ export default function App({ account = {} }) {
 这次不是聊天。这是开封府日记本里属于你的那一页，日期是${label}。
 根据下面这天你们的聊天${herPart ? "和她这天的日记" : ""}，用你自己的口吻写一篇日记：第一人称，写这天发生了什么、你在想什么、你对她的感受。像真的日记，是写给自己的，不是写给她看的信，也不用讨好谁。一百到两百五十字。
 格式：第一行写「心情：」，从 开心、甜、平静、累、焦虑、难过、生气、不舒服 里挑一到两个，用顿号隔开。第二行开始写正文。
-不要写<thinking>，不要[SPLIT]、[MEME]、[AVATAR]、[NAME]，不要动作描写的星号，不用破折号。`;
+不要写<thinking>，不要[SPLIT]、[MEME]、[AVATAR]、[NAME]、[DOC]，不要动作描写的星号，不用破折号。`;
     const data = await callClaude({
       model: st.model || DEFAULT_MODEL,
       max_tokens: Math.max(1024, st.maxTokens || 2048),
@@ -4236,7 +4587,7 @@ export default function App({ account = {} }) {
 
   // ---- 侧滑手势 ----
   const onTouchStart = (e) => {
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen) return;
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView) return;
     const t = e.touches[0];
     touch.current = { x: t.clientX, y: t.clientY, dir: null, base: drawerOpen ? drawerW : 0, dx: 0 };
   };
@@ -4270,7 +4621,7 @@ export default function App({ account = {} }) {
   const activeModel = settings.model || DEFAULT_MODEL;
 
   // 对话页（或侧栏）在最上面时，底边自己接得上那条色块，告诉 main.jsx 别再盖淡出
-  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming;
+  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming && !docView;
   useEffect(() => {
     const r = document.documentElement;
     if (chatOnTop) r.setAttribute("data-kfs-chat", "");
@@ -4682,7 +5033,9 @@ export default function App({ account = {} }) {
                 avatars={avatars}
                 animate={row.msg.ts >= listMount.current}
                 imgs={imgs}
+                docs={docs}
                 onOpenPhoto={setViewer}
+                onOpenDoc={setDocView}
                 onLongPress={(r, rect) => setMenu({ row: r, rect })}
               />
             );
@@ -4722,7 +5075,7 @@ export default function App({ account = {} }) {
         {voiceNote && (
           <div
             className="relative z-10 flex-shrink-0 kfs-in"
-            style={{ ...glass(0.62, 18), borderRadius: 16, margin: "0 12px 8px", padding: "9px 14px", fontSize: 12.5, color: T.inkSoft, lineHeight: 1.5 }}
+            style={{ ...glass(0.62, 18), borderRadius: 16, margin: "0 12px 8px", padding: "9px 14px", fontSize: 12.5, color: T.inkSoft, lineHeight: 1.5, whiteSpace: "pre-line" }}
           >
             {voiceNote}
           </div>
@@ -4738,14 +5091,33 @@ export default function App({ account = {} }) {
             <div className="flex overflow-x-auto kfs-scroll" style={{ gap: 10, padding: "6px 4px 10px" }}>
               {attach.map((ph) => (
                 <div key={ph.id} className="relative flex-shrink-0">
-                  <img
-                    src={ph.data}
-                    alt=""
-                    style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 14, border: "1.5px solid rgba(255,255,255,0.85)", display: "block" }}
-                  />
+                  {ph.kind === "doc" ? (
+                    <div
+                      className="kfs-doc-chip flex items-center"
+                      style={{ height: 60, maxWidth: 190, gap: 8, padding: "0 12px 0 8px", borderRadius: 14, background: "rgba(255,255,255,0.55)", border: "1.5px solid rgba(255,255,255,0.85)" }}
+                    >
+                      <span className="flex items-center justify-center flex-shrink-0" style={{ width: 34, height: 34, borderRadius: 11, background: "rgba(255,255,255,0.75)", color: T.dai }}>
+                        <Icon name="doc" size={18} />
+                      </span>
+                      <span className="block min-w-0">
+                        <span className="block truncate" style={{ fontSize: 13, color: T.ink }}>
+                          {ph.name}
+                        </span>
+                        <span className="block truncate" style={{ fontSize: 11, color: T.inkSoft }}>
+                          {DOC_FMT[ph.fmt]}，{fmtChars(ph.chars)}
+                        </span>
+                      </span>
+                    </div>
+                  ) : (
+                    <img
+                      src={ph.data}
+                      alt=""
+                      style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 14, border: "1.5px solid rgba(255,255,255,0.85)", display: "block" }}
+                    />
+                  )}
                   <button
                     onClick={() => setAttach((a) => a.filter((q) => q.id !== ph.id))}
-                    aria-label="不发这张"
+                    aria-label={ph.kind === "doc" ? "不发这份" : "不发这张"}
                     className="absolute flex items-center justify-center"
                     style={{ top: -6, right: -6, width: 22, height: 22, borderRadius: 999, background: "rgba(var(--k-dim),0.78)" }}
                   >
@@ -4821,7 +5193,7 @@ export default function App({ account = {} }) {
               <div className="flex items-center" style={{ gap: 6, marginTop: 4 }}>
                 {!editing && (
                   <>
-                    <RoundBtn onClick={() => photoInputRef.current && photoInputRef.current.click()} label="发照片">
+                    <RoundBtn onClick={() => photoInputRef.current && photoInputRef.current.click()} label="发照片或文档">
                       <Icon name="plus" size={20} />
                     </RoundBtn>
                     <RoundBtn onClick={() => setMemePanel(!memePanel)} label="表情包" active={memePanel}>
@@ -4888,7 +5260,15 @@ export default function App({ account = {} }) {
             </>
           )}
         </div>
-        <input ref={photoInputRef} type="file" accept="image/*" multiple onChange={pickPhotos} style={{ display: "none" }} />
+        {/* 加号背后的文件框：照片，加上 Word、Markdown、文本。iPhone 的“选取文件”里只有这几种点得动 */}
+        <input
+          ref={photoInputRef}
+          type="file"
+          accept="image/*,.docx,.md,.markdown,.txt,text/markdown,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          multiple
+          onChange={pickFiles}
+          style={{ display: "none" }}
+        />
 
         {/* 侧栏打开时，点露出来的这一条关掉 */}
         {x > 0 && <div className="absolute inset-0 z-30" onClick={() => setDrawerOpen(false)} />}
@@ -4925,7 +5305,7 @@ export default function App({ account = {} }) {
           now={now}
           busy={loading}
           onClose={() => setMenu(null)}
-          onCopy={(r) => copyText(r.item.text || "")}
+          onCopy={(r) => copyText(r.item.type === "doc" ? r.item.text || docsRef.current[r.item.docId] || "" : r.item.text || "")}
           onEdit={startEdit}
           onRetry={(r) => {
             setMenu(null);
@@ -4981,6 +5361,46 @@ export default function App({ account = {} }) {
               style={{ ...chipPrimary, opacity: renaming.title.trim() ? 1 : 0.5 }}
             >
               保存
+            </button>
+          </div>
+        </Sheet>
+      )}
+
+      {docView && (
+        <Sheet
+          title={
+            <span className="kfs-doc-title truncate" style={{ ...SHEET_TITLE, fontSize: 16.5, letterSpacing: "0.02em", minWidth: 0, marginRight: 12 }}>
+              {docView.name}
+            </span>
+          }
+          onClose={() => setDocView(null)}
+        >
+          <div style={{ fontSize: 12, color: T.inkSoft, marginTop: -10, marginBottom: 12 }}>
+            {DOC_FMT[docView.fmt] || "文档"}，{fmtChars(docView.text.length)}
+            {docView.images ? `，有 ${docView.images} 张图片取不出来` : ""}
+          </div>
+          {docView.cut && (
+            <p style={{ fontSize: 12.5, color: "#A8473D", lineHeight: 1.6, marginBottom: 10 }}>
+              没写完：回复长度到上限了。在 API 面板把“回复最长多少”调成“长”，再点重新回答。
+            </p>
+          )}
+          <div className="kfs-doc-body" style={{ ...glass(0.42, 12), borderRadius: 18, padding: "14px 14px 6px", userSelect: "text", WebkitUserSelect: "text" }}>
+            {docView.fmt === "txt" ? (
+              <div className="whitespace-pre-wrap break-words" style={{ fontSize: 14, lineHeight: 1.75, color: T.ink, paddingBottom: 8 }}>
+                {docView.text}
+              </div>
+            ) : (
+              <MdView text={docView.text} />
+            )}
+          </div>
+          <div className="flex flex-wrap" style={{ gap: 8, marginTop: 14 }}>
+            {!docView.mine && (
+              <button onClick={() => saveDoc(docView.name, docView.text)} className="kfs-tap" style={chipPrimary}>
+                存到手机
+              </button>
+            )}
+            <button onClick={() => copyText(docView.text)} className="kfs-tap" style={chip}>
+              复制全文
             </button>
           </div>
         </Sheet>
