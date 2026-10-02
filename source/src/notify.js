@@ -7,6 +7,7 @@
 // 记在这台设备上（localStorage，不跟云端走）
 export const PUSH_FLAG = "kfs-push"; // 写着 "on"：她在这台设备上开过通知
 export const PUSH_KEY = "kfs-push-key"; // 订阅的时候用的是服务器的哪把公钥
+export const PUSH_AT = "kfs-push-at"; // 这台设备登记在登记簿里的门牌号（他的回话到了，敲的就是它）
 
 // ---------- base64url ----------
 

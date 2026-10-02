@@ -189,26 +189,35 @@ const boxError = (error) => {
   return missing ? coded("notable", "库房里还没有信箱") : coded("refused", text || "信箱出错了");
 };
 const BOX_COLS = "job,state,note,sealed,created_at,beat_at,done_at";
+// 看信箱的请求：没连上不要自己闷头重试（库默认会隔 1、2、4 秒再试三回，她那头就得干等），
+// 等上八秒没动静就掐掉。重试、等多久，都由 mail.js 说了算
+const quick = (query) => {
+  let q = typeof query.retry === "function" ? query.retry(false) : query;
+  try {
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") q = q.abortSignal(AbortSignal.timeout(8000));
+  } catch (e) {}
+  return q;
+};
 export const mailbox = {
   // 信箱里现在有的（放得早的排前面）
   async list() {
-    const { data, error } = await supabase.from("mailbox").select(BOX_COLS).order("created_at", { ascending: true });
+    const { data, error } = await quick(supabase.from("mailbox").select(BOX_COLS).order("created_at", { ascending: true }));
     if (error) throw boxError(error);
     return data || [];
   },
   // 某一回的那一格；没有就回 null
   async get(job) {
-    const { data, error } = await supabase.from("mailbox").select(BOX_COLS).eq("job", job);
+    const { data, error } = await quick(supabase.from("mailbox").select(BOX_COLS).eq("job", job));
     if (error) throw boxError(error);
     return (data && data[0]) || null;
   },
   async remove(job) {
-    const { error } = await supabase.from("mailbox").delete().eq("job", job);
+    const { error } = await quick(supabase.from("mailbox").delete().eq("job", job));
     if (error) throw boxError(error);
   },
-  // 只看这张表在不在（通知面板用）
+  // 只看这张表在不在（通知面板、开机时问新路通不通用）
   async probe() {
-    const { error } = await supabase.from("mailbox").select("job").limit(1);
+    const { error } = await quick(supabase.from("mailbox").select("job").limit(1));
     if (error) throw boxError(error);
   },
 };

@@ -6,7 +6,7 @@
 // 把门牌号记进登记簿（push_subs 表），小后端照着登记簿发。
 // =====================================================
 import { callPush, pushLedger, mailbox } from "./cloud.js";
-import { PUSH_FLAG, PUSH_KEY, b64uToBytes, sameKey, pushSupport, isStandalone, subscriptionKey, subscriptionRow, entrancePage, pushHostOf, readNoticeMark, noticeMarkOfUrl } from "./notify.js";
+import { PUSH_FLAG, PUSH_KEY, PUSH_AT, b64uToBytes, sameKey, pushSupport, isStandalone, subscriptionKey, subscriptionRow, entrancePage, pushHostOf, readNoticeMark, noticeMarkOfUrl } from "./notify.js";
 
 const local = {
   get(key) {
@@ -102,6 +102,7 @@ async function subscribeAndRecord(reg, sub, serverKey) {
   if (!row) throw coded("badsub", "浏览器给的订阅不完整");
   await pushLedger.upsert(row);
   if (serverKey) local.set(PUSH_KEY, serverKey);
+  local.set(PUSH_AT, row.endpoint);
   return sub;
 }
 
@@ -286,6 +287,7 @@ export function disablePush() {
   // “开过”的记号马上清：排在前头还没做完的重新登记、换门牌号，看到记号没了就不会又订上
   local.set(PUSH_FLAG, "");
   local.set(PUSH_KEY, "");
+  local.set(PUSH_AT, "");
   return serial(async () => {
     if (!pushSupport(window).ok) return;
     let sub = null;
@@ -319,6 +321,40 @@ export async function lastOutcome() {
   const row = (await pushLedger.list()).find((r) => r.endpoint === sub.endpoint);
   if (!row) return { gone: true };
   return row.last_at ? { at: Date.parse(row.last_at), status: row.last_status, note: row.last_note || "", host: pushHostOf(sub.endpoint) } : { at: 0 };
+}
+
+// ---------- 他的回话也敲她（第二步，见 mail.js） ----------
+
+// 他的回话到了，敲哪几台设备：只有这一台（它开着通知的话）。
+// 不照登记簿全敲：登记簿是明文的，偷到登录密码（没有暗号）的人能往里添一行自己的设备；
+// 要是照登记簿全敲，横幅上他说的话就落到别人手里了。发话的这台设备自己报门牌号，小后端只敲报上来的
+export function knockList() {
+  const at = local.get(PUSH_FLAG) === "on" ? local.get(PUSH_AT) : "";
+  return at ? [at] : [];
+}
+
+// 轻轻问一声：替她等回话的那条新路通不通（不带对话，两下很小的敲门）。
+// true 通；false 不通（小后端还是旧的、里面是样板、没建，或者信箱那张表没建）；null 没问成（没网、没登录）
+export async function probeReply() {
+  let fn = null;
+  try {
+    const k = await callPush({ op: "key" });
+    fn = !!k && Array.isArray(k.can) && k.can.includes("reply");
+  } catch (e) {
+    fn = e.code === "refused" ? false : null;
+  }
+  let box = null;
+  try {
+    await mailbox.probe();
+    box = true;
+  } catch (e) {
+    box = e.code === "notable" ? false : null;
+  }
+  if (fn === true && box === true) return true;
+  if (fn === false || box === false) return false;
+  // 信箱看得到、小后端却连不上：不是没网，是那条路不通（多半是根本没有 push 这个函数）
+  if (fn === null && box === true) return false;
+  return null;
 }
 
 // ---------- 从通知回来 ----------

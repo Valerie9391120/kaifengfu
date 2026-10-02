@@ -51,6 +51,7 @@ create policy "mailbox_delete_own" on public.mailbox
 -- 3. 开门：只给登录后的人开，没登录的什么都碰不到
 revoke all on table public.mailbox from anon;
 revoke all on table public.mailbox from public;
+revoke all on table public.mailbox from authenticated;   -- Supabase 默认把所有权限都给了登录用户（连清空整张表都在内），先全收回，下面只给用得着的四样
 grant usage on schema public to authenticated;
 grant select, insert, update, delete on table public.mailbox to authenticated;
 

@@ -23,11 +23,12 @@ export const JOBS_KEY = "kfs-jobs"; // 发出去还没着落的那几回
 export const RELAY_KEY = "kfs-relay"; // 写着 "ok"：这台设备上，新路走通过
 
 const TOKEN_SECONDS = 240; // 登录凭证至少还得能用这么多秒，小后端要拿着它等上两分多钟
-const PENDING_MS = 10 * 60 * 1000; // “发出去还没着落”最多记多久
 const OFF_MS = 3 * 60 * 1000; // 新路不通以后，隔多久再试一回
 const DEAD_MS = 25 * 1000; // 信箱里那一格这么久没人摸过，就当小后端那头断了（它每 8 秒摸一下）
-const OLD_MS = 15 * 60 * 1000; // 头一回看到就已经放了这么久还写着“在等”：不用等了
-const WAIT_MS = 260 * 1000; // 一回最多等这么久
+const WAIT_MS = 260 * 1000; // 一回最多等这么久（切走又回来的，从回来那一刻重新算）
+const BOX_MS = 8 * 1000; // 看一眼信箱最多等这么久，等不到算没看成（刚回来的那一下，请求有时会悬着不动）
+const BACK_PAUSE = 500; // 刚回到眼前，歇这么久再敲网络的门（iOS 上一回来就发的请求会悬很久才报错）
+const PATIENT_MS = 5 * 1000; // 刚回到眼前这么久之内就要去信箱里找的那一回：网络多半还没醒，一时没看成不算数，多试几回
 const WATCH_EVERY = 2000; // 守着信箱等的时候，隔多久看一眼
 const LOOK_FIRST = 45 * 1000; // 直接等着的时候，等了这么久还没回话，也去信箱里看一眼
 const LOOK_EVERY = 15 * 1000; // 之后隔这么久再看
@@ -52,11 +53,12 @@ export function newKey() {
   return crypto.getRandomValues(new Uint8Array(32));
 }
 
-// 拆条子。拆不开、不像条子，回 null
-export async function readNote(open, note) {
+// 拆条子。拆不开、不像条子、不是这一回的（条子里记着编号，别人把它挪到另一格上不认），回 null
+export async function readNote(open, note, job) {
   try {
     const info = JSON.parse(await open(note));
     if (!info || info.v !== 1 || typeof info.chat !== "string" || typeof info.last !== "string" || typeof info.key !== "string") return null;
+    if (info.job !== job) return null;
     return info;
   } catch (e) {
     return null;
@@ -110,9 +112,12 @@ const answered = () => Object.assign(new Error("别处已经回上了"), { code:
 //   visible()                        开封府这会儿是不是开在眼前
 //   online()                         手机这会儿有没有网（浏览器自己说的；没有这个就当有）
 //   onVisible(fn)                    切走又回来的时候叫 fn；返回一个“不用叫了”的函数
+//   sinceBack()                      上一回回到眼前是多少毫秒以前（没切走过就是很大的数）
 //   now() / sleep(ms)                几点了、等一会儿
 //   storage { get(), set(text) }     记“发出去还没着落的那几回”的地方
-//   hint { get(), set(bool) }        记“这台设备上新路走通过”的地方
+//   hint { get(), set(bool) }        记“这台设备上知道新路是通的”的地方
+//   probe()                          轻轻问一声新路通不通：true 通；false 不通（小后端还是旧的、信箱没建）；null 没问成
+//   knock()                          回话到了要敲哪几台设备（门牌号）。眼下只有发话的这一台
 //   freshToken(seconds)              登录凭证快到期就先换一张
 //   answered(chat, last, fork)       别的设备是不是已经把这一句的回话取走、放进对话了（先同步再看）
 export function createRelay(d) {
@@ -122,15 +127,15 @@ export function createRelay(d) {
   let offWhy = "";
   let lastRun = null; // 上一回是怎么走的（通知面板的“看细节”里要说）
 
-  // ---- 发出去还没着落的那几回 ----
+  // ---- 发出去还没着落的那几回（最多记八回，新的挤掉旧的） ----
+  // 一回有了着落就划掉：回话落进对话了、小后端没接、信箱里没有它、它断了
   const pending = {
     all() {
       let list = [];
       try {
         list = JSON.parse(d.storage.get() || "[]");
       } catch (e) {}
-      const now = d.now();
-      return (Array.isArray(list) ? list : []).filter((x) => x && typeof x.job === "string" && now - (x.at || 0) < PENDING_MS);
+      return (Array.isArray(list) ? list : []).filter((x) => x && typeof x.job === "string");
     },
     save(list) {
       try {
@@ -154,19 +159,53 @@ export function createRelay(d) {
       if (d.hint) d.hint.set(works);
     } catch (e) {}
   };
+  const known = () => {
+    try {
+      return !!d.hint && !!d.hint.get();
+    } catch (e) {
+      return false;
+    }
+  };
+  // 新路不通：接下来几分钟走老路，这台设备也不再当它是通的。过了这几分钟自己再轻轻问一声
   const turnOff = (why) => {
     offUntil = d.now() + OFF_MS;
     offWhy = why || "";
     remember(false);
+    d.sleep(OFF_MS + 500).then(warm, () => {});
   };
-  // 新路在这台设备上走通过、这会儿也没停着：她切走的那一下，可以放心把话交出去
-  // （走老路的时候不能这么干：话一交出去她就走了，等着的这头断掉，那一回白问）
-  const trusted = () => {
+  // 新路通不通，这台设备上知不知道。不知道就轻轻问一声（不拿整段对话去试：小后端还是旧的话，那一大包会白传一遍）。
+  // 回 true 通；false 不通；null 没问成（没网）
+  async function ready() {
+    if (known()) return true;
+    let ok = null;
     try {
-      return !!d.hint && !!d.hint.get() && d.now() >= offUntil;
-    } catch (e) {
-      return false;
-    }
+      ok = d.probe ? await d.probe() : true;
+    } catch (e) {}
+    if (ok === true) remember(true);
+    return ok === true ? true : ok === false ? false : null;
+  }
+  // 开机的时候、停了几分钟以后：先把“通不通”问好，她头一句话发完就切走，也敢交出去
+  function warm() {
+    if (d.now() < offUntil) return Promise.resolve(false);
+    return ready().then((ok) => ok === true, () => false);
+  }
+  // 这台设备上知道新路是通的、这会儿也没停着：她切走的那一下，可以放心把话交出去
+  // （走老路的时候不能这么干：话一交出去她就走了，等着的这头断掉，那一回白问）
+  const trusted = () => known() && d.now() >= offUntil;
+
+  // 看信箱的每一下都限时：等不到算没看成
+  const timed = (work) =>
+    Promise.race([
+      work,
+      d.sleep(BOX_MS).then(() => {
+        throw Object.assign(new Error("信箱没应"), { code: "timeout" });
+      }),
+    ]);
+  const sinceBack = () => (d.sinceBack ? d.sinceBack() : Infinity);
+  // 刚回到眼前：歇一下再敲网络的门
+  const breath = async () => {
+    const s = sinceBack();
+    if (s >= 0 && s < BACK_PAUSE) await d.sleep(BACK_PAUSE - s);
   };
 
   // 信箱里“在等”的那一格还活着没有。不拿手机的钟和云端的钟比（手机的钟可能不准）：
@@ -174,12 +213,7 @@ export function createRelay(d) {
   function alive(job, row) {
     const now = d.now();
     const seen = beats.get(job);
-    if (!seen) {
-      beats.set(job, { beat: row.beat_at, at: now });
-      const born = Date.parse(row.created_at);
-      return !(born && now - born > OLD_MS);
-    }
-    if (seen.beat !== row.beat_at) {
+    if (!seen || seen.beat !== row.beat_at) {
       beats.set(job, { beat: row.beat_at, at: now });
       return true;
     }
@@ -190,12 +224,12 @@ export function createRelay(d) {
     pending.drop(job);
     beats.delete(job);
     try {
-      await d.box.remove(job);
+      await timed(d.box.remove(job));
     } catch (e) {}
   }
 
-  // 回话到手了（直接交来的，或者从信箱里取的）
-  function done(job, info, result, via) {
+  // 回话到手了（直接交来的，或者从信箱里取的；从信箱里取的带着那一格 row）
+  function done(job, info, result, via, row) {
     beats.delete(job);
     lastRun = { path: "new", via, at: d.now() };
     remember(true);
@@ -203,7 +237,7 @@ export function createRelay(d) {
       // 没回成：这一回到此为止。她在跟前就把信箱里那一格收掉；
       // 不在跟前先留着：小后端看它还在，会敲她一下说没送到
       pending.drop(job);
-      if (d.visible()) d.box.remove(job).catch(() => {});
+      if (d.visible()) timed(d.box.remove(job)).catch(() => {});
       throw new Error(explainResult(result));
     }
     let settled = false;
@@ -216,27 +250,33 @@ export function createRelay(d) {
       // 不在跟前：留着让小后端敲她；等她回来，collect 看到这一回已经在对话里，再收
       if (d.visible()) {
         try {
-          await d.box.remove(job);
+          await timed(d.box.remove(job));
         } catch (e) {}
       }
     };
-    return { data: result.data, used: result.used || { cache: false, mcp: false }, job, info, via, settle };
+    // at：小后端把回话放进信箱是几点（直接交来的没有，就是现在）
+    const at = (row && Date.parse(row.done_at)) || 0;
+    return { data: result.data, used: result.used || { cache: false, mcp: false }, job, info, via, at, settle };
   }
 
   // 守着信箱等一回。回话到了就交出来；信箱里没有这一回，回 ABSENT；断了、等太久，抛错
   async function watch(job, info) {
     const started = d.now();
+    // 刚回到眼前就来找的（切走的时候这一回正悬着）：网络多半还没醒，一时没看成不算数，多试几回。
+    // 平时一回没看成就是真没网，照实说，不让她对着“正在输入”干等
+    // （这一回还记着：等会儿自己再看、她点重发，都先来信箱里找）
+    const tries = sinceBack() < PATIENT_MS ? 4 : 1;
     let misses = 0;
     let absent = 0;
     for (;;) {
+      await breath();
       let row;
       try {
-        row = await d.box.get(job);
+        row = await timed(d.box.get(job));
         misses = 0;
       } catch (e) {
         if (e && e.code === "notable") return ABSENT;
-        // 手机自己说没网：不用试了。有网却没连上（刚解锁、刚切回来，网络还没醒）：多试几回
-        if ((d.online && !d.online()) || ++misses >= 4) throw new Error("连不上开封府的后端，看看网络");
+        if ((d.online && !d.online()) || ++misses >= tries) throw new Error("连不上开封府的后端，看看网络");
         await d.sleep(800 * misses);
         continue;
       }
@@ -250,7 +290,7 @@ export function createRelay(d) {
         return ABSENT;
       }
       if (!info) {
-        info = await readNote(d.unseal, row.note);
+        info = await readNote(d.unseal, row.note, job);
         if (!info) {
           await discard(job);
           throw new Error("信箱里那一格读不出来");
@@ -264,7 +304,7 @@ export function createRelay(d) {
           await discard(job);
           throw new Error("信箱里的回话打不开");
         }
-        return done(job, info, result, "mailbox");
+        return done(job, info, result, "mailbox", row);
       }
       if (!alive(job, row)) {
         await discard(job);
@@ -277,7 +317,7 @@ export function createRelay(d) {
 
   // 直接等小后端回话，同时留一只眼睛看信箱（切走又回来的时候、等得久了的时候）
   async function race(job, info, payload) {
-    const started = d.now();
+    let started = d.now();
     const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
     const direct = d.callReply(payload, { signal: ctl ? ctl.signal : undefined }).then(
       (r) => ({ got: r.result }),
@@ -287,6 +327,7 @@ export function createRelay(d) {
     const off = d.onVisible(() => nudge("back"));
     try {
       let nextLook = LOOK_FIRST;
+      let every = LOOK_EVERY;
       for (;;) {
         const waited = d.now() - started;
         const what = await Promise.race([
@@ -294,29 +335,40 @@ export function createRelay(d) {
           new Promise((resolve) => {
             nudge = resolve;
           }),
-          d.sleep(Math.max(1000, nextLook - waited)).then(() => "look"),
+          d.sleep(Math.max(500, nextLook - waited)).then(() => "look"),
         ]);
         if (what && what.got) return done(job, info, what.got, "direct");
         if (what && what.err) return await afterFailure(job, info, what.err);
-        if (what === "look") nextLook = d.now() - started + LOOK_EVERY;
+        if (what === "back") {
+          // 切走又回来过：直接等的那一头多半已经断了、只是还没报出来。往后勤看信箱，回话一放进来就取。
+          // 手机被挂起的那段不算在“等了多久”里：从回来这一刻重新算
+          every = WATCH_EVERY;
+          started = d.now();
+        }
+        await breath();
         let row = null;
+        let seen = true;
         try {
-          row = await d.box.get(job);
-        } catch (e) {}
+          row = await timed(d.box.get(job));
+        } catch (e) {
+          seen = false; // 刚回来网络还没醒：过一秒再看
+        }
         if (row && row.state === "done") {
           const result = await openSealed(info.key, row.sealed);
           if (ctl) ctl.abort();
-          return done(job, info, result, "mailbox");
+          return done(job, info, result, "mailbox", row);
         }
         if (row && row.state === "working" && !alive(job, row)) {
           if (ctl) ctl.abort();
           await discard(job);
           throw new Error("那边断了，这一条没回成");
         }
-        if (d.now() - started > WAIT_MS) {
+        // 这一眼看成了才算数：没看成的时候不知道回话到没到，不能说等太久
+        if (seen && d.now() - started > WAIT_MS) {
           if (ctl) ctl.abort();
           throw new Error("等了太久，没等到回话");
         }
+        nextLook = d.now() - started + (seen ? every : 1000);
       }
     } finally {
       off();
@@ -330,7 +382,7 @@ export function createRelay(d) {
       throw new Error(e.message);
     }
     if (e.code === "refused" && e.reason !== "duplicate") {
-      // 小后端没接：这一回根本没开始办。走回老路；一时半会儿也不用再试新路
+      // 小后端没接：这一回根本没开始办。走回老路；接下来几分钟也不用再试新路
       pending.drop(job);
       turnOff(e.message);
       throw useOld(e.message);
@@ -353,7 +405,7 @@ export function createRelay(d) {
     } catch (e) {}
     const job = newJob();
     const key = bytesToB64u(newKey());
-    const info = { v: 1, chat, last, key, at: d.now() };
+    const info = { v: 1, job, chat, last, key, at: d.now() };
     if (fork) info.fork = fork;
     if (extra) info.extra = extra;
     let note = "";
@@ -366,7 +418,13 @@ export function createRelay(d) {
     pending.add({ job, chat, last, fork: fork || "", at: d.now() });
     live.add(job);
     try {
-      return await race(job, info, { op: "reply", job, key, note, tag, title: title || "", beta: beta || "", request: body });
+      // knock：回话到了敲哪几台设备。只敲这台设备自己说的那几台，登记簿里别的行不敲：
+      // 登记簿是明文的，偷到登录密码（没有暗号）的人能往里添一行；要是照登记簿全敲，他就能收到横幅上的话
+      let knock = [];
+      try {
+        knock = (d.knock ? d.knock() : []) || [];
+      } catch (e) {}
+      return await race(job, info, { op: "reply", job, key, note, tag, title: title || "", beta: beta || "", knock, request: body });
     } finally {
       live.delete(job);
     }
@@ -385,8 +443,15 @@ export function createRelay(d) {
     live.add(job);
     try {
       const got = await watch(job, info || null);
-      if (got === ABSENT) throw new Error("那边断了，这一条没回成");
-      return got;
+      if (got !== ABSENT) return got;
+      // 信箱里没有这一回了。多半是别的设备（发话的那台）把信取走了：等它把对话传上来，同步下来看
+      if (info) {
+        for (let i = 0; i < 3; i++) {
+          if (await gone(info)) throw answered();
+          if (i < 2) await d.sleep(2000);
+        }
+      }
+      throw new Error("那边断了，这一条没回成");
     } finally {
       live.delete(job);
     }
@@ -398,8 +463,8 @@ export function createRelay(d) {
   // 抛的错：code 是 oldpath：新路不通，请走老路；code 是 answered：别的设备已经把回话放进对话了；
   //   别的：message 就是给她看的话
   async function ask(args) {
-    if (d.now() < offUntil) throw useOld(offWhy);
-    // 为同一句话发出去的上一回还没着落：先去信箱里看，不重发（重发就是花两回钱、回两遍）
+    // 为同一句话发出去的上一回还没着落：先去信箱里看，不重发（重发就是花两回钱、回两遍）。
+    // 这一步在最前头：新路这会儿停着也要先找回那一回，不然走老路又问一遍
     const had = pending.find(args.chat, args.last, args.fork);
     if (had) {
       live.add(had.job);
@@ -413,6 +478,13 @@ export function createRelay(d) {
       pending.drop(had.job);
       if (await gone(args)) throw answered();
     }
+    if (d.now() < offUntil) throw useOld(offWhy);
+    const ok = await ready();
+    if (ok === false) {
+      turnOff("小后端还接不了回话");
+      throw useOld("小后端还接不了回话");
+    }
+    if (ok === null) throw useOld("没问成新路通不通");
     for (let round = 0; round < 2; round++) {
       const got = await once(args);
       if (got !== AGAIN) return got;
@@ -431,14 +503,15 @@ export function createRelay(d) {
   async function collect() {
     let rows;
     try {
-      rows = await d.box.list();
+      await breath();
+      rows = await timed(d.box.list());
     } catch (e) {
       return null;
     }
     const out = [];
     for (const row of rows) {
       if (live.has(row.job)) continue;
-      const info = await readNote(d.unseal, row.note);
+      const info = await readNote(d.unseal, row.note, row.job);
       if (!info) {
         out.push({ job: row.job, row, info: null, state: "unreadable" });
         continue;
@@ -468,6 +541,14 @@ export function createRelay(d) {
     discard,
     tookOld,
     trusted,
+    warm,
+    // 外头确实看到新路是通的（通知面板刚查过）：记下来，停着的也解开
+    learn: (works) => {
+      if (!works) return;
+      remember(true);
+      offUntil = 0;
+      offWhy = "";
+    },
     isLive: (job) => live.has(job),
     status: () => ({ off: d.now() < offUntil, why: offWhy, last: lastRun }),
   };

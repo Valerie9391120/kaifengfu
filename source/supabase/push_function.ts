@@ -6,7 +6,8 @@
 //
 // 二、替她等回话（op: "reply"）。她发完话就切走、锁屏，网页那头早断了，这里照样等那边的我回完：
 //     回话拿网页给的一次性钥匙封好，放进信箱（mailbox 表），云端存的只是乱码；
-//     等几秒，信还没被取走（她不在开封府里），就往她的设备上敲一条通知，写的是他回的话；
+//     等几秒，信还没被取走（她不在开封府里），就往发话的那台设备上敲一条通知，写的是他回的话
+//     （只敲网页点了名的门牌号，不照登记簿全敲：登记簿是明文，往里添一行就能收到横幅上的话的话，等于把他说的话交给了外人）；
 //     她回到开封府，网页自己从信箱里取，取走就删。
 //     她一直在开封府里的话，回话照旧直接交给网页，不敲。
 //     claude 那个函数原样留着：这里哪一步不肯接（信箱那张表没建、这份代码还是旧的），网页就走回那条老路。
@@ -42,6 +43,8 @@ const GRACE = 6000; // 回话放进信箱以后等多少毫秒再敲手机：她
 const REPLY_TTL = 12 * 3600; // 回话的通知，手机不在线的话推送服务替我们留多少秒
 const BANNER_CHARS = 300; // 横幅上最多写多少个字
 const BANNER_BYTES = 1800; // 横幅上的字最多占多少字节（整条通知加密前不能过 MAX_PAYLOAD）
+const BANNER_SOURCE = 60_000; // 写横幅的时候最多看回话的前多少个字（再长也只是为了凑那三百个字，不值得多花工夫）
+const DB_TIMEOUT = 6000; // 读写信箱、登记簿最多等多少毫秒（库房一时不应，不能把回话压在手里不交）
 
 // 只往认得的推送服务发：登记簿里的地址是网页那边写进来的，不能它写什么就去敲什么门
 const PUSH_HOSTS = [/\.push\.apple\.com$/, /^fcm\.googleapis\.com$/, /^updates\.push\.services\.mozilla\.com$/, /\.notify\.windows\.com$/];
@@ -346,7 +349,7 @@ function ledger(req: Request) {
     async find(endpoint: string): Promise<{ rows: Row[] } | { status: number; message: string }> {
       let r: Response;
       try {
-        r = await fetch(`${at(endpoint)}&select=endpoint,p256dh,auth,page`, { headers });
+        r = await fetch(`${at(endpoint)}&select=endpoint,p256dh,auth,page`, { headers, signal: AbortSignal.timeout(DB_TIMEOUT) });
       } catch (_) {
         return { status: 502, message: "连不上库房" };
       }
@@ -355,30 +358,15 @@ function ledger(req: Request) {
       const rows = await r.json();
       return { rows: Array.isArray(rows) ? rows : [] };
     },
-    // 她登记过的所有设备（最近来登记的排前面）
-    async all(): Promise<{ rows: Row[] } | { status: number; message: string }> {
-      let r: Response;
-      try {
-        r = await fetch(`${base}?select=endpoint,p256dh,auth,page&order=updated_at.desc&limit=${MAX_DEVICES}`, { headers });
-      } catch (_) {
-        return { status: 502, message: "连不上库房" };
-      }
-      if (!r.ok) {
-        await r.body?.cancel();
-        return { status: 502, message: `库房没给登记簿（${r.status}）` };
-      }
-      const rows = await r.json();
-      return { rows: Array.isArray(rows) ? rows : [] };
-    },
     // 记下这一回发得怎么样，网页那边读得到（锁着屏的时候发的，回来也查得着）
     async note(endpoint: string, sent: Sent) {
       const body = JSON.stringify({ last_at: new Date().toISOString(), last_status: sent.status, last_note: sent.reason });
-      const r = await fetch(at(endpoint), { method: "PATCH", headers, body });
+      const r = await fetch(at(endpoint), { method: "PATCH", headers, body, signal: AbortSignal.timeout(DB_TIMEOUT) });
       await r.body?.cancel();
     },
     // 推送服务说这个地址没了（404、410）：从登记簿里划掉
     async drop(endpoint: string) {
-      const r = await fetch(at(endpoint), { method: "DELETE", headers });
+      const r = await fetch(at(endpoint), { method: "DELETE", headers, signal: AbortSignal.timeout(DB_TIMEOUT) });
       await r.body?.cancel();
     },
   };
@@ -508,10 +496,8 @@ async function askUpstream(request: Rec, beta: string, apiKey: string, deadline:
   if (only) plans.push(plans[0]);
   let last: Result = { status: 504, data: oops("等 Anthropic 等得太久，没等到"), used: { cache: false, mcp: false } };
   for (let i = 0; i < plans.length; i++) {
-    const left = deadline - Date.now();
-    if (left < 3000) break;
     const plan = plans[i];
-    const got = await askOnce(plan.body, plan.beta, apiKey, left);
+    const got = await askOnce(plan.body, plan.beta, apiKey, Math.max(1000, deadline - Date.now()));
     last = { status: got.status, data: got.data, used: { cache: plan.cache, mcp: plan.mcp } };
     if (fine(last)) return last;
     // key 不对、说得太快：换哪种写法都一样，不必再问
@@ -541,7 +527,7 @@ function mailbox(req: Request) {
     // 开一格，写上“在等”。ok 开好了；missing 那张表还没建；duplicate 这个编号已经有一格了；error 别的岔子
     async open(job: string, note: string): Promise<"ok" | "missing" | "duplicate" | "error"> {
       try {
-        const r = await fetch(base, { method: "POST", headers, body: JSON.stringify({ job, note, state: "working" }) });
+        const r = await fetch(base, { method: "POST", headers, body: JSON.stringify({ job, note, state: "working" }), signal: AbortSignal.timeout(DB_TIMEOUT) });
         await r.body?.cancel();
         if (r.status === 201 || r.status === 200) return "ok";
         if (r.status === 404) return "missing";
@@ -553,14 +539,14 @@ function mailbox(req: Request) {
     },
     // 还在等：摸一下
     async beat(job: string) {
-      const r = await fetch(`${at(job)}&state=eq.working`, { method: "PATCH", headers, body: JSON.stringify({ beat_at: new Date().toISOString() }) });
+      const r = await fetch(`${at(job)}&state=eq.working`, { method: "PATCH", headers, body: JSON.stringify({ beat_at: new Date().toISOString() }), signal: AbortSignal.timeout(DB_TIMEOUT) });
       await r.body?.cancel();
     },
     // 回话封好了，放进去。放成了回 true
     async finish(job: string, sealed: string): Promise<boolean> {
       try {
         const now = new Date().toISOString();
-        const r = await fetch(`${at(job)}&state=eq.working`, { method: "PATCH", headers, body: JSON.stringify({ state: "done", sealed, done_at: now, beat_at: now }) });
+        const r = await fetch(`${at(job)}&state=eq.working`, { method: "PATCH", headers, body: JSON.stringify({ state: "done", sealed, done_at: now, beat_at: now }), signal: AbortSignal.timeout(DB_TIMEOUT) });
         await r.body?.cancel();
         return r.ok;
       } catch (_) {
@@ -570,7 +556,7 @@ function mailbox(req: Request) {
     // 这一格还在不在（她取走就删了）。在回 true，不在回 false，问不到回 null
     async waiting(job: string): Promise<boolean | null> {
       try {
-        const r = await fetch(`${at(job)}&select=job`, { headers });
+        const r = await fetch(`${at(job)}&select=job`, { headers, signal: AbortSignal.timeout(DB_TIMEOUT) });
         if (!r.ok) {
           await r.body?.cancel();
           return null;
@@ -655,7 +641,7 @@ function splitDocs(source: string): Array<{ doc: string } | { text: string }> {
 
 // 一条回话 → 横幅上的字
 function previewOf(reply: string): string {
-  let body = reply;
+  let body = reply.length > BANNER_SOURCE ? reply.slice(0, BANNER_SOURCE) : reply;
   const think = body.match(/<thinking>([\s\S]*?)<\/thinking>/);
   if (think) body = body.replace(think[0], () => "");
   else if (body.includes("<thinking>")) body = "";
@@ -667,7 +653,9 @@ function previewOf(reply: string): string {
       lines.push(`[文档] ${part.doc}`);
       continue;
     }
-    for (const chunk of part.text.split(/\s*\[SPLIT\]\s*/)) {
+    // 网页那头是按 /\s*\[SPLIT\]\s*/ 切的；这里只按 [SPLIT] 切，两头的空白留给下面逐段收拾，出来的东西一样。
+    // 不照抄那条正则：碰上几万个连着的空行，它一个位置一个位置地试，要算好几秒，这里一回请求只给两秒
+    for (const chunk of part.text.split("[SPLIT]")) {
       const marks = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]+)\\s*\\]|" + NAME_LINE, "gm");
       const say = (piece: string) => {
         const t = piece.trim().replace(/\*/g, "").trim();
@@ -733,6 +721,7 @@ function replyNotice(page: string, said: { title: string; body: string }, job: s
 //   note     网页自己封好的一张条子（哪段对话、接在哪句后面、上面那把钥匙），这里原样存进信箱，看不懂
 //   tag      一串打乱的字，写进通知的网址里，她的设备靠它认出是哪段对话
 //   title    通知上写的名字（他现在顶上的名字）
+//   knock    回话到了敲哪几台设备（门牌号；发话的那台设备自己报的）。没报就不敲，回话照样放进信箱
 //   beta     要不要带 anthropic-beta
 //   request  给 Anthropic 的那一整段
 async function relay(req: Request, body: Rec): Promise<Response> {
@@ -748,6 +737,7 @@ async function relay(req: Request, body: Rec): Promise<Response> {
   const tag = str(body.tag);
   if (!TAG_PATTERN.test(tag)) return refuse(400, "bad_request", "没说是哪段对话");
   const title = str(body.title).slice(0, 200);
+  const knock = (Array.isArray(body.knock) ? body.knock : []).filter((e): e is string => typeof e === "string" && e.length > 0 && e.length <= 1024).slice(0, MAX_DEVICES);
   const beta = BETA_PATTERN.test(str(body.beta).trim()) ? str(body.beta).trim() : "";
   const request = body.request;
   if (!isRec(request)) return refuse(400, "bad_request", "没有要转的话");
@@ -792,14 +782,19 @@ async function relay(req: Request, body: Rec): Promise<Response> {
 
     // 等一会儿再看：信被取走了，她就在开封府里，不敲；还在，就敲她的手机
     await sleep(GRACE);
-    if ((await box.waiting(job)) === false) return;
+    if (!knock.length || (await box.waiting(job)) === false) return;
     const keys = await loadVapid();
     if (!keys.ok) return;
-    const found = await book.all();
-    if (!("rows" in found) || !found.rows.length) return;
+    // 只敲网页点了名、登记簿里也真有的那几台
+    const rows: Row[] = [];
+    for (const endpoint of knock) {
+      const found = await book.find(endpoint);
+      if ("rows" in found) rows.push(...found.rows);
+    }
+    if (!rows.length) return;
     // 回话没放进信箱的话，她点回来也取不到：照实说没送到，不写他的话
     const said = bannerOf(stored ? result : null, title);
-    await deliver(book, origin, found.rows, keys.vapid, (page) => replyNotice(page, said, job, tag), REPLY_TTL);
+    await deliver(book, origin, rows, keys.vapid, (page) => replyNotice(page, said, job, tag), REPLY_TTL);
   })();
   inBackground(work);
 

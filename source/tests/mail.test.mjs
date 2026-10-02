@@ -67,8 +67,9 @@ async function call(body, { token = "tok" } = {}) {
   return { status: res.status, data };
 }
 
-// 一回传话寄给函数的那一包
+// 一回传话寄给函数的那一包。KNOCK 是网页点名要敲的设备（门牌号）：addDevice 领的设备默认都点上名
 let seq = 0;
+let KNOCK = [];
 function order(extra = {}) {
   const key = crypto.randomBytes(32);
   return {
@@ -79,16 +80,26 @@ function order(extra = {}) {
     tag: "TAGtagTAG_-123456",
     title: "光义",
     beta: "",
+    knock: KNOCK.slice(),
     request: { model: "claude-sonnet-4-6", max_tokens: 2048, system: "名帖", messages: [{ role: "user", content: [{ type: "text", text: "在吗" }] }] },
     ...extra,
   };
 }
 const mailRow = (job) => supa.mail.rows.get(USER.id + "|" + job) || null;
+// 拿网页那头真的代码开信；打不开回 null（测试照样往下走，该挂的那一条会挂）
+const openMail = async (key, sealed) => {
+  try {
+    return await mailjs.openSealed(key, sealed);
+  } catch (e) {
+    return null;
+  }
+};
 const said = (text) => ({ status: 200, json: { id: "msg_1", type: "message", role: "assistant", model: "claude-sonnet-4-6", content: [{ type: "text", text }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 } } });
 const upstreamError = (status, type, message) => ({ status, json: { type: "error", error: { type, message } } });
 
 function addDevice(mode = "ok", page = PAGE, updated = "2026-10-01T10:00:00.000Z") {
   const dev = push.addDevice(mode);
+  KNOCK.push(dev.endpoint);
   supa.table.rows.set(USER.id + "|" + dev.endpoint, { user_id: USER.id, endpoint: dev.endpoint, p256dh: dev.p256dh, auth: dev.auth, page, created_at: updated, updated_at: updated, last_at: null, last_status: null, last_note: null });
   return dev;
 }
@@ -98,6 +109,7 @@ function resetWorld() {
   Object.assign(supa.mail.state, { missing: false, down: false, failPatch: 0 });
   supa.table.rows.clear();
   push.reset();
+  KNOCK = [];
   claude.reset();
   background.length = 0;
   for (const k of Object.keys(pushEnv)) delete pushEnv[k];
@@ -173,10 +185,9 @@ function resetWorld() {
     "等回话：问 Anthropic 用的是密钥柜里的 key，寄去的就是网页给的那一整段，beta 照带");
   ok(!!row && row.state === "done" && row.note === o.note && typeof row.sealed === "string" && row.sealed.startsWith("v1.") && row.done_at && background.length === 1,
     "等回话：同一条回话封好放进了信箱（条子原样存着），后台的活交给了运行环境看着");
-  const opened = await mailjs.openSealed(o.key, row.sealed);
-  ok(JSON.stringify(opened) === JSON.stringify(r.data.result), "等回话：信箱里那封，拿网页自己那把一次性钥匙打得开，和直接交来的一字不差（开信用的是网页那头真的代码）");
-  let wrong = false;
-  try { await mailjs.openSealed(b64u(crypto.randomBytes(32)), row.sealed); wrong = true; } catch (e) {}
+  const opened = row && (await openMail(o.key, row.sealed));
+  ok(!!opened && JSON.stringify(opened) === JSON.stringify(r.data.result), "等回话：信箱里那封，拿网页自己那把一次性钥匙打得开，和直接交来的一字不差（开信用的是网页那头真的代码）");
+  const wrong = row && (await openMail(b64u(crypto.randomBytes(32)), row.sealed));
   const stored = JSON.stringify(row);
   ok(!wrong && !stored.includes(o.key) && !stored.includes("在呢") && !stored.includes("想她了") && !JSON.stringify(r.data).includes(o.key),
     "等回话：信箱里只有乱码：没有那把钥匙、没有他的话；换一把钥匙打不开；回给网页的东西里也不带钥匙");
@@ -194,6 +205,9 @@ function resetWorld() {
   resetWorld();
   const a = addDevice("ok", PAGE, "2026-10-01T10:00:00.000Z");
   const b = addDevice("ok", PAGE + "dingxiang/", "2026-10-02T10:00:00.000Z");
+  // 登记簿里还有一行：别人（偷到登录密码、没有暗号的人）添进去的设备。网页没点它的名
+  const spy = addDevice("ok", PAGE, "2026-10-03T10:00:00.000Z");
+  KNOCK = [a.endpoint, b.endpoint, "https://web.push.apple.com/not-in-the-ledger"];
   clock.on();
   const o = order({ title: "  小狐\n狸  " });
   claude.script.push(said("<thinking>她肯定睡了</thinking>\n在呢\n[SPLIT]\n*摸摸头* 早点睡\n[MEME:fox_reading_book.jpg]\n[NAME:小狐狸]"));
@@ -204,18 +218,33 @@ function resetWorld() {
   await Promise.all(background);
   const got = push.delivered;
   const n0 = got[0] && got[0].json && got[0].json.notification;
-  ok(r.status === 200 && early === 0 && got.length === 2, "她不在：等够那几秒、信还在信箱里，才敲；登记过的两台设备都敲到");
+  ok(r.status === 200 && early === 0 && got.length === 2 && got.map((d) => d.endpoint).sort().join() === [a.endpoint, b.endpoint].sort().join(), "她不在：等够那几秒、信还在信箱里，才敲；网页点了名的两台设备都敲到");
+  ok(spy.hits === 0 && push.log.every((x) => x.endpoint !== spy.endpoint) && push.log.length === 2 && supa.table.rows.get(USER.id + "|" + spy.endpoint).last_at === null,
+    "她不在：登记簿里没被点名的那一行不敲（往登记簿里添一行，收不到他说的话）；点了名、登记簿里却没有的门牌号也不去敲");
   ok(!!n0 && got[0].json.web_push === 8030 && n0.title === "小狐 狸" && n0.body === "在呢\n摸摸头 早点睡\n[表情包]",
     `她不在：横幅上是他的名字和他回的话：心里话不写，分条的一条一行，星号去掉，表情包写成 [表情包]，改名字的记号不写（${JSON.stringify(n0 && n0.body)}）`);
   const navs = got.map((d) => d.json.notification.navigate).sort();
-  ok(navs[0] === `${PAGE}#n=r.${o.tag}.${o.job}` && navs[1] === `${PAGE}dingxiang/#n=r.${o.tag}.${o.job}` && got[0].endpoint === b.endpoint,
-    "她不在：点了回到各自的入口，网址带着“哪段对话”的记号；最近来登记的那台先敲");
+  ok(navs[0] === `${PAGE}#n=r.${o.tag}.${o.job}` && navs[1] === `${PAGE}dingxiang/#n=r.${o.tag}.${o.job}`, "她不在：点了回到各自的入口，网址带着“哪段对话”的记号");
   ok(got.every((d) => d.ttl === String(12 * 3600) && d.urgency === "high"), "她不在：手机不在线的话，推送服务替我们留十二个小时");
-  const rows = supa.table.all();
-  ok(rows.every((x) => x.last_status === 201 && x.last_at), "她不在：发得怎么样记在登记簿里（面板的“看细节”查得到）");
+  const rows = supa.table.all().filter((x) => x.endpoint !== spy.endpoint);
+  ok(rows.length === 2 && rows.every((x) => x.last_status === 201 && x.last_at), "她不在：发得怎么样记在登记簿里（面板的“看细节”查得到）");
   ok(mailRow(o.job) && mailRow(o.job).state === "done", "她不在：信还在信箱里，等她回来取");
   const parsed = mailjs.parseReplyMark(new URL(navs[0]).hash.slice(3));
   ok(!!parsed && parsed.tag === o.tag && parsed.job === o.job, "她不在：网页那头读得出通知网址里的记号（哪段对话、哪一回）");
+
+  // 网页一台都没点名（这台设备没开通知）：不敲，信照样在信箱里
+  push.reset();
+  const o2 = order({ knock: [] });
+  await call(o2);
+  await clock.tick(GRACE + 200);
+  await Promise.all(background);
+  ok(push.log.length === 0 && mailRow(o2.job).state === "done", "网页一台设备都没点名：不敲（登记簿里有几行都不敲），信照样在信箱里");
+  // 点名点得不像话：不是字符串、太长、太多，都不理
+  const o3 = order({ knock: [null, 42, { endpoint: a.endpoint }, "x".repeat(2000), ...Array(20).fill("https://web.push.apple.com/zzz")] });
+  const r3 = await call(o3);
+  await clock.tick(GRACE + 200);
+  await Promise.all(background);
+  ok(r3.status === 200 && push.log.length === 0, "点名点得不像话（不是字、太长、太多）：照常回话，不敲、不出错");
   clock.off();
 }
 
@@ -230,8 +259,8 @@ function resetWorld() {
   const r = await call(o);
   ok(r.status === 200 && r.data.result.status === 401 && r.data.result.data.error.type === "authentication_error" && claude.calls.length === 1,
     "没回成：Anthropic 说 key 不对，照实交给网页（网页那头翻成人话），不多问");
-  const opened = await mailjs.openSealed(o.key, mailRow(o.job).sealed);
-  ok(opened.status === 401 && mailjs.resultOk(opened) === false && mailjs.explainResult(opened).includes("key 不对"), "没回成：信箱里封的也是这句报错，网页取出来说得成人话");
+  const opened = await openMail(o.key, mailRow(o.job).sealed);
+  ok(!!opened && opened.status === 401 && mailjs.resultOk(opened) === false && mailjs.explainResult(opened).includes("key 不对"), "没回成：信箱里封的也是这句报错，网页取出来说得成人话");
   await clock.tick(GRACE + 100);
   await Promise.all(background);
   const n = push.delivered[0] && push.delivered[0].json.notification;
@@ -285,6 +314,21 @@ function resetWorld() {
   await clock.tick(1500);
   const r7 = await junk;
   ok(r7.data.result.status === 502 && mailjs.resultOk(r7.data.result) === false, "没回成：回来的不是 JSON，也算没回成");
+  // 状态码不是 2xx、回来的东西又不像报错：也算没回成，横幅不拿它当他的话
+  claude.script.push({ status: 503, json: { message: "upstream connect error" } }, { status: 503, json: { message: "upstream connect error" } });
+  push.reset();
+  const dev8 = addDevice();
+  const calls8 = claude.calls.length;
+  const o8 = order();
+  const odd = call(o8);
+  await until(() => claude.calls.length === calls8 + 1);
+  await clock.tick(1500);
+  const r8 = await odd;
+  await clock.tick(GRACE + 100);
+  await Promise.all(background);
+  const n8 = push.delivered.find((d) => d.endpoint === dev8.endpoint && d.json.notification.navigate.endsWith(o8.job));
+  ok(r8.data.result.status === 503 && fn.fine(r8.data.result) === false && mailjs.resultOk(r8.data.result) === false && !!n8 && n8.json.notification.title === "开封府" && n8.json.notification.body.includes("没送到"),
+    "没回成：状态码是 503、回来的东西又不像报错：两头都认它没回成，横幅照实说没送到");
   await clock.tick(GRACE + 100);
   await Promise.all(background);
   clock.off();
@@ -334,6 +378,15 @@ function resetWorld() {
   const before2 = claude.calls.length;
   const r3 = await call(order({ request: rich, beta: "mcp-client-2025-11-20" }));
   ok(claude.calls.length === before2 + 1 && JSON.stringify(r3.data.result.used) === JSON.stringify({ cache: true, mcp: true }), "换写法：头一种就通，只问一回");
+
+  // key 不对、说得太快：还有别的写法也不换着问（换了也一样）
+  for (const [status, type] of [[401, "authentication_error"], [403, "permission_error"], [429, "rate_limit_error"]]) {
+    claude.script.push(upstreamError(status, type, "no"), said("不该问到这一回"));
+    const at = claude.calls.length;
+    const rr = await call(order({ request: rich, beta: "mcp-client-2025-11-20" }));
+    ok(rr.data.result.status === status && claude.calls.length === at + 1, `换写法：Anthropic 回 ${status}（${type}），还有两种写法也不换着问`);
+    claude.script.length = 0;
+  }
 
   // 没带缓存记号、带着工具：两种写法（带工具、不带工具）
   const plainMcp = JSON.parse(JSON.stringify(noCache));
@@ -425,7 +478,7 @@ function resetWorld() {
   ok(r3.status === 200 && push.log.length === 0 && mailRow(o3.job).state === "done", "通知的钥匙没放好：不敲手机，回话照样等、照样放进信箱（她回来取得到）");
   Object.assign(pushEnv, baseEnv);
 
-  // 一台设备都没登记：也一样
+  // 点了名、登记簿里却一行都没有：也一样
   supa.table.rows.clear();
   push.reset();
   const o4 = order();
@@ -507,6 +560,27 @@ function resetWorld() {
   const diff = corpus.filter((t) => fn.previewOf(t) !== expect(t));
   ok(diff.length === 0, `横幅：${corpus.length} 条各式各样的回话，小后端拆出来的和网页拆出来的一模一样${diff.length ? "（对不上的：" + JSON.stringify(diff.map((t) => [t, fn.previewOf(t), expect(t)])) + "）" : ""}`);
   ok(fn.previewOf("<thinking>想她</thinking>\n在呢") === "在呢" && fn.previewOf("<thinking>没关上") === "……" && !fn.previewOf("<thinking>秘密</thinking>\n话").includes("秘密"), "横幅：心里话一个字都不上横幅");
+  // 再随机拼四千条对一遍（种子是定的，每回跑的是同一批）
+  let seed = 20261002;
+  const rnd = () => {
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+    return seed / 0x80000000;
+  };
+  const bits = ["在呢", "*笑*", "好", " ", "\n", "\n\n", "[SPLIT]", "\n[SPLIT]\n", " [SPLIT] ", "[MEME:a.jpg]", "[AVATAR:b.jpg]", "[NAME:小狐]", "\n[NAME:小狐]\n", "[NAME:新名字]", "\n[NAME:新名字]\n", "\n [NAME:「新名字」] \n",
+    "<thinking>", "</thinking>", "[DOC:x.md]\n", "\n[DOC:x.md]\n", "\n[/DOC]\n", "[/DOC]", "\n[DOC:文件名.md]\n", "\r\n", "\t", "：", "$&", "*", "[", "]", "一家人 👨\u200d👩\u200d👧\u200d👦"];
+  const off = [];
+  for (let i = 0; i < 4000; i++) {
+    let t = "";
+    for (let k = 1 + Math.floor(rnd() * 12); k > 0; k--) t += bits[Math.floor(rnd() * bits.length)];
+    if (fn.previewOf(t) !== expect(t)) off.push(t);
+  }
+  ok(off.length === 0, `横幅：随机拼的四千条回话，两边拆出来的也一模一样${off.length ? "（对不上 " + off.length + " 条，头一条：" + JSON.stringify([off[0], fn.previewOf(off[0]), expect(off[0])]) + "）" : ""}`);
+  // 几万个连着的空行：小后端不照抄网页那条会慢的正则，一眨眼就拆完（它一回请求只有两秒可算）
+  const blank = "在呢" + "\n".repeat(25000) + "[SPLIT]" + " ".repeat(25000) + "好";
+  const t0 = performance.now();
+  const quick = fn.previewOf(blank);
+  ok(quick === "在呢\n好" && quick === expect(blank) && performance.now() - t0 < 300, `横幅：五万个连着的空白，拆得出来（和网页拆的一样）、不拖（${Math.round(performance.now() - t0)} 毫秒）`);
+  ok(fn.previewOf("好".repeat(100000) + "[SPLIT]尾巴") === "好".repeat(60000), "横幅：回话太长只看前六万个字（横幅上本来也只写三百个）");
 
   // 太长的截掉
   const long = "很长".repeat(400);
@@ -519,6 +593,9 @@ function resetWorld() {
   ok(b.title === "光义" && Array.from(b.body).length === 300 && fn.bannerOf(null, "光义").title === "开封府" && fn.bannerOf({ status: 200, data: { content: [] }, used: {} }, "").title === "开封府" && fn.bannerOf({ status: 200, data: { content: [] }, used: {} }, "x").body === "……",
     "横幅：名字用网页给的（没给就写开封府）；回话是空的写省略号；没回成的不写他的话");
   ok(fn.bannerOf({ status: 200, data: { content: [{ type: "text", text: "好" }] }, used: {} }, "名字".repeat(50)).title.length <= 40, "横幅：名字太长也截");
+  const heavy = fn.bannerOf({ status: 200, data: { content: [{ type: "text", text: family }] }, used: {} }, "光义");
+  const heavyNotice = JSON.stringify({ web_push: 8030, notification: { title: heavy.title, body: heavy.body, navigate: PAGE + "dingxiang/#n=r." + "T".repeat(32) + "." + "J".repeat(20), lang: "zh-CN", dir: "ltr" } });
+  ok(new TextEncoder().encode(heavy.body).length <= 1800 && new TextEncoder().encode(heavyNotice).length <= 3000, `横幅：一长串拼起来的表情，写上横幅以后整条通知还在推送服务肯收的大小以内（${new TextEncoder().encode(heavyNotice).length} 个字节）`);
 }
 
 // ================= 手机这一头：对话上的手艺（src/thread.js） =================
@@ -549,7 +626,14 @@ function resetWorld() {
   const forked = mailPut(tail, finfo, him("rJ2", 150, "J2"));
   ok(mailFit(tail, finfo, "J2") === "ok" && forked.map((m) => m.id).join() === "a,b,c,rJ2,新说的" && forked[3].alts.length === 2 && forked[3].altIdx === 1 && forked[3].alts[0].node.id === "old" && forked[3].alts[0].after.map((m) => m.id).join() === "旧的后话",
     "取信·重新回答：新回答开一个分支摆在外面，旧回答连同它后面的话收进旧分支；那一回发出去以后她又说的，接在新回答后面");
-  ok(mailFit(forked, finfo, "J2") === "dup" && mailFit([her("a"), him("b"), her("c")], finfo, "J2") === "gone" && mailFit([her("a")], finfo, "J2") === "later", "取信·重新回答：放过了认得出；要换掉的那一条不在了就不要了");
+  ok(mailFit(forked, finfo, "J2") === "dup" && mailFit([her("a")], finfo, "J2") === "later", "取信·重新回答：放过了认得出；这台设备上还没有那一句，先留着");
+  // 要换掉的那一条不在外面摆着了（她翻到了别的版本、存档里缺了它）：那一句后面还空着，就当平常的回话放进去，不把回好的话扔了
+  const lost = [her("a", 1), him("b", 2), her("c", 3), her("新说的", 200)];
+  ok(mailFit(lost, finfo, "J2") === "ok" && mailPut(lost, finfo, him("rJ2", 150, "J2")).map((m) => m.id).join() === "a,b,c,rJ2,新说的" && !mailPut(lost, finfo, him("rJ2", 150, "J2"))[3].alts,
+    "取信·重新回答：要换掉的那一条不在了、那一句后面还空着：当平常的回话接在那一句后面");
+  const other = [her("a", 1), him("b", 2), her("c", 3), him("另一个版本", 4)];
+  ok(mailFit(other, finfo, "J2") === "gone" && mailFit(full.slice(0, 3).concat([her("event", 9)]).map((m, i) => (i === 3 ? { id: "e", role: "event" } : m)).concat([him("x", 10)]), finfo, "J2") === "gone",
+    "取信·重新回答：要换掉的那一条不在了、那一句后面已经有别的回话：这封不要了");
   const back = thread.switchAlt(forked, 3, 0);
   ok(hasJob(back, "J2") && mailFit(back, finfo, "J2") === "dup" && back.map((m) => m.id).join() === "a,b,c,old,旧的后话", "取信：她翻回旧分支以后，收在别的分支里的那条也认得出（不会再放一遍）");
   const nested = forkAt([her("a"), him("b", 2, "J9"), her("c")], 0, her("a2"));
@@ -569,14 +653,20 @@ function world({ visible = true } = {}) {
     visible, online: true, table: true, getFails: 0, listFails: 0,
     rows: new Map(), removed: [], sent: [], replies: [], aborted: 0,
     storage: "", vis: new Set(), freshed: 0, synced: 0, answered: false, hint: false,
+    backAt: -Infinity, probe: true, probes: 0, knock: ["https://web.push.apple.com/this-device"], hang: "", looks: [],
   };
+  const never = new Promise(() => {});
   const box = {
     async list() {
+      w.looks.push(Date.now());
+      if (w.hang === "list") return never;
       if (!w.table) throw coded("notable");
       if (w.listFails > 0) { w.listFails--; throw coded("refused", "TypeError: Failed to fetch"); }
       return [...w.rows.values()].sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
     },
     async get(job) {
+      w.looks.push(Date.now());
+      if (w.hang === "get") return never;
       if (!w.table) throw coded("notable");
       if (w.getFails > 0) { w.getFails--; throw coded("refused", "TypeError: Failed to fetch"); }
       const r = w.rows.get(job);
@@ -598,6 +688,9 @@ function world({ visible = true } = {}) {
     visible: () => w.visible,
     online: () => w.online,
     onVisible: (f) => { w.vis.add(f); return () => w.vis.delete(f); },
+    sinceBack: () => Date.now() - w.backAt,
+    probe: async () => { w.probes++; if (w.probe instanceof Error) throw w.probe; return w.probe; },
+    knock: () => w.knock,
     now: () => Date.now(),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     storage: { get: () => w.storage, set: (t) => { w.storage = t; } },
@@ -613,7 +706,7 @@ function world({ visible = true } = {}) {
     const now = stamp();
     w.rows.set(p.job, { job: p.job, state: "done", note: p.note, sealed: await fn.sealWith(new Uint8Array(unb64u(p.key)), JSON.stringify(result)), created_at: old ? old.created_at : now, beat_at: now, done_at: now });
   };
-  w.comeBack = () => { w.visible = true; for (const f of [...w.vis]) f(); };
+  w.comeBack = () => { w.visible = true; w.backAt = Date.now(); for (const f of [...w.vis]) f(); };
   w.jobs = () => { try { return JSON.parse(w.storage || "[]").map((x) => x.job); } catch (e) { return []; } };
   return w;
 }
@@ -635,19 +728,24 @@ const drive = async (p, step = 500, max = 400000) => {
   const untrusted = w.relay.trusted();
   w.replies.push(async (p) => { await w.done(p); return { type: "reply", job: p.job, result: GOOD }; });
   const got = (await settled(w.relay.ask({ ...ARGS, extra: { withMcp: true, slugs: { s0: "笔记" } } }))).v;
-  ok(untrusted === false && w.relay.trusted() === true && w.hint === true, "一回传话：新路走通一回，这台设备就记着它通（她切走的那一下才敢把话交出去）");
+  ok(untrusted === false && w.relay.trusted() === true && w.hint === true && w.probes === 1, "一回传话：这台设备上头一回用，先轻轻问一声新路通不通；通，就记着（她切走的那一下才敢把话交出去）");
   const p = w.sent[0];
-  const info = await readNote((t) => vaultjs.unseal(vault, t), p.note);
+  const info = await readNote((t) => vaultjs.unseal(vault, t), p.note, p.job);
   ok(!!got && got.via === "direct" && JSON.stringify(got.data) === JSON.stringify(GOOD.data) && got.used.cache === true && got.job === p.job, "一回传话：她在跟前，回话直接交到手上");
-  ok(p.op === "reply" && /^[A-Za-z0-9]{20}$/.test(p.job) && unb64u(p.key).length === 32 && p.title === "光义" && p.request === ARGS.body && p.tag === (await chatTag((n) => vaultjs.rowKeyFor(vault, n), "chatA")) && /^[A-Za-z0-9_-]{32}$/.test(p.tag) && !p.tag.includes("chatA"),
-    "一回传话：寄给小后端的有编号、一次性钥匙、条子、打乱了的对话记号、他的名字、要转的那一整段");
-  ok(!!info && info.chat === "chatA" && info.last === "m7" && info.key === p.key && info.extra.slugs.s0 === "笔记" && p.note.startsWith("v1.") && !p.note.includes("chatA") && w.freshed === 240,
-    "一回传话：条子是拿存档的钥匙封的（云端看不懂），里面记着哪段对话、接在哪句后面、那把一次性钥匙；发之前先看登录凭证够不够用");
+  ok(p.op === "reply" && /^[A-Za-z0-9]{20}$/.test(p.job) && unb64u(p.key).length === 32 && p.title === "光义" && p.knock.join() === "https://web.push.apple.com/this-device" && p.request === ARGS.body && p.tag === (await chatTag((n) => vaultjs.rowKeyFor(vault, n), "chatA")) && /^[A-Za-z0-9_-]{32}$/.test(p.tag) && !p.tag.includes("chatA"),
+    "一回传话：寄给小后端的有编号、一次性钥匙、条子、打乱了的对话记号、他的名字、这台设备的门牌号（回话到了敲它）、要转的那一整段");
+  ok(!!info && info.job === p.job && info.chat === "chatA" && info.last === "m7" && info.key === p.key && info.extra.slugs.s0 === "笔记" && p.note.startsWith("v1.") && !p.note.includes("chatA") && w.freshed === 240,
+    "一回传话：条子是拿存档的钥匙封的（云端看不懂），里面记着是哪一回、哪段对话、接在哪句后面、那把一次性钥匙；发之前先看登录凭证够不够用");
+  ok((await readNote((t) => vaultjs.unseal(vault, t), p.note, "anotherJob0000000001")) === null, "一回传话：条子认编号：被人挪到另一格上（换了编号）就不认");
   ok(w.jobs().join() === p.job && w.rows.has(p.job) && w.removed.length === 0, "一回传话：回话还没落进对话之前，信不取走、这一回也还记着");
   await got.settle();
   await got.settle();
   ok(w.jobs().length === 0 && !w.rows.has(p.job) && w.removed.join() === p.job, "一回传话：落进对话以后叫一声 settle：信取走（小后端就不敲手机了），这一回不用再记");
   ok(w.relay.status().last.path === "new" && w.relay.status().last.via === "direct" && !w.relay.status().off, "一回传话：记着上一回是怎么到的（面板的“看细节”要说）");
+  // 第二回：已经知道通了，不再问
+  w.replies.push(async (p2) => { await w.done(p2); return { type: "reply", job: p2.job, result: GOOD }; });
+  const second = (await settled(w.relay.ask({ ...ARGS, last: "m8" }))).v;
+  ok(!!second && w.probes === 1 && second.at === 0, "一回传话：知道通了以后不再问；当面交到的不带“几点放进信箱”");
 
   // 她不在跟前（页面在后台）：信留着，让小后端敲她
   const h = world({ visible: false });
@@ -679,6 +777,38 @@ const drive = async (p, step = 500, max = 400000) => {
     const later = await settled(w.relay.ask({ ...ARGS, last: "m9" }));
     ok(!!later.v && w.sent.length === 2 && !w.relay.status().off, `走回老路：${name}：过了三分钟再试一回新路（她在 Supabase 补好了就接上）`);
   }
+  // 这台设备上还不知道通不通：轻轻一问就知道不通（小后端还是旧的、信箱没建），整段对话不往那边寄
+  const np = world();
+  np.probe = false;
+  const out0 = await settled(np.relay.ask(ARGS));
+  const out0b = await settled(np.relay.ask({ ...ARGS, last: "m8" }));
+  ok(out0.e && out0.e.code === "oldpath" && np.sent.length === 0 && np.probes === 1 && out0b.e && out0b.e.code === "oldpath" && np.relay.status().off && !np.relay.trusted(),
+    "还不知道通不通：先轻轻问一声，不通就走老路，那一大包对话不白传；几分钟里也不再问");
+  // 她在 Supabase 补好了：过三分钟自己再问一声，问通了，下一句就走新路，切走也敢交
+  np.probe = true;
+  await clock.tick(3 * 60 * 1000 + 1000);
+  await breathe();
+  ok(np.probes === 2 && np.relay.trusted(), "不通以后过三分钟：自己再轻轻问一声，通了就记着");
+  // 没问成（没网）：这一句走老路，不下“不通”的结论
+  const nn = world();
+  nn.probe = null;
+  const outn = await settled(nn.relay.ask(ARGS));
+  ok(outn.e && outn.e.code === "oldpath" && nn.sent.length === 0 && !nn.relay.status().off, "没问成（没网）：这一句走老路（老路也连不上就照实说），不记成“新路不通”");
+  nn.probe = new Error("boom");
+  ok((await settled(nn.relay.ask(ARGS))).e.code === "oldpath" && !nn.relay.status().off, "问的时候出了错：一样");
+  // 开机先问好
+  const wm = world();
+  const warmed = await wm.relay.warm();
+  ok(warmed === true && wm.relay.trusted() && wm.probes === 1 && (await wm.relay.warm()) === true && wm.probes === 1, "开机先问好通不通：头一句话发完就切走，也敢交出去；问过了不再问");
+  // 面板那边查到两样都好了：记下，停着的也解开
+  const lp = world();
+  lp.probe = false;
+  await settled(lp.relay.ask(ARGS));
+  lp.relay.learn(true);
+  lp.replies.push(async (p) => { await lp.done(p); return { type: "reply", job: p.job, result: GOOD }; });
+  const learned = await settled(lp.relay.ask(ARGS));
+  ok(!!learned.v && lp.sent.length === 1 && lp.relay.trusted(), "面板上刚查到回话那两样都好了：马上走新路，不用等那三分钟、不用重开");
+
   // 登录过期：不是新路的毛病，照实说
   const a = world();
   a.replies.push(async () => { throw coded("auth", "登录过期了，重新登录一下"); });
@@ -732,11 +862,26 @@ const drive = async (p, step = 500, max = 400000) => {
   await clock.tick(2500);
   ok(alive4 && !!res4 && res4.via === "mailbox", "断了：手机的钟和云端差十分钟也不碍事（只看那一格上的时间变没变，不拿两边的钟比）");
 
-  // 放了很久还写着“在等”的：不等
-  const w5 = world();
-  w5.replies.push(async (p) => { w5.working(p, new Date(Date.now() - 20 * 60 * 1000).toISOString()); throw coded("unreachable", "连不上"); });
-  const out5 = await drive(w5.relay.ask(ARGS), 500, 8000);
-  ok(out5.e && out5.e.message.includes("那边断了"), "断了：那一格二十分钟前就写着“在等”，一眼就知道早断了，不用等二十五秒");
+  // 手机的钟快了、慢了一个钟头：一样不碍事（那一格上写的时间和手机的钟差多少都不看）
+  for (const skew of [60 * 60 * 1000, -60 * 60 * 1000]) {
+    const w5 = world();
+    const at = () => new Date(Date.now() - skew).toISOString();
+    w5.replies.push(async (p) => { w5.working(p, at()); throw coded("unreachable", "连不上"); });
+    let res5 = null;
+    w5.relay.ask(ARGS).then((v) => { res5 = v; }, (e) => { res5 = { e }; });
+    for (let i = 0; i < 20; i++) { await clock.tick(2000); const r = w5.rows.get(w5.sent[0].job); if (r && i % 3 === 2) r.beat_at = at(); }
+    const alive5 = res5 === null;
+    const p5 = w5.sent[0];
+    w5.rows.set(p5.job, { ...w5.rows.get(p5.job), state: "done", sealed: await fn.sealWith(new Uint8Array(unb64u(p5.key)), JSON.stringify(GOOD)), done_at: at(), beat_at: at() });
+    await clock.tick(2500);
+    ok(alive5 && !!res5 && res5.via === "mailbox" && w5.sent.length === 1, `断了：手机的钟${skew > 0 ? "快" : "慢"}了一个钟头，他想了四十秒，照样守到了（没有因为“看着像放了很久”就不等）`);
+  }
+  // 钟差一个钟头、小后端真断了：照样二十五秒认出来
+  const w6 = world();
+  w6.replies.push(async (p) => { w6.working(p, new Date(Date.now() - 60 * 60 * 1000).toISOString()); throw coded("unreachable", "连不上"); });
+  const t6 = Date.now();
+  const out6 = await drive(w6.relay.ask(ARGS), 1000);
+  ok(out6.e && out6.e.message.includes("那边断了") && Date.now() - t6 >= 25000 && Date.now() - t6 < 32000, "断了：钟差一个钟头、那一格真没人摸了：照样二十五秒认出来");
   clock.off();
 }
 
@@ -804,7 +949,7 @@ const drive = async (p, step = 500, max = 400000) => {
   const t0 = Date.now();
   const out = await drive(w.relay.ask(ARGS));
   const job = w.sent[0].job;
-  ok(out.e && !out.e.code && out.e.message.includes("连不上开封府的后端") && w.jobs().join() === job && Date.now() - t0 < 8000, "信箱也连不上：试几回就照实说连不上；这一回还记着（它多半还在办）");
+  ok(out.e && !out.e.code && out.e.message.includes("连不上开封府的后端") && w.jobs().join() === job && Date.now() - t0 < 1000 && w.getFails === 98, "话没连上、信箱也没看成（真没网）：看一眼就照实说连不上，不让她对着“正在输入”干等；这一回还记着（它多半还在办）");
   // 她点“重发”：网络好了，那一回的回话已经在信箱里：取它，不花第二回钱
   w.getFails = 0;
   await w.done(w.sent[0]);
@@ -812,6 +957,38 @@ const drive = async (p, step = 500, max = 400000) => {
   ok(!!again.v && again.v.job === job && again.v.via === "mailbox" && w.sent.length === 1, "她点重发：上一回为这句话发出去的还记着，先去信箱里看，取到了它的回话，没有重发");
   await again.v.settle();
   ok(w.jobs().length === 0 && w.rows.size === 0, "取到以后：信取走，这一回不用再记");
+
+  // 刚回到眼前的那一阵：网络还没醒，信箱一时没看成不算数，多试几回
+  const wb = world();
+  wb.replies.push(async (p) => { await wb.done(p); wb.getFails = 2; wb.backAt = Date.now(); throw coded("unreachable", "连不上"); });
+  const tb = Date.now();
+  const outb = await drive(wb.relay.ask(ARGS), 200);
+  ok(!!outb.v && outb.v.via === "mailbox" && wb.getFails === 0 && Date.now() - tb >= 2400 && wb.looks[0] - tb >= 500, `刚回到眼前：歇半秒再敲网络的门；头两眼没看成也不算数，第三眼取到了（${Date.now() - tb} 毫秒）`);
+  const wc = world();
+  wc.replies.push(async (p) => { wc.working(p); wc.getFails = 99; wc.backAt = Date.now(); throw coded("unreachable", "连不上"); });
+  const outc = await drive(wc.relay.ask(ARGS), 200);
+  ok(outc.e && outc.e.message.includes("连不上") && wc.getFails === 95, "刚回到眼前：试四眼都没看成，才照实说连不上");
+  // 看信箱那一下悬着不应：八秒算没看成，不会一直挂着
+  const wh = world();
+  wh.replies.push(async (p) => { await wh.done(p); wh.hang = "get"; throw coded("unreachable", "连不上"); });
+  const th = Date.now();
+  const outh = await drive(wh.relay.ask(ARGS), 500);
+  ok(outh.e && outh.e.message.includes("连不上") && Date.now() - th >= 8000 && Date.now() - th < 10000 && wh.jobs().length === 1, `看信箱那一下悬着不应：等八秒算没看成（${Date.now() - th} 毫秒），照实说，这一回还记着`);
+  wh.hang = "";
+  const outh2 = await drive(wh.relay.ask(ARGS));
+  ok(!!outh2.v && wh.sent.length === 1, "悬过以后她点重发：取到了那一回的回话，没有重发");
+
+  // 新路这会儿停着，也先找回记着的那一回：不走老路再问一遍
+  const wo = world();
+  wo.replies.push(async (p) => { wo.working(p); wo.getFails = 99; throw coded("unreachable", "连不上"); });
+  await drive(wo.relay.ask(ARGS));
+  wo.getFails = 0;
+  wo.replies.push(async () => { throw coded("refused", "库房里还没有信箱", { reason: "no_mailbox" }); });
+  const tripped = await drive(wo.relay.ask({ ...ARGS, last: "m8" }));
+  await wo.done(wo.sent[0]);
+  const found = await drive(wo.relay.ask(ARGS));
+  ok(tripped.e && tripped.e.code === "oldpath" && wo.relay.status().off && !!found.v && found.v.job === wo.sent[0].job && wo.sent.length === 2,
+    "新路这会儿停着：为这句话发出去的那一回还记着，照样先去信箱里取它，不走老路再问一遍");
 
   // 换了一句话（她又说了一句）：那是新的一回
   const w2 = world();
@@ -829,16 +1006,31 @@ const drive = async (p, step = 500, max = 400000) => {
   const out3 = await drive(w3.relay.ask(ARGS), 100);
   ok(out3.e && out3.e.message.includes("连不上") && Date.now() - t1 < 1000 && w3.getFails === 98, "手机自己说没网：马上照实说，不白等");
 
-  // 记着的那一回过了十分钟：不认了
+  // 隔了很久才点重发：那一回的回话还在信箱里，照样取它；信箱里已经没有它了，才发新的一回
   const w4 = world();
   w4.replies.push(async (p) => { w4.working(p); w4.getFails = 99; throw coded("unreachable", "连不上"); });
   await drive(w4.relay.ask(ARGS));
-  await clock.tick(11 * 60 * 1000);
+  await clock.tick(40 * 60 * 1000);
   w4.getFails = 0;
-  w4.rows.clear();
-  w4.replies.push(async (p) => { await w4.done(p); return { type: "reply", job: p.job, result: GOOD }; });
-  const fresh = await drive(w4.relay.ask(ARGS));
-  ok(!!fresh.v && w4.sent.length === 2, "记着的那一回过了十分钟：不认了，照常发新的一回");
+  await w4.done(w4.sent[0]);
+  const late = await drive(w4.relay.ask(ARGS));
+  ok(!!late.v && late.v.job === w4.sent[0].job && w4.sent.length === 1, "隔了四十分钟才点重发：那一回的回话还在信箱里，取它，不重发");
+  const w4b = world();
+  w4b.replies.push(async (p) => { w4b.working(p); w4b.getFails = 99; throw coded("unreachable", "连不上"); });
+  await drive(w4b.relay.ask(ARGS));
+  w4b.getFails = 0;
+  w4b.rows.clear();
+  w4b.replies.push(async (p) => { await w4b.done(p); return { type: "reply", job: p.job, result: GOOD }; });
+  const fresh = await drive(w4b.relay.ask(ARGS));
+  ok(!!fresh.v && w4b.sent.length === 2 && w4b.jobs().join() === w4b.sent[1].job, "记着的那一回信箱里已经没有了：划掉它，发新的一回");
+  // 记的回数有上限：新的挤掉旧的
+  const w4c = world();
+  for (let i = 0; i < 10; i++) {
+    w4c.replies.push(async (p) => { w4c.working(p); w4c.getFails = 99; throw coded("unreachable", "连不上"); });
+    await drive(w4c.relay.ask({ ...ARGS, last: "m" + i }));
+    w4c.getFails = 0;
+  }
+  ok(w4c.jobs().length === 8 && w4c.jobs().join() === w4c.sent.slice(2).map((p) => p.job).join(), "发出去没着落的最多记八回，新的挤掉旧的");
   clock.off();
 }
 
@@ -855,10 +1047,81 @@ const drive = async (p, step = 500, max = 400000) => {
   await w.done(w.sent[0]);
   await clock.tick(20000);
   const before = res;
+  const tBack = Date.now();
+  w.looks.length = 0;
   w.comeBack();
   await breathe();
-  await clock.tick(10);
-  ok(before === null && !!res && res.via === "mailbox" && w.aborted === 1 && w.sent.length === 1, "切走又回来：直接等的那头还悬着，一回来就去信箱里看，取到了；悬着的那头掐掉");
+  await clock.tick(300);
+  const tooSoon = w.looks.length;
+  await clock.tick(300);
+  ok(before === null && tooSoon === 0 && w.looks.length === 1 && w.looks[0] - tBack >= 500 && !!res && res.via === "mailbox" && w.aborted === 1 && w.sent.length === 1,
+    "切走又回来：直接等的那头还悬着，回来歇半秒就去信箱里看，取到了；悬着的那头掐掉");
+
+  // 回来的时候他还没回完、直接等的那头悬着：往后每两秒看一眼信箱，回话一放进来就取到
+  const w5 = world();
+  w5.replies.push((p) => { w5.working(p); return new Promise(() => {}); });
+  const p5 = w5.relay.ask(ARGS);
+  let res5 = null;
+  p5.then((v) => { res5 = v; }, (e) => { res5 = { e }; });
+  await until(() => w5.sent.length === 1);
+  await clock.tick(5000);
+  w5.visible = false;
+  w5.comeBack();
+  await breathe();
+  for (let i = 0; i < 6; i++) { await clock.tick(2000); w5.beat(w5.sent[0].job); }
+  const still = res5;
+  await w5.done(w5.sent[0]);
+  await clock.tick(2100);
+  ok(still === null && !!res5 && res5.via === "mailbox" && w5.sent.length === 1, "切走又回来、他还没回完：往后每两秒看一眼信箱（不再干等那头悬着的），回话放进来两秒内取到");
+
+  // 刚回来的那一下网络还没醒，信箱没看成：过一秒再看
+  const w6 = world();
+  w6.replies.push(() => new Promise(() => {}));
+  const p6 = w6.relay.ask(ARGS);
+  let res6 = null;
+  p6.then((v) => { res6 = v; }, (e) => { res6 = { e }; });
+  await until(() => w6.sent.length === 1);
+  await w6.done(w6.sent[0]);
+  w6.getFails = 1;
+  w6.comeBack();
+  await breathe();
+  await clock.tick(600);
+  const missed = res6;
+  const failedLooks = w6.getFails;
+  await clock.tick(1100);
+  ok(missed === null && failedLooks === 0 && !!res6 && res6.via === "mailbox", "刚回来网络还没醒、头一眼没看成：过一秒再看，取到了");
+
+  // 手机被挂起十分钟才回来，刚回来那几秒网络还没醒：不能因为“已经过了十分钟”就说等太久，回话明明在信箱里
+  const w7 = world();
+  w7.replies.push(() => new Promise(() => {}));
+  const p7 = w7.relay.ask(ARGS);
+  let res7 = null;
+  p7.then((v) => { res7 = v; }, (e) => { res7 = { e }; });
+  await until(() => w7.sent.length === 1);
+  await w7.done(w7.sent[0]);
+  w7.visible = false;
+  mock.timers.setTime(Date.now() + 10 * 60 * 1000); // 挂起：钟走了十分钟，页面里的定时器一下没走
+  w7.getFails = 5;
+  w7.comeBack();
+  await breathe();
+  for (let i = 0; i < 30 && !res7; i++) await clock.tick(500);
+  ok(!!res7 && res7.via === "mailbox" && w7.getFails === 0 && w7.sent.length === 1, `挂起十分钟才回来、头几眼信箱没看成：不说“等了太久”，网络醒了就取到（${res7 && res7.e ? res7.e.message : "取到了"}）`);
+  // 回来以后他还没回完：等多久从回来那一刻重新算（挂起的那段不算）
+  const w8 = world();
+  w8.replies.push((p) => { w8.working(p); return new Promise(() => {}); });
+  const p8 = w8.relay.ask(ARGS);
+  let res8 = null;
+  p8.then((v) => { res8 = v; }, (e) => { res8 = { e }; });
+  await until(() => w8.sent.length === 1);
+  w8.visible = false;
+  mock.timers.setTime(Date.now() + 10 * 60 * 1000);
+  w8.comeBack();
+  await breathe();
+  for (let i = 0; i < 5; i++) { await clock.tick(2000); w8.beat(w8.sent[0].job); }
+  const waiting8 = res8;
+  await w8.done(w8.sent[0]);
+  await clock.tick(2500);
+  ok(waiting8 === null && !!res8 && res8.via === "mailbox", "挂起十分钟才回来、他还在回：接着等，不说“等了太久”");
 
   // 一直在眼前、直接等的那头悬着：四十五秒去看一眼，之后每十五秒
   const w2 = world();
@@ -915,23 +1178,25 @@ const drive = async (p, step = 500, max = 400000) => {
   const note = async (info) => vaultjs.seal(vault, JSON.stringify(info));
   const k1 = b64u(crypto.randomBytes(32));
   const k2 = b64u(crypto.randomBytes(32));
-  const info1 = { v: 1, chat: "A", last: "m1", key: k1, at: 1 };
-  const info2 = { v: 1, chat: "B", last: "m2", key: k2, at: 2 };
+  const info1 = { v: 1, job: "jobDONE0001", chat: "A", last: "m1", key: k1, at: 1 };
+  const info2 = { v: 1, job: "jobWORK0001", chat: "B", last: "m2", key: k2, at: 2 };
   const t = (ms) => new Date(Date.now() - ms).toISOString();
   w.rows.set("jobDONE0001", { job: "jobDONE0001", state: "done", note: await note(info1), sealed: await fn.sealWith(new Uint8Array(unb64u(k1)), JSON.stringify(GOOD)), created_at: t(60000), beat_at: t(50000), done_at: t(50000) });
   w.rows.set("jobWORK0001", { job: "jobWORK0001", state: "working", note: await note(info2), sealed: null, created_at: t(5000), beat_at: t(5000), done_at: null });
-  w.rows.set("jobSTALE001", { job: "jobSTALE001", state: "working", note: await note(info2), sealed: null, created_at: t(20 * 60000), beat_at: t(20 * 60000), done_at: null });
+  w.rows.set("jobSTALE001", { job: "jobSTALE001", state: "working", note: await note({ ...info2, job: "jobSTALE001" }), sealed: null, created_at: t(20 * 60000), beat_at: t(20 * 60000), done_at: null });
+  w.rows.set("jobMOVED001", { job: "jobMOVED001", state: "done", note: await note(info1), sealed: await fn.sealWith(new Uint8Array(unb64u(k1)), JSON.stringify(GOOD)), created_at: t(800), beat_at: t(800), done_at: t(800) });
   w.rows.set("jobALIEN001", { job: "jobALIEN001", state: "done", note: "v1.AAAA.BBBB", sealed: "v1.AAAA.BBBB", created_at: t(1000), beat_at: t(1000), done_at: t(1000) });
-  w.rows.set("jobBROKEN01", { job: "jobBROKEN01", state: "done", note: await note(info1), sealed: "v1.AAAA.BBBB", created_at: t(900), beat_at: t(900), done_at: t(900) });
+  w.rows.set("jobBROKEN01", { job: "jobBROKEN01", state: "done", note: await note({ ...info1, job: "jobBROKEN01" }), sealed: "v1.AAAA.BBBB", created_at: t(900), beat_at: t(900), done_at: t(900) });
   const list = await w.relay.collect();
   const by = Object.fromEntries(list.map((m) => [m.job, m]));
-  ok(list.length === 5 && by.jobDONE0001.state === "done" && by.jobDONE0001.result.data.content[0].text === "在呢" && by.jobDONE0001.info.chat === "A" && by.jobWORK0001.state === "working" && by.jobSTALE001.state === "dead" && by.jobALIEN001.state === "unreadable" && by.jobBROKEN01.state === "unreadable" && w.removed.length === 0,
-    "看信箱：到了的打开；还在等的、早断了的、打不开的，各认各的；只看不动");
+  ok(list.length === 6 && by.jobDONE0001.state === "done" && by.jobDONE0001.result.data.content[0].text === "在呢" && by.jobDONE0001.info.chat === "A" && by.jobWORK0001.state === "working" && by.jobSTALE001.state === "working" && by.jobALIEN001.state === "unreadable" && by.jobBROKEN01.state === "unreadable" && w.removed.length === 0,
+    "看信箱：到了的打开；还在等的（哪怕那一格上写的时间看着很旧：手机的钟不一定准）先当它活着；打不开的认得出；只看不动");
+  ok(by.jobMOVED001.state === "unreadable", "看信箱：条子是从别的格子上挪过来的（编号对不上）：不认");
   ok(list[0].job === "jobSTALE001" && list[1].job === "jobDONE0001", "看信箱：放得早的排前面");
-  // 还在等的那一格一直没人摸：过二十五秒算断了
+  // 还在等的那两格一直没人摸：过二十五秒算断了
   await clock.tick(26000);
   const list2 = await w.relay.collect();
-  ok(list2.find((m) => m.job === "jobWORK0001").state === "dead", "看信箱：还在等的那一格二十五秒没人摸，下一遍看就算断了");
+  ok(list2.find((m) => m.job === "jobWORK0001").state === "dead" && list2.find((m) => m.job === "jobSTALE001").state === "dead", "看信箱：还在等的那一格二十五秒没人摸，下一遍看就算断了");
   await w.relay.discard("jobSTALE001");
   ok(!w.rows.has("jobSTALE001"), "看信箱：收掉一格");
 
@@ -950,11 +1215,23 @@ const drive = async (p, step = 500, max = 400000) => {
   const none = await w3.relay.collect();
   w3.table = false;
   ok(none === null && (await w3.relay.collect()) === null, "看信箱：没网、信箱那张表没建，这一遍就不看了");
+  // 看的那一下悬着不应：八秒算没看成，下一遍照常能看
+  const w3b = world();
+  w3b.hang = "list";
+  const hung = await drive(w3b.relay.collect(), 500, 12000);
+  w3b.hang = "";
+  ok(hung.v === null && Array.isArray(await w3b.relay.collect()), "看信箱：那一下悬着不应，八秒算没看成；不会把后面的都堵住");
+  // 刚回到眼前：歇半秒再看
+  const w3c = world();
+  w3c.backAt = Date.now();
+  const t3 = Date.now();
+  await drive(w3c.relay.collect(), 100, 2000);
+  ok(w3c.looks.length === 1 && w3c.looks[0] - t3 >= 500, "看信箱：刚回到眼前，歇半秒再敲网络的门");
 
   // 接着守上次打开时发出去的那一回
   const w4 = world();
   const k4 = b64u(crypto.randomBytes(32));
-  const info4 = { v: 1, chat: "A", last: "m1", key: k4, at: 1, extra: { withMcp: true, slugs: { s0: "笔记" } } };
+  const info4 = { v: 1, job: "jobRESUME01", chat: "A", last: "m1", key: k4, at: 1, extra: { withMcp: true, slugs: { s0: "笔记" } } };
   const p4 = { job: "jobRESUME01", key: k4, note: await note(info4) };
   w4.working(p4);
   const r4 = w4.relay.resume("jobRESUME01", info4);
@@ -964,10 +1241,24 @@ const drive = async (p, step = 500, max = 400000) => {
   const liveNow = w4.relay.isLive("jobRESUME01") && (await w4.relay.collect()).length === 0;
   await w4.done(p4);
   await clock.tick(2500);
-  ok(liveNow && !!res4 && res4.via === "mailbox" && res4.info.extra.slugs.s0 === "笔记" && !w4.relay.isLive("jobRESUME01"), "接着守：上次打开时发出去的那一回，守到回话放进来；条子里记的东西（接了哪些工具）原样带回来");
+  ok(liveNow && !!res4 && res4.via === "mailbox" && res4.info.extra.slugs.s0 === "笔记" && !w4.relay.isLive("jobRESUME01") && res4.at === Date.parse(w4.rows.get("jobRESUME01").done_at),
+    "接着守：上次打开时发出去的那一回，守到回话放进来；条子里记的东西（接了哪些工具）原样带回来；带着小后端放进信箱的时间");
+  // 守着守着信没了：是别的设备（发话的那台）取走了。等它把对话传上来，同步下来一看有回话了，就不报错
   const w5 = world();
-  const out5 = await drive(w5.relay.resume("jobNOWHERE1", info4));
-  ok(out5.e && out5.e.message.includes("那边断了"), "接着守：信箱里根本没有这一回了，照实说没回成");
+  w5.working({ job: "jobRESUME01", key: k4, note: p4.note });
+  let res5 = null;
+  w5.relay.resume("jobRESUME01", info4).then((v) => { res5 = v; }, (e) => { res5 = { e }; });
+  await clock.tick(2000);
+  w5.rows.clear();
+  for (let i = 0; i < 40 && w5.synced < 1; i++) await clock.tick(500);
+  const before5 = res5;
+  w5.answered = true; // 那台设备的对话这时候才传上来
+  for (let i = 0; i < 20 && !res5; i++) await clock.tick(500);
+  ok(before5 === null && res5 && res5.e && res5.e.code === "answered" && w5.synced === 2, "接着守：信箱里那一格没了，是别的设备取走了：头一眼对话还没同步到，隔两秒再看就有了，不说“那边断了”");
+  // 真没了（等了几眼对话里也没有回话）：照实说没回成
+  const w5b = world();
+  const out5 = await drive(w5b.relay.resume("jobNOWHERE1", { ...info4, job: "jobNOWHERE1" }));
+  ok(out5.e && !out5.e.code && out5.e.message.includes("那边断了") && w5b.synced === 3, "接着守：信箱里根本没有这一回，对话里也没有回话：照实说没回成");
   // 没带条子去守：自己从那一格上拆
   const w6 = world();
   await w6.done(p4);
@@ -980,11 +1271,11 @@ const drive = async (p, step = 500, max = 400000) => {
 {
   ok(parseReplyMark("r.TAGtagTAG_-12.job0001abcdef")?.job === "job0001abcdef" && parseReplyMark("test-abc") === null && parseReplyMark("r.short.x") === null && parseReplyMark("r.TAGtagTAG_-12.job0001abcdef.extra") === null && parseReplyMark("") === null && parseReplyMark(null) === null,
     "记号：认得出回话的通知带的那种（r.对话.编号），测试通知的、多一截的、短的都不认");
-  const good = await vaultjs.seal(vault, JSON.stringify({ v: 1, chat: "A", last: "m", key: "k" }));
+  const good = await vaultjs.seal(vault, JSON.stringify({ v: 1, job: "J", chat: "A", last: "m", key: "k" }));
   const open = (t) => vaultjs.unseal(vault, t);
   const other = await vaultjs.deriveVault("别的暗号", new Uint8Array(16).fill(7), 1000);
-  ok((await readNote(open, good)).chat === "A" && (await readNote(open, "乱写的")) === null && (await readNote(open, await vaultjs.seal(vault, "不是 JSON"))) === null && (await readNote(open, await vaultjs.seal(vault, JSON.stringify({ v: 2, chat: "A", last: "m", key: "k" })))) === null && (await readNote((t) => vaultjs.unseal(other, t), good)) === null,
-    "条子：自己封的拆得开；乱写的、不是这个格式的、别的暗号封的，都拆不开（回空，不出错）");
+  ok((await readNote(open, good, "J")).chat === "A" && (await readNote(open, good, "K")) === null && (await readNote(open, "乱写的", "J")) === null && (await readNote(open, await vaultjs.seal(vault, "不是 JSON"), "J")) === null && (await readNote(open, await vaultjs.seal(vault, JSON.stringify({ v: 2, job: "J", chat: "A", last: "m", key: "k" })), "J")) === null && (await readNote((t) => vaultjs.unseal(other, t), good, "J")) === null,
+    "条子：自己封的拆得开；编号对不上的、乱写的、不是这个格式的、别的暗号封的，都拆不开（回空，不出错）");
   const key = crypto.randomBytes(32);
   const sealed = await fn.sealWith(new Uint8Array(key), JSON.stringify({ status: 200, data: { 话: "中文也行" } }));
   const sealed2 = await fn.sealWith(new Uint8Array(key), JSON.stringify({ status: 200, data: { 话: "中文也行" } }));

@@ -22,9 +22,11 @@ passed, failed = 0, 0
 def ok(cond, msg):
     global passed, failed
     if cond:
-        passed += 1; print("ok:", msg)
+        passed += 1; print("ok:", msg, flush=True)
     else:
-        failed += 1; print("FAIL:", msg)
+        failed += 1; print("FAIL:", msg, flush=True)
+        if os.environ.get("KFS_FAILFAST"):      # 故意改坏了看拦不拦得住的时候：头一条没过就收工
+            raise SystemExit(1)
 
 def mock(path, data=None):
     req = urllib.request.Request(MOCK + path, data=data.encode() if data is not None else None, method="POST" if data is not None else "GET")
@@ -60,8 +62,8 @@ STUB = """(() => {
     const s = load(); s.device = { ...d, key }; save(s);
     return wrap(s.device);
   };
-  // 装“切走了”“回来了”
-  let hidden = false;
+  // 装“切走了”“回来了”。__start_hidden 写着 1：页面一打开就不在眼前（开封府在后台被叫起来）
+  let hidden = localStorage.getItem("__start_hidden") === "1";
   Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
   Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
   window.__away = (v) => { hidden = !!v; document.dispatchEvent(new Event("visibilitychange")); };
@@ -371,6 +373,71 @@ with sync_playwright() as p:
     pe.get_by_text(re.compile("点这里重发")).click()
     pe.get_by_text("收到：这句也会失败").last.wait_for(timeout=20000)
     pe.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.5)
+    # 没回成、开封府又被收掉了；收掉之前她还翻到了别的对话
+    mock("/__debug/claude-fail?kind=broken")
+    mock("/__debug/claude-hold?ms=3000")
+    say(pe, "关掉以后才失败")
+    ok(wait_mock(lambda: len(box()["rows"]) == 1, timeout=8), "发一句（他要想三秒，然后失败）")
+    pe.get_by_role("button", name="打开侧栏").click(); time.sleep(0.5)
+    pe.locator("button", has_text="另一段对话").first.click(); time.sleep(0.6)
+    pe.close()
+    ok(wait_mock(lambda: len(banners()) == b1 + 2, timeout=GRACE + 10) and "没送到" in banners()[-1]["json"]["notification"]["body"], "没回成、开封府被收掉了：照样敲一下说没送到")
+    fail_tap = banners()[-1]["json"]["notification"]["navigate"]
+    mock("/__debug/claude-fail")
+    # 从图标回来：眼前是另一段对话。那封报错的信先留着（等她翻到那段对话再说），不偷偷重发
+    pe = A.new_page()
+    pe.on("pageerror", lambda e: errors.append("E2: " + str(e)))
+    n6 = len(calls())
+    pe.goto(BASE); kite(pe)
+    time.sleep(2.5)
+    ok(count_text(pe, "收到：另一段对话") == 1 and pe.get_by_text("点这里重发").count() == 0 and len(box()["rows"]) == 1 and len(calls()) == n6,
+       "她从图标回来、眼前是别的对话：没回成的那封信先留在信箱里，不在不相干的对话底下说“没送到”，也不偷偷重发")
+    pe.close()
+    # 点着那条“没送到”的横幅回来：翻到那段对话，底下有“点这里重发”可点
+    pe = A.new_page()
+    pe.on("pageerror", lambda e: errors.append("E3: " + str(e)))
+    pe.goto(fail_tap); kite(pe)
+    pe.get_by_text(re.compile("消息没送到（这把 key 没绑定工作区")).wait_for(timeout=15000)
+    ok(wait_mock(lambda: box()["rows"] == []) and len(calls()) == n6 and count_text(pe, "关掉以后才失败") == 1 and count_text(pe, "收到：另一段对话") == 0,
+       "点着“没送到”的横幅回来：翻到那段对话，那一句还在，底下是“消息没送到（缘故）。点这里重发”；信箱里那一格收掉")
+    pe.get_by_text(re.compile("点这里重发")).click()
+    pe.get_by_text("收到：关掉以后才失败").last.wait_for(timeout=20000)
+    pe.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.5)
+    ok(len(calls()) == n6 + 1, "点重发：回上了")
+
+    # ================= 开封府在后台醒着（没在眼前）：信不取，照样敲她 =================
+    mock("/__debug/claude-hold?ms=3000")
+    say(pe, "后台醒着的时候")
+    ok(wait_mock(lambda: any(r["state"] == "working" for r in box()["rows"]), timeout=8), "发一句（他要想三秒）")
+    pe.evaluate("localStorage.setItem('__start_hidden', '1')")
+    pe.close()
+    b2 = len(banners())
+    pe = A.new_page()                      # 系统在后台把开封府叫了起来：页面活着，可她没在看
+    pe.on("pageerror", lambda e: errors.append("E4: " + str(e)))
+    pe.goto(BASE); kite(pe)
+    ok(wait_mock(lambda: len(banners()) == b2 + 1, timeout=GRACE + 12) and banners()[-1]["json"]["notification"]["body"].startswith("收到：后台醒着的时候"),
+       "开封府醒着、可不在眼前：信箱里的信不去取（取了小后端就以为她看到了），横幅照样敲")
+    ok(len(box()["rows"]) == 1 and count_text(pe, "收到：后台醒着的时候") == 0, "不在眼前的时候：信还在信箱里，对话里还没放")
+    pe.evaluate("localStorage.removeItem('__start_hidden'); window.__away(false)")
+    pe.get_by_text("收到：后台醒着的时候").last.wait_for(timeout=15000)
+    ok(wait_mock(lambda: box()["rows"] == []) and count_text(pe, "收到：后台醒着的时候") == 1, "她一回到眼前：信取出来放进对话，信箱里收掉")
+    time.sleep(1.0)
+
+    # ================= 真没网（手机自己还以为有网）：马上照实说，不对着“正在输入”干等 =================
+    time.sleep(5.5)                        # 刚回到眼前的那五秒里会多试几回（网络还没醒）；这里测的是平时
+    dead = lambda route: route.abort()
+    pe.route(re.compile(re.escape(MOCK) + "/.*"), dead)
+    n7 = len(calls())
+    t0 = time.time()
+    say(pe, "没网的时候")
+    pe.get_by_text(re.compile("消息没送到（连不上")).wait_for(timeout=20000)
+    took = time.time() - t0
+    ok(took < 6 and len(calls()) == n7, f"没网：{took:.1f} 秒就说“消息没送到（连不上…）”（她停手那两秒多也算在里面），和老路上一样快")
+    pe.unroute(re.compile(re.escape(MOCK) + "/.*"), dead)
+    pe.get_by_text(re.compile("点这里重发")).click()
+    pe.get_by_text("收到：没网的时候").last.wait_for(timeout=20000)
+    pe.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.5)
+    ok(len(calls()) == n7 + 1 and calls()[-1]["via"] == "push" and jobs(pe) == [], "网回来了点重发：发出去了，只问了一回，走的还是新路")
 
     # ================= 新路不通：自己走回老路，聊天不断 =================
     for state, name, setup, undo in [
@@ -441,7 +508,104 @@ with sync_playwright() as p:
     c2 = len(calls())
     say(pe, "再查一下")
     pe.get_by_text("收到：再查一下").last.wait_for(timeout=25000)
-    ok(len(calls()) == c2 + 1 and "mcp_servers" in calls()[-1]["body"] and isinstance(calls()[-1]["body"]["system"], str), "上一回不带缓存才通的：这一回网页就不带缓存记号寄了（和老路上的记性一样）")
+    ok(len(calls()) == c2 + 1 and "mcp_servers" in calls()[-1]["body"] and isinstance(calls()[-1]["body"]["system"], list) and "cache_control" in calls()[-1]["body"]["system"][0],
+       "上一回是摘了工具才通的，不是缓存的毛病：这一回缓存记号照带（和老路上的记性一样；不然一次工具连不上，往后每句话都按全价算）")
+
+    # ================= 重新回答 =================
+    mock("/__debug/claude-fail")
+    pe.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.5)
+    _, before = chat_of(pe)
+    c3 = len(calls())
+    pe.get_by_role("button", name="重新回答").click()
+    ok(wait_mock(lambda: len(calls()) == c3 + 1, timeout=15), "点“重新回答”：重新问了一回")
+    wait_js(pe, "!document.body.innerText.includes('正在输入')", 20000); time.sleep(1.5)
+    _, after = chat_of(pe)
+    ok(calls()[-1]["via"] == "push" and len(after) == len(before) and after[-1]["role"] == "him" and len(after[-1]["alts"]) == 2 and after[-1]["altIdx"] == 1 and after[-1]["job"] != before[-1].get("job") and after[-1]["alts"][0]["node"]["id"] == before[-1]["id"]
+       and wait_mock(lambda: box()["rows"] == []) and pe.get_by_text("2/2").count() == 1,
+       "重新回答走的也是新路：新回答开一个版本摆在外面，旧的翻得回去；信取走了")
+    # 重新回答的工夫里她又说了一句，然后开封府被收掉：旧回答和它的版本不能丢，新回答到了还是一个新版本，她那一句接在后面
+    mock("/__debug/claude-hold?ms=4000")
+    b3 = len(banners())
+    c4 = len(calls())
+    pe.get_by_role("button", name="重新回答").click()
+    ok(wait_mock(lambda: any(r["state"] == "working" for r in box()["rows"]), timeout=8), "又点一回“重新回答”（他要想四秒）")
+    say(pe, "等的工夫里说的")
+    time.sleep(0.8)
+    _, mid = chat_of(pe)
+    ok([m["id"] for m in mid[:len(after)]] == [m["id"] for m in after] and len(mid[len(after) - 1]["alts"]) == 2 and mid[-1].get("text") == "等的工夫里说的",
+       "重新回答的工夫里她发了一句：存档里旧回答和它的两个版本都还在（画面上先收起来的不算丢），她那一句接在最后")
+    pe.close()
+    ok(wait_mock(lambda: len(banners()) == b3 + 1, timeout=GRACE + 12), "开封府被收掉：新回答照样进信箱、照样敲她")
+    pe = A.new_page()
+    pe.on("pageerror", lambda e: errors.append("E5: " + str(e)))
+    pe.goto(BASE); kite(pe)
+    ok(wait_mock(lambda: box()["rows"] == []), "她回来：信取走")
+    time.sleep(1.0)
+    _, back = chat_of(pe)
+    forked = back[len(after) - 1]
+    ok(len(calls()) == c4 + 1 and forked["role"] == "him" and len(forked["alts"]) == 3 and forked["altIdx"] == 2 and forked.get("job") and [m.get("text") for m in back[len(after):]] == ["等的工夫里说的"]
+       and pe.get_by_text("3/3").count() == 1 and count_text(pe, "等的工夫里说的") == 1,
+       "她回来：新回答是第三个版本，前两个翻得回去；她那一句接在新回答后面；没有多问")
+    pe.get_by_role("button", name="上一个版本").click(); time.sleep(0.5)
+    ok(pe.get_by_text("2/3").count() == 1, "翻回上一个版本：还在")
+    pe.get_by_role("button", name="下一个版本").click(); time.sleep(0.5)
+
+    # ================= 第二台设备 =================
+    B = browser.new_context(**iphone)
+    B.add_init_script(STUB)
+    pb = B.new_page()
+    pb.on("pageerror", lambda e: errors.append("B: " + str(e)))
+    pb.goto(BASE)
+    pb.get_by_text("进门先报上名来").wait_for(timeout=15000)
+    pb.locator("input[type=email]").fill("qing@example.com")
+    pb.locator("input[type=password]").fill("correct-horse")
+    pb.get_by_role("button", name="进府").click()
+    pb.get_by_text("对暗号").wait_for(timeout=15000)
+    pb.locator("form input").first.fill(PASS)
+    pb.get_by_role("button", name="开门").click()
+    kite(pb)
+    pb.get_by_text("等的工夫里说的").last.wait_for(timeout=15000)
+    # 这台设备上头一句话，发完就切走：开机时已经问好了新路是通的，照样敢交出去
+    ok(wait_js(pb, "localStorage.getItem('kfs-relay') === 'ok'", 8000), "新设备一进门就轻轻问好了新路通不通（还一句话都没发）")
+    mock("/__debug/claude-hold?ms=2500")
+    o1 = len(box()["ops"])
+    say(pb, "新设备头一句")
+    time.sleep(0.4)
+    t0 = time.time()
+    pb.evaluate("window.__away(true)")
+    sent = wait_mock(lambda: box()["ops"][o1:].count("reply") == 1, timeout=5)
+    ok(sent and time.time() - t0 < 1.2, "新设备上头一句话发完就切走：切走的那一下也送出去了（不用先聊过一句）")
+    ok(wait_mock(lambda: any(r["state"] == "done" for r in box()["rows"]), timeout=15), "新设备：回话进了信箱")
+    b4 = len(banners())
+    time.sleep(GRACE + 1.5)
+    ok(len(banners()) == b4, "这台设备没开通知：不敲它，也不去敲别的设备（只敲发话的那台）")
+    pb.evaluate("window.__away(false)")
+    pb.get_by_text("收到：等的工夫里说的 / 新设备头一句").last.wait_for(timeout=15000)
+    pb.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.5)
+    ok(wait_mock(lambda: box()["rows"] == []), "新设备回到眼前：信取走")
+
+    # 手机发话、他还没回完的时候打开另一台设备：那台也显示正在输入；手机收到回话把信取走了，那台不能说“那边断了”
+    pe.evaluate("window.__away(true)"); pe.evaluate("window.__away(false)")       # 手机同步一下
+    pe.get_by_text("收到：等的工夫里说的 / 新设备头一句").last.wait_for(timeout=15000)
+    time.sleep(1.0)
+    mock("/__debug/claude-hold?ms=7000")
+    c5 = len(calls())
+    say(pe, "两台设备")
+    ok(wait_mock(lambda: any(r["state"] == "working" for r in box()["rows"]), timeout=8), "手机发一句（他要想七秒）")
+    time.sleep(1.5)                                                               # 等手机把这一句传上云端
+    pb.evaluate("window.__away(true)"); pb.evaluate("window.__away(false)")       # 另一台设备切回眼前：同步、看信箱
+    seen = False
+    for _ in range(80):
+        if count_text(pb, "两台设备") == 1 and pb.evaluate("document.body.innerText.includes('正在输入')"):
+            seen = True; break
+        time.sleep(0.1)
+    ok(seen and len(box()["rows"]) == 1, "另一台设备：她那一句同步过来了，也守着这一回（正在输入），没有重发")
+    pe.get_by_text("收到：两台设备").last.wait_for(timeout=20000)
+    ok(wait_mock(lambda: box()["rows"] == []), "手机收到回话：信取走")
+    pb.get_by_text("收到：两台设备").last.wait_for(timeout=20000)
+    time.sleep(2.0)
+    ok(pb.get_by_text("点这里重发").count() == 0 and count_text(pb, "收到：两台设备") == 1 and len(calls()) == c5 + 1 and not pb.evaluate("document.body.innerText.includes('正在输入')"),
+       "另一台设备：信箱里那一格没了，不说“那边断了”；等对话同步过来，回话就在；从头到尾只问了一回")
 
     browser.close()
 

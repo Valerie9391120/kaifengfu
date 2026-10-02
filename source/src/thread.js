@@ -68,23 +68,29 @@ export function answeredAfter(msgs, lastId) {
 //   ok     放得进
 //   dup    已经在里面了（放过了）
 //   later  这台设备上的这段对话还没跟上（没有那一句，多半是还没同步到）
-//   gone   用不着了：那一句后面已经有回话；或者要换掉的那一条已经不在外面摆着
+//   gone   用不着了：那一句后面已经有回话了
 export function mailFit(msgs, info, job) {
   if (!Array.isArray(msgs) || !msgs.length) return "later";
   if (hasJob(msgs, job)) return "dup";
   if (!msgs.some((m) => m.id === info.last)) return "later";
-  if (info.fork) {
-    const j = msgs.findIndex((m) => m.id === info.fork);
-    return j >= 0 && msgs[j].role === "him" ? "ok" : "gone";
-  }
+  // 重新回答：要换掉的那一条还在外面摆着，就在它上面开新分支
+  if (forkTarget(msgs, info) >= 0) return "ok";
+  // 平常的回话；或者是重新回答、要换掉的那一条却不在了（被翻走、被改掉）：那一句后面还空着就放，当平常的回话放
   return answeredAfter(msgs, info.last) ? "gone" : "ok";
+}
+
+// 重新回答要换掉的是第几条；不是重新回答、或者那一条不在外面摆着，回 -1
+function forkTarget(msgs, info) {
+  if (!info.fork) return -1;
+  const j = msgs.findIndex((m) => m.id === info.fork);
+  return j >= 0 && msgs[j].role === "him" ? j : -1;
 }
 
 // 放进去（先用 mailFit 看过是 ok 的）。him 是整理好的那一条回话
 export function mailPut(msgs, info, him) {
-  if (!info.fork) return insertReply(msgs, info.last, him);
+  const j = forkTarget(msgs, info);
+  if (j < 0) return insertReply(msgs, info.last, him);
   // 重新回答：在要换掉的那一条上开新分支。那一回发出去以后她又说的话，接在新回答后面，不收进旧分支
-  const j = msgs.findIndex((m) => m.id === info.fork);
   const tail = msgs.slice(j + 1);
   const later = tail.filter((m) => (m.ts || 0) > (info.at || 0));
   const old = tail.filter((m) => !((m.ts || 0) > (info.at || 0)));
