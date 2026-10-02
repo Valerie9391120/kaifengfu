@@ -251,7 +251,8 @@ function safePage(page: string, origin: string | null): string | null {
 
 async function postOnce(endpoint: string, body: Uint8Array, headers: Record<string, string>): Promise<{ status: number; reason: string }> {
   try {
-    const r = await fetch(endpoint, { method: "POST", headers, body: src(body), signal: AbortSignal.timeout(SEND_TIMEOUT) });
+    // redirect: manual：推送服务要是回一个“请去别处”，不跟着走（只肯敲认得的门）
+    const r = await fetch(endpoint, { method: "POST", headers, body: src(body), redirect: "manual", signal: AbortSignal.timeout(SEND_TIMEOUT) });
     const text = (await r.text()).slice(0, 400);
     if (r.status >= 200 && r.status < 300) return { status: r.status, reason: "" };
     let reason = text;
@@ -263,7 +264,9 @@ async function postOnce(endpoint: string, body: Uint8Array, headers: Record<stri
     }
     return { status: r.status, reason: tidy(reason) };
   } catch (e) {
-    return { status: 0, reason: tidy(String(e)) };
+    // 没连上。原因只留个大类：有的运行环境报错的话里带着整个地址，那是这台设备的门牌号，不该记下来给人看
+    const name = e instanceof Error ? e.name : "";
+    return { status: 0, reason: name === "TimeoutError" || name === "AbortError" ? "Timeout" : "NetworkError" };
   }
 }
 

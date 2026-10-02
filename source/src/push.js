@@ -46,6 +46,15 @@ export function ensureWorker() {
   return worker;
 }
 
+// 动订阅、动登记簿的几件事（重新登记、换门牌号、开、关）一件一件排着做，不叠在一起：
+// 叠着做的话，这个刚退订那个又订上，登记簿里会留下作废的行
+let queue = Promise.resolve();
+function serial(work) {
+  const run = queue.then(work, work);
+  queue = run.catch(() => {});
+  return run;
+}
+
 async function currentSub() {
   const reg = await ensureWorker();
   return { reg, sub: await reg.pushManager.getSubscription() };
@@ -98,7 +107,10 @@ async function subscribeAndRecord(reg, sub, serverKey) {
 
 // 开过通知的设备，每次打开开封府都重新登记一遍：门牌号被系统换了、上回登记没传上去，都在这儿补上。
 // 不弹任何东西；没开过、许可被收回了，就什么都不做。serverKey 没给就用上回记下的
-export async function resyncPush(serverKey = "") {
+export function resyncPush(serverKey = "") {
+  return serial(() => resyncNow(serverKey));
+}
+async function resyncNow(serverKey) {
   if (local.get(PUSH_FLAG) !== "on") return "off";
   if (!pushSupport(window).ok) return "blocked";
   const found = await currentSub();
@@ -123,17 +135,22 @@ export async function resyncPush(serverKey = "") {
 }
 
 // 这台设备的门牌号作废了（推送服务回 404、410）：退掉，重新订一个、登记上。许可还在，不用她再点
-export async function renewPush(serverKey = "") {
-  const { reg, sub } = await currentSub();
-  if (sub) {
-    try {
-      await pushLedger.remove(sub.endpoint);
-    } catch (e) {}
-    try {
-      await sub.unsubscribe();
-    } catch (e) {}
-  }
-  await subscribeAndRecord(reg, null, serverKey || local.get(PUSH_KEY));
+// 她已经把通知关了就什么都不做，回 false（关掉以后订阅没了，也像是“作废”，不能因此又替她订上）
+export function renewPush(serverKey = "") {
+  return serial(async () => {
+    if (local.get(PUSH_FLAG) !== "on") return false;
+    const { reg, sub } = await currentSub();
+    if (sub) {
+      try {
+        await pushLedger.remove(sub.endpoint);
+      } catch (e) {}
+      try {
+        await sub.unsubscribe();
+      } catch (e) {}
+    }
+    await subscribeAndRecord(reg, null, serverKey || local.get(PUSH_KEY));
+    return true;
+  });
 }
 
 // 看一遍现在是什么情形，给面板用。不弹任何东西
@@ -146,6 +163,7 @@ export async function checkPush() {
     // 她在 Supabase 要做的三样，各自好了没有：ok 好了；别的是没好的缘故
     setup: { table: "", fn: "", keys: "", say: "" },
     ready: false, // 三样都好了
+    away: false, // 开过通知的设备，这会儿连不上后端
     serverKey: "",
     on: false,
     host: "",
@@ -158,7 +176,15 @@ export async function checkPush() {
   if (!support.ok) return state;
 
   try {
-    const k = await callPush({ op: "key" });
+    let k;
+    try {
+      k = await callPush({ op: "key" });
+    } catch (e) {
+      // 一时没连上（刚解锁、刚切回来，网络还没醒）：等一下再试一回，别因为这一下就说小后端没接上
+      if (e.code !== "unreachable") throw e;
+      await new Promise((done) => setTimeout(done, 900));
+      k = await callPush({ op: "key" });
+    }
     state.setup.fn = "ok";
     if (k.configured) {
       state.setup.keys = "ok";
@@ -186,6 +212,8 @@ export async function checkPush() {
   };
   let rows = await readLedger();
   state.ready = state.setup.fn === "ok" && state.setup.keys === "ok" && state.setup.table === "ok";
+  // 这台设备开过通知（那时候三样都是好的），现在却连不上：是这会儿的网络，不是她在 Supabase 少做了什么
+  state.away = state.flag && (state.setup.fn === "unreachable" || state.setup.table === "error");
   if (!state.ready) return state;
 
   try {
@@ -219,38 +247,45 @@ export async function enablePush(serverKey = "") {
   try {
     permission = await Notification.requestPermission();
   } catch (e) {}
-  const { reg, sub } = await currentSub();
-  if (permission !== "granted") permission = await permissionNow(reg);
-  if (permission !== "granted") return { ok: false, why: permission === "denied" ? "denied" : "dismissed" };
-  let key = serverKey;
-  if (!key) {
-    const k = await callPush({ op: "key" });
-    if (!k.configured) throw coded("nokey", k.message || "密钥柜里的钥匙还没放好");
-    key = k.publicKey;
-  }
-  await subscribeAndRecord(reg, sub, key);
-  local.set(PUSH_FLAG, "on");
-  return { ok: true, why: "" };
+  return serial(async () => {
+    const { reg, sub } = await currentSub();
+    if (permission !== "granted") permission = await permissionNow(reg);
+    if (permission !== "granted") return { ok: false, why: permission === "denied" ? "denied" : "dismissed" };
+    let key = serverKey;
+    if (!key) {
+      const k = await callPush({ op: "key" });
+      if (!k.configured) throw coded("nokey", k.message || "密钥柜里的钥匙还没放好");
+      key = k.publicKey;
+    }
+    await subscribeAndRecord(reg, sub, key);
+    local.set(PUSH_FLAG, "on");
+    return { ok: true, why: "" };
+  });
 }
 
-// 关掉：登记簿里划掉这台设备，退订。哪一步没做成都接着往下做
-// （登记簿没划掉也不要紧：退订以后门牌号作废，小后端下回发的时候会被告知，自己划掉）
-export async function disablePush() {
+// 关掉：退订，登记簿里划掉这台设备。哪一步没做成都接着往下做。
+// 先退订：这一步不靠网络，做了门牌号就作废，这台设备再也收不到。登记簿没划掉也不要紧，
+// 小后端下回发的时候推送服务会说这个门牌号没了，它自己划掉
+export function disablePush() {
+  // “开过”的记号马上清：排在前头还没做完的重新登记、换门牌号，看到记号没了就不会又订上
   local.set(PUSH_FLAG, "");
   local.set(PUSH_KEY, "");
-  if (!pushSupport(window).ok) return;
-  let sub = null;
-  try {
-    const reg = await navigator.serviceWorker.getRegistration(workerScope());
-    sub = reg ? await reg.pushManager.getSubscription() : null;
-  } catch (e) {}
-  if (!sub) return;
-  try {
-    await pushLedger.remove(sub.endpoint);
-  } catch (e) {}
-  try {
-    await sub.unsubscribe();
-  } catch (e) {}
+  return serial(async () => {
+    if (!pushSupport(window).ok) return;
+    let sub = null;
+    try {
+      const reg = await navigator.serviceWorker.getRegistration(workerScope());
+      sub = reg ? await reg.pushManager.getSubscription() : null;
+    } catch (e) {}
+    if (!sub) return;
+    const endpoint = sub.endpoint;
+    try {
+      await sub.unsubscribe();
+    } catch (e) {}
+    try {
+      await pushLedger.remove(endpoint);
+    } catch (e) {}
+  });
 }
 
 // 往这一台设备发一条测试通知。delay 是等几秒再发（给她留出锁屏的工夫）
@@ -260,8 +295,9 @@ export async function sendTestPush(delay = 0) {
   return await callPush({ op: "test", endpoint: sub.endpoint, delay });
 }
 
-// 这台设备上一回发得怎么样（小后端记在登记簿里）。登记簿里已经没有这台设备了就回 { gone: true }
+// 这台设备上一回发得怎么样（小后端记在登记簿里）。登记簿里已经没有这台设备了就回 { gone: true }；她把通知关了回 { off: true }
 export async function lastOutcome() {
+  if (local.get(PUSH_FLAG) !== "on") return { off: true };
   const { sub } = await currentSub();
   if (!sub) return { gone: true };
   const row = (await pushLedger.list()).find((r) => r.endpoint === sub.endpoint);
@@ -271,13 +307,27 @@ export async function lastOutcome() {
 
 // ---------- 从通知回来 ----------
 
+// 开封府自己待着的那一格历史上做个记号。系统换网址的时候新添的那一格没有这个记号，认得出来
+const HOME = "kfs-home";
+const atHome = () => !!(window.history.state && window.history.state.kfs === HOME);
+function tagHome() {
+  try {
+    if (!atHome()) window.history.replaceState({ kfs: HOME }, "");
+  } catch (e) {}
+}
+
 // 网址后面带着通知的记号（#n=…）就取下来，顺手把网址收拾干净：
-// 下一条通知的记号不一样，系统打开它的时候页面只当是换了个井号，不会整页重来
-export function takeNoticeMark() {
+// 下一条通知的记号不一样，系统打开它的时候页面只当是换了个井号，不会整页重来。
+// inPage：开封府开着的时候网址被换的（不是刚被叫起来）。这种时候浏览器会多添一格历史；
+// iPhone 的主屏幕应用里，历史一有能退的，从屏幕左边往右划就成了“后退”，会和拉出侧栏的手势抢。
+// 所以把新添的那格也收拾干净，再退回原来那一格（两格网址一样，往前往后都不会再有动静）
+export function takeNoticeMark(inPage = false) {
   const mark = readNoticeMark(window.location.hash);
   if (!mark) return "";
+  const added = inPage && !atHome();
   try {
-    window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+    window.history.replaceState(added ? null : { kfs: HOME }, "", window.location.pathname + window.location.search);
+    if (added) window.history.back();
   } catch (e) {}
   return mark;
 }
@@ -286,8 +336,8 @@ export function takeNoticeMark() {
 //   开封府是被通知叫起来的（网址里带着记号）；开着的时候系统把网址换成带记号的（hashchange）；
 //   老一些的浏览器由 sw.js 发话过来
 export function watchNotices(fn) {
-  const fromHash = () => {
-    const mark = takeNoticeMark();
+  const fromHash = (e) => {
+    const mark = takeNoticeMark(!!e);
     if (mark) fn(mark);
   };
   const fromWorker = (e) => {
@@ -295,6 +345,7 @@ export function watchNotices(fn) {
     if (mark) fn(mark);
   };
   fromHash();
+  tagHome();
   window.addEventListener("hashchange", fromHash);
   const sw = navigator.serviceWorker;
   if (sw) sw.addEventListener("message", fromWorker);
