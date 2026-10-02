@@ -8,6 +8,8 @@ import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.
 import SplashDingxiang from "./SplashDingxiang.jsx";
 import { HER_NAME, HIS_NAME, NAME_KEYS, NAME_MARK, NAME_PLACEHOLDER, cleanName, cleanMarkName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, DOC_NAME_PLACEHOLDER, docFmtOf, readDoc, wrapDocForModel, missingDocNote, splitDocBlocks, docBlocksToNote, replyRoom } from "./docs.js";
+import { generateVapidKeys, secretsBlock, explainOutcome, describePush } from "./notify.js";
+import { checkPush, enablePush, disablePush, renewPush, sendTestPush, lastOutcome, resyncPush, watchNotices } from "./push.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -3177,6 +3179,281 @@ function ApiPanel({ settings, onChange, onTest, testNote, testing, usage, monthU
   );
 }
 
+// 账户面板里的“通知”一栏。眼下只通管道：开启、发一条测试通知；接到他的回话上是下一步。
+// 她在 Supabase 要做的三样（登记簿、小后端、钥匙）哪样还没好，这里一样一样列出来
+const PUSH_CARD = { ...glass(0.5, 16), borderRadius: 16, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6, color: T.ink };
+const PUSH_DENIED = "系统里把开封府的通知关着。到手机的 设置 → 通知 → 开封府 里打开“允许通知”，再回来点开启。";
+
+function PushStep({ done, title, children }) {
+  return (
+    <div className="kfs-push-step flex" data-done={done ? "yes" : "no"} style={{ gap: 9, padding: "5px 0" }}>
+      <span
+        className="flex-shrink-0 flex items-center justify-center"
+        style={{ width: 18, height: 18, marginTop: 2, borderRadius: "50%", color: "#fff", background: done ? T.daiGrad : "transparent", border: done ? "none" : "1.5px solid rgba(var(--k-soft),0.4)" }}
+      >
+        {done && <Icon name="check" size={11} sw={2.6} />}
+      </span>
+      <span className="min-w-0" style={{ fontSize: 13.5, lineHeight: 1.55, color: T.ink }}>
+        {title}
+        <span style={{ color: T.inkSoft }}>{children}</span>
+      </span>
+    </div>
+  );
+}
+
+function PushPanel({ email, onCopy, back }) {
+  const [st, setSt] = useState(null); // 现在是什么情形（push.js 的 checkPush）
+  const [busy, setBusy] = useState("");
+  const [note, setNote] = useState(null); // 刚做的那一步怎么样：{ ok, say }
+  const [secrets, setSecrets] = useState(""); // 刚生成的那三行
+  const [detail, setDetail] = useState(false);
+  const [waitFrom, setWaitFrom] = useState(null); // 等着后台那一条发出去：点的时候登记簿里记的是哪一回
+  const alive = useRef(true);
+
+  const refresh = async () => {
+    try {
+      const s = await checkPush();
+      if (alive.current) setSt(s);
+      return s;
+    } catch (e) {
+      return null;
+    }
+  };
+  useEffect(() => {
+    alive.current = true;
+    refresh();
+    // 去 Supabase 贴完东西、锁完屏回来：自己再看一遍
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive.current = false;
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
+  // “十秒后再发”：小后端先回话、过后才发，发得怎么样它记在登记簿里。隔两秒去看一眼，看到新的一回就停
+  useEffect(() => {
+    if (waitFrom === null) return;
+    let tries = 0;
+    let stopped = false; // 已经看到结果、或者面板关了：还在路上的那一趟回来也不算数
+    const t = setInterval(async () => {
+      tries++;
+      let out = null;
+      try {
+        out = await lastOutcome();
+      } catch (e) {}
+      if (stopped || !alive.current) return;
+      if (out && out.gone) {
+        setWaitFrom(null);
+        renew();
+      } else if (out && out.at && out.at !== waitFrom) {
+        setNote(explainOutcome(out));
+        setWaitFrom(null);
+        refresh();
+      } else if (tries >= 22) {
+        setNote({ ok: false, say: "还没看到发出去的记录。过一会儿点“再看一次”。" });
+        setWaitFrom(null);
+      }
+    }, 2000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [waitFrom]);
+
+  // 推送服务说这台设备的门牌号作废了：小后端已经把它从登记簿里划掉，这里退掉旧的、重新订一个
+  const renew = async () => {
+    try {
+      await renewPush(st ? st.serverKey : "");
+      if (alive.current) setNote({ ok: false, say: "这台设备的通知地址作废了，已经换了一个新的。再发一次试试。" });
+    } catch (e) {
+      if (alive.current) setNote({ ok: false, say: explainOutcome({ status: 410, note: "", host: "" }).say });
+    }
+    await refresh();
+  };
+
+  const act = async (name, work) => {
+    if (busy) return;
+    setBusy(name);
+    setNote(null);
+    try {
+      await work();
+    } catch (e) {
+      if (alive.current) setNote({ ok: false, say: "没成：" + ((e && e.message) || e) });
+    }
+    if (alive.current) setBusy("");
+  };
+  // 开启：enablePush 里的头一件事就是问系统要许可，必须紧跟着手指点的这一下，前面不能先等别的
+  const enable = () =>
+    act("enable", async () => {
+      const r = await enablePush(st.serverKey);
+      if (!r.ok) setNote({ ok: false, say: r.why === "denied" ? PUSH_DENIED : "没点“允许”，通知没开。想开就再点一次。" });
+      await refresh();
+    });
+  const disable = () =>
+    act("off", async () => {
+      await disablePush();
+      await refresh();
+    });
+  const test = (delay) =>
+    act(delay ? "later" : "test", async () => {
+      const before = st && st.last ? st.last.at : 0;
+      const r = await sendTestPush(delay);
+      if (r.queued) {
+        setNote({ ok: true, say: `${r.delay} 秒后发出。现在把屏幕锁上，等横幅。` });
+        setWaitFrom(before);
+        return;
+      }
+      const one = (r.results || [])[0];
+      if (!one) throw new Error("小后端没说发得怎么样");
+      if (one.removed) return await renew();
+      setNote(explainOutcome({ status: one.status, note: one.reason, host: one.host }));
+      await refresh();
+    });
+  const makeKeys = () =>
+    act("keys", async () => {
+      setSecrets(secretsBlock(await generateVapidKeys(window.crypto.subtle), email));
+    });
+
+  if (!st) {
+    return (
+      <div className="kfs-push" data-state="checking" style={{ ...PUSH_CARD, color: T.inkSoft }}>
+        正在看通知这条路通不通……
+      </div>
+    );
+  }
+  if (!st.support.ok) {
+    return (
+      <div className="kfs-push" data-state="unsupported" style={PUSH_CARD}>
+        {st.support.say}
+      </div>
+    );
+  }
+
+  const setup = st.setup;
+  const denied = st.permission === "denied";
+  const state = !st.ready ? "setup" : st.on ? "on" : denied ? "denied" : "off";
+  const shown = note || (state === "on" && st.last ? { ...explainOutcome(st.last), when: st.last.at } : null);
+  const small = { fontSize: 12, color: T.inkSoft, lineHeight: 1.6 };
+
+  return (
+    <div className="kfs-push" data-state={state}>
+      {state === "setup" && (
+        <div style={PUSH_CARD}>
+          <div style={{ marginBottom: 4 }}>通知还差几步，都在 Supabase 里做：</div>
+          <PushStep done={setup.table === "ok"} title="登记簿">
+            {setup.table === "ok" ? "：建好了" : setup.table === "missing" ? "：还没建。把通知那段 SQL（push.sql）在 SQL Editor 里跑一遍" : "：读不到"}
+          </PushStep>
+          <PushStep done={setup.fn === "ok"} title="小后端">
+            {setup.fn === "ok" ? "：接上了" : setup.fn === "unreachable" ? "：还没接上。在 Edge Functions 里建一个叫 push 的函数" : setup.fn === "auth" ? "：登录过期了，重新登录一下" : "：不肯答"}
+          </PushStep>
+          <PushStep done={setup.keys === "ok"} title="钥匙">
+            {setup.keys === "ok"
+              ? "：放好了"
+              : setup.keys === "missing"
+              ? "：还没放。点下面生成一份"
+              : setup.keys === "bad"
+              ? "：放的不对"
+              : "：小后端接上了才看得到"}
+          </PushStep>
+          {setup.say && setup.keys !== "missing" && (
+            <div className="kfs-push-say" style={{ ...small, marginTop: 4 }}>
+              它说：{setup.say}
+            </div>
+          )}
+        </div>
+      )}
+      {state === "denied" && <div style={PUSH_CARD}>{PUSH_DENIED}</div>}
+      {state === "off" && <div style={PUSH_CARD}>现在关着。打开以后，这台设备能收到开封府的系统通知。眼下只有测试通知，接到他的回话上是下一步。</div>}
+      {state === "on" && (
+        <div style={PUSH_CARD}>
+          这台设备开着通知。
+          <div style={small}>眼下只有测试通知，接到他的回话上是下一步。</div>
+        </div>
+      )}
+
+      {secrets && state === "setup" && (
+        <div className="kfs-push-secrets" style={{ marginTop: 10 }}>
+          {/* 不用输入框摆：字小的输入框在 iPhone 上一点就把整页放大。就是一段选得中的字 */}
+          <pre
+            aria-label="贴进密钥柜的三行"
+            style={{ ...field, margin: 0, fontSize: 11.5, lineHeight: 1.5, fontFamily: "ui-monospace,Menlo,monospace", whiteSpace: "pre-wrap", wordBreak: "break-all", userSelect: "text", WebkitUserSelect: "text" }}
+          >
+            {secrets}
+          </pre>
+          <p style={{ ...small, marginTop: 6 }}>
+            三行一起复制，到 Supabase 的 Edge Functions → Secrets，在 Name 那一格里粘贴（会自己分成三条），点 Save，再回来。第三行是苹果要的联系邮箱，填的是你的登录邮箱，想换别的就改这一行。钥匙只用生成这一回；这三行别发给别人。
+          </p>
+        </div>
+      )}
+
+      <div className="flex flex-wrap" style={{ gap: 8, marginTop: 10 }}>
+        {state === "setup" && setup.keys !== "ok" && !secrets && (
+          <button onClick={makeKeys} disabled={!!busy} className="kfs-tap" style={{ ...chip, opacity: busy ? 0.5 : 1 }}>
+            {busy === "keys" ? "正在生成…" : "生成一份钥匙"}
+          </button>
+        )}
+        {state === "setup" && secrets && (
+          <button onClick={() => onCopy(secrets)} className="kfs-tap" style={chipPrimary}>
+            复制这三行
+          </button>
+        )}
+        {(state === "setup" || state === "denied") && (
+          <button onClick={() => act("check", refresh)} disabled={!!busy} className="kfs-tap" style={{ ...chip, opacity: busy ? 0.5 : 1 }}>
+            {busy === "check" ? "正在看…" : "再看一次"}
+          </button>
+        )}
+        {state === "off" && (
+          <button onClick={enable} disabled={!!busy} className="kfs-tap" style={{ ...chipPrimary, opacity: busy ? 0.6 : 1 }}>
+            {busy === "enable" ? "正在开启…" : "开启通知"}
+          </button>
+        )}
+        {state === "on" && (
+          <>
+            <button onClick={() => test(0)} disabled={!!busy || waitFrom !== null} className="kfs-tap" style={{ ...chip, opacity: busy || waitFrom !== null ? 0.5 : 1 }}>
+              {busy === "test" ? "正在发…" : "发一条测试通知"}
+            </button>
+            <button onClick={() => test(10)} disabled={!!busy || waitFrom !== null} className="kfs-tap" style={{ ...chip, opacity: busy || waitFrom !== null ? 0.5 : 1 }}>
+              {waitFrom !== null ? "等它发出去…" : "十秒后再发"}
+            </button>
+            <button onClick={disable} disabled={!!busy} className="kfs-tap" style={{ ...chip, color: T.inkSoft, opacity: busy ? 0.5 : 1 }}>
+              {busy === "off" ? "正在关…" : "关掉"}
+            </button>
+          </>
+        )}
+      </div>
+      {state === "on" && <p style={{ ...small, marginTop: 8 }}>“十秒后再发”是留给锁屏的：点完就把屏幕锁上，看横幅到不到。</p>}
+
+      {/* 她是点着测试通知回到开封府的（这次打开以来）：横幅到了、点了回得来，两头都验着了 */}
+      {back > 0 && state === "on" && (
+        <div className="kfs-push-back" style={{ fontSize: 12.5, lineHeight: 1.6, marginTop: 8, color: T.ink }}>
+          你是点着测试通知回来的（{timeAgo(back)}）：横幅到了，点了也回得来，这条路全通了。
+        </div>
+      )}
+      {shown && (
+        <div className="kfs-push-note" data-ok={shown.ok ? "yes" : "no"} style={{ fontSize: 12.5, lineHeight: 1.6, marginTop: 8, color: shown.ok ? T.ink : "#A8473D" }}>
+          {shown.when ? `上一回（${timeAgo(shown.when)}）：` : ""}
+          {shown.say}
+        </div>
+      )}
+
+      <button onClick={() => setDetail(!detail)} className="kfs-push-more" style={{ ...small, marginTop: 8, textDecoration: "underline", textUnderlineOffset: 3 }}>
+        {detail ? "收起细节" : "看细节"}
+      </button>
+      {detail && (
+        <div className="kfs-push-detail" style={{ ...small, marginTop: 6, userSelect: "text", WebkitUserSelect: "text" }}>
+          {describePush(st).map((line, i) => (
+            <div key={i}>{line}</div>
+          ))}
+          <div>哪一步卡住了，把这几行截图给我。</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ModelPanel({ current, onPick }) {
   const [custom, setCustom] = useState(MODELS.find((m) => m.id === current) ? "" : current);
   return (
@@ -3321,6 +3598,8 @@ export default function App({ account = {} }) {
   const dayMsgsRef = useRef({});
   const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState("");
+  const [noticeMark, setNoticeMark] = useState(""); // 她是点了哪条通知回来的（通知网址后面的记号）
+  const [noticeBack, setNoticeBack] = useState(0); // 这次打开以来，上一回点着测试通知回来是什么时候（通知面板里要说）
   const [copySheet, setCopySheet] = useState("");
   const [fillOn, setFillOn] = useState(() => gapInfo().fill);
   const [chatMenu, setChatMenu] = useState(null); // 长按一段对话弹出来的小菜单
@@ -4183,6 +4462,22 @@ export default function App({ account = {} }) {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // ---- 通知 ----
+  // 开过通知的设备，每次打开都悄悄重新登记一遍（见 push.js）；她点通知回来的，记下是哪一条
+  useEffect(() => {
+    resyncPush().catch(() => {});
+    return watchNotices((mark) => {
+      setNoticeMark(mark);
+      if (mark.startsWith("test-")) setNoticeBack(Date.now());
+    });
+  }, []);
+  // 眼下只有测试通知：回来了说一声。开屏还挡着的时候先不说，进了门再说
+  useEffect(() => {
+    if (!noticeMark || splash) return;
+    setToast("从通知回来的");
+    setNoticeMark("");
+  }, [noticeMark, splash]);
+
   useEffect(() => {
     if (!voiceNote) return;
     const t = setTimeout(() => setVoiceNote(""), 6000);
@@ -4582,6 +4877,9 @@ export default function App({ account = {} }) {
       } catch (e) {}
       return;
     }
+    try {
+      await Promise.race([disablePush(), new Promise((done) => setTimeout(done, 4000))]);
+    } catch (e) {}
     if (account.signOut) account.signOut();
   };
 
@@ -4702,6 +5000,9 @@ export default function App({ account = {} }) {
           </div>
           {backupNote && <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 8, lineHeight: 1.6 }}>{backupNote}</div>}
           <input ref={importRef} type="file" accept="application/json,.json" onChange={importBackup} style={{ display: "none" }} />
+
+          <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8, marginTop: 22 }}>通知</div>
+          <PushPanel email={account.email} onCopy={copyText} back={noticeBack} />
 
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8, marginTop: 22 }}>屏幕</div>
           {gapInfo().canFill && (

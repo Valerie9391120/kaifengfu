@@ -6,3 +6,4 @@ export const SUPABASE_URL =
 export const SUPABASE_KEY =
   typeof __KFS_SUPABASE_KEY__ !== "undefined" ? __KFS_SUPABASE_KEY__ : "sb_publishable_SGVA4WEsdL2hQz7fjissdQ_4TYuVJNa";
 export const FUNCTION_URL = SUPABASE_URL + "/functions/v1/claude";
+export const PUSH_URL = SUPABASE_URL + "/functions/v1/push";
