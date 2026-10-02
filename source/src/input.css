@@ -4,7 +4,8 @@
 
 /* 跟主题走的颜色，写成“红,绿,蓝”三个数，用的时候 rgb(var(--k-ink))、rgba(var(--k-soft),0.5)。
    默认是青绿；丁香在 <html data-kfs-theme="dingxiang"> 时换一套（见 src/theme.js）。
-   --k-base 是聊天背景最底边的颜色，也是网页底色 */
+   --k-base 是聊天背景最底边的颜色，也是网页底色；
+   --k-motto 是空对话里那句题字的颜色：青绿的背景里它压在一方深青上，要用实墨；丁香的背景中间是浅的，用轻一档的紫 */
 :root {
   --k-ink: 36, 51, 47;
   --k-soft: 52, 74, 68;
@@ -21,6 +22,7 @@
   --k-bg3: 228, 232, 218;
   --k-glow: 160, 196, 182;
   --k-glow-light: 242, 246, 238;
+  --k-motto: 36, 51, 47;
 }
 html[data-kfs-theme="dingxiang"] {
   --k-ink: 48, 38, 70;
@@ -38,6 +40,7 @@ html[data-kfs-theme="dingxiang"] {
   --k-bg3: 243, 234, 244;
   --k-glow: 198, 176, 244;
   --k-glow-light: 250, 244, 252;
+  --k-motto: 84, 68, 118;
 }
 
 html,

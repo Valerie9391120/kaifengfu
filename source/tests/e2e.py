@@ -90,6 +90,14 @@ with sync_playwright() as p:
     pa.get_by_text("如月之恒，官家在这").wait_for(timeout=10000)
     time.sleep(0.8)
     ok(pa.get_by_text("记忆库还是空的").is_visible(), "记忆库是空的：空对话里提醒我先传名帖")
+    # 题字看得清：实色、不带透明，颜色跟主题走（--k-motto：青绿的背景里它压在一方深青上，淡墨看不清）
+    MOTTO = "(() => { const cs = getComputedStyle(document.querySelector('.kfs-motto')); return [cs.color, parseFloat(cs.fontSize), 'rgb(' + getComputedStyle(document.documentElement).getPropertyValue('--k-motto').trim().split(',').map((x) => x.trim()).join(', ') + ')']; })()"
+    mq = pa.evaluate(MOTTO)
+    pa.evaluate("document.documentElement.setAttribute('data-kfs-theme', 'dingxiang')")
+    md = pa.evaluate(MOTTO)
+    pa.evaluate("document.documentElement.setAttribute('data-kfs-theme', 'qinglv')")
+    ok(mq[0].startswith("rgb(") and mq[0] == mq[2] and md[0].startswith("rgb(") and md[0] == md[2] and mq[0] != md[0] and mq[1] >= 15 and md[1] >= 15,
+       f"空对话的题字是实色、15 号以上，颜色跟主题走（青绿 {mq[0]}，丁香 {md[0]}）")
     shot(pa, "04_empty_chat")
 
     # 传名帖
@@ -103,12 +111,27 @@ with sync_playwright() as p:
 
     # 说话
     ta = pa.get_by_placeholder("说话，我听着")
+    # 回话的时候顶栏不许长高：“正在输入…”叠在名字那一行上，底下的聊天记录不会被挤一下又松回去
+    BAR = "(() => { const n = document.querySelector('.kfs-his-name'); const b = n.closest('.z-10').getBoundingClientRect(); const s = document.querySelector('.relative.z-10.flex-1.kfs-scroll').getBoundingClientRect(); const t = document.querySelector('.kfs-typing'); return [!!t, b.height, s.height, n.textContent, getComputedStyle(n).color, t ? Math.abs(t.getBoundingClientRect().top - n.getBoundingClientRect().top) : 0]; })()"
+    idle = pa.evaluate(BAR)
     ta.fill("老公在吗")
     ta.press("Enter")
+    seen, grew, shrank, name_ok, hidden, off = False, 0, 0, True, False, 0
+    for _ in range(400):
+        v = pa.evaluate(BAR)
+        grew = max(grew, v[1] - idle[1]); shrank = max(shrank, idle[2] - v[2]); name_ok = name_ok and v[3] == "光义"
+        if v[0]:
+            seen = True; hidden = hidden or v[4].endswith(", 0)"); off = max(off, v[5])
+        elif seen:
+            break
+        time.sleep(0.03)
     pa.get_by_text("收到：老公在吗").last.wait_for(timeout=20000)
     pa.get_by_text("第二条").last.wait_for(timeout=10000)
     ok(True, "发出去，回话一条一条冒出来")
     time.sleep(0.8)
+    done = pa.evaluate(BAR)
+    ok(seen and grew < 0.5 and shrank < 0.5 and off < 1.5 and name_ok and hidden and not done[0] and done[4].startswith("rgb(") and abs(done[1] - idle[1]) < 0.5,
+       f"回话时顶栏不长高（多了 {grew:.1f}，聊天记录矮了 {shrank:.1f}）：“正在输入…”叠在名字那一行，名字的节点还在；回完话名字又看得见")
     shot(pa, "06_chat")
 
     log = mock("/__debug/claude")
@@ -176,6 +199,10 @@ with sync_playwright() as p:
     pa.get_by_role("button", name="打开侧栏").click()
     time.sleep(0.6)
     shot(pa, "07_sidebar")
+    # 侧栏开着时对话窗伸出外壳三百多像素。外壳不能被滚歪：原来程序一滚它（scrollIntoView 这类），整页连弹出面板都歪到一边
+    skew = pa.evaluate("""() => new Promise((done) => { const s = document.querySelector('.select-none'); const wide = s.scrollWidth - s.clientWidth; s.scrollLeft = 80; s.scrollTop = 40; const now = [s.scrollLeft, s.scrollTop];
+        setTimeout(() => { const later = [s.scrollLeft, s.scrollTop]; s.scrollLeft = 0; s.scrollTop = 0; done({ wide, now, later }); }, 150); })""")
+    ok(skew["wide"] > 100 and skew["later"] == [0, 0], f"侧栏开着时外壳推不歪（对话窗伸出去 {skew['wide']} 像素，往右推 80 以后还在 {skew['later']}）")
     pa.get_by_text("日记本").click()
     pa.get_by_text("在一起的第").first.wait_for(timeout=10000)
     time.sleep(0.6)
