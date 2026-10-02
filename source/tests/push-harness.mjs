@@ -198,7 +198,8 @@ export function createFakePush() {
   const log = []; // 每一次敲门
   const delivered = []; // 真送到设备上的通知（解开以后的样子）
 
-  // mode：ok 正常；gone 这个地址作废了（410）；flaky 头一回 503、第二回才收；down 一直 503
+  // mode：ok 正常；gone 这个地址作废了（410）；flaky 头一回 503、第二回才收；down 一直 503；
+  //       dead 根本连不上（报错的话里带着整个地址，有的运行环境就是这样）
   function addDevice(mode = "ok", host = "web.push.apple.com") {
     const ecdh = crypto.createECDH("prime256v1");
     ecdh.generateKeys();
@@ -213,7 +214,7 @@ export function createFakePush() {
   async function receive(url, init = {}) {
     const headers = Object.fromEntries(Object.entries(init.headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
     const body = init.body ? Buffer.from(init.body.buffer ? new Uint8Array(init.body.buffer, init.body.byteOffset, init.body.byteLength) : init.body) : Buffer.alloc(0);
-    const entry = { endpoint: url, method: init.method || "GET", headers, size: body.length, status: 0, reason: "" };
+    const entry = { endpoint: url, method: init.method || "GET", headers, size: body.length, status: 0, reason: "", redirect: init.redirect || "" };
     log.push(entry);
     const done = (status, reason = "") => {
       entry.status = status;
@@ -223,6 +224,7 @@ export function createFakePush() {
     const dev = devices.get(url);
     if (!dev) return done(404, "BadPath");
     dev.hits++;
+    if (dev.mode === "dead") throw new TypeError(`error sending request for url (${url}): connection refused`);
     if (entry.method !== "POST") return done(405, "MethodNotAllowed");
     if (dev.mode === "gone") return done(410, "Unregistered");
     if (dev.mode === "down" || (dev.mode === "flaky" && dev.hits === 1)) return done(503, "ServiceUnavailable");

@@ -145,7 +145,7 @@ def close_panel(page):
 
 def again(page):
     page.get_by_role("button", name="再看一次").click(); time.sleep(0.3)
-    page.get_by_role("button", name="再看一次").wait_for(timeout=10000) if page.evaluate(STATE) in ("setup", "denied") else None
+    page.get_by_role("button", name="再看一次").wait_for(timeout=10000) if page.evaluate(STATE) in ("setup", "denied", "away") else None
     time.sleep(0.8)
 
 errors = []
@@ -169,7 +169,7 @@ with sync_playwright() as p:
     mock("/__debug/push-setup?fn=missing")
     again(pa)
     steps = pa.evaluate(STEPS)
-    ok([s.split("|")[0] for s in steps] == ["yes", "no", "no"] and "建一个叫 push 的函数" in steps[1] and "接上了才看得到" in steps[2], "push 函数还没建（连打招呼都过不去）：说小后端没接上，钥匙那行说现在还看不到")
+    ok([s.split("|")[0] for s in steps] == ["yes", "no", "no"] and "连不上" in steps[1] and "要有一个叫 push 的函数" in steps[1] and "接上了才看得到" in steps[2], "push 函数还没建（连打招呼都过不去）：说小后端连不上、要有一个叫 push 的函数，钥匙那行说现在还看不到")
     mock("/__debug/push-setup?fn=missing-cors")
     again(pa)
     ok([s.split("|")[0] for s in pa.evaluate(STEPS)] == ["yes", "no", "no"], "push 函数还没建（网关回了 404）：一样认得出")
@@ -294,6 +294,13 @@ with sync_playwright() as p:
     pa.get_by_text("从通知回来的").wait_for(timeout=5000)
     ok(pa.evaluate("location.hash") == "" and pa.evaluate("location.href") == BASE and pa.locator(".kfs-push").is_visible(), "开封府开着的时候点通知：不重新加载（面板还开着），说一声“从通知回来的”，网址后面的记号收走")
     time.sleep(1.8)
+    hist1 = pa.evaluate("[history.length, !!(history.state && history.state.kfs === 'kfs-home')]")
+    pa.evaluate("location.href = location.origin + location.pathname + '#n=test-live5678'")   # 又一条
+    pa.get_by_text("从通知回来的").wait_for(timeout=5000)
+    time.sleep(1.8)
+    hist2 = pa.evaluate("[history.length, !!(history.state && history.state.kfs === 'kfs-home')]")
+    ok(hist1[1] and hist2[1] and hist2[0] == hist1[0] and pa.evaluate("location.href") == BASE,
+       f"点通知回来不在历史里越攒越多：每回都退回开封府原来待的那一格（历史 {hist1[0]} 格，再来一条还是 {hist2[0]} 格），左边往右划不会变成“后退”")
     pa.evaluate("location.href = location.origin + location.pathname + '#somewhere-else'"); time.sleep(0.5)
     ok(not pa.get_by_text("从通知回来的").is_visible() and pa.evaluate("location.hash") == "#somewhere-else", "不是通知的记号：不理会，也不动它")
     before = mock("/__debug/push")["rows"][0]["updated_at"]   # 往下到进门为止不开面板：登记的时间要是变了，只能是打开开封府那一下自己重新登记的
@@ -336,15 +343,59 @@ with sync_playwright() as p:
     open_panel(pa)
     wait_state(pa, "on")
     ok(pa.evaluate(NOTE) == "" and mock("/__debug/push")["rows"][0]["last_at"] is None, "（新订的门牌号还没发过：面板上没有“上一回”）")
+    # 先发一条，紧接着点“十秒后再发”：不能把刚才那一条的记录当成这一条的
+    pa.get_by_role("button", name="发一条测试通知").click()
+    wait_note(pa, "收下了")
+    sent0 = len(mock("/__debug/push")["delivered"])
     t0 = time.time()
     pa.get_by_role("button", name="十秒后再发").click()
     pa.get_by_text(re.compile("10 秒后发出")).wait_for(timeout=5000)
     quick = time.time() - t0
-    ok(quick < 3 and len(mock("/__debug/push")["delivered"]) == 1 and pa.get_by_role("button", name="等它发出去…").is_disabled() and pa.get_by_role("button", name="发一条测试通知").is_disabled(),
+    ok(quick < 3 and len(mock("/__debug/push")["delivered"]) == sent0 and pa.get_by_role("button", name="等它发出去…").is_disabled() and pa.get_by_role("button", name="发一条测试通知").is_disabled(),
        f"十秒后再发：小后端先回话（{quick:.1f} 秒），这时候还没发；等着的时候不让再点")
     wait_note(pa, "收下了", 25000)
     took = time.time() - t0
-    ok(10 <= took < 16 and len(mock("/__debug/push")["delivered"]) == 2 and pa.get_by_role("button", name="十秒后再发").is_enabled(), f"十秒后再发：{took:.1f} 秒后面板上看到“收下了”（小后端在后台发的，结果从登记簿里读回来）")
+    ok(10 <= took < 16 and len(mock("/__debug/push")["delivered"]) == sent0 + 1 and pa.get_by_role("button", name="十秒后再发").is_enabled(), f"十秒后再发：{took:.1f} 秒后面板上才说“收下了”（小后端在后台发的，结果从登记簿里读回来；没把刚才那一条当成这一条）")
+
+    # 等着的工夫把通知关了：不能因为“订阅没了”就又替她订上
+    pa.get_by_role("button", name="十秒后再发").click()
+    pa.get_by_text(re.compile("10 秒后发出")).wait_for(timeout=5000)
+    pa.evaluate("window.__pushCalls.length = 0")
+    pa.get_by_role("button", name="关掉", exact=True).click()
+    wait_state(pa, "off")
+    time.sleep(5)
+    ok(mock("/__debug/push")["rows"] == [] and "device" not in pa.evaluate(FAKE) and "subscribe" not in pa.evaluate("window.__pushCalls") and pa.evaluate(STATE) == "off" and "换了一个新的" not in pa.locator(".kfs-push").inner_text(),
+       "等着“十秒后再发”的工夫把通知关了：就是关了，过几秒也不会又订上")
+    pa.get_by_role("button", name="开启通知").click()
+    wait_state(pa, "on")
+    dev = pa.evaluate(FAKE)["device"]
+    time.sleep(7)   # 刚才那条十秒的在小后端那边还排着，等它过去，免得搅了后面数通知
+
+    # 开着通知的设备一时连不上小后端：是网络的事，不能摆出“还差几步、去建函数、生成钥匙”
+    close_panel(pa)
+    mock("/__debug/push-setup?fn=missing")
+    open_panel(pa)
+    wait_state(pa, "away")
+    words = pa.locator(".kfs-push").inner_text()
+    ok("连不上" in words and "过一会儿再看" in words and not pa.get_by_role("button", name="生成一份钥匙").is_visible() and pa.locator(".kfs-push-step").count() == 0 and len(mock("/__debug/push")["rows"]) == 1,
+       "开着通知的设备一时连不上小后端：说是连不上、过一会儿再看；不摆“还差几步”，订阅和登记都没动")
+    mock("/__debug/push-setup")
+    again(pa)
+    wait_state(pa, "on")
+    ok(pa.get_by_role("button", name="发一条测试通知").is_visible(), "连上了再看一次：回到开着的样子")
+
+    # 两趟“看一遍”叠在一起，先问的后到：只认后问的那一趟（不然面板会被旧答案盖回去）
+    mock("/__debug/push-setup?hold=2500")
+    pa.evaluate("document.dispatchEvent(new Event('visibilitychange'))")   # 第一趟：小后端这回答得慢，答的是“钥匙好着”
+    time.sleep(0.4)
+    mock("/__debug/push-secrets", "")                                      # 这工夫密钥柜被清空了
+    pa.evaluate("document.dispatchEvent(new Event('visibilitychange'))")   # 第二趟：答得快，“钥匙没了”
+    wait_state(pa, "setup")
+    time.sleep(3.2)                                                        # 第一趟的旧答案这时候才到
+    ok(pa.evaluate(STATE) == "setup" and "还没放" in pa.evaluate(STEPS)[2], "先问的后到：面板停在后问的那一趟（钥匙没了），没被迟到的旧答案盖回“开着”")
+    mock("/__debug/push-secrets", block)
+    again(pa)
+    wait_state(pa, "on")
 
     # ================= 门牌号作废 =================
     mock("/__debug/push-mode?mode=gone&endpoint=" + urllib.parse.quote(dev["endpoint"], safe=""))

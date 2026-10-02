@@ -3209,11 +3209,14 @@ function PushPanel({ email, onCopy, back }) {
   const [detail, setDetail] = useState(false);
   const [waitFrom, setWaitFrom] = useState(null); // 等着后台那一条发出去：点的时候登记簿里记的是哪一回
   const alive = useRef(true);
+  const lastCheck = useRef(0);
 
+  // 看一遍现在什么情形。看得慢的那一趟可能比后发的那一趟晚回来，只认最后发出去的那一趟
   const refresh = async () => {
+    const mine = ++lastCheck.current;
     try {
       const s = await checkPush();
-      if (alive.current) setSt(s);
+      if (alive.current && mine === lastCheck.current) setSt(s);
       return s;
     } catch (e) {
       return null;
@@ -3245,7 +3248,9 @@ function PushPanel({ email, onCopy, back }) {
         out = await lastOutcome();
       } catch (e) {}
       if (stopped || !alive.current) return;
-      if (out && out.gone) {
+      if (out && out.off) {
+        setWaitFrom(null); // 等的工夫她把通知关了：不等了
+      } else if (out && out.gone) {
         setWaitFrom(null);
         renew();
       } else if (out && out.at && out.at !== waitFrom) {
@@ -3253,8 +3258,9 @@ function PushPanel({ email, onCopy, back }) {
         setWaitFrom(null);
         refresh();
       } else if (tries >= 22) {
-        setNote({ ok: false, say: "还没看到发出去的记录。过一会儿点“再看一次”。" });
+        setNote({ ok: false, say: "等了一阵，没看到这一条发出去的记录。横幅到了就不用管；没到的话再发一次。" });
         setWaitFrom(null);
+        refresh();
       }
     }, 2000);
     return () => {
@@ -3266,8 +3272,8 @@ function PushPanel({ email, onCopy, back }) {
   // 推送服务说这台设备的门牌号作废了：小后端已经把它从登记簿里划掉，这里退掉旧的、重新订一个
   const renew = async () => {
     try {
-      await renewPush(st ? st.serverKey : "");
-      if (alive.current) setNote({ ok: false, say: "这台设备的通知地址作废了，已经换了一个新的。再发一次试试。" });
+      const renewed = await renewPush(st ? st.serverKey : "");
+      if (alive.current && renewed) setNote({ ok: false, say: "这台设备的通知地址作废了，已经换了一个新的。再发一次试试。" });
     } catch (e) {
       if (alive.current) setNote({ ok: false, say: explainOutcome({ status: 410, note: "", host: "" }).say });
     }
@@ -3294,12 +3300,19 @@ function PushPanel({ email, onCopy, back }) {
     });
   const disable = () =>
     act("off", async () => {
+      setWaitFrom(null); // 正等着“十秒后再发”的结果：不等了
       await disablePush();
       await refresh();
     });
   const test = (delay) =>
     act(delay ? "later" : "test", async () => {
-      const before = st && st.last ? st.last.at : 0;
+      // 等几秒再发的那种，靠“登记簿里的时间变了”认出这一条发出去了，所以发之前现去看一眼上一回是什么时候
+      // （面板上记的可能是旧的：拿旧的去比，会把上一条当成这一条）
+      let before = 0;
+      if (delay) {
+        const prev = await lastOutcome();
+        before = (prev && prev.at) || 0;
+      }
       const r = await sendTestPush(delay);
       if (r.queued) {
         setNote({ ok: true, say: `${r.delay} 秒后发出。现在把屏幕锁上，等横幅。` });
@@ -3334,7 +3347,8 @@ function PushPanel({ email, onCopy, back }) {
 
   const setup = st.setup;
   const denied = st.permission === "denied";
-  const state = !st.ready ? "setup" : st.on ? "on" : denied ? "denied" : "off";
+  // away：这台设备开过通知，这会儿却连不上后端。是网络的事，别摆出“还差几步”让她以为后端没了
+  const state = st.away ? "away" : !st.ready ? "setup" : st.on ? "on" : denied ? "denied" : "off";
   const shown = note || (state === "on" && st.last ? { ...explainOutcome(st.last), when: st.last.at } : null);
   const small = { fontSize: 12, color: T.inkSoft, lineHeight: 1.6 };
 
@@ -3347,7 +3361,7 @@ function PushPanel({ email, onCopy, back }) {
             {setup.table === "ok" ? "：建好了" : setup.table === "missing" ? "：还没建。把通知那段 SQL（push.sql）在 SQL Editor 里跑一遍" : "：读不到"}
           </PushStep>
           <PushStep done={setup.fn === "ok"} title="小后端">
-            {setup.fn === "ok" ? "：接上了" : setup.fn === "unreachable" ? "：还没接上。在 Edge Functions 里建一个叫 push 的函数" : setup.fn === "auth" ? "：登录过期了，重新登录一下" : "：不肯答"}
+            {setup.fn === "ok" ? "：接上了" : setup.fn === "unreachable" ? "：连不上。Edge Functions 里要有一个叫 push 的函数；有了还这样，多半是网络，过一会儿再看" : setup.fn === "auth" ? "：登录过期了，重新登录一下" : "：不肯答"}
           </PushStep>
           <PushStep done={setup.keys === "ok"} title="钥匙">
             {setup.keys === "ok"
@@ -3365,6 +3379,7 @@ function PushPanel({ email, onCopy, back }) {
           )}
         </div>
       )}
+      {state === "away" && <div style={PUSH_CARD}>这台设备开着通知，可这会儿连不上后端，多半是网络。过一会儿再看。</div>}
       {state === "denied" && <div style={PUSH_CARD}>{PUSH_DENIED}</div>}
       {state === "off" && <div style={PUSH_CARD}>现在关着。打开以后，这台设备能收到开封府的系统通知。眼下只有测试通知，接到他的回话上是下一步。</div>}
       {state === "on" && (
@@ -3400,7 +3415,7 @@ function PushPanel({ email, onCopy, back }) {
             复制这三行
           </button>
         )}
-        {(state === "setup" || state === "denied") && (
+        {(state === "setup" || state === "denied" || state === "away") && (
           <button onClick={() => act("check", refresh)} disabled={!!busy} className="kfs-tap" style={{ ...chip, opacity: busy ? 0.5 : 1 }}>
             {busy === "check" ? "正在看…" : "再看一次"}
           </button>

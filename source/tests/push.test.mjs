@@ -262,6 +262,13 @@ const rowOf = (dev) => supa.table.all().find((r) => r.endpoint === dev.endpoint)
   const rDown = await call({ op: "test", endpoint: down.endpoint });
   ok(!rDown.data.results[0].ok && rDown.data.results[0].status === 503 && rDown.data.results[0].reason === "ServiceUnavailable" && down.hits === 2 && rowOf(down).last_status === 503 && rowOf(down).last_note === "ServiceUnavailable",
     "推送服务一直没应：只重试一回就停，原因记进登记簿");
+  const dead = push.addDevice("dead");
+  register(dead);
+  const rDead = await call({ op: "test", endpoint: dead.endpoint });
+  const token = dead.endpoint.split("/").pop();
+  ok(rDead.data.results[0].status === 0 && rDead.data.results[0].reason === "NetworkError" && dead.hits === 2 && rowOf(dead).last_status === 0 && rowOf(dead).last_note === "NetworkError" && !rDead.text.includes(token) && !JSON.stringify(rowOf(dead)).replace(dead.endpoint, "").includes(token),
+    "根本没连上：重试一回，记成“没连上”；报错的话里带着门牌号，不往登记簿和回话里写");
+  ok(push.log.length > 5 && push.log.every((x) => x.redirect === "manual"), "敲推送服务的门：对面说“请去别处”也不跟着走");
   const unlisted = push.addDevice();
   supa.table.handle("POST", new URLSearchParams("on_conflict=user_id,endpoint"), QING.id, JSON.stringify({ endpoint: "https://evil.example/collect", p256dh: unlisted.p256dh, auth: unlisted.auth, page: PAGE }));
   const before = push.log.length;

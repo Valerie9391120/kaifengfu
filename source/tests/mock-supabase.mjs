@@ -16,6 +16,7 @@ const ledger = createLedgerTable();
 const fakePush = createFakePush();
 fakePush.install();
 const pushFn = await loadPushFunction();
+let pushHold = 0; // 下一次敲 push 函数的门：答案照常算好，压这么多毫秒再回（测“先问的后到”）
 let pushFnState = "ok"; // ok 部署了；missing 还没建这个函数（照 Supabase 网关那样回 404，不带跨域的头）；missing-cors 同上但带着头
 function pushSecrets(text) {
   // 她在 Supabase 的 Secrets 里一次贴好几行“名字=值”，这里照着收
@@ -30,6 +31,7 @@ function pushReset() {
   ledger.state.missing = false;
   fakePush.reset();
   pushFnState = "ok";
+  pushHold = 0;
   for (const k of Object.keys(pushEnv)) delete pushEnv[k];
   Object.assign(pushEnv, { SUPABASE_URL: `http://127.0.0.1:${PORT}`, SUPABASE_ANON_KEY: "sb_publishable_test", ALLOWED_EMAIL: "qing@example.com" });
 }
@@ -146,6 +148,7 @@ http
     if (url.pathname === "/__debug/push-setup") {
       ledger.state.missing = url.searchParams.get("table") === "missing";
       pushFnState = url.searchParams.get("fn") || "ok";
+      pushHold = Number(url.searchParams.get("hold") || 0);
       return send(res, 200, { ok: true });
     }
     // 往密钥柜里贴（正文是那几行“名字=值”）；make=1 是现生成一对贴进去
@@ -232,6 +235,11 @@ http
       for (const k of ["authorization", "apikey", "content-type", "origin"]) if (req.headers[k]) headers[k] = req.headers[k];
       const body = req.method === "POST" ? await readBody(req) : undefined;
       const out = await pushFn.handler(new Request(`http://127.0.0.1:${PORT}${req.url}`, { method: req.method, headers, body }));
+      if (pushHold && req.method === "POST") {
+        const ms = pushHold;
+        pushHold = 0;
+        await new Promise((r) => setTimeout(r, ms));
+      }
       res.writeHead(out.status, Object.fromEntries(out.headers));
       return res.end(await out.text());
     }
