@@ -74,6 +74,12 @@ html[data-kfs-kb] {
   --kfs-sab: 0px;
 }
 
+/* 键盘开着时，弹出面板最高只到状态栏底下，不钻到状态栏后面去：
+   账户面板很长，在最上面那一行改昵称时，名字和面板的顶边都得看得见 */
+html[data-kfs-kb] .kfs-sheet-box {
+  max-height: min(84%, calc(100% - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 32px)) !important;
+}
+
 /* 空一条、100vh 也够不着（见 gap.js 的 "bottom"）：网页本身就到不了横条那儿，
    让位记成 0，输入框直接贴到网页最底边 */
 html[data-kfs-gap="bottom"] {

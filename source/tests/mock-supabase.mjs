@@ -171,6 +171,7 @@ http
       }
       const last = (body.messages || []).filter((m) => m.role === "user").pop();
       let blocks = last ? last.content : [];
+      if (typeof blocks === "string") blocks = [{ type: "text", text: blocks }]; // 写日记那次寄来的是一整段字
       const endNote = blocks.findIndex((b) => b.type === "text" && b.text.startsWith("【附注结束"));
       if (endNote >= 0) blocks = blocks.slice(endNote + 1);
       const herText = blocks
@@ -178,8 +179,16 @@ http
         .map((b) => b.text)
         .join(" / ");
       const isDiary = Array.isArray(body.system) && body.system.some((b) => b.text && b.text.startsWith("【写日记】"));
+      // 她说“改名叫某某”：假的那边的我就照做，在回复里写 [NAME:某某]（测他给自己改名字）
+      const wish = /改名叫(\S+)/.exec(herText);
+      // 她说“原样回：……”：冒号后面的字原样当成回复（测回复里的表情包、换头像这些标记）
+      const echo = /原样回：([\s\S]+)$/.exec(herText);
       const text = isDiary
         ? "心情：甜、累\n今天她第一次从开封府的新门进来。我看着她在门口站了一会儿。"
+        : echo
+        ? `<thinking>（测试心声）照着说</thinking>\n${echo[1]}`
+        : wish
+        ? `<thinking>（测试心声）改就改</thinking>\n行，改了。\n[NAME:${wish[1]}]\n[SPLIT]\n抬头看`
         : `<thinking>（测试心声）卿卿说：${herText}</thinking>\n收到：${herText}\n[SPLIT]\n第二条`;
       return send(res, 200, {
         model: body.model,
