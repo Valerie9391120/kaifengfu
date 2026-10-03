@@ -477,6 +477,9 @@ with sync_playwright() as p:
         ("missing", "根本没有 push 函数", "/__debug/push-setup?fn=missing", "/__debug/push-setup"),
     ]:
         mock(setup)
+        # 这台设备上还不知道新路通不通（没走通过，或者上回不通、记号擦了）。
+        # “记着通、小后端却不接了”是另一种情形，在 tests/e2e_mail_edge.py 的 stale 那一段
+        pe.evaluate("localStorage.removeItem('kfs-relay')")
         pe.reload(); kite(pe)          # 重新打开：上一种情形里“新路不通”的记性清掉
         time.sleep(1.2)                # 开机那一声“新路通不通”问完
         c0, o0 = len(calls()), len(box()["ops"])
@@ -489,11 +492,9 @@ with sync_playwright() as p:
         say(pe, f"老路 {state} 二")
         pe.get_by_text(f"收到：老路 {state} 二").last.wait_for(timeout=20000)
         pe.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.2)
-        # 头一种情形里这台设备还记着“新路是通的”（上一句刚走通过），所以整包寄过去一回、被拒了才知道；
-        # 后三种是重新打开以后：记号已经擦了，开机先轻轻问了一声就知道不通，那一大包对话一回都没往新路上寄
-        want = 1 if state == "table" else 0
-        ok(first_via == "claude" and calls()[-1]["via"] == "claude" and len(calls()) == c0 + 2 and tried == want and box()["ops"][o0:].count("reply") == want and pe.get_by_text("点这里重发").count() == 0,
-           f"{name}：话照样回上了，走的是老路（claude 函数）；整包对话往新路上寄了 {tried} 回（该是 {want} 回），第二句直接走老路；一回都没多问")
+        # 开机先轻轻问了一声就知道不通：那一大包对话一回都没往新路上寄
+        ok(first_via == "claude" and calls()[-1]["via"] == "claude" and len(calls()) == c0 + 2 and tried == 0 and box()["ops"][o0:].count("reply") == 0 and pe.get_by_text("点这里重发").count() == 0,
+           f"{name}：话照样回上了，走的是老路（claude 函数）；开机问一声就知道不通，整包对话往新路上寄了 {tried} 回（该是 0 回）；一回都没多问")
         _, m = chat_of(pe)
         ok(m[-1]["role"] == "him" and "job" not in m[-1], f"{name}：走老路回来的那一条，和从前一样")
         if state == "missing":

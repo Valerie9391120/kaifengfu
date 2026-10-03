@@ -437,6 +437,43 @@ def later(browser):
     A.close(); B.close()
 
 
+# 没回成的信留在信箱里（她回来的时候眼前是别的对话）。她自己从侧栏翻到那段对话：这时候才说“没送到…点这里重发”
+def side(browser):
+    A = phone(browser)
+    pa = page_of(A, "side")
+    first_time(pa); enable_notifications(pa)
+    chat(pa, "甲段的话")
+    pa.get_by_role("button", name="打开侧栏").click(); pa.wait_for_timeout(600)
+    pa.get_by_role("button", name="新对话").first.click(); pa.wait_for_timeout(600)
+    chat(pa, "乙段的话")
+    pa.get_by_role("button", name="打开侧栏").click(); pa.wait_for_timeout(600)
+    pa.locator("button", has_text="甲段的话").first.click(); pa.wait_for_timeout(800)
+    b0 = len(banners())
+    mock("/__debug/claude-fail?kind=broken")
+    mock("/__debug/claude-hold?ms=3000")
+    say(pa, "这句会失败")
+    ok(wait_mock(working, 8), "自己翻到那段对话·准备：甲段里发一句（会失败），翻到乙段，开封府被收掉")
+    pa.get_by_role("button", name="打开侧栏").click(); pa.wait_for_timeout(500)
+    pa.locator("button", has_text="乙段的话").first.click(); pa.wait_for_timeout(600)
+    pa.close()
+    ok(wait_mock(lambda: len(banners()) == b0 + 1, GRACE + 12) and "没送到" in banners()[-1]["json"]["notification"]["body"], "自己翻到那段对话·准备：横幅说没送到")
+    mock("/__debug/claude-fail")
+    c1 = len(calls())
+    pb = page_of(A, "side2")
+    pb.goto(BASE); kite(pb)                  # 从图标进来：眼前是乙段
+    pb.wait_for_timeout(2500)
+    waiting = count_text(pb, "收到：乙段的话") == 1 and note_count(pb, "点这里重发") == 0 and len(box()["rows"]) == 1
+    pb.get_by_role("button", name="打开侧栏").click(); pb.wait_for_timeout(600)
+    pb.locator("button", has_text="甲段的话").first.click()    # 她自己翻到甲段
+    said = wait_js(pb, "document.body.innerText.includes('消息没送到（这把 key 没绑定工作区')", 10000)
+    ok(waiting and said and count_text(pb, "这句会失败") == 1 and wait_mock(lambda: box()["rows"] == []) and len(calls()) == c1,
+       "没回成的信留着、她自己从侧栏翻到那段对话：这时候给“消息没送到（缘故）。点这里重发”，信收掉；没有偷偷重发")
+    pb.get_by_text(re.compile("点这里重发")).first.click()
+    pb.get_by_text("收到：这句会失败").last.wait_for(timeout=20000)
+    ok(len(calls()) == c1 + 1, "点重发：回上了，只问了一回")
+    A.close()
+
+
 # 重新回答没成（Anthropic 那头报错）、开封府又被收掉：回来说一声“重新回答没成功”，旧回答原样在
 def refail(browser):
     A = phone(browser)
@@ -463,7 +500,7 @@ def refail(browser):
     A.close()
 
 
-SCENES = [("cold", cold), ("avatar", avatar), ("back", back), ("regen", regen), ("typed", typed), ("stale", stale), ("unsure", unsure), ("blip", blip), ("edit", edit), ("pair", pair), ("resend", resend), ("later", later), ("refail", refail)]
+SCENES = [("cold", cold), ("avatar", avatar), ("back", back), ("regen", regen), ("typed", typed), ("stale", stale), ("unsure", unsure), ("blip", blip), ("edit", edit), ("pair", pair), ("resend", resend), ("later", later), ("side", side), ("refail", refail)]
 want = [a for a in sys.argv[1:] if not a.startswith("-")]
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])

@@ -71,7 +71,10 @@ export async function loadBundle(relative) {
 export function makeVapidKeys() {
   const ecdh = crypto.createECDH("prime256v1");
   ecdh.generateKeys();
-  return { publicKey: b64u(ecdh.getPublicKey()), privateKey: b64u(ecdh.getPrivateKey()) };
+  // Node 交出来的私钥不补前头的零：最高那个字节正好是零的时候（两百五十六回里有一回）只有 31 个字节。
+  // 真的钥匙（面板里生成的，走 JWK）永远是 32 个字节，函数也只认 32 个字节，所以这里补齐，不然测试隔三岔五平白挂一回
+  const d = ecdh.getPrivateKey();
+  return { publicKey: b64u(ecdh.getPublicKey()), privateKey: b64u(Buffer.concat([Buffer.alloc(32 - d.length), d])) };
 }
 
 const hmac = (key, data) => crypto.createHmac("sha256", key).update(data).digest();

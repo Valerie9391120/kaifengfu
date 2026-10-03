@@ -4694,7 +4694,6 @@ export default function App({ account = {} }) {
   // 开封府不在眼前的时候不看：这时候把信取走，小后端就以为她看到了、不敲手机了。
   // retry：这是没看成以后自己再来的第几回（外头叫的时候不带）
   const checkMail = async (retry = 0) => {
-    if (document.visibilityState !== "visible") return;
     if (mailBusy.current) {
       mailAgain.current = true;
       return;
@@ -4708,6 +4707,7 @@ export default function App({ account = {} }) {
       if (!mailGate.current) mailGate.current = Promise.race([memesReady.current, new Promise((done) => setTimeout(done, 2500))]).catch(() => {});
       await mailGate.current;
       const relay = getRelay();
+      // 开封府不在眼前就不看（等表情包的那一下工夫里她切走了，也算）
       const list = document.visibilityState === "visible" ? await relay.collect() : [];
       // 这一遍没看成（没网、信箱没应）：过一会儿自己再来，不然信在信箱里、屏幕上什么都没有，要等她切走再回来才看得到
       if (list === null) missed = true;
