@@ -283,6 +283,11 @@ export function createEngine({ local, remote, vault, uid, onError }) {
     getStatus: () => status,
     exportAll,
     stop,
+    // 借钥匙用（钥匙本身不往外交）：封一段字、拆一段字、把一个名字打乱成云端看不懂的样子。
+    // 信箱那条路要用：条子用它封，通知网址里的对话记号用它打乱（见 mail.js）
+    seal: (text) => seal(vault, text),
+    unseal: (sealed) => unseal(vault, sealed),
+    nameFor: (name) => rowKeyFor(vault, name),
     _debug: { cache, dirty, deleted, getSince: () => since },
   };
 }

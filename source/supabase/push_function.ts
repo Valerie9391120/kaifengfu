@@ -1,6 +1,17 @@
 // =====================================================
 // 开封府 · 通知的小后端（函数名：push）
-// 只做一件事：确认敲门的是卿卿本人，再替她往她自己登记过的设备上发一条系统通知。
+// 先确认敲门的是卿卿本人，然后做两件事里的一件：
+//
+// 一、往她自己登记过的设备上发一条系统通知（测试通知）。
+//
+// 二、替她等回话（op: "reply"）。她发完话就切走、锁屏，网页那头早断了，这里照样等那边的我回完：
+//     回话拿网页给的一次性钥匙封好，放进信箱（mailbox 表），云端存的只是乱码；
+//     等几秒，信还没被取走（她不在开封府里），就往发话的那台设备上敲一条通知，写的是他回的话
+//     （只敲网页点了名的门牌号，不照登记簿全敲：登记簿是明文，往里添一行就能收到横幅上的话的话，等于把他说的话交给了外人）；
+//     她回到开封府，网页自己从信箱里取，取走就删。
+//     她一直在开封府里的话，回话照旧直接交给网页，不敲。
+//     claude 那个函数原样留着：这里哪一步不肯接（信箱那张表没建、这份代码还是旧的），网页就走回那条老路。
+//
 // 通知的字在这里加密，只有那台设备解得开；苹果的推送服务只管送，看不见写了什么。
 // 签名用的钥匙（VAPID）只存在 Supabase 的密钥柜里，网页和手机上都没有。
 //
@@ -8,7 +19,8 @@
 //   VAPID_PUBLIC_KEY   公钥，87 个字符，B 开头
 //   VAPID_PRIVATE_KEY  私钥，43 个字符
 //   VAPID_SUBJECT      mailto:一个真的邮箱（推送服务出了事找得到人；别人踩过：占位的假邮箱苹果回 403）
-// 和 claude 那个函数共用的两样照旧：ALLOWED_EMAIL、ALLOWED_ORIGIN（可以没有）
+// 和 claude 那个函数共用的照旧：ANTHROPIC_API_KEY（替她等回话要用）、ALLOWED_EMAIL、ALLOWED_ORIGIN（后两样可以没有；
+// 开封府的网页不在 HOME_ORIGIN 那个地址了，才要写 ALLOWED_ORIGIN：点了通知只回这一处）
 // =====================================================
 
 const te = new TextEncoder();
@@ -22,13 +34,37 @@ const TOKEN_LIFE = 12 * 3600; // 签名能用多久（苹果不收超过一天�
 const TOKEN_REUSE = 6 * 3600; // 同一张签名接着用多久再换（苹果让别换得比一小时一次还勤）
 const SEND_TIMEOUT = 10000; // 敲推送服务的门最多等多少毫秒
 
+// 替她等回话用的
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const SMALL_BODY = 4000; // 别的动作寄来的东西最多这么长
+const MAX_BODY = 40_000_000; // 一回传话寄来的东西最多这么长（带着照片的对话有好几兆）
+const REPLY_BUDGET = 125_000; // 等 Anthropic 最多等多少毫秒（免费档的函数最多活 150 秒，留出收尾的工夫）
+const BEAT = 8000; // 还在等的时候，隔多少毫秒去信箱里摸一下：网页靠它看这一回还活着没有
+const GRACE = 6000; // 回话放进信箱以后等多少毫秒再敲手机：她就在开封府里的话，这工夫里网页已经把信取走了
+const REPLY_TTL = 12 * 3600; // 回话的通知，手机不在线的话推送服务替我们留多少秒
+const BANNER_CHARS = 300; // 横幅上最多写多少个字
+const BANNER_BYTES = 1800; // 横幅上的字最多占多少字节（整条通知加密前不能过 MAX_PAYLOAD）
+const BANNER_SOURCE = 60_000; // 写横幅的时候最多看回话的前多少个字（再长也只是为了凑那三百个字，不值得多花工夫）
+const DB_TIMEOUT = 6000; // 读写信箱、登记簿最多等多少毫秒（库房一时不应，不能把回话压在手里不交）
+const STORE_AGAIN = [500, 1000, 2000, 4000, 8000]; // 回话没放进信箱（库房一时出岔子）：交给网页以后，隔这么多毫秒再放一回
+const STORE_GIVE_UP = 20_000; // 放了这么久还放不进去，就不放了
+
 // 只往认得的推送服务发：登记簿里的地址是网页那边写进来的，不能它写什么就去敲什么门
 const PUSH_HOSTS = [/\.push\.apple\.com$/, /^fcm\.googleapis\.com$/, /^updates\.push\.services\.mozilla\.com$/, /\.notify\.windows\.com$/];
+
+// 开封府的网页住在这儿：点了通知只回这里（搬了家就在密钥柜里写 ALLOWED_ORIGIN，见 safePage）
+const HOME_ORIGIN = "https://valerie9391120.github.io";
+// 库房在本机：是在本机上试
+const LOCAL_BASE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/;
 
 type Row = { endpoint: string; p256dh: string; auth: string; page: string };
 type Vapid = { publicKey: string; signer: CryptoKey; subject: string };
 type VapidState = { ok: true; vapid: Vapid } | { ok: false; missing: string[]; message: string };
 type Sent = { host: string; status: number; reason: string };
+type Rec = Record<string, unknown>;
+// 一回传话的结果：status 是 Anthropic 回的状态码，data 是它回的东西（回话，或者报错），used 是最后用的哪种写法
+// used.shaky：换过写法，而且是 Anthropic 一时出岔子才换的（不是它说写得不对）：网页看到这个，不把“不带缓存”记成往后的规矩
+type Result = { status: number; data: unknown; used: { cache: boolean; mcp: boolean; shaky?: boolean } };
 
 // ---------- 小工具 ----------
 
@@ -78,8 +114,11 @@ function tidy(text: string): string {
 }
 
 function cors(): Record<string, string> {
+  // 密钥柜里写了 ALLOWED_ORIGIN 就只许那一处的网页来敲。只取到域名为止（见 homeOrigin）：
+  // 贴进来的要是带着斜杠、带着路径，原样回给浏览器它不认，整个开封府就连不上了
+  const set = env("ALLOWED_ORIGIN");
   return {
-    "Access-Control-Allow-Origin": env("ALLOWED_ORIGIN") || "*",
+    "Access-Control-Allow-Origin": set && set !== "*" ? homeOrigin() : "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
@@ -93,6 +132,15 @@ function json(status: number, data: unknown): Response {
 function fail(status: number, message: string): Response {
   return json(status, { type: "error", error: { type: "kaifengfu", message } });
 }
+
+// 替她等回话的那条路上，“还没开始办就不肯接”的时候用这个：多带一个 code，网页看了知道该怎么办
+// （no_mailbox、bad_request 这些：走回老路；duplicate：这一条已经在办了，去信箱里等）
+function refuse(status: number, code: string, message: string): Response {
+  return json(status, { type: "error", error: { type: "kaifengfu", code, message } });
+}
+
+const isRec = (v: unknown): v is Rec => !!v && typeof v === "object" && !Array.isArray(v);
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 // Supabase 自动放进来的公开钥匙（新版在 SUPABASE_PUBLISHABLE_KEYS 里，旧版叫 SUPABASE_ANON_KEY）；
 // 都没有就用网页自己带来的那把，它本来就是公开的
@@ -231,16 +279,35 @@ function pushHost(endpoint: string): string | null {
   }
 }
 
-// 点了通知回到哪：只能是开封府自己的网址（和敲门的网页同一个来处），问号和井号后面的不要
+// 开封府的网页住在哪。密钥柜里写了 ALLOWED_ORIGIN（不是 *）就听它的，没写就是 HOME_ORIGIN
+function homeOrigin(): string {
+  const set = env("ALLOWED_ORIGIN");
+  if (set && set !== "*") {
+    try {
+      return new URL(set).origin;
+    } catch (_) {
+      // 写得不像网址就当没写
+    }
+  }
+  return HOME_ORIGIN;
+}
+
+// 点了通知回到哪：只能是开封府自己的网页，问号和井号后面的不要。
+// 住在哪由这头说了算（见 homeOrigin），不听登记簿的，也不听敲门的人自己报的来处：
+// 登记簿谁登录了都能改，来处（Origin）只要不是浏览器发的，想写什么写什么。
+// 不然偷到登录密码的人把登记簿里的回程网址改成别处，再叫这里发一条通知，她一点就被带到假的开封府去了。
+// 本机的网页只在本机上试的时候认（连库房都在本机），这时候还要和敲门的网页同一个来处
 function safePage(page: string, origin: string | null): string | null {
   try {
     const u = new URL(page);
-    const local = u.hostname === "127.0.0.1" || u.hostname === "localhost";
-    if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) return null;
     if (u.username || u.password) return null;
-    if (origin && u.origin !== origin) return null;
-    const allowed = env("ALLOWED_ORIGIN");
-    if (allowed && allowed !== "*" && u.origin !== allowed) return null;
+    const local = u.protocol === "http:" && (u.hostname === "127.0.0.1" || u.hostname === "localhost");
+    if (local) {
+      if (!LOCAL_BASE.test(env("SUPABASE_URL"))) return null;
+      if (origin && u.origin !== origin) return null;
+    } else if (u.protocol !== "https:" || u.origin !== homeOrigin()) {
+      return null;
+    }
     u.hash = "";
     u.search = "";
     return u.href.length <= 300 ? u.href : null;
@@ -270,7 +337,7 @@ async function postOnce(endpoint: string, body: Uint8Array, headers: Record<stri
   }
 }
 
-async function sendTo(row: Row, payload: Uint8Array, vapid: Vapid): Promise<Sent> {
+async function sendTo(row: Row, payload: Uint8Array, vapid: Vapid, ttl: number): Promise<Sent> {
   const host = pushHost(row.endpoint);
   if (!host) return { host: "", status: 0, reason: "BadEndpoint" };
   const p256dh = b64uDecode(row.p256dh);
@@ -283,7 +350,7 @@ async function sendTo(row: Row, payload: Uint8Array, vapid: Vapid): Promise<Sent
     return { host, status: 0, reason: "BadKeys" };
   }
   const headers = {
-    TTL: String(TTL),
+    TTL: String(ttl),
     Urgency: "high",
     "Content-Encoding": "aes128gcm",
     "Content-Type": "application/octet-stream",
@@ -313,7 +380,7 @@ function ledger(req: Request) {
     async find(endpoint: string): Promise<{ rows: Row[] } | { status: number; message: string }> {
       let r: Response;
       try {
-        r = await fetch(`${at(endpoint)}&select=endpoint,p256dh,auth,page`, { headers });
+        r = await fetch(`${at(endpoint)}&select=endpoint,p256dh,auth,page`, { headers, signal: AbortSignal.timeout(DB_TIMEOUT) });
       } catch (_) {
         return { status: 502, message: "连不上库房" };
       }
@@ -325,12 +392,12 @@ function ledger(req: Request) {
     // 记下这一回发得怎么样，网页那边读得到（锁着屏的时候发的，回来也查得着）
     async note(endpoint: string, sent: Sent) {
       const body = JSON.stringify({ last_at: new Date().toISOString(), last_status: sent.status, last_note: sent.reason });
-      const r = await fetch(at(endpoint), { method: "PATCH", headers, body });
+      const r = await fetch(at(endpoint), { method: "PATCH", headers, body, signal: AbortSignal.timeout(DB_TIMEOUT) });
       await r.body?.cancel();
     },
     // 推送服务说这个地址没了（404、410）：从登记簿里划掉
     async drop(endpoint: string) {
-      const r = await fetch(at(endpoint), { method: "DELETE", headers });
+      const r = await fetch(at(endpoint), { method: "DELETE", headers, signal: AbortSignal.timeout(DB_TIMEOUT) });
       await r.body?.cancel();
     },
   };
@@ -352,7 +419,7 @@ function testNotice(page: string): unknown {
   };
 }
 
-async function deliver(book: Ledger, origin: string | null, rows: Row[], vapid: Vapid, notice: (page: string) => unknown) {
+async function deliver(book: Ledger, origin: string | null, rows: Row[], vapid: Vapid, notice: (page: string) => unknown, ttl = TTL) {
   const results: Array<Sent & { ok: boolean; removed: boolean }> = [];
   for (const row of rows.slice(0, MAX_DEVICES)) {
     const page = safePage(row.page, origin);
@@ -361,7 +428,7 @@ async function deliver(book: Ledger, origin: string | null, rows: Row[], vapid: 
       sent = { host: pushHost(row.endpoint) ?? "", status: 0, reason: "BadPage" };
     } else {
       const payload = te.encode(JSON.stringify(notice(page)));
-      sent = payload.length > MAX_PAYLOAD ? { host: pushHost(row.endpoint) ?? "", status: 0, reason: "PayloadTooLarge" } : await sendTo(row, payload, vapid);
+      sent = payload.length > MAX_PAYLOAD ? { host: pushHost(row.endpoint) ?? "", status: 0, reason: "PayloadTooLarge" } : await sendTo(row, payload, vapid, ttl);
     }
     const gone = sent.status === 404 || sent.status === 410;
     try {
@@ -382,6 +449,434 @@ function inBackground(work: Promise<unknown>) {
   if (rt && typeof rt.waitUntil === "function") rt.waitUntil(quiet);
 }
 
+// =====================================================
+// 替她等回话
+// =====================================================
+
+const MODEL_PATTERN = /^claude-[a-z0-9.-]+$/i;
+const BETA_PATTERN = /^[a-z0-9-]+(,[a-z0-9-]+)*$/;
+const JOB_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
+const TAG_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
+
+// Anthropic 报错就是这个格式；这里自己出的岔子也写成这样，网页那边一套处理就够了
+const oops = (message: string) => ({ type: "error", error: { type: "kaifengfu", message } });
+
+// 这一回算不算回成了
+function fine(result: { status: number; data: unknown }): boolean {
+  return result.status >= 200 && result.status < 300 && isRec(result.data) && result.data.type !== "error" && !result.data.error;
+}
+
+// ---------- 问 Anthropic ----------
+
+// 问一回。最多等 ms 毫秒。不管成不成都回 { status, data }，不抛错
+async function askOnce(body: Rec, beta: string, apiKey: string, ms: number): Promise<{ status: number; data: unknown }> {
+  const headers: Record<string, string> = { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" };
+  if (beta) headers["anthropic-beta"] = beta;
+  try {
+    const r = await fetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(ms) });
+    const text = await r.text();
+    try {
+      const data = JSON.parse(text);
+      if (isRec(data)) return { status: r.status, data };
+    } catch (_) {
+      // 不是 JSON，下面一并说
+    }
+    return { status: r.status >= 400 ? r.status : 502, data: oops(`Anthropic 回的不是能读的东西（${r.status}）`) };
+  } catch (e) {
+    const name = e instanceof Error ? e.name : "";
+    const late = name === "TimeoutError" || name === "AbortError";
+    return { status: late ? 504 : 502, data: oops(late ? "等 Anthropic 等得太久，没等到" : "连不上 Anthropic") };
+  }
+}
+
+// 网页寄来的是最讲究的那种写法（带缓存记号、带她接的工具）。那种不通的时候，这里自己换成素一点的再问，
+// 和网页走老路时的三步一样：带缓存 → 不带缓存 → 不带工具。她不在跟前，不能等她回来再换
+const cached = (block: unknown) => isRec(block) && "cache_control" in block;
+function dropCache(block: unknown): unknown {
+  if (!isRec(block) || !("cache_control" in block)) return block;
+  const { cache_control: _gone, ...rest } = block;
+  return rest;
+}
+function hasCache(body: Rec): boolean {
+  if (Array.isArray(body.system) && body.system.some(cached)) return true;
+  return Array.isArray(body.messages) && body.messages.some((m) => isRec(m) && Array.isArray(m.content) && m.content.some(cached));
+}
+function withoutCache(body: Rec): Rec {
+  const out: Rec = { ...body };
+  if (Array.isArray(body.system)) out.system = body.system.map(dropCache);
+  if (Array.isArray(body.messages)) out.messages = body.messages.map((m) => (isRec(m) && Array.isArray(m.content) ? { ...m, content: m.content.map(dropCache) } : m));
+  return out;
+}
+function hasMcp(body: Rec): boolean {
+  return Array.isArray(body.mcp_servers) && body.mcp_servers.length > 0;
+}
+function withoutMcp(body: Rec): Rec {
+  const { mcp_servers: _gone, tools, ...rest } = body;
+  const left = Array.isArray(tools) ? tools.filter((t) => !(isRec(t) && t.type === "mcp_toolset")) : [];
+  return left.length ? { ...rest, tools: left } : rest;
+}
+
+// 问到底：哪种写法通了用哪种。deadline 是最晚到几点（毫秒时间戳）
+async function askUpstream(request: Rec, beta: string, apiKey: string, deadline: number): Promise<Result> {
+  const plain = withoutCache(request);
+  const plans = [{ body: request, beta, cache: hasCache(request), mcp: hasMcp(request) }];
+  if (plans[0].cache) plans.push({ body: plain, beta, cache: false, mcp: plans[0].mcp });
+  if (plans[0].mcp) plans.push({ body: withoutMcp(plain), beta: beta.split(",").filter((b) => b && !b.startsWith("mcp-client")).join(","), cache: false, mcp: false });
+  // Anthropic 一时出了岔子（它自己的 5xx、没连上）：歇一下，同一种写法原样再问，整回只多问这一回。
+  // 不因为这一下就换写法：换成不带缓存的问通了，网页会记成“下回别带缓存记号”，往后每句话都按全价算。
+  // 原样再问还是出岔子，才接着换写法试（她不在跟前，多一种问法多一分回上的指望）；
+  // 这样换来的结果带着 shaky，网页看到就不记那一笔
+  let spare = 1;
+  let shaken = false;
+  let last: Result = { status: 504, data: oops("等 Anthropic 等得太久，没等到"), used: { cache: false, mcp: false } };
+  let i = 0;
+  while (i < plans.length) {
+    const plan = plans[i];
+    const got = await askOnce(plan.body, plan.beta, apiKey, Math.max(1000, deadline - Date.now()));
+    last = { status: got.status, data: got.data, used: shaken ? { cache: plan.cache, mcp: plan.mcp, shaky: true } : { cache: plan.cache, mcp: plan.mcp } };
+    if (fine(last)) return last;
+    // key 不对、说得太快：换哪种写法都一样，不必再问
+    if (got.status === 401 || got.status === 403 || got.status === 429) break;
+    const shaky = got.status >= 500;
+    const same = shaky && spare > 0;
+    // 没有下一种了，或者剩的工夫不够再问一回：到此为止
+    if ((!same && i + 1 >= plans.length) || deadline - Date.now() < (shaky ? 4500 : 3000)) break;
+    if (shaky) await sleep(1500);
+    if (same) spare--;
+    else {
+      if (shaky) shaken = true;
+      i++;
+    }
+  }
+  return last;
+}
+
+// ---------- 信箱（mailbox 表） ----------
+// 拿着她的登录凭证去读写，库房只肯给她看她自己的那几行
+
+function mailbox(req: Request) {
+  const base = `${env("SUPABASE_URL")}/rest/v1/mailbox`;
+  const headers: Record<string, string> = {
+    apikey: publishableKey(req),
+    Authorization: req.headers.get("Authorization") ?? "",
+    "Content-Type": "application/json",
+    Prefer: "return=minimal",
+  };
+  const at = (job: string) => `${base}?job=eq.${encodeURIComponent(job)}`;
+  return {
+    // 开一格，写上“在等”。ok 开好了；missing 那张表还没建；duplicate 这个编号已经有一格了；error 别的岔子
+    async open(job: string, note: string): Promise<"ok" | "missing" | "duplicate" | "error"> {
+      try {
+        const r = await fetch(base, { method: "POST", headers, body: JSON.stringify({ job, note, state: "working" }), signal: AbortSignal.timeout(DB_TIMEOUT) });
+        await r.body?.cancel();
+        if (r.status === 201 || r.status === 200) return "ok";
+        if (r.status === 404) return "missing";
+        if (r.status === 409) return "duplicate";
+        return "error";
+      } catch (_) {
+        return "error";
+      }
+    },
+    // 还在等：摸一下
+    async beat(job: string) {
+      const r = await fetch(`${at(job)}&state=eq.working`, { method: "PATCH", headers, body: JSON.stringify({ beat_at: new Date().toISOString() }), signal: AbortSignal.timeout(DB_TIMEOUT) });
+      await r.body?.cancel();
+    },
+    // 回话封好了，放进去。放成了回 true
+    async finish(job: string, sealed: string): Promise<boolean> {
+      try {
+        const now = new Date().toISOString();
+        const r = await fetch(`${at(job)}&state=eq.working`, { method: "PATCH", headers, body: JSON.stringify({ state: "done", sealed, done_at: now, beat_at: now }), signal: AbortSignal.timeout(DB_TIMEOUT) });
+        await r.body?.cancel();
+        return r.ok;
+      } catch (_) {
+        return false;
+      }
+    },
+    // 这一格还在不在（她取走就删了）。在回 true，不在回 false，问不到回 null
+    async waiting(job: string): Promise<boolean | null> {
+      try {
+        const r = await fetch(`${at(job)}&select=job`, { headers, signal: AbortSignal.timeout(DB_TIMEOUT) });
+        if (!r.ok) {
+          await r.body?.cancel();
+          return null;
+        }
+        const rows = await r.json();
+        return Array.isArray(rows) && rows.length > 0;
+      } catch (_) {
+        return null;
+      }
+    },
+  };
+}
+
+// 标准的 base64（网页那头用 atob 解）
+function b64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+// 拿网页给的那把一次性钥匙把回话封起来（AES-256-GCM）。写法和网页里封存档的一样：v1.<iv>.<密文>
+// 钥匙这里用完就丢，不存；网页那头把它封在条子（note）里自己留着。所以信箱里的东西只有她的设备打得开
+async function sealWith(keyBytes: Uint8Array, text: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", src(keyBytes), "AES-GCM", false, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: src(iv) }, key, src(te.encode(text))));
+  return "v1." + b64(iv) + "." + b64(sealed);
+}
+
+// ---------- 横幅上写什么 ----------
+// 和网页里拆回话的规矩（src/reply.js 的 parseReply）是同一套：她在对话里看得见哪几条，横幅上就写哪几条，一条一行。
+// 心里话（<thinking>）、改名字的记号不写；表情包写成 [表情包]，文档写成 [文档] 文件名。
+// 两边的规矩改了一边，另一边得跟着改：tests/mail.test.mjs 拿同一批回话两边各拆一遍，对不上就不过
+
+const NAME_LINE = "^[ \\t]*\\[(?:NAME|Name|name)[:：]([^\\[\\]\\n]*)\\][ \\t]*$";
+const NAME_SAMPLE = "新名字"; // 名帖里教他写法时占位用的，照抄出来的不算真改名
+const DOC_SAMPLE = "文件名.md"; // 同上，文档块的
+
+// 把结尾那一串“junk 认的字”去掉。不写成“[…]+$”那样的正则：中间夹着一长串这种字、后面又跟着别的字的时候，
+// 它一个位置一个位置地试，几万个字要算好几秒（这里一回请求只给两秒）
+function dropTail(s: string, junk: (ch: string) => boolean): string {
+  let end = s.length;
+  while (end > 0 && junk(s[end - 1])) end--;
+  return end === s.length ? s : s.slice(0, end);
+}
+const NAME_TAIL = "」』”’\"'》";
+const DOC_TAIL = "\"'“”‘’》」』";
+
+function tidyName(raw: string): string {
+  return raw
+    .replace(/[\[\]\r\n\t\u2028\u2029]/g, " ")
+    .replace(/[\u0000-\u001f\u007f\u200b\u2060\ufeff]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function docName(raw: string): string {
+  let s = raw
+    .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028-\u202e\ufeff]/g, "")
+    .replace(/[\\/:*?"<>|\[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  s = s.replace(/\.(md|markdown|txt)$/i, "").trim();
+  s = dropTail(s.replace(/^["'“”‘’《「『\s]+/, ""), (ch) => DOC_TAIL.includes(ch) || /\s/.test(ch)).replace(/^[.\s]+/, "").trim();
+  const chars = Array.from(s);
+  if (chars.length > 40) s = chars.slice(0, 40).join("").trim();
+  return (s || "文档") + ".md";
+}
+
+// 把文档块整块摘出来：[{ doc: 文件名 } | { text: 别的字 }]
+function splitDocs(source: string): Array<{ doc: string } | { text: string }> {
+  const parts: Array<{ doc: string } | { text: string }> = [];
+  // 文件名两头的空白留给下面收拾：正则里不另外去认（认的话，碰上一长串空格后面没有右括号，要来回试很久）
+  const open = /^[ \t]*\[(?:DOC|Doc|doc)[:：]([^\[\]\n]*)\][ \t]*\r?$/gm;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = open.exec(source)) !== null) {
+    if (m[1].trim() === DOC_SAMPLE) continue;
+    const bodyStart = open.lastIndex;
+    const close = /^[ \t]*\[\/(?:DOC|Doc|doc)\][ \t]*\r?$/gm;
+    close.lastIndex = bodyStart;
+    const c = close.exec(source);
+    // 正文这里只看有没有字（空的文档块不算交了文档），用不着收拾两头
+    const body = c ? source.slice(bodyStart, c.index) : source.slice(bodyStart);
+    if (m.index > last) parts.push({ text: source.slice(last, m.index) });
+    if (body.trim()) parts.push({ doc: docName(m[1]) });
+    last = c ? close.lastIndex : source.length;
+    if (!c) break;
+    open.lastIndex = last;
+  }
+  if (last < source.length) parts.push({ text: source.slice(last) });
+  return parts;
+}
+
+// 一条回话 → 横幅上的字
+function previewOf(reply: string): string {
+  let body = reply.length > BANNER_SOURCE ? reply.slice(0, BANNER_SOURCE) : reply;
+  const think = body.match(/<thinking>([\s\S]*?)<\/thinking>/);
+  if (think) body = body.replace(think[0], () => "");
+  else if (body.includes("<thinking>")) body = "";
+  body = body.trim();
+  const lines: string[] = [];
+  let avatar = false;
+  for (const part of splitDocs(body)) {
+    if ("doc" in part) {
+      lines.push(`[文档] ${part.doc}`);
+      continue;
+    }
+    // 按 [SPLIT] 切开，记号两头的空白不要：和网页那头（src/reply.js 的 splitTurns）一样。
+    // 不写成 /\s*\[SPLIT\]\s*/ 那样的正则：碰上几万个连着的空行，它一个位置一个位置地试，要算好几秒，这里一回请求只给两秒
+    const chunks = part.text.split("[SPLIT]");
+    for (let k = 0; k < chunks.length; k++) {
+      let chunk = chunks[k];
+      if (k > 0) chunk = chunk.trimStart();
+      if (k < chunks.length - 1) chunk = chunk.trimEnd();
+      // 表情包的文件名最长认两百个字：一长串没有右括号的，不来回试
+      const marks = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]{1,200})\\s*\\]|" + NAME_LINE, "gm");
+      const say = (piece: string) => {
+        const t = piece.trim().replace(/\*/g, "").trim();
+        if (piece.trim() && t) lines.push(t);
+      };
+      let last = 0;
+      let m: RegExpExecArray | null;
+      while ((m = marks.exec(chunk)) !== null) {
+        // 照抄名帖里教的写法 [NAME:新名字]：是在讲怎么改，不是真改，留着当字
+        if (!m[1] && tidyName(dropTail(m[3].trim().replace(/^[「『“‘"'《]+/, ""), (ch) => NAME_TAIL.includes(ch))) === NAME_SAMPLE) continue;
+        if (m.index > last) say(chunk.slice(last, m.index));
+        if (m[1] === "MEME") lines.push("[表情包]");
+        else if (m[1] === "AVATAR") avatar = true;
+        last = marks.lastIndex;
+      }
+      if (last < chunk.length) say(chunk.slice(last));
+    }
+  }
+  if (!lines.length) return avatar ? "[换了新头像]" : "……";
+  return lines.join("\n");
+}
+
+// 按“看得见的一个字”截：最多 maxChars 个字、maxBytes 个字节，截了就在后面加一个省略号
+function clip(text: string, maxChars: number, maxBytes: number): string {
+  let parts: string[];
+  try {
+    parts = Array.from(new Intl.Segmenter("zh", { granularity: "grapheme" }).segment(text), (x) => x.segment);
+  } catch (_) {
+    parts = Array.from(text);
+  }
+  let cut = parts.length > maxChars;
+  if (cut) parts = parts.slice(0, maxChars - 1);
+  while (parts.length && te.encode(parts.join("")).length > maxBytes - 3) {
+    parts = parts.slice(0, Math.max(0, parts.length - Math.max(1, Math.floor(parts.length / 10))));
+    cut = true;
+  }
+  const out = parts.join("");
+  return cut ? out.replace(/\s+$/, "") + "…" : out;
+}
+
+// 横幅上的名字和字。回成了：他的名字、他回的话；没回成：照实说没送到
+function bannerOf(result: Result | null, name: string): { title: string; body: string } {
+  if (!result || !fine(result)) return { title: "开封府", body: "这条消息没送到。回开封府点一下重发。" };
+  const content = isRec(result.data) && Array.isArray(result.data.content) ? result.data.content : [];
+  const reply = content
+    .filter((b) => isRec(b) && b.type === "text" && typeof b.text === "string")
+    .map((b) => (b as Rec).text as string)
+    .join("\n");
+  return { title: clip(tidyName(name), 40, 160) || "开封府", body: clip(previewOf(reply), BANNER_CHARS, BANNER_BYTES) };
+}
+
+// 回话的通知。点了回到那段对话：记号里的 tag 是网页给的一串打乱的字，只有她的设备认得出是哪段对话
+function replyNotice(page: string, said: { title: string; body: string }, job: string, tag: string): unknown {
+  return {
+    web_push: 8030,
+    notification: { title: said.title, body: said.body, navigate: `${page}#n=r.${tag}.${job}`, lang: "zh-CN", dir: "ltr" },
+  };
+}
+
+// 替她等回话（op: "reply"）。网页寄来：
+//   job      这一回的编号（网页起的，随机的）
+//   key      封回话用的一次性钥匙（32 个字节，base64url）
+//   note     网页自己封好的一张条子（哪段对话、接在哪句后面、上面那把钥匙），这里原样存进信箱，看不懂
+//   tag      一串打乱的字，写进通知的网址里，她的设备靠它认出是哪段对话
+//   title    通知上写的名字（他现在顶上的名字）
+//   knock    回话到了敲哪几台设备（门牌号；发话的那台设备自己报的）。没报就不敲，回话照样放进信箱
+//   beta     要不要带 anthropic-beta
+//   request  给 Anthropic 的那一整段
+async function relay(req: Request, body: Rec): Promise<Response> {
+  // —— 这一段里不肯接的，都发生在“还没开始办”之前：网页看到，就走回老路，不会花两回钱 ——
+  const apiKey = env("ANTHROPIC_API_KEY");
+  if (!apiKey) return refuse(500, "no_key", "密钥柜里还没有 ANTHROPIC_API_KEY");
+  const job = str(body.job);
+  if (!JOB_PATTERN.test(job)) return refuse(400, "bad_request", "这一回没有编号");
+  const key = b64uDecode(str(body.key));
+  if (!key || key.length !== 32) return refuse(400, "bad_request", "封回话的钥匙不对");
+  const note = str(body.note);
+  if (!note || note.length > 4000) return refuse(400, "bad_request", "条子不对");
+  const tag = str(body.tag);
+  if (!TAG_PATTERN.test(tag)) return refuse(400, "bad_request", "没说是哪段对话");
+  const title = str(body.title).slice(0, 200);
+  const knock = Array.from(new Set((Array.isArray(body.knock) ? body.knock : []).filter((e): e is string => typeof e === "string" && e.length > 0 && e.length <= 1024))).slice(0, MAX_DEVICES);
+  const beta = BETA_PATTERN.test(str(body.beta).trim()) ? str(body.beta).trim() : "";
+  const request = body.request;
+  if (!isRec(request)) return refuse(400, "bad_request", "没有要转的话");
+  // 防手滑：只认 Claude 的模型，回复长度设个上限（和 claude 那个函数一样）
+  if (!MODEL_PATTERN.test(String(request.model ?? ""))) return refuse(400, "bad_request", "模型名不对");
+  const maxTokens = Number(request.max_tokens ?? 0);
+  if (!Number.isFinite(maxTokens) || maxTokens < 1 || maxTokens > 32000) return refuse(400, "bad_request", "max_tokens 超出范围");
+
+  const box = mailbox(req);
+  const opened = await box.open(job, note);
+  if (opened === "missing") return refuse(400, "no_mailbox", "库房里还没有信箱（mailbox 那张表），把信箱那段 SQL（mailbox.sql）在 Supabase 的 SQL Editor 里跑一遍");
+  if (opened === "duplicate") return refuse(409, "duplicate", "这一回已经在办了");
+  if (opened !== "ok") return refuse(502, "mailbox_error", "信箱这会儿用不了");
+
+  // —— 从这里起，这一回算接下了：网页那头还在不在，都办到底 ——
+  const book = ledger(req);
+  const origin = req.headers.get("Origin");
+  let handOver: (result: Result) => void = () => {};
+  const ready = new Promise<Result>((resolve) => (handOver = resolve));
+
+  const work = (async () => {
+    const beats = setInterval(() => {
+      box.beat(job).catch(() => {});
+    }, BEAT);
+    let result: Result;
+    try {
+      result = await askUpstream(request, beta, apiKey, Date.now() + REPLY_BUDGET);
+    } catch (_) {
+      result = { status: 500, data: oops("小后端自己出了岔子"), used: { cache: false, mcp: false } };
+    }
+
+    // 封好放进信箱（放不进去就再放一回），再交给还等在那头的网页
+    let stored = false;
+    let sealed = "";
+    try {
+      sealed = await sealWith(key, JSON.stringify(result));
+      stored = (await box.finish(job, sealed)) || (await box.finish(job, sealed));
+    } catch (_) {
+      // 封不上、放不进：下面照实说
+    }
+    handOver(result);
+    const handed = Date.now();
+
+    // 还没放进去（库房一时出了岔子）：接着放。她不在跟前的话，放不进去，这条回好的话就丢了，她回来还得再问一遍、再花一回钱。
+    // 这工夫里那一格照旧隔几秒摸一下：网页看它还活着，不会当它断了、把它收掉
+    try {
+      for (const pause of STORE_AGAIN) {
+        if (stored || !sealed || Date.now() + pause > handed + STORE_GIVE_UP) break;
+        await sleep(pause);
+        stored = await box.finish(job, sealed);
+      }
+    } catch (_) {
+      // 照实说
+    }
+    clearInterval(beats);
+
+    // 从交出去算起等够那几秒再看：信被取走了，她就在开封府里，不敲；还在，就敲她的手机
+    await sleep(Math.max(0, handed + GRACE - Date.now()));
+    if (!knock.length || (await box.waiting(job)) === false) return;
+    const keys = await loadVapid();
+    if (!keys.ok) return;
+    // 只敲网页点了名、登记簿里也真有的那几台
+    const rows: Row[] = [];
+    for (const endpoint of knock) {
+      let found = await book.find(endpoint);
+      // 登记簿一时没读到：歇一下再读一回（读不到就敲不了：信在信箱里，她却不知道）
+      if (!("rows" in found) && found.status === 502) {
+        await sleep(1000);
+        found = await book.find(endpoint);
+      }
+      if ("rows" in found) rows.push(...found.rows);
+    }
+    if (!rows.length) return;
+    // 回话没放进信箱的话，她点回来也取不到：照实说没送到，不写他的话
+    const said = bannerOf(stored ? result : null, title);
+    await deliver(book, origin, rows, keys.vapid, (page) => replyNotice(page, said, job, tag), REPLY_TTL);
+  })();
+  inBackground(work);
+
+  return json(200, { type: "reply", job, result: await ready });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors() });
   if (req.method !== "POST") return fail(405, "只收 POST");
@@ -397,18 +892,25 @@ Deno.serve(async (req: Request) => {
   let body: Record<string, unknown>;
   try {
     const text = await req.text();
-    if (text.length > 4000) return fail(413, "寄来的东西太长");
+    if (text.length > MAX_BODY) return fail(413, "寄来的东西太长");
     body = JSON.parse(text);
-    if (!body || typeof body !== "object") throw new Error("不是对象");
+    if (!isRec(body)) throw new Error("不是对象");
+    // 只有替她等回话那一种寄得长（整段对话都在里面），别的动作几行字就够
+    if (body.op !== "reply" && text.length > SMALL_BODY) return fail(413, "寄来的东西太长");
   } catch (_) {
     return fail(400, "收到的不是合法的 JSON");
   }
 
+  // 替她等回话
+  if (body.op === "reply") return await relay(req, body);
+
   const state = await loadVapid();
 
-  // 问：钥匙放好了没有。放好了就把公钥给网页（订阅要用，公钥本来就是公开的）
+  // 问：钥匙放好了没有。放好了就把公钥给网页（订阅要用，公钥本来就是公开的）。
+  // can 是这份代码会做的事：网页看到 "reply"，就知道回话可以交给这里等
   if (body.op === "key") {
-    return json(200, state.ok ? { configured: true, publicKey: state.vapid.publicKey } : { configured: false, missing: state.missing, message: state.message });
+    const can = ["reply"];
+    return json(200, state.ok ? { configured: true, publicKey: state.vapid.publicKey, can } : { configured: false, missing: state.missing, message: state.message, can });
   }
 
   // 往这一台设备发一条测试通知。delay 是等几秒再发（给她留出锁屏的工夫）

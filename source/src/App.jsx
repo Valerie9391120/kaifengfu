@@ -1,15 +1,18 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import MEMES from "../static/memes.json";
 import { store } from "./store.js";
-import { callClaude } from "./cloud.js";
+import { callClaude, callReply, mailbox, freshToken } from "./cloud.js";
 import { openProbe } from "./probe.js";
 import { gapInfo, setFill } from "./gap.js";
 import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
 import SplashDingxiang from "./SplashDingxiang.jsx";
-import { HER_NAME, HIS_NAME, NAME_KEYS, NAME_MARK, NAME_PLACEHOLDER, cleanName, cleanMarkName, tidyName } from "./names.js";
-import { DOC_KEY, DOC_FMT, DOC_NAME_PLACEHOLDER, docFmtOf, readDoc, wrapDocForModel, missingDocNote, splitDocBlocks, docBlocksToNote, replyRoom } from "./docs.js";
-import { generateVapidKeys, secretsBlock, explainOutcome, describePush } from "./notify.js";
-import { checkPush, enablePush, disablePush, renewPush, sendTestPush, lastOutcome, resyncPush, watchNotices } from "./push.js";
+import { HER_NAME, HIS_NAME, NAME_KEYS, NAME_MARK, NAME_PLACEHOLDER, cleanName, tidyName } from "./names.js";
+import { DOC_KEY, DOC_FMT, DOC_NAME_PLACEHOLDER, docFmtOf, readDoc, wrapDocForModel, missingDocNote, docBlocksToNote, replyRoom } from "./docs.js";
+import { parseReply, settleAvatarItems } from "./reply.js";
+import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut } from "./thread.js";
+import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY } from "./mail.js";
+import { generateVapidKeys, secretsBlock, explainOutcome, describePush, describeMail } from "./notify.js";
+import { checkPush, enablePush, disablePush, renewPush, sendTestPush, lastOutcome, resyncPush, watchNotices, probeReply, knockList } from "./push.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -43,6 +46,8 @@ const SPLASH = {
 const RAW_BASE =
   "https://raw.githubusercontent.com/Valerie9391120/meme-library/main/";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
+const OPENED_AT = Date.now(); // 这次打开开封府是几点（认“上回打开时发出去、没送到的那一句”用，见 checkMail）
+const ORPHAN_AGE = 10 * 1000; // 记下不到这么久的那一回先不当它没送到：也许正在路上（同一台设备上另开着一页，刚发出去，大包还没传完）
 const MODELS = [
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6", note: "一直陪你聊的这个" },
   { id: "claude-opus-4-6", label: "Opus 4.6", note: "上一代 Opus" },
@@ -1004,72 +1009,6 @@ function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null, thumbL
   return merged;
 }
 
-function splitMarks(text) {
-  const parts = [];
-  // 表情包、换头像、改名字三种标记。改名字的要独占一行才算（所以带 m 标志），新名字里可以有空格
-  const re = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]+)\\s*\\]|" + NAME_MARK, "gm");
-  let last = 0;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    // 照抄名帖里教的写法 [NAME:新名字]：是在讲怎么改，不是真改，留着当字显示
-    if (!m[1] && cleanMarkName(m[3]) === NAME_PLACEHOLDER) continue;
-    if (m.index > last) parts.push({ type: "text", value: text.slice(last, m.index) });
-    if (m[1]) parts.push({ type: m[1] === "AVATAR" ? "avatar" : "meme", value: m[2] });
-    else parts.push({ type: "name", value: m[3] });
-    last = re.lastIndex;
-  }
-  if (last < text.length) parts.push({ type: "text", value: text.slice(last) });
-  return parts;
-}
-
-function parseReply(text) {
-  let thinking = "";
-  let body = text || "";
-  const m = body.match(/<thinking>([\s\S]*?)<\/thinking>/);
-  if (m) {
-    thinking = m[1].trim();
-    body = body.replace(m[0], "");
-  } else if (body.includes("<thinking>")) {
-    thinking = body.split("<thinking>")[1].trim();
-    body = "";
-  }
-  body = body.trim();
-  const items = [];
-  // 改名字的标记不显示成字，新名字单独带出去（写了好几次只认最后一次；收拾完是空的不算）
-  let rename = null;
-  // 先把文档块整块摘出来（里面的字不当标记看），剩下的再分条、认标记
-  splitDocBlocks(body).forEach((part) => {
-    if (part.type === "doc") {
-      items.push({ type: "doc", name: part.name, text: part.text, ...(part.cut ? { cut: true } : {}) });
-      return;
-    }
-    part.value.split(/\s*\[SPLIT\]\s*/).forEach((chunk) => {
-      splitMarks(chunk).forEach((p) => {
-        if (p.type === "meme") items.push({ type: "meme", file: p.value });
-        else if (p.type === "avatar") items.push({ type: "avatar", file: p.value });
-        else if (p.type === "name") rename = cleanMarkName(p.value) || rename;
-        else if (p.value.trim()) items.push({ type: "text", text: p.value.trim() });
-      });
-    });
-  });
-  if (!items.length) items.push({ type: "text", text: "……" });
-  return { thinking, body, items, rename };
-}
-
-// 换头像只认索引里真有的图，多次只留最后一次
-function settleAvatarItems(items, exists) {
-  const valid = items.filter((it) => it.type !== "avatar" || exists(it.file));
-  let lastAv = -1;
-  valid.forEach((it, i) => {
-    if (it.type === "avatar") lastAv = i;
-  });
-  const out = valid.filter((it, i) => it.type !== "avatar" || i === lastAv);
-  return {
-    items: out.length ? out : [{ type: "text", text: "……" }],
-    avatarFile: lastAv >= 0 ? valid[lastAv].file : null,
-  };
-}
-
 function makeTitle(msgs, memeLookup) {
   const first = msgs.find((m) => m.role === "her");
   if (!first) return "新对话";
@@ -1111,27 +1050,6 @@ function renderRich(text) {
       <span key={i}>{p}</span>
     )
   );
-}
-
-// 在第 i 条开一个新分支：旧的这条连同它后面的对话存进 alts，新的接上，后面清空
-function forkAt(msgs, i, newNode) {
-  const m = msgs[i];
-  const { alts: oldAlts, altIdx, ...node } = m;
-  const alts = oldAlts ? oldAlts.slice() : [];
-  alts[oldAlts ? altIdx : 0] = { node, after: msgs.slice(i + 1) };
-  const { alts: _x, altIdx: _y, ...fresh } = newNode;
-  alts.push({ node: fresh, after: [] });
-  return msgs.slice(0, i).concat([{ ...fresh, alts, altIdx: alts.length - 1 }]);
-}
-
-// 翻到第 t 个分支：先把眼前这支收好，再把那支整个换上来
-function switchAlt(msgs, i, t) {
-  const m = msgs[i];
-  if (!m || !m.alts || t < 0 || t >= m.alts.length || t === m.altIdx) return msgs;
-  const { alts: oldAlts, altIdx, ...node } = m;
-  const alts = oldAlts.slice();
-  alts[altIdx] = { node, after: msgs.slice(i + 1) };
-  return msgs.slice(0, i).concat([{ ...alts[t].node, alts, altIdx: t }], alts[t].after);
 }
 
 // 所有分支里的照片（删对话时一起清掉）
@@ -3179,8 +3097,8 @@ function ApiPanel({ settings, onChange, onTest, testNote, testing, usage, monthU
   );
 }
 
-// 账户面板里的“通知”一栏。眼下只通管道：开启、发一条测试通知；接到他的回话上是下一步。
-// 她在 Supabase 要做的三样（登记簿、小后端、钥匙）哪样还没好，这里一样一样列出来
+// 账户面板里的“通知”一栏：开启、发一条测试通知；他回话的时候她不在开封府，也敲她。
+// 她在 Supabase 要做的几样（登记簿、小后端、钥匙；回话还要信箱和新的那份小后端）哪样还没好，这里一样一样列出来
 const PUSH_CARD = { ...glass(0.5, 16), borderRadius: 16, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6, color: T.ink };
 const PUSH_DENIED = "系统里把开封府的通知关着。到手机的 设置 → 通知 → 开封府 里打开“允许通知”，再回来点开启。";
 
@@ -3201,7 +3119,7 @@ function PushStep({ done, title, children }) {
   );
 }
 
-function PushPanel({ email, onCopy, back }) {
+function PushPanel({ email, onCopy, back, mailStatus, onReplyReady }) {
   const [st, setSt] = useState(null); // 现在是什么情形（push.js 的 checkPush）
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState(null); // 刚做的那一步怎么样：{ ok, say }
@@ -3217,6 +3135,8 @@ function PushPanel({ email, onCopy, back }) {
     try {
       const s = await checkPush();
       if (alive.current && mine === lastCheck.current) setSt(s);
+      // 回话那两样都好了：告诉聊天那边新路是通的（她在 Supabase 贴完回来看一眼面板，接着发话就走新路，不用重开）
+      if (s.replyReady && onReplyReady) onReplyReady();
       return s;
     } catch (e) {
       return null;
@@ -3361,7 +3281,15 @@ function PushPanel({ email, onCopy, back }) {
             {setup.table === "ok" ? "：建好了" : setup.table === "missing" ? "：还没建。把通知那段 SQL（push.sql）在 SQL Editor 里跑一遍" : "：读不到"}
           </PushStep>
           <PushStep done={setup.fn === "ok"} title="小后端">
-            {setup.fn === "ok" ? "：接上了" : setup.fn === "unreachable" ? "：连不上。Edge Functions 里要有一个叫 push 的函数；有了还这样，多半是网络，过一会儿再看" : setup.fn === "auth" ? "：登录过期了，重新登录一下" : "：不肯答"}
+            {setup.fn === "ok"
+              ? "：接上了"
+              : setup.fn === "unreachable"
+              ? "：连不上。Edge Functions 里要有一个叫 push 的函数；有了还这样，多半是网络，过一会儿再看"
+              : setup.fn === "auth"
+              ? "：登录过期了，重新登录一下"
+              : setup.fn === "wrong"
+              ? "：函数建了，里面的代码却不是开封府的那份。打开 push 函数的 Code，把里面的字全删掉，换成我给的那份，再点 Deploy"
+              : "：不肯答"}
           </PushStep>
           <PushStep done={setup.keys === "ok"} title="钥匙">
             {setup.keys === "ok"
@@ -3372,7 +3300,7 @@ function PushPanel({ email, onCopy, back }) {
               ? "：放的不对"
               : "：小后端接上了才看得到"}
           </PushStep>
-          {setup.say && setup.keys !== "missing" && (
+          {setup.say && setup.keys !== "missing" && setup.fn !== "wrong" && (
             <div className="kfs-push-say" style={{ ...small, marginTop: 4 }}>
               它说：{setup.say}
             </div>
@@ -3381,11 +3309,32 @@ function PushPanel({ email, onCopy, back }) {
       )}
       {state === "away" && <div style={PUSH_CARD}>这台设备开着通知，可这会儿连不上后端，多半是网络。过一会儿再看。</div>}
       {state === "denied" && <div style={PUSH_CARD}>{PUSH_DENIED}</div>}
-      {state === "off" && <div style={PUSH_CARD}>现在关着。打开以后，这台设备能收到开封府的系统通知。眼下只有测试通知，接到他的回话上是下一步。</div>}
+      {state === "off" && (
+        <div style={PUSH_CARD}>
+          现在关着。打开以后，{st.replyReady ? "他回话的时候你不在开封府，这台设备会收到横幅，上面写着他说的话。" : "这台设备能收到开封府的系统通知。"}
+        </div>
+      )}
       {state === "on" && (
         <div style={PUSH_CARD}>
           这台设备开着通知。
-          <div style={small}>眼下只有测试通知，接到他的回话上是下一步。</div>
+          {st.replyReady && (
+            <div className="kfs-push-reply" data-ready="yes" style={small}>
+              他回话的时候你不在开封府，会敲你，横幅上写着他说的话。发完话就可以切走、锁屏。
+            </div>
+          )}
+        </div>
+      )}
+      {/* 测试通知通了，他的回话还敲不了她：还差哪一样，在 Supabase 里补上 */}
+      {(state === "on" || state === "off") && !st.replyReady && (
+        <div className="kfs-push-reply" data-ready="no" style={{ ...PUSH_CARD, marginTop: 10 }}>
+          <div style={{ marginBottom: 4 }}>他的回话还敲不了你，还差：</div>
+          <PushStep done={setup.mail === "ok"} title="信箱">
+            {setup.mail === "ok" ? "：建好了" : setup.mail === "missing" ? "：还没建。把信箱那段 SQL（mailbox.sql）在 SQL Editor 里跑一遍" : "：读不到，过一会儿再看"}
+          </PushStep>
+          <PushStep done={setup.relay === "ok"} title="小后端">
+            {setup.relay === "ok" ? "：是新的" : "：还是旧的那份。打开 push 函数的 Code，把里面的字全删掉，换成新的那份，再点 Deploy"}
+          </PushStep>
+          <div style={{ ...small, marginTop: 4 }}>差着的时候聊天照常，只是你切走以后他的回话到不了。</div>
         </div>
       )}
 
@@ -3415,7 +3364,7 @@ function PushPanel({ email, onCopy, back }) {
             复制这三行
           </button>
         )}
-        {(state === "setup" || state === "denied" || state === "away") && (
+        {(state === "setup" || state === "denied" || state === "away" || (state === "off" && !st.replyReady)) && (
           <button onClick={() => act("check", refresh)} disabled={!!busy} className="kfs-tap" style={{ ...chip, opacity: busy ? 0.5 : 1 }}>
             {busy === "check" ? "正在看…" : "再看一次"}
           </button>
@@ -3436,6 +3385,11 @@ function PushPanel({ email, onCopy, back }) {
             <button onClick={disable} disabled={!!busy} className="kfs-tap" style={{ ...chip, color: T.inkSoft, opacity: busy ? 0.5 : 1 }}>
               {busy === "off" ? "正在关…" : "关掉"}
             </button>
+            {!st.replyReady && (
+              <button onClick={() => act("check", refresh)} disabled={!!busy} className="kfs-tap" style={{ ...chip, opacity: busy ? 0.5 : 1 }}>
+                {busy === "check" ? "正在看…" : "再看一次"}
+              </button>
+            )}
           </>
         )}
       </div>
@@ -3459,9 +3413,11 @@ function PushPanel({ email, onCopy, back }) {
       </button>
       {detail && (
         <div className="kfs-push-detail" style={{ ...small, marginTop: 6, userSelect: "text", WebkitUserSelect: "text" }}>
-          {describePush(st).map((line, i) => (
-            <div key={i}>{line}</div>
-          ))}
+          {describePush(st)
+            .concat(mailStatus ? [describeMail(mailStatus())].filter(Boolean) : [])
+            .map((line, i) => (
+              <div key={i}>{line}</div>
+            ))}
           <div>哪一步卡住了，把这几行截图给我。</div>
         </div>
       )}
@@ -3513,21 +3469,6 @@ function ModelPanel({ current, onPick }) {
 //   主体
 // =========================================================
 const DEFAULT_SETTINGS = { model: DEFAULT_MODEL, maxTokens: 2048, mcps: DEFAULT_MCPS };
-
-// 最后一条（不算换头像提示）是她的话，就说明还欠她一个回复
-function needsReply(msgs) {
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].role === "event") continue;
-    return msgs[i].role === "her";
-  }
-  return false;
-}
-
-// 回复插在这次请求的最后一条后面，回复途中她又发的排在回复后面
-function insertReply(base, lastMsgId, him) {
-  const pos = lastMsgId ? base.findIndex((m) => m.id === lastMsgId) : -1;
-  return pos >= 0 ? base.slice(0, pos + 1).concat([him], base.slice(pos + 1)) : base.concat([him]);
-}
 
 const usageKey = (d = new Date()) => `kfs2:usage:${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
 
@@ -3614,6 +3555,20 @@ export default function App({ account = {} }) {
   const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState("");
   const [noticeMark, setNoticeMark] = useState(""); // 她是点了哪条通知回来的（通知网址后面的记号）
+  const [booted, setBooted] = useState(false); // 开机那一遍读完了（目录、上次那段对话都在了）
+  const relayRef = useRef(null); // 替她等回话的那条新路（见 getRelay）
+  const mailBusy = useRef(false); // 正在看信箱
+  const mailAgain = useRef(false); // 看的工夫里又有人要看：这一遍看完马上再看一遍
+  const mailLater = useRef(false); // 信箱里有一封，这台设备上的那段对话还没跟上：等同步下来再放
+  const mailTimer = useRef(null);
+  const tagsRef = useRef({}); // 对话的编号 → 通知网址里认它的那串字
+  const forkRef = useRef(null); // 正在重新回答的那段对话：{ chat, full }，full 是点“重新回答”那一刻的整段（见 saveChat）
+  const backAtRef = useRef(-Infinity); // 上一回从后台回到眼前是几点
+  const memesReady = useRef(null); // 仓库里新加的表情包读回来没有（读不回来也算完）
+  const mailGate = useRef(null); // 头一遍看信箱之前要等的那一下（见 checkMail）
+  const backResend = useRef(false); // 她不在眼前的时候有一句话没连上：等她回来再发（见 askGuangyi）
+  const orphansRef = useRef(new Set()); // 上回打开时没送到、这回已经替她补发过的那几回（一回只补一次，见 checkMail）
+  const latest = useRef({}); // 最新一遍画面里的那几个函数（给一开机就挂上的监听用，免得它们拿着旧的）
   const [noticeBack, setNoticeBack] = useState(0); // 这次打开以来，上一回点着测试通知回来是什么时候（通知面板里要说）
   const [copySheet, setCopySheet] = useState("");
   const [fillOn, setFillOn] = useState(() => gapInfo().fill);
@@ -3638,6 +3593,10 @@ export default function App({ account = {} }) {
 
   const allMemes = useMemo(() => MEME_DATA.concat(extraMemes), [extraMemes]);
   const memeLookup = (file) => MEME_MAP[file] || extraMemes.find((m) => m.file === file) || null;
+  // 同一件事，但不靠“这一遍画面”里的那份：开机时挂上的活（看信箱、守着上一回）拿的是最早那遍画面，那时仓库里新加的表情包还没读回来
+  const extraMemesRef = useRef([]);
+  extraMemesRef.current = extraMemes;
+  const memeKnown = (file) => !!(MEME_MAP[file] || extraMemesRef.current.find((m) => m.file === file));
 
   const markStorageFail = () => {
     setStorageOk(false);
@@ -3731,13 +3690,18 @@ export default function App({ account = {} }) {
       }
 
       // 部署之后才能联网同步新表情包，预览环境里这一步会安静地失败
-      fetch(RAW_BASE + "README.md")
+      memesReady.current = fetch(RAW_BASE + "README.md")
         .then((r) => (r.ok ? r.text() : ""))
         .then((txt) => {
-          if (txt) setExtraMemes(newMemesFrom(parseReadme(txt)));
+          if (txt) {
+            const fresh = newMemesFrom(parseReadme(txt));
+            extraMemesRef.current = fresh;
+            setExtraMemes(fresh);
+          }
         })
         .catch(() => {});
 
+      setBooted(true);
     })();
   }, []);
 
@@ -3822,7 +3786,14 @@ export default function App({ account = {} }) {
           messagesRef.current = msgs;
           setMessages(msgs);
           loadImagesFor(msgs);
+          // 别的设备已经把回话放进来了：底下那句“消息没送到…点这里重发”就不该留着
+          if (!needsReply(msgs)) setErrorNote("");
         }
+      }
+      // 信箱里有一封在等这段对话同步下来：现在再看一遍
+      if (mailLater.current && has("kfs2:chat:") && latest.current.checkMail) {
+        mailLater.current = false;
+        latest.current.checkMail();
       }
     });
     return () => {
@@ -3833,7 +3804,16 @@ export default function App({ account = {} }) {
 
   // ---- 对话存取 ----
   const saveChat = async (id, msgs) => {
-    const ok = await store.set("kfs2:chat:" + id, JSON.stringify(msgs));
+    // 正在重新回答的那段对话：画面上先把旧回答收起来了（msgs 里没有它），存档不能跟着丢。
+    // 这工夫里存的是原来那一整段，加上她新说的；新回答到了（forkRef 清掉以后）再整段换上。
+    // 不然她这时候发一句话、开封府又被系统收掉，旧回答连同它的几个版本就没了
+    const fk = forkRef.current;
+    let keep = msgs;
+    if (fk && fk.chat === id) {
+      const had = new Set(fk.full.map((m) => m.id));
+      keep = fk.full.concat(msgs.filter((m) => !had.has(m.id)));
+    }
+    const ok = await store.set("kfs2:chat:" + id, JSON.stringify(keep));
     if (!ok) markStorageFail();
     const prev = indexRef.current;
     const old = prev.find((c) => c.id === id);
@@ -3847,7 +3827,8 @@ export default function App({ account = {} }) {
     indexRef.current = next;
     setIndex(next);
     store.set("kfs2:index", JSON.stringify(next));
-    store.set("kfs2:lastChat", id);
+    // 上次停在哪段：只认眼前这一段（信箱里取出来放进别的对话的、她翻走以后才到的回话，不改这个）
+    if (chatIdRef.current === id) store.set("kfs2:lastChat", id);
   };
 
   // 切走之前，把还没来得及回的那几条先送出去
@@ -3878,6 +3859,8 @@ export default function App({ account = {} }) {
       loadImagesFor(msgs);
     }
     store.set("kfs2:lastChat", id);
+    // 信箱里要是有这段对话的东西（他还没回完的那一回、没回成的那一封），现在轮到它了
+    if (latest.current.checkMail) latest.current.checkMail();
   };
 
   const loadImagesFor = async (msgs) => {
@@ -3986,7 +3969,131 @@ export default function App({ account = {} }) {
     });
   };
 
-  const requestReply = async (msgs) => {
+  // ---- 替她等回话的那条新路（见 mail.js）：用到的浏览器和云端的东西在这里递进去 ----
+  const getRelay = () => {
+    if (!relayRef.current) {
+      relayRef.current = createRelay({
+        callReply,
+        box: mailbox,
+        seal: (text) => store.seal(text),
+        unseal: (sealed) => store.unseal(sealed),
+        nameFor: (name) => store.nameFor(name),
+        visible: () => document.visibilityState === "visible",
+        online: () => navigator.onLine !== false,
+        sinceBack: () => Date.now() - backAtRef.current,
+        probe: probeReply,
+        knock: knockList,
+        onVisible: (fn) => {
+          const h = () => {
+            if (document.visibilityState === "visible") fn();
+          };
+          document.addEventListener("visibilitychange", h);
+          return () => document.removeEventListener("visibilitychange", h);
+        },
+        now: () => Date.now(),
+        sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+        storage: {
+          get: () => {
+            try {
+              return localStorage.getItem(JOBS_KEY) || "";
+            } catch (e) {
+              return "";
+            }
+          },
+          set: (text) => {
+            try {
+              if (text) localStorage.setItem(JOBS_KEY, text);
+              else localStorage.removeItem(JOBS_KEY);
+            } catch (e) {}
+          },
+        },
+        hint: {
+          get: () => {
+            try {
+              return localStorage.getItem(RELAY_KEY) === "ok";
+            } catch (e) {
+              return false;
+            }
+          },
+          set: (works) => {
+            try {
+              if (works) localStorage.setItem(RELAY_KEY, "ok");
+              else localStorage.removeItem(RELAY_KEY);
+            } catch (e) {}
+          },
+        },
+        freshToken,
+        // 信箱里没有这一回了：先同步一遍，看是不是别的设备已经把回话取走、放进对话了。
+        // 对话里有 jobs 里哪一回的回话，就是回上了（重新回答只能这么认：那一句后面本来就有回话）；
+        // 平常的回话再看一眼那一句后面是不是已经有了他的话
+        answered: async (chat, last, fork, jobs) => {
+          try {
+            await store.syncNow();
+          } catch (e) {}
+          const msgs = safeParse(await store.get("kfs2:chat:" + chat), []) || [];
+          return (jobs || []).some((j) => hasJob(msgs, j)) || (!fork && answeredAfter(msgs, last));
+        },
+      });
+    }
+    return relayRef.current;
+  };
+
+  // 把那边回来的一整段整理成对话里的一条。
+  // used：最后用的哪种写法（带没带缓存、带没带工具）；ctx：发的时候记下的（接没接工具、工具的名字）；
+  // job：走新路的那一回的编号（走老路的没有）；ts：这条算几点到的
+  const digestReply = (data, used, ctx, job, ts) => {
+    recordUsage(data);
+    const slugToName = (ctx && ctx.slugs) || {};
+    const usedTools = Array.from(
+      new Set(
+        (data.content || [])
+          .filter((b) => b.type === "mcp_tool_use")
+          .map((b) => slugToName[b.server_name] || b.server_name || b.name)
+      )
+    );
+    const text = (data.content || [])
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+    const parsed = parseReply(text);
+    // 回复到长度上限被截断了：最后那份文档就算结尾的记号写上了，也记成没写完
+    if (data.stop_reason === "max_tokens") {
+      const lastDoc = parsed.items.filter((it) => it.type === "doc").pop();
+      if (lastDoc && parsed.items[parsed.items.length - 1] === lastDoc) lastDoc.cut = true;
+    }
+    const settled = settleAvatarItems(parsed.items, memeKnown);
+    // 他换头像时也记下换之前那张（见 buildMessages）
+    const prevHim = avatarsRef.current.him || null;
+    const him = {
+      // 走新路的，编号定了这一条的 id：两台设备各取一遍同一封信，放进对话的是同一条
+      id: job ? "r" + job : newId(),
+      role: "him",
+      ts: ts || Date.now(),
+      items: settled.items.map((it) => (it.type === "avatar" ? { ...it, prev: prevHim } : it)),
+      raw: parsed.body,
+      thinking: parsed.thinking,
+      tools: usedTools,
+      toolNote: ctx && ctx.withMcp && !(used && used.mcp) ? "这次MCP没连上，先不用工具回你" : "",
+    };
+    if (job) him.job = job;
+    if (settled.avatarFile) changeHisAvatar({ type: "meme", file: settled.avatarFile });
+    // 他给自己改了名字：顶栏马上换；回复上记一笔，对话里留一行提示（和现在一样的不算改）
+    if (parsed.rename && parsed.rename !== (namesRef.current.him || HIS_NAME)) {
+      him.rename = parsed.rename;
+      changeHisName(parsed.rename);
+    }
+    return him;
+  };
+
+  // 向那边要一条回复。成了回 { him, settle }：him 是整理好的回复；settle 是走新路时要在“放进对话、存好”以后叫的。失败抛错。
+  // opts.chat 哪段对话；opts.fork 是“重新回答”的话，要换掉的是哪一条；
+  // opts.resume 有的话，这一回早就发出去了（上次打开时发的），不用再拼一遍话，守着信箱等就行；
+  // opts.recheck 是她点“重发”要的；opts.flushed 是切走的那一下抢着交出去的
+  const requestReply = async (msgs, opts = {}) => {
+    if (opts.resume) {
+      const got = await getRelay().resume(opts.resume.job, opts.resume.info);
+      return { him: digestReply(got.data, got.used, (got.info && got.info.extra) || null, got.job, got.at ? Math.min(Date.now(), got.at) : 0), settle: got.settle };
+    }
     const st = settingsRef.current;
     const model = st.model || DEFAULT_MODEL;
     const mcps = (st.mcps || []).filter((m) => m.enabled && m.url);
@@ -4010,27 +4117,68 @@ export default function App({ account = {} }) {
     if (!flagsRef.current.noCache) attempts.push({ cache: true, mcp: withMcp });
     attempts.push({ cache: false, mcp: withMcp });
     if (withMcp) attempts.push({ cache: false, mcp: false });
+    const bodyFor = (at) => {
+      const body = {
+        model,
+        max_tokens: st.maxTokens || 2048,
+        system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
+        messages: withNowNote(apiMessages, nowNote, at.cache),
+      };
+      if (at.mcp) {
+        body.mcp_servers = mcps.map((m, i) => {
+          const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
+          if (m.token) s.authorization_token = m.token;
+          return s;
+        });
+        body.tools = body.mcp_servers.map((s) => ({ type: "mcp_toolset", mcp_server_name: s.name }));
+      }
+      return body;
+    };
+    const betaFor = (at) => (at.mcp ? "mcp-client-2025-11-20" : "");
+    const slugs = {};
+    mcps.forEach((m, i) => {
+      slugs[mcpSlug(m.name, i)] = m.name;
+    });
+    const ctx = withMcp ? { withMcp: true, slugs } : null;
 
+    // 新路：把最讲究的那种写法交给小后端，它那头自己照上面三步试（她不在跟前，不能等她回来再换）。
+    // 新路不通（它不肯接、它那头没办起来），抛回来的错带着 oldpath，就走下面的老路
+    let oldWhy = "";
+    if (opts.chat) {
+      const first = attempts[0];
+      try {
+        const got = await getRelay().ask({
+          body: bodyFor(first),
+          beta: betaFor(first),
+          chat: opts.chat,
+          last: msgs.length ? msgs[msgs.length - 1].id : "",
+          fork: opts.fork || "",
+          title: namesRef.current.him || HIS_NAME,
+          extra: ctx,
+          recheck: !!opts.recheck,
+        });
+        // 和老路上的记性一样：只有“不带缓存、别的照旧”才通的那种，才记下回别带缓存记号。
+        // 是工具连不上、摘了工具才通的，不算缓存的毛病；是 Anthropic 一时出岔子、小后端才换的写法（shaky），也不算：
+        // 记了的话，它挤上两三秒，她这一趟后面的每句话都不带缓存、按全价算
+        if (first.cache && !got.used.cache && !got.used.shaky && !!got.used.mcp === !!first.mcp) flagsRef.current.noCache = true;
+        // 从信箱里取的：算小后端放进去那会儿到的（切走半天才回来取，不该显示成刚到）
+        return { him: digestReply(got.data, got.used, ctx, got.job, got.at ? Math.min(Date.now(), got.at) : 0), settle: got.settle };
+      } catch (e) {
+        if (!e || e.code !== "oldpath") throw e;
+        // 是切走的那一下抢着交出去的，小后端却没接，页面这会儿还藏着：不从这儿走老路
+        // （等着的这头马上就断，那一回白问）。当成没抢着交：照旧等她停手那两秒多再发
+        if (opts.flushed && document.visibilityState !== "visible") throw Object.assign(new Error("等她回来再发"), { code: "later" });
+        oldWhy = String(e.message || "");
+      }
+    }
+
+    // 老路：网页自己等着
     let data = null;
     let used = null;
     let lastErr = "";
     for (const at of attempts) {
       try {
-        const body = {
-          model,
-          max_tokens: st.maxTokens || 2048,
-          system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
-          messages: withNowNote(apiMessages, nowNote, at.cache),
-        };
-        if (at.mcp) {
-          body.mcp_servers = mcps.map((m, i) => {
-            const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
-            if (m.token) s.authorization_token = m.token;
-            return s;
-          });
-          body.tools = body.mcp_servers.map((s) => ({ type: "mcp_toolset", mcp_server_name: s.name }));
-        }
-        data = await callClaude(body, at.mcp ? "mcp-client-2025-11-20" : "");
+        data = await callClaude(bodyFor(at), betaFor(at));
         used = at;
         break;
       } catch (e) {
@@ -4040,71 +4188,69 @@ export default function App({ account = {} }) {
     }
 
     if (!data) throw new Error(lastErr || "没有回应");
-    {
-      if (attempts[0].cache && used === attempts[1]) flagsRef.current.noCache = true;
-      recordUsage(data);
-      const slugToName = {};
-      mcps.forEach((m, i) => {
-        slugToName[mcpSlug(m.name, i)] = m.name;
-      });
-      const usedTools = Array.from(
-        new Set(
-          (data.content || [])
-            .filter((b) => b.type === "mcp_tool_use")
-            .map((b) => slugToName[b.server_name] || b.server_name || b.name)
-        )
-      );
-      const text = (data.content || [])
-        .filter((b) => b.type === "text")
-        .map((b) => b.text)
-        .join("\n");
-      const parsed = parseReply(text);
-      // 回复到长度上限被截断了：最后那份文档就算结尾的记号写上了，也记成没写完
-      if (data.stop_reason === "max_tokens") {
-        const lastDoc = parsed.items.filter((it) => it.type === "doc").pop();
-        if (lastDoc && parsed.items[parsed.items.length - 1] === lastDoc) lastDoc.cut = true;
-      }
-      const settled = settleAvatarItems(parsed.items, (f) => !!memeLookup(f));
-      // 他换头像时也记下换之前那张（见 buildMessages）
-      const prevHim = avatarsRef.current.him || null;
-      const him = {
-        id: newId(),
-        role: "him",
-        ts: Date.now(),
-        items: settled.items.map((it) => (it.type === "avatar" ? { ...it, prev: prevHim } : it)),
-        raw: parsed.body,
-        thinking: parsed.thinking,
-        tools: usedTools,
-        toolNote: withMcp && !used.mcp ? "这次MCP没连上，先不用工具回你" : "",
-      };
-      if (settled.avatarFile) changeHisAvatar({ type: "meme", file: settled.avatarFile });
-      // 他给自己改了名字：顶栏马上换；回复上记一笔，对话里留一行提示（和现在一样的不算改）
-      if (parsed.rename && parsed.rename !== (namesRef.current.him || HIS_NAME)) {
-        him.rename = parsed.rename;
-        changeHisName(parsed.rename);
-      }
-      return him;
-    }
+    if (attempts[0].cache && used === attempts[1]) flagsRef.current.noCache = true;
+    if (opts.chat) getRelay().tookOld(oldWhy);
+    return { him: digestReply(data, used, ctx, ""), settle: null };
   };
 
-  const askGuangyi = async (id, msgs) => {
+  // resume：这一回早就发出去了（见 checkMail），守着信箱等它的回话，{ job, info }；
+  // how.recheck：是她点“重发”要的；how.flushed：是切走的那一下抢着交出去的
+  const askGuangyi = async (id, msgs, resume = null, how = null) => {
     loadingRef.current = true;
     setLoading(true);
     setErrorNote("");
     try {
-      const him = await requestReply(msgs);
+      const { him, settle } = await requestReply(msgs, { chat: id, resume, recheck: !!(how && how.recheck), flushed: !!(how && how.flushed) });
       // 回复插在这次请求的最后一条后面；等回复时她又发的几条排在后面
+      const anchor = resume ? resume.info.last : msgs.length ? msgs[msgs.length - 1].id : null;
       const isCurrent = chatIdRef.current === id;
-      const base = isCurrent ? messagesRef.current : msgs;
-      const next = insertReply(base, msgs.length ? msgs[msgs.length - 1].id : null, him);
-      if (isCurrent) messagesRef.current = next;
-      await saveChat(id, next);
-      if (chatIdRef.current === id) {
-        setMessages(next);
-        setReveal({ id: him.id, count: 1 });
+      // 她已经翻到别的对话去了：以存档里的为准（等的工夫里她在这段对话里又说的话都在存档里，拿发话那一刻的旧样子去存会把它们盖掉）
+      const base = isCurrent ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + id), null) || msgs;
+      // 不比她那一句早（从信箱里取的，时间是云端的钟记的）
+      const said = base.find((m) => m.id === anchor);
+      if (said && him.ts <= said.ts) him.ts = said.ts + 1;
+      // 这一回的回话已经在对话里了（信箱那头先放进去的）：不放第二遍
+      if (!(him.job && hasJob(base, him.job))) {
+        const next = insertReply(base, anchor, him);
+        if (isCurrent) messagesRef.current = next;
+        await saveChat(id, next);
+        if (chatIdRef.current === id) {
+          setMessages(next);
+          setReveal({ id: him.id, count: 1 });
+        }
       }
+      if (settle) settle();
     } catch (e) {
-      if (chatIdRef.current === id) setErrorNote(`消息没送到（${String(e.message || e).slice(0, 90)}）。点这里重发`);
+      if (e && e.code === "answered") {
+        // 别的设备已经把这一句的回话取走、放进对话了：把同步下来的那份换上来。
+        // 等的工夫里她在这台设备上又说的话（同步下来的那份里没有）接在后面，不能丢
+        const fresh = safeParse(await store.get("kfs2:chat:" + id), null);
+        if (Array.isArray(fresh) && chatIdRef.current === id) {
+          const got = new Set(fresh.map((m) => m.id));
+          const asked = new Set(msgs.map((m) => m.id));
+          const more = messagesRef.current.filter((m) => !got.has(m.id) && !asked.has(m.id));
+          const next = fresh.concat(more);
+          messagesRef.current = next;
+          setMessages(next);
+          loadImagesFor(next);
+          if (more.length) await saveChat(id, next);
+        }
+      } else if (e && e.code === "later") {
+        // 切走的那一下没交成（见 requestReply）：等她回到眼前再发。
+        // 不排定时器：页面藏着的那几秒里定时器照走，到点就从藏着的页面走老路，等着的这头马上断，那一回白问
+        if (document.visibilityState === "visible") scheduleReply(700);
+        else backResend.current = true;
+      } else if (e && e.code === "offline" && document.visibilityState !== "visible") {
+        // 她不在眼前的时候没连上（多半是切走的那一下网正好断了）：这会儿不报错（她回来头一眼看到的不该是一行红字）。
+        // 是这台设备自己发的那一回：等她回到眼前再发。那一回还记着：到时候先去信箱里找（万一其实送到了），没有才重发。
+        // 是守着的那一回（别处发的、上次打开时发的）：她回来的时候看信箱那一遍会再认出它，接着守
+        if (!resume) backResend.current = true;
+      } else {
+        if (chatIdRef.current === id) setErrorNote(`消息没送到（${String(e.message || e).slice(0, 90)}）。点这里重发`);
+        // 这一回也许其实已经交给小后端了（只是这头没连上）：过几秒自己去信箱里看一眼，回话在就取出来，不用她点
+        clearTimeout(mailTimer.current);
+        mailTimer.current = setTimeout(() => latest.current.checkMail(), 4000);
+      }
     }
     loadingRef.current = false;
     setLoading(false);
@@ -4131,26 +4277,59 @@ export default function App({ account = {} }) {
     setLoading(true);
     setErrorNote("");
     setReveal(null);
+    forkRef.current = { chat: id, full }; // 存档里先别丢旧回答（见 saveChat）
     messagesRef.current = base; // 先把旧回答收起来
     setMessages(base);
+    // 这工夫里她新说的：眼前（或者存档里）有、点“重新回答”那一刻的整段里没有的那几条
+    const had = new Set(full.map((m) => m.id));
+    const added = async () => {
+      const now = chatIdRef.current === id ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + id), null) || [];
+      return now.filter((m) => !had.has(m.id));
+    };
     try {
-      const him = await requestReply(base);
-      const extra = chatIdRef.current === id ? messagesRef.current.slice(base.length) : [];
+      const { him, settle } = await requestReply(base, { chat: id, fork: msgId });
+      const extra = await added();
       const next = forkAt(full, j, him).concat(extra);
+      forkRef.current = null;
       if (chatIdRef.current === id) {
         messagesRef.current = next;
         setMessages(next);
         setReveal({ id: him.id, count: 1 });
       }
       await saveChat(id, next);
+      if (settle) settle();
       if (extra.length) pendingRef.current = true;
     } catch (e) {
-      if (chatIdRef.current === id) {
-        messagesRef.current = full;
-        setMessages(full);
-        setErrorNote(`重新回答没成功（${String(e.message || e).slice(0, 90)}）`);
+      const extra = await added();
+      forkRef.current = null;
+      const fresh = e && e.code === "answered" ? safeParse(await store.get("kfs2:chat:" + id), null) : null;
+      if (Array.isArray(fresh)) {
+        // 别的设备已经把这一回的新回答取走、放进对话了：换上同步下来的那份，她这工夫里新说的接在后面
+        const got = new Set(fresh.map((m) => m.id));
+        const more = extra.filter((m) => !got.has(m.id));
+        const next = fresh.concat(more);
+        if (chatIdRef.current === id) {
+          messagesRef.current = next;
+          setMessages(next);
+          loadImagesFor(next);
+        }
+        if (more.length) await saveChat(id, next);
+        if (needsReply(next)) pendingRef.current = true;
+      } else {
+        // 没成：旧回答放回来，她这工夫里新说的留着
+        const back = full.concat(extra);
+        if (chatIdRef.current === id) {
+          messagesRef.current = back;
+          setMessages(back);
+          setErrorNote(`重新回答没成功（${String(e.message || e).slice(0, 90)}）`);
+        }
+        if (extra.length) await saveChat(id, back);
+        // 这一回也许其实已经交给小后端了（只是这头没连上）：过几秒自己去信箱里看一眼，新回答在就取出来
+        clearTimeout(mailTimer.current);
+        mailTimer.current = setTimeout(() => latest.current.checkMail(), 4000);
       }
     }
+    forkRef.current = null;
     loadingRef.current = false;
     setLoading(false);
     if (pendingRef.current) {
@@ -4224,6 +4403,12 @@ export default function App({ account = {} }) {
     if (taRef.current) taRef.current.style.height = "auto";
   };
   const submitEdit = (t) => {
+    // 他正在回话、正在重新回答的时候先不改：对话这会儿还在变（重新回答把旧回答先收起来了），
+    // 这时候改，分支会接乱（同一条话在对话里出现两回）。输入框里的字留着，等他回完再点
+    if (loadingRef.current) {
+      setToast("等他回完再改");
+      return;
+    }
     const msgs = messagesRef.current;
     const i = msgs.findIndex((m) => m.id === editing.id);
     setEditing(null);
@@ -4244,13 +4429,14 @@ export default function App({ account = {} }) {
   };
 
   // ---- 她连着发几条，停下来再回 ----
-  const triggerReply = () => {
+  // how：见 askGuangyi（定时器走完叫的时候不带）
+  const triggerReply = (how = null) => {
     if (loadingRef.current) {
       pendingRef.current = true;
       return;
     }
     const msgs = messagesRef.current;
-    if (needsReply(msgs)) askGuangyi(chatIdRef.current, msgs);
+    if (needsReply(msgs)) askGuangyi(chatIdRef.current, msgs, null, how);
   };
 
   const scheduleReply = (ms) => {
@@ -4477,6 +4663,180 @@ export default function App({ account = {} }) {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // ---- 信箱：她不在的时候到的回话（那条新路见 mail.js） ----
+  // 信箱里的一封回话放进它那段对话。回 applied 放进去了；dup 早放过了；gone 用不着了；failed 那一回没回成（已经告诉她了）；
+  // later 这台设备上的那段对话还没跟上（等同步下来再放，信先留着）；keep 没回成、她眼前又不是那段对话（信先留着）；
+  // busy 那段对话正在重新回答（等它完了再看，信先留着）
+  const applyMail = async ({ job, info, row, result }) => {
+    const id = info.chat;
+    const here = () => chatIdRef.current === id;
+    // 这段对话正在重新回答：画面上旧回答先收起来了（messagesRef 里没有它）。这时候拿画面去认信，
+    // 信箱里要是还留着旧回答的那一封，会把它当成没放过的、又放一遍，回头还把新回答盖掉。等重新回答完了再看
+    if (forkRef.current && forkRef.current.chat === id) return "busy";
+    const msgs = here() ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + id), null);
+    const fit = mailFit(msgs, info, job);
+    if (fit !== "ok") return fit;
+    if (!resultOk(result)) {
+      // 没回成。她正对着这段对话：照老样子给一句“点这里重发”。
+      // 眼前是别的对话：信先留着，等她翻到这段对话再说（横幅上写着“回开封府点一下重发”，翻过来得有得点）
+      if (!here()) return "keep";
+      if (info.fork) {
+        // 没成的是“重新回答”：旧回答还在，说一声就行（想要就再点一次重新回答）
+        if (!loadingRef.current) setErrorNote(`重新回答没成功（${explainResult(result).slice(0, 90)}）`);
+      } else if (!loadingRef.current && !timerRef.current && needsReply(messagesRef.current)) {
+        setErrorNote(`消息没送到（${explainResult(result).slice(0, 90)}）。点这里重发`);
+      }
+      return "failed";
+    }
+    // 这条算几点到的：小后端放进信箱的时候（不比她那一句早，不比现在晚）
+    const anchor = msgs.find((m) => m.id === info.last);
+    const stamp = Math.max(((anchor && anchor.ts) || 0) + 1, Math.min(Date.now(), Date.parse(row.done_at) || Date.now()));
+    const next = mailPut(msgs, info, digestReply(result.data, result.used, info.extra || null, job, stamp));
+    if (here()) messagesRef.current = next;
+    await saveChat(id, next);
+    // 存的那一下工夫里对话又变了（她发了一句、点了重新回答）：画面已经是更新的那份，不拿这一份旧的去盖
+    if (here() && messagesRef.current === next) {
+      setMessages(next);
+      setErrorNote("");
+    }
+    return "applied";
+  };
+
+  // 看一遍信箱：到了的回话放进对话；还在等的，是眼前这段对话就守着它（顶上显示“正在输入”），别的过几秒再看。
+  // 开封府不在眼前的时候不看：这时候把信取走，小后端就以为她看到了、不敲手机了。
+  // retry：这是没看成以后自己再来的第几回（外头叫的时候不带）
+  const checkMail = async (retry = 0) => {
+    if (mailBusy.current) {
+      mailAgain.current = true;
+      return;
+    }
+    mailBusy.current = true;
+    let again = false;
+    let missed = false;
+    try {
+      // 头一遍看之前，先等仓库里新加的表情包读回来（最多两秒半）：信里他要是换了头像，得认得那张图。
+      // 她是从图标进来的、还是点着横幅进来的，都从这儿过
+      if (!mailGate.current) mailGate.current = Promise.race([memesReady.current, new Promise((done) => setTimeout(done, 2500))]).catch(() => {});
+      await mailGate.current;
+      const relay = getRelay();
+      // 开封府不在眼前就不看（等表情包的那一下工夫里她切走了，也算）
+      const list = document.visibilityState === "visible" ? await relay.collect() : [];
+      // 这一遍没看成（没网、信箱没应）：过一会儿自己再来，不然信在信箱里、屏幕上什么都没有，要等她切走再回来才看得到
+      if (list === null) missed = true;
+      for (const m of list || []) {
+        // 看的工夫里她切走了：一封都不动（这时候把信取走，小后端就不敲她了）。回来那一遍再办
+        if (document.visibilityState !== "visible") break;
+        const age = Date.now() - (Date.parse(m.row.created_at) || 0);
+        const stale = age > 3 * 24 * 3600 * 1000; // 放了三天还放不进对话的，收掉
+        if (m.state === "unreadable") {
+          // 打不开的（多半是别的账号、别的暗号留下的）：放一天还在就收掉
+          if (age > 24 * 3600 * 1000) await relay.discard(m.job);
+          continue;
+        }
+        const mine = m.info.chat === chatIdRef.current && !loadingRef.current && !timerRef.current;
+        if (m.state === "dead") {
+          // 只收还写着“在等”的：看的那一眼和收的这一下之间回话要是正好放进来了，那一格留着。
+          // 所以过几秒再看一遍：留下了就取出来（下面那句“没送到”跟着收掉）
+          await relay.discard(m.job, true);
+          again = true;
+          if (mine && mailFit(messagesRef.current, m.info, m.job) === "ok" && needsReply(messagesRef.current)) setErrorNote("消息没送到（那边断了，这一条没回成）。点这里重发");
+          continue;
+        }
+        if (m.state === "working") {
+          if (mine && !m.info.fork && mailFit(messagesRef.current, m.info, m.job) === "ok") askGuangyi(m.info.chat, messagesRef.current, { job: m.job, info: m.info });
+          else again = true;
+          continue;
+        }
+        const out = await applyMail(m);
+        if (out === "busy") {
+          again = true;
+          continue;
+        }
+        if (out === "later") mailLater.current = true;
+        // 放的那一下工夫里她切走了：信先留着（小后端看它还在，照样敲她），回来那一遍认出放过了再收
+        if (document.visibilityState !== "visible" && !stale) break;
+        if ((out !== "later" && out !== "keep") || stale) await relay.discard(m.job);
+      }
+      // 上回打开时发出去、却没送到的那一句（切走的那一下话没出去，开封府又被系统收掉了）：那一回还记着，信箱里却没有它。
+      // 眼前正是那段对话、那一句后面还空着：替她补发，不用她再说一遍（发之前照旧先同步看一眼别处回上了没有，见 mail.js 的 ask）。
+      // 只认这次打开之前记下的（这次打开以后没送成的，当场就有“点这里重发”）；一回只补一次
+      if (list !== null && document.visibilityState === "visible" && !loadingRef.current && !timerRef.current) {
+        const msgs = messagesRef.current;
+        // 记着的那一回接的正是眼下最后一条：那一句后面什么都没添过，还空着
+        const owed = msgs.length ? relay.owed(chatIdRef.current, msgs[msgs.length - 1].id) : null;
+        if (owed && owed.at < OPENED_AT && !orphansRef.current.has(owed.job) && !list.some((m) => m.job === owed.job)) {
+          if (Date.now() - owed.at < ORPHAN_AGE) again = true; // 太新，过三秒再看
+          else {
+            orphansRef.current.add(owed.job);
+            askGuangyi(chatIdRef.current, msgs, null, { recheck: true });
+          }
+        }
+      }
+    } catch (e) {}
+    mailBusy.current = false;
+    const soon = mailAgain.current;
+    mailAgain.current = false;
+    if (again || soon) {
+      clearTimeout(mailTimer.current);
+      mailTimer.current = setTimeout(() => latest.current.checkMail(), soon ? 300 : 3000);
+    } else if (missed && retry < 4) {
+      // 隔两秒、四秒、八秒、十六秒各再看一回；还不成就等下一个由头（她切回来、网回来、翻对话）
+      clearTimeout(mailTimer.current);
+      mailTimer.current = setTimeout(() => latest.current.checkMail(retry + 1), 2000 * 2 ** retry);
+    }
+  };
+
+  // 通知网址里的那串字是哪段对话
+  const chatOfTag = async (tag) => {
+    for (const c of indexRef.current) {
+      if (!tagsRef.current[c.id]) {
+        try {
+          tagsRef.current[c.id] = await chatTag((name) => store.nameFor(name), c.id);
+        } catch (e) {
+          return "";
+        }
+      }
+      if (tagsRef.current[c.id] === tag) return c.id;
+    }
+    return "";
+  };
+
+  // 她点着一条回话的通知回来：先把信箱里的放进对话，再翻到那段对话
+  const openFromNotice = async ({ tag }) => {
+    await checkMail();
+    let id = await chatOfTag(tag);
+    if (!id) {
+      // 目录里还没有那段对话（别的设备上聊的，还没同步到）：同步一遍再找
+      try {
+        await store.syncNow();
+      } catch (e) {}
+      id = await chatOfTag(tag);
+    }
+    if (id && id !== chatIdRef.current) await openChat(id);
+    checkMail();
+  };
+
+  // 她要切走了（锁屏、换到别的应用）：还没传上云端的改动马上传；还没来得及送出去的话马上送。
+  // 她停手两三秒才发的那个等待，切走以后就不走了；不在这一下送出去，就得等她回来才送。
+  // 只在新路走通过的设备上这么干：走老路的话，话一交出去她就走了，等着的这头断掉，那一回白问，
+  // 回来看到的是“消息没送到”；不如照旧等她回来再送
+  const leaving = () => {
+    // 先把话交出去：切走以后页面只剩两三秒，这一包最要紧
+    if (timerRef.current && getRelay().trusted()) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+      triggerReply({ flushed: true });
+    }
+    store.flush().catch(() => {});
+  };
+
+  // 她不在的时候没送成的那一句：回到眼前以后补发（已经有一句排着队等发，就不另排了）
+  const resendSoon = () => {
+    if (!timerRef.current) scheduleReply(700);
+  };
+
+  latest.current = { checkMail, openFromNotice, leaving, resendSoon };
+
   // ---- 通知 ----
   // 开过通知的设备，每次打开都悄悄重新登记一遍（见 push.js）；她点通知回来的，记下是哪一条
   useEffect(() => {
@@ -4486,12 +4846,62 @@ export default function App({ account = {} }) {
       if (mark.startsWith("test-")) setNoticeBack(Date.now());
     });
   }, []);
-  // 眼下只有测试通知：回来了说一声。开屏还挡着的时候先不说，进了门再说
+  // 点着回话的通知回来的：翻到那段对话（存档读完了才办；开屏挡着也照办，进了门就在眼前）。
+  // 点着测试通知回来的：说一声。开屏还挡着的时候先不说，进了门再说
   useEffect(() => {
-    if (!noticeMark || splash) return;
+    if (!noticeMark) return;
+    const reply = parseReplyMark(noticeMark);
+    if (reply) {
+      if (!booted) return;
+      setNoticeMark("");
+      latest.current.openFromNotice(reply);
+      return;
+    }
+    if (splash) return;
     setToast("从通知回来的");
     setNoticeMark("");
-  }, [noticeMark, splash]);
+  }, [noticeMark, splash, booted]);
+  // 开机读完看一遍信箱；之后每次切回来再看；切走的那一下把话送出去
+  useEffect(() => {
+    if (!booted) return;
+    // 先轻轻问好新路通不通：她头一句话发完就切走，也敢交出去
+    getRelay().warm();
+    latest.current.checkMail();
+    // 新路通不通还不知道的时候（开机那一下没网、没问成）再问一声；已经知道了就什么都不做。
+    // 回到眼前的那一下晚一点问：iOS 上一回来就发的请求会悬很久
+    let warmTimer = null;
+    const warmSoon = (ms) => {
+      clearTimeout(warmTimer);
+      warmTimer = setTimeout(() => getRelay().warm(), ms);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        backAtRef.current = Date.now();
+        latest.current.checkMail();
+        warmSoon(700);
+        // 她不在的时候有一句话没连上、没送成：现在补发（晚一点发，躲开刚回来那一下）
+        if (backResend.current) {
+          backResend.current = false;
+          latest.current.resendSoon();
+        }
+      } else latest.current.leaving();
+    };
+    const onHide = () => latest.current.leaving();
+    const onOnline = () => {
+      latest.current.checkMail();
+      warmSoon(0);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pagehide", onHide);
+    window.addEventListener("online", onOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("online", onOnline);
+      clearTimeout(warmTimer);
+      clearTimeout(mailTimer.current);
+    };
+  }, [booted]);
 
   useEffect(() => {
     if (!voiceNote) return;
@@ -4507,9 +4917,10 @@ export default function App({ account = {} }) {
     sendHer({ kind: "meme", file });
   };
 
+  // 她点“点这里重发”。recheck：这台设备不记得为这句话发过哪一回的话，先同步看一眼别处回上了没有（见 mail.js 的 ask）
   const retry = () => {
     const msgs = messagesRef.current;
-    if (!loadingRef.current && needsReply(msgs)) askGuangyi(chatIdRef.current, msgs);
+    if (!loadingRef.current && needsReply(msgs)) askGuangyi(chatIdRef.current, msgs, null, { recheck: true });
   };
 
   // ---- 分条：一条一条冒出来 ----
@@ -4895,6 +5306,10 @@ export default function App({ account = {} }) {
     try {
       await Promise.race([disablePush(), new Promise((done) => setTimeout(done, 4000))]);
     } catch (e) {}
+    try {
+      localStorage.removeItem(JOBS_KEY);
+      localStorage.removeItem(RELAY_KEY);
+    } catch (e) {}
     if (account.signOut) account.signOut();
   };
 
@@ -5017,7 +5432,7 @@ export default function App({ account = {} }) {
           <input ref={importRef} type="file" accept="application/json,.json" onChange={importBackup} style={{ display: "none" }} />
 
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8, marginTop: 22 }}>通知</div>
-          <PushPanel email={account.email} onCopy={copyText} back={noticeBack} />
+          <PushPanel email={account.email} onCopy={copyText} back={noticeBack} mailStatus={() => getRelay().status()} onReplyReady={() => getRelay().learn(true)} />
 
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8, marginTop: 22 }}>屏幕</div>
           {gapInfo().canFill && (

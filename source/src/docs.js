@@ -119,7 +119,8 @@ export function cleanDocName(raw) {
 export function splitDocBlocks(text) {
   const src = String(text || "");
   const parts = [];
-  const open = /^[ \t]*\[(?:DOC|Doc|doc)[:：][ \t]*([^\[\]\n]*?)[ \t]*\][ \t]*\r?$/gm;
+  // 文件名两头的空白留给 cleanDocName 收拾：正则里不另外去认（认的话，碰上一长串空格后面没有右括号，要来回试很久，手机会卡住）
+  const open = /^[ \t]*\[(?:DOC|Doc|doc)[:：]([^\[\]\n]*)\][ \t]*\r?$/gm;
   let last = 0;
   let m;
   while ((m = open.exec(src)) !== null) {
@@ -128,7 +129,7 @@ export function splitDocBlocks(text) {
     const close = /^[ \t]*\[\/(?:DOC|Doc|doc)\][ \t]*\r?$/gm;
     close.lastIndex = bodyStart;
     const c = close.exec(src);
-    const body = (c ? src.slice(bodyStart, c.index) : src.slice(bodyStart)).replace(/^\r?\n/, "").replace(/\s+$/, "");
+    const body = (c ? src.slice(bodyStart, c.index) : src.slice(bodyStart)).replace(/^\r?\n/, "").trimEnd(); // 不写成 /\s+$/：正文里夹着一长串空白的时候，那样写要一个位置一个位置地试
     if (m.index > last) parts.push({ type: "text", value: src.slice(last, m.index) });
     if (body.trim()) parts.push({ type: "doc", name: cleanDocName(m[1]), text: body, cut: !c });
     last = c ? close.lastIndex : src.length;
