@@ -182,16 +182,35 @@ ok(NEAR === 64 && GLIDE === 380, "说好的两个数：离底不到 64 像素算
   ok(e.scrollTop === 1700, "跟到新的底");
 }
 {
-  // 认“位置变没变”的那条线是 1 个像素
+  // 认“位置变没变”的那条线是 1 个像素：差 0.9 不算，差 1 就算
   const e = box(3000, 600);
-  const { f, halted } = world(e);
+  const { f, halted, wait } = world(e);
   f.changed();
-  e.raw(2400.4); f.scrolled();          // 差不到 1 个像素（位置带小数的手机上常有）：不算滚过
+  e.raw(2399.1); f.scrolled();          // 差 0.9（位置带小数的手机上常有）：不算滚过
   f.bottom(false);
-  ok(halted.length === 0, "位置只差 0.4 个像素报来一下：不算她滚的");
-  e.scrollTop = 2398; f.scrolled();     // 真动了 2 个像素：算
+  ok(halted.length === 0, "位置只差 0.9 个像素报来一下：不算她滚的");
+  wait(1000);
+  e.scrollTop = 2399; f.scrolled();     // 差 1：算
   f.bottom(false);
-  ok(halted.length === 1, "动了 2 个像素：算她滚的（紧跟着到底要叫停）");
+  ok(halted.length === 1, "差 1 个像素：算她滚的（紧跟着到底要叫停）");
+}
+{
+  // 东西变了的时候“她动过没有”也是这条线：挪了 0.9 不先认，挪了 1 就先认
+  const e = box(3000, 600);
+  const { f } = world(e);
+  f.changed();
+  e.raw(2400 - 63.5); f.scrolled();
+  ok(f.stick() === true, "离底 63.5：还跟着");
+  e.raw(2400 - 64.4);                   // 又往上挪了 0.9，没报来
+  e.scrollHeight = 3100; f.changed();
+  ok(e.scrollTop === e.max && f.stick() === true, "又挪了 0.9 个像素、没报来就来了新话：不算她动过，照旧跟到底");
+  const g = box(3000, 600);
+  const w = world(g);
+  w.f.changed();
+  g.raw(2400 - 63.5); w.f.scrolled();
+  g.raw(2400 - 64.5);                   // 这回挪了正好 1，过了 64 那条线
+  g.scrollHeight = 3100; w.f.changed();
+  ok(g.scrollTop === 2400 - 64.5 && w.f.stick() === false && w.f.away() === true, "挪了正好 1 个像素（离底 64.5）、没报来就来了新话：先认她那一下，算翻走了，不拽");
 }
 {
   // 她刚好挪过了那条线（离底 63 → 65），这一下还没报来，就来了新话：先认她那一下，不拽
@@ -238,6 +257,16 @@ ok(NEAR === 64 && GLIDE === 380, "说好的两个数：离底不到 64 像素算
   e.scrollHeight = 2100;       // 紧跟着蹦出一条
   f.changed();
   ok(e.scrollTop === 1500 && f.stick() === true && f.away() === false, "键盘收起来被收到底（位置带着 0.4 的零头）、紧跟着蹦出一条：照样跟到底");
+  for (const [off, follows] of [[0.9, true], [-0.9, true], [1, false], [-1, false]]) {
+    const b = box(2000, 300);
+    const w = world(b);
+    w.f.changed();
+    b.clientHeight = 600;
+    b.raw(1400 + off);
+    b.scrollHeight = 2100;
+    w.f.changed();
+    ok((b.scrollTop === 1500) === follows && w.f.stick() === follows, `同上，位置离那个底差 ${off} 个像素：${follows ? "算被收过去的，跟" : "不算，不跟"}`);
+  }
 }
 
 // ---------- 她自己发话、换对话：一定到底 ----------
@@ -569,6 +598,55 @@ ok(NEAR === 64 && GLIDE === 380, "说好的两个数：离底不到 64 像素算
   ok(e.scrollTop === e.max && f.away() === false, "滑回最底下");
 }
 
+// ---------- 盒子被藏起来（整页藏起来的时候量到的全是零） ----------
+{
+  const e = box(3000, 600);
+  const { f, said } = world(e);
+  f.changed();
+  e.scrollTop = 800; f.scrolled();
+  let kept = null;
+  const hide = () => { kept = [e.scrollHeight, e.clientHeight, e.scrollTop]; e.scrollHeight = 0; e.clientHeight = 0; e.raw(0); };
+  const show = () => { e.scrollHeight = kept[0]; e.clientHeight = kept[1]; e.raw(kept[2]); };
+  hide(); f.changed(); f.scrolled();
+  ok(f.away() === true && f.stick() === false && said.join() === "true", "翻着旧消息的时候整页被藏起来、量到的全是零：不认，照旧记着她翻上去了");
+  show(); f.changed();
+  ok(e.scrollTop === 800 && f.away() === true && f.stick() === false, "盒子回来：她还在原来翻到的地方，没被带到底");
+  e.scrollTop = e.max; f.scrolled();
+  hide(); f.changed();
+  kept[0] = 3200;                               // 藏着的工夫里来了新话
+  show(); f.changed();
+  ok(e.scrollTop === e.max && e.max === 2600 && f.stick() === true, "跟着的人：藏着的工夫里来了新话，盒子回来就跟到底");
+}
+{
+  // 滑到一半整页被藏起来：就此停下，不拿零去滚、去记；回来以后照眼下的样子办
+  const e = box(5000, 600);
+  const { f, tick, pending } = world(e);
+  f.changed();
+  e.scrollTop = 1000; f.scrolled();
+  f.bottom(true); tick(3);
+  const kept = [e.scrollHeight, e.clientHeight, e.scrollTop];
+  e.scrollHeight = 0; e.clientHeight = 0; e.raw(0);
+  tick(ALL);
+  ok(f.gliding() === "" && pending() === 0, "往底下滑到一半整页被藏起来：滑的那一下就此停下");
+  e.scrollHeight = kept[0]; e.clientHeight = kept[1]; e.raw(kept[2]);
+  f.changed();
+  ok(e.scrollTop === e.max && f.stick() === true && f.away() === false, "盒子回来：她点过圆钮的，到底");
+}
+{
+  // 往顶上滑到一半整页被藏起来：一样停下；回来以后她在哪还在哪，不许因为记了一堆零就把她带到底
+  const e = box(5000, 600);
+  const { f, tick, pending } = world(e);
+  f.changed();
+  f.top(); tick(6);
+  const kept = [e.scrollHeight, e.clientHeight, e.scrollTop];
+  e.scrollHeight = 0; e.clientHeight = 0; e.raw(0);
+  tick(ALL);
+  ok(f.gliding() === "" && pending() === 0, "往顶上滑到一半整页被藏起来：也就此停下");
+  e.scrollHeight = kept[0]; e.clientHeight = kept[1]; e.raw(kept[2]);
+  f.changed();
+  ok(e.scrollTop === kept[2] && kept[2] > 0 && kept[2] < 4400 - NEAR && f.stick() === false && f.away() === true, "盒子回来：停在半路上，没被带到底，圆钮在");
+}
+
 // ---------- 盒子还没摆出来 ----------
 {
   let said = 0;
@@ -775,7 +853,9 @@ function browser({ H = 3000, C = 600 } = {}) {
       const a = pick(["grow", "grow", "grow", "shrink", "user", "user", "user", "img", "send", "kb", "panel", "button", "bartop", "frames", "frames", "think", "finger"]);
       const gliding = !!w.f.gliding();
       if (a === "grow") { const h = pick([10, 50, 63, 64, 65, 120, 400]); commit(h); trace.push("来话+" + h); }
-      else if (a === "shrink") { const h = pick([20, 58, 120, 600]); commit(-h); trace.push("变矮-" + h); }
+      // 变矮只照整数变，矮不下去（会低过那条 40 的底线）就不变。让它“收到 40 为止”的话，收掉的那一截带着前面图片、思考过程的零头，
+      // 紧跟着再点开一块一样高的思考过程，又排得出“正好抵掉”（见下面图片那一条的说明），那是这份假浏览器自己凑出来的巧合
+      else if (a === "shrink") { const h = pick([20, 58, 120, 600]); if (w.K - h < 40) continue; commit(-h); trace.push("变矮-" + h); }
       // 悄悄变高的（图片出来、点开思考）高度都故意带个零头 .37，跟当场报的那些整数凑不成“正好抵掉”。
       // 量大小的那个（ResizeObserver）只在大小跟它上一回看到的不一样的时候才报：同一帧里对话先变矮了 140（当场报了、跟了），
       // 紧跟着一张图片出来又撑高了正好 140，它眼里就是没变，不报，这一回就没人跟（下一回一变就跟上）。

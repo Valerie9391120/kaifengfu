@@ -12,7 +12,7 @@
 //   bottom()    到底（点圆钮是滑过去；键盘弹出来、点着横幅回来是一下到）
 //   top()       点上面：滑回最顶
 //   touch()     她的手指落在聊天记录上，或者滚轮动了
-// el() 交出聊天记录那个会滚的盒子；onAway(真/假) 是告诉外头圆钮该不该出来；
+// el() 交出聊天记录那个会滚的盒子（还没摆出来、被藏起来的时候，这里什么都不做）；onAway(真/假) 是告诉外头圆钮该不该出来；
 // raf / caf / now 是排动画帧、取消、看钟；still() 是系统开没开“减弱动态效果”；
 // halt(盒子) 是叫它把惯性停下（见下面 calm）。
 // =====================================================
@@ -39,6 +39,13 @@ export function createFollow({ el, onAway, raf, caf, now, still, halt }) {
   let pinUntil = 0;
   let looseUntil = 0;
 
+  // 聊天记录那个盒子，眼下摆出来了才交出来。整页被藏起来的时候（账户面板里“量一量屏幕底下”那一下）
+  // 量到的全是零：照零去认，翻着旧消息的人会被认成“在最底下”，等盒子回来就把她带到底。
+  // 所以没摆出来的时候什么都不认、什么都不动，等它回来（大小一变自然会再报进来）
+  const box = () => {
+    const e = el();
+    return e && e.clientHeight > 0 ? e : null;
+  };
   // 顶上回弹的时候位置是负的，当成 0；底下回弹的时候算出来离底是负的，照样算在底下
   const topOf = (e) => Math.max(0, e.scrollTop);
   const gap = (e) => e.scrollHeight - e.clientHeight - topOf(e);
@@ -52,7 +59,7 @@ export function createFollow({ el, onAway, raf, caf, now, still, halt }) {
   };
   // 照眼下的样子重新量：在不在最底下
   const fresh = () => {
-    const e = el();
+    const e = box();
     if (!e) return;
     sync(e);
     last = e.scrollTop;
@@ -69,7 +76,7 @@ export function createFollow({ el, onAway, raf, caf, now, still, halt }) {
   // 落的地方也可能离那个底不远，放宽了会把她拽回去。宁可认不出来（圆钮出来，她点一下），也不拽人。
   // 这里只认，不对账：账等 changed() 来对（东西一变它准来）
   const hers = () => {
-    const e = el();
+    const e = box();
     if (!e) return;
     const t = topOf(e);
     let g = e.scrollHeight - e.clientHeight - t;
@@ -99,13 +106,13 @@ export function createFollow({ el, onAway, raf, caf, now, still, halt }) {
   };
   // 一下到底。firm：先把惯性停掉
   const land = (firm) => {
-    const e = el();
+    const e = box();
     if (!e) return;
     if (firm) calm(e);
     set(e, e.scrollHeight);
   };
   const glide = (to) => {
-    const e = el();
+    const e = box();
     if (!e) return;
     stop();
     calm(e);
@@ -119,6 +126,10 @@ export function createFollow({ el, onAway, raf, caf, now, still, halt }) {
     }
     const t0 = now();
     const step = () => {
+      if (!box()) {
+        run = null; // 滑到一半盒子被藏起来了：就此停下，等它回来再照眼下的样子办
+        return;
+      }
       const p = Math.min(1, (now() - t0) / GLIDE);
       set(e, from + (goal() - from) * (1 - Math.pow(1 - p, 3))); // 先快后慢
       if (p < 1) {
@@ -137,7 +148,7 @@ export function createFollow({ el, onAway, raf, caf, now, still, halt }) {
     gliding: () => (run ? run.to : ""),
 
     scrolled() {
-      const e = el();
+      const e = box();
       if (!e) return;
       if (run) return; // 自己正滑着：滑到头再认
       if (Math.abs(e.scrollTop - last) < 1) return; // 还在上一回认过的地方：没有新的事
@@ -153,7 +164,7 @@ export function createFollow({ el, onAway, raf, caf, now, still, halt }) {
     },
 
     changed() {
-      const e = el();
+      const e = box();
       if (!e) return;
       // 正往底下滑：滑的那一下每一帧现量，自己会追到新的底（这里要是也去跟，画面会先跳到底、下一帧又被拉回半路）；
       // 正往顶上滑：不打岔，滑完再量
@@ -175,8 +186,10 @@ export function createFollow({ el, onAway, raf, caf, now, still, halt }) {
         mark(false);
         return;
       }
-      if (stick) land(false);
-      else fresh(); // 没跟着：画面不动，只把“在不在最底下”重新量一遍（东西变矮了、盒子变高了，可能又到底了）
+      if (stick) {
+        land(false);
+        mark(false); // 平常圆钮本来就收着；滑到一半被打断的那种（整页被藏起来）会留着，到底了就收
+      } else fresh(); // 没跟着：画面不动，只把“在不在最底下”重新量一遍（东西变矮了、盒子变高了，可能又到底了）
     },
 
     pin() {
@@ -206,7 +219,7 @@ export function createFollow({ el, onAway, raf, caf, now, still, halt }) {
 
     // 点上面：滑回最顶
     top() {
-      const e = el();
+      const e = box();
       if (!e) return;
       stick = false;
       pinUntil = 0;

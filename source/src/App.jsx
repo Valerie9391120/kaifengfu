@@ -4875,8 +4875,18 @@ export default function App({ account = {} }) {
 
   // 她点着一条回话的通知回来：先把信箱里的放进对话，再翻到那段对话
   const openFromNotice = async ({ tag }) => {
+    // 那段对话本来就开着（比方她翻着旧消息的时候切走的）：点横幅就是来看这一条的。
+    // 侧栏、历史对话那一页要是还开着就收了，聊天记录到底（换对话的时候 openChat 也是这么收的）。
+    // 赶在看信箱前头办：看信箱要等网络，慢的时候好几秒，等它回来再到底，她可能已经在翻了，会被拽一下。
+    // 回话晚一步才放进对话也不要紧：这时候已经记成“跟着”，放进来就跟到底
+    const here = await chatOfTag(tag);
+    if (here && here === chatIdRef.current) {
+      setHistoryOpen(false);
+      setDrawerOpen(false);
+      follow.bottom(false);
+    }
     await checkMail();
-    let id = await chatOfTag(tag);
+    let id = here || (await chatOfTag(tag));
     if (!id) {
       // 目录里还没有那段对话（别的设备上聊的，还没同步到）：同步一遍再找
       try {
@@ -4885,8 +4895,6 @@ export default function App({ account = {} }) {
       id = await chatOfTag(tag);
     }
     if (id && id !== chatIdRef.current) await openChat(id);
-    // 那段对话本来就开着（比方她翻着旧消息的时候切走的）：点横幅就是来看这一条的，到底
-    else if (id) follow.bottom(false);
     checkMail();
   };
 

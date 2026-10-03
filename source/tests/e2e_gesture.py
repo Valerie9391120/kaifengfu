@@ -362,16 +362,43 @@ def scroll(browser):
     # 没有“滚动锚定”的浏览器（iPhone）不给放回来，原来每敲一个字聊天记录往下掉一截，四五行的时候还被当成她翻走了
     TA_H = "Math.round(document.querySelector('.kfs-composer textarea').getBoundingClientRect().height)"
     pa.get_by_placeholder("说话，我听着").click()
-    for n in range(1, 6):
-        pa.keyboard.type(f"草稿的第{n}行", delay=10); pa.keyboard.press("Shift+Enter")
+    worst = 0
+    for n in range(1, 6):                                  # 每一行敲完、换完行都看一眼：两行三行的时候也不许掉
+        pa.keyboard.type(f"草稿的第{n}行", delay=10); pa.wait_for_timeout(120)
+        worst = max(worst, pa.evaluate(GAP))
+        pa.keyboard.press("Shift+Enter"); pa.wait_for_timeout(120)
+        worst = max(worst, pa.evaluate(GAP))
     pa.keyboard.type("接着敲", delay=10); pa.wait_for_timeout(300)
     th = pa.evaluate(TA_H)
-    ok(th >= 110 and pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], f"草稿打到六行（输入框高 {th}）、一个字一个字敲：聊天记录一直贴着底，圆钮没出来")
+    ok(th >= 110 and worst <= 1 and pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"],
+       f"草稿从一行打到六行（输入框高 {th}），每一行都看：聊天记录一直贴着底（最远离底 {worst}），圆钮没出来")
+    # 往上挪 40 像素（还算跟着）再敲一个字：位置不许被带走
+    pa.evaluate(f"{LIST}.scrollTop -= 40"); pa.wait_for_timeout(200)
+    pos = pa.evaluate(TOP)
+    pa.keyboard.type("再", delay=10); pa.wait_for_timeout(300)
+    ok(pa.evaluate(GAP) == 40 and pa.evaluate(TOP) == pos, f"离底 40 的时候敲一个字：位置没被带走（离底 {pa.evaluate(GAP)}）")
+    pa.evaluate(f"{LIST}.scrollTop = {LIST}.scrollHeight"); pa.wait_for_timeout(200)
+    # 删掉两行：输入框矮下去一截，聊天记录还贴着底
+    for _ in range(12):
+        pa.keyboard.press("Backspace")
+    pa.wait_for_timeout(300)
+    th2 = pa.evaluate(TA_H)
+    ok(th2 < th and pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], f"退格删掉两行（输入框 {th} → {th2}）：聊天记录还贴着底")
     pa.keyboard.press("Enter")
     pa.get_by_text(re.compile("^收到：草稿的第1行")).last.wait_for(state="attached", timeout=20000)
     pa.get_by_text("第二条").last.wait_for(state="attached", timeout=10000)
     wait_js(pa, "!(" + TYPING + ")", 15000); pa.wait_for_timeout(900)
     ok(pa.evaluate(TA_H) < 50 and pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], "发出去：输入框矮回去，他的回话跟到底")
+
+    # 整页被藏起来一下（账户面板里“量一量屏幕底下”就是这么办的，那一下量到的全是零）：翻着旧消息的人，回来不许被带到底
+    drag(pa, f, 380, 700)
+    held = pa.evaluate(TOP)
+    pa.evaluate("document.documentElement.setAttribute('data-kfs-probe', '')"); pa.wait_for_timeout(300)
+    gone = pa.evaluate(f"{LIST}.clientHeight")
+    pa.evaluate("document.documentElement.removeAttribute('data-kfs-probe')"); pa.wait_for_timeout(300)
+    ok(gone == 0 and pa.evaluate(TOP) == held and pa.evaluate(GAP) > 200 and pa.evaluate(BTN)["shown"], f"翻着旧消息的时候整页被藏起来一下：回来还在原处（{held} → {pa.evaluate(TOP)}），圆钮还在")
+    b = pa.evaluate(BTN)
+    pa.touchscreen.tap(b["cx"], b["cy"]); pa.wait_for_timeout(700)
 
     # 输入框有焦点（键盘开着）的时候点圆钮、点顶栏：焦点不许被抢走，不然键盘就收了
     FOCUS = "document.activeElement === document.querySelector('.kfs-composer textarea')"
@@ -635,17 +662,19 @@ def notice(browser):
     drag(pa, f, 300, 700)                    # 发完往上翻旧消息
     held = pa.evaluate(TOP)
     was_away = pa.evaluate(BTN)["shown"] and pa.evaluate(GAP) > 300
+    pa.get_by_role("button", name="打开侧栏").tap(); pa.wait_for_timeout(700)      # 还把侧栏拉开了
+    was_away = was_away and pa.evaluate(REACHABLE)
     pa.evaluate("window.__away(true)")       # 切走了
     knocked = wait_mock(lambda: len(banners()) == b0 + 1, GRACE + 14)
     pa.wait_for_timeout(600)
     stayed = pa.evaluate(TOP)
-    ok(sent and was_away and knocked and stayed == held, f"翻着旧消息的时候切走，他回了、横幅到了：她不在的时候画面没被挪（{held} → {stayed}）")
+    ok(sent and was_away and knocked and stayed == held, f"翻着旧消息、开着侧栏的时候切走，他回了、横幅到了：她不在的时候画面没被挪（{held} → {stayed}）")
     nav = banners()[-1]["json"]["notification"]["navigate"]
     pa.evaluate("window.__away(false)")      # 点着横幅回来：系统把网址换成带记号的
     pa.evaluate("(mark) => { location.hash = mark; }", "#" + nav.split("#")[1])
     got = wait_js(pa, "(() => [...document.querySelectorAll('.items-end span')].some((e) => e.children.length === 0 && e.textContent === '收到：我先去忙了'))()", 15000)
     wait_js(pa, "location.hash === ''", 8000); pa.wait_for_timeout(1500)
-    ok(got and pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], f"点着横幅回来（那段对话本来就开着）：到底，那一条就在眼前（离底 {pa.evaluate(GAP)}）")
+    ok(got and pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"] and not pa.evaluate(REACHABLE), f"点着横幅回来（那段对话本来就开着、侧栏也开着）：侧栏收了，到底，那一条就在眼前（离底 {pa.evaluate(GAP)}）")
     f.close()
     A.close()
 
