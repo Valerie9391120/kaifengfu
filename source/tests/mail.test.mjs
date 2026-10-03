@@ -1040,11 +1040,15 @@ const drive = async (p, step = 500, max = 400000) => {
   const p3 = w3.relay.ask(ARGS);
   let res3 = null;
   p3.then((v) => { res3 = v; }, (e) => { res3 = { e }; });
-  await clock.tick(1000);
-  await clock.tick(1000);
+  await until(() => w3.sent.length === 1);
+  await breathe();
+  await clock.tick(200); // 让过那一百五十毫秒，头一眼：还没有
+  const firstLook = w3.looks.length;
+  await clock.tick(800); // 八百毫秒的时候那一格开出来了
+  await clock.tick(1000); // 一秒半以后再看的那一眼：有了
   await w3.done(w3.sent[0]);
   await clock.tick(2500);
-  ok(!!res3 && res3.via === "mailbox" && w3.sent.length === 1, "没送到？刚断的那一下信箱里还没有，过一秒半有了：守着它，不重发");
+  ok(firstLook === 1 && !!res3 && res3.via === "mailbox" && w3.sent.length === 1, "没送到？刚断的那一下信箱里还没有，过一秒半有了：守着它，不重发");
 
   // 别的设备已经把信取走、放进对话了
   const w4 = world();

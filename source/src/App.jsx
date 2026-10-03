@@ -4218,12 +4218,18 @@ export default function App({ account = {} }) {
       if (settle) settle();
     } catch (e) {
       if (e && e.code === "answered") {
-        // 别的设备已经把这一句的回话取走、放进对话了：把同步下来的那份换上来
+        // 别的设备已经把这一句的回话取走、放进对话了：把同步下来的那份换上来。
+        // 等的工夫里她在这台设备上又说的话（同步下来的那份里没有）接在后面，不能丢
         const fresh = safeParse(await store.get("kfs2:chat:" + id), null);
         if (Array.isArray(fresh) && chatIdRef.current === id) {
-          messagesRef.current = fresh;
-          setMessages(fresh);
-          loadImagesFor(fresh);
+          const got = new Set(fresh.map((m) => m.id));
+          const asked = new Set(msgs.map((m) => m.id));
+          const more = messagesRef.current.filter((m) => !got.has(m.id) && !asked.has(m.id));
+          const next = fresh.concat(more);
+          messagesRef.current = next;
+          setMessages(next);
+          loadImagesFor(next);
+          if (more.length) await saveChat(id, next);
         }
       } else if (e && e.code === "later") {
         // 切走的那一下没交成（见 requestReply）：照旧等她停手那两秒多。她不在的时候定时器不走，回来了才发

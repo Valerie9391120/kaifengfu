@@ -464,6 +464,10 @@ with sync_playwright() as p:
     woke = wait_js(pe, "localStorage.getItem('kfs-relay') === 'ok'", 8000)
     pe.unroute("**/functions/v1/push", first_fails)
     ok(woke and flaky["left"] == 0, "问新路通不通的时候头一下没连上、信箱却看得到：再敲一回就通了，记下（不因为这一下把新路停三分钟）")
+    # 系统说网回来了：也问一声
+    pe.evaluate("localStorage.removeItem('kfs-relay')")
+    pe.evaluate("window.dispatchEvent(new Event('online'))")
+    ok(wait_js(pe, "localStorage.getItem('kfs-relay') === 'ok'", 8000), "还不知道新路通不通的时候网回来了：也问一声，问到了记下")
 
     # ================= 新路不通：自己走回老路，聊天不断 =================
     for state, name, setup, undo in [

@@ -199,28 +199,53 @@ def typed(browser):
     A.close()
 
 
-# 这台设备记着“新路是通的”，小后端却不接了（退回了旧的那份）。发完就切走：切走的那一下交不成，不从藏着的页面走老路
+# 这台设备记着“新路是通的”，小后端却不接了（换回了旧的那份；或者函数里成了样板）。发完就切走：
+# 切走的那一下交不成，不从藏着的页面走老路
 def stale(browser):
     A = phone(browser, notify=False)
     pa = page_of(A, "stale")
     first_time(pa)
     chat(pa, "第一句")
-    mock("/__debug/push-setup?fn=old")
-    pa.reload(); kite(pa); time.sleep(1.0)
-    hint = pa.evaluate("localStorage.getItem('kfs-relay')")
-    c0, o0 = len(calls()), len(box()["ops"])
-    say(pa, "发完就走")
-    time.sleep(0.4)
-    pa.evaluate("window.__away(true)")
-    time.sleep(1.5)
-    early = len(calls()) - c0
-    tried = box()["ops"][o0:].count("reply")
-    pa.evaluate("window.__away(false)")
-    pa.get_by_text("收到：发完就走").last.wait_for(timeout=20000)
-    pa.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.2)
-    ok(hint == "ok" and tried == 1 and early == 0 and len(calls()) - c0 == 1 and calls()[-1]["via"] == "claude" and note_count(pa) == 0 and pa.evaluate("localStorage.getItem('kfs-relay')") is None,
-       "记着新路是通的、小后端却不接了：切走的那一下交不成，不从藏着的页面走老路（那一回会白问）；照旧等她停手那两秒多，走老路回上了，只问了一回")
+    for state, name in [("old", "换回了旧的那份"), ("template", "函数里成了样板")]:
+        mock("/__debug/push-setup")
+        pa.reload(); kite(pa); pa.wait_for_timeout(1200)       # 这时候小后端是好的：开机问一声，记上“通”
+        mock("/__debug/push-setup?fn=" + state)                 # 然后它不接了，这台设备还不知道
+        hint = pa.evaluate("localStorage.getItem('kfs-relay')")
+        c0, o0 = len(calls()), len(box()["ops"])
+        say(pa, "发完就走 " + state)
+        pa.wait_for_timeout(400)
+        pa.evaluate("window.__away(true)")
+        pa.wait_for_timeout(1500)
+        early = len(calls()) - c0
+        tried = box()["ops"][o0:].count("reply")
+        pa.evaluate("window.__away(false)")
+        pa.get_by_text("收到：发完就走 " + state).last.wait_for(timeout=20000)
+        pa.get_by_text("第二条").last.wait_for(timeout=10000); pa.wait_for_timeout(1200)
+        total = box()["ops"][o0:].count("reply")
+        ok(hint == "ok" and tried == 1 and early == 0 and total == 1 and len(calls()) - c0 == 1 and calls()[-1]["via"] == "claude" and note_count(pa) == 0 and pa.evaluate("localStorage.getItem('kfs-relay')") is None,
+           f"记着新路是通的、小后端却不接了（{name}）：切走的那一下交不成，不从藏着的页面走老路（那一回会白问）；照旧等她停手那两秒多，走老路回上了；整包只往新路上寄了 {total} 回，只问了一回")
     mock("/__debug/push-setup")
+    A.close()
+
+
+# 这台设备还不知道新路通不通（没问过、没问成）：切走的那一下不抢着交，也不赶在这会儿去问
+def unsure(browser):
+    A = phone(browser, notify=False)
+    pa = page_of(A, "unsure")
+    first_time(pa)
+    chat(pa, "第一句")
+    pa.evaluate("localStorage.removeItem('kfs-relay')")
+    c0, o0 = len(calls()), len(box()["ops"])
+    say(pa, "还不知道的时候")
+    pa.wait_for_timeout(400)
+    pa.evaluate("window.__away(true)")
+    pa.wait_for_timeout(1000)
+    early = box()["ops"][o0:]
+    pa.evaluate("window.__away(false)")
+    pa.get_by_text("收到：还不知道的时候").last.wait_for(timeout=20000)
+    pa.get_by_text("第二条").last.wait_for(timeout=10000); pa.wait_for_timeout(1200)
+    ok(early == [] and len(calls()) - c0 == 1 and note_count(pa) == 0,
+       f"还不知道新路通不通的时候发完就切走：切走的那一下不抢着交、也不赶在这会儿去敲门问（敲了 {early}），照旧等她停手那两秒多；回上了，只问了一回")
     A.close()
 
 
@@ -380,6 +405,38 @@ def resend(browser):
     A.close(); B.close()
 
 
+# 信箱里的信是别的设备上那句话的回话，这台设备还没同步到那一句：信先留着，等同步下来再放
+def later(browser):
+    A = phone(browser, notify=False)
+    B = phone(browser, notify=False)
+    pa = page_of(A, "laterA")
+    first_time(pa)
+    chat(pa, "第一句"); pa.wait_for_timeout(1500)
+    pb = page_of(B, "laterB")
+    gate = {"down": True}
+    pb.route("**/rest/v1/kv*", lambda route: route.abort("internetdisconnected") if not gate["down"] and route.request.method == "GET" else route.continue_())
+    second_device(pb)
+    pb.get_by_text("收到：第一句").last.wait_for(timeout=20000)
+    gate["down"] = False                                                          # 另一台这会儿同步不下来
+    c0 = len(calls())
+    mock("/__debug/claude-hold?ms=2500")
+    say(pa, "手机上新说的")
+    ok(wait_mock(working, 8), "信先留着·准备：手机发一句、手机上的开封府被收掉")
+    pa.wait_for_timeout(1500)                                                     # 手机把这一句传上云端
+    pa.close()
+    ok(wait_mock(done, 15), "信先留着·准备：回话进了信箱")
+    pb.evaluate("window.__away(true)"); pb.evaluate("window.__away(false)")       # 另一台切回眼前：看信箱（同步不下来）
+    pb.wait_for_timeout(3500)
+    kept = len(box()["rows"]) == 1 and count_text(pb, "手机上新说的") == 0 and count_text(pb, "收到：手机上新说的") == 0 and note_count(pb) == 0
+    gate["down"] = True                                                           # 同步通了：先到的是她那一句，信这才放得进
+    pb.evaluate("window.__away(true)"); pb.evaluate("window.__away(false)")
+    got = wait_js(pb, shown("收到：手机上新说的"), 15000)
+    pb.wait_for_timeout(1500)
+    ok(kept and got and count_text(pb, "手机上新说的") == 1 and count_text(pb, "收到：手机上新说的") == 1 and wait_mock(lambda: box()["rows"] == []) and len(calls()) - c0 == 1,
+       "这台设备还没同步到那一句：信先留在信箱里（不乱放、不报错）；那一句同步下来，信就放进去了，只问了一回")
+    A.close(); B.close()
+
+
 # 重新回答没成（Anthropic 那头报错）、开封府又被收掉：回来说一声“重新回答没成功”，旧回答原样在
 def refail(browser):
     A = phone(browser)
@@ -406,7 +463,7 @@ def refail(browser):
     A.close()
 
 
-SCENES = [("cold", cold), ("avatar", avatar), ("back", back), ("regen", regen), ("typed", typed), ("stale", stale), ("blip", blip), ("edit", edit), ("pair", pair), ("resend", resend), ("refail", refail)]
+SCENES = [("cold", cold), ("avatar", avatar), ("back", back), ("regen", regen), ("typed", typed), ("stale", stale), ("unsure", unsure), ("blip", blip), ("edit", edit), ("pair", pair), ("resend", resend), ("later", later), ("refail", refail)]
 want = [a for a in sys.argv[1:] if not a.startswith("-")]
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])
