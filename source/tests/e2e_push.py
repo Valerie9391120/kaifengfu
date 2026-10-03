@@ -205,7 +205,8 @@ with sync_playwright() as p:
     A.add_init_script(STUB)
     pa.reload(); kite(pa)
     open_panel(pa)
-    ok(pa.evaluate(STATE) == "off" and pa.get_by_role("button", name="开启通知").is_visible() and "眼下只有测试通知" in pa.locator(".kfs-push").inner_text(), "三样都好了、还没开：一个“开启通知”，说清眼下只有测试通知")
+    ok(pa.evaluate(STATE) == "off" and pa.get_by_role("button", name="开启通知").is_visible() and "他回话的时候你不在开封府，这台设备会收到横幅" in pa.locator(".kfs-push").inner_text() and not pa.get_by_role("button", name="再看一次").is_visible(),
+       "三样都好了、还没开：一个“开启通知”，说清打开以后他回话会敲这台设备")
     reg = pa.evaluate("navigator.serviceWorker.getRegistration().then((r) => r ? { scope: r.scope, url: (r.active || r.waiting || r.installing).scriptURL } : null)")
     ok(reg == {"scope": BASE, "url": BASE + "sw.js"}, f"后端好了以后打开面板：服务工作线程先注册好（{reg and reg['url']}），等她点")
     pa.locator(".kfs-push").scroll_into_view_if_needed(); time.sleep(0.3)

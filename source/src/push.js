@@ -5,8 +5,8 @@
 // 这里管的是这台设备这一头：注册服务工作线程（sw.js）、问她要通知的许可、向推送服务订一个“门牌号”、
 // 把门牌号记进登记簿（push_subs 表），小后端照着登记簿发。
 // =====================================================
-import { callPush, pushLedger } from "./cloud.js";
-import { PUSH_FLAG, PUSH_KEY, b64uToBytes, sameKey, pushSupport, isStandalone, subscriptionKey, subscriptionRow, entrancePage, pushHostOf, readNoticeMark, noticeMarkOfUrl } from "./notify.js";
+import { callPush, pushLedger, mailbox } from "./cloud.js";
+import { PUSH_FLAG, PUSH_KEY, PUSH_AT, b64uToBytes, sameKey, pushSupport, isStandalone, subscriptionKey, subscriptionRow, entrancePage, pushHostOf, readNoticeMark, noticeMarkOfUrl } from "./notify.js";
 
 const local = {
   get(key) {
@@ -102,6 +102,7 @@ async function subscribeAndRecord(reg, sub, serverKey) {
   if (!row) throw coded("badsub", "浏览器给的订阅不完整");
   await pushLedger.upsert(row);
   if (serverKey) local.set(PUSH_KEY, serverKey);
+  local.set(PUSH_AT, row.endpoint);
   return sub;
 }
 
@@ -160,9 +161,11 @@ export async function checkPush() {
     support,
     standalone: isStandalone(window),
     permission: support.ok ? Notification.permission : "",
-    // 她在 Supabase 要做的三样，各自好了没有：ok 好了；别的是没好的缘故
-    setup: { table: "", fn: "", keys: "", say: "" },
+    // 她在 Supabase 要做的三样，各自好了没有：ok 好了；别的是没好的缘故。
+    // 后两样是“他的回话也敲她”要的：relay 是 push 函数会不会替她等回话（ok 会；old 还是旧的那份代码），mail 是信箱那张表
+    setup: { table: "", fn: "", keys: "", say: "", relay: "", mail: "" },
     ready: false, // 三样都好了
+    replyReady: false, // 他的回话也能敲她了（push 函数是新的、信箱建好了）
     away: false, // 开过通知的设备，这会儿连不上后端
     serverKey: "",
     on: false,
@@ -185,13 +188,20 @@ export async function checkPush() {
       await new Promise((done) => setTimeout(done, 900));
       k = await callPush({ op: "key" });
     }
-    state.setup.fn = "ok";
-    if (k.configured) {
-      state.setup.keys = "ok";
-      state.serverKey = k.publicKey;
+    if (!k || typeof k.configured !== "boolean") {
+      // 有 push 这个函数，答的却不是开封府那份代码该答的话（多半是建函数的时候里面还是 Supabase 给的样板）
+      state.setup.fn = "wrong";
+      state.setup.say = String((k && (k.message || k.msg)) || "").slice(0, 120);
     } else {
-      state.setup.keys = (k.missing || []).length >= 3 ? "missing" : "bad";
-      state.setup.say = k.message || "";
+      state.setup.fn = "ok";
+      state.setup.relay = Array.isArray(k.can) && k.can.includes("reply") ? "ok" : "old";
+      if (k.configured) {
+        state.setup.keys = "ok";
+        state.serverKey = k.publicKey;
+      } else {
+        state.setup.keys = (k.missing || []).length >= 3 ? "missing" : "bad";
+        state.setup.say = k.message || "";
+      }
     }
   } catch (e) {
     state.setup.fn = e.code === "auth" ? "auth" : e.code === "refused" ? "refused" : "unreachable";
@@ -212,6 +222,13 @@ export async function checkPush() {
   };
   let rows = await readLedger();
   state.ready = state.setup.fn === "ok" && state.setup.keys === "ok" && state.setup.table === "ok";
+  try {
+    await mailbox.probe();
+    state.setup.mail = "ok";
+  } catch (e) {
+    state.setup.mail = e.code === "notable" ? "missing" : "error";
+  }
+  state.replyReady = state.ready && state.setup.relay === "ok" && state.setup.mail === "ok";
   // 这台设备开过通知（那时候三样都是好的），现在却连不上：是这会儿的网络，不是她在 Supabase 少做了什么
   state.away = state.flag && (state.setup.fn === "unreachable" || state.setup.table === "error");
   if (!state.ready) return state;
@@ -270,6 +287,7 @@ export function disablePush() {
   // “开过”的记号马上清：排在前头还没做完的重新登记、换门牌号，看到记号没了就不会又订上
   local.set(PUSH_FLAG, "");
   local.set(PUSH_KEY, "");
+  local.set(PUSH_AT, "");
   return serial(async () => {
     if (!pushSupport(window).ok) return;
     let sub = null;
@@ -303,6 +321,55 @@ export async function lastOutcome() {
   const row = (await pushLedger.list()).find((r) => r.endpoint === sub.endpoint);
   if (!row) return { gone: true };
   return row.last_at ? { at: Date.parse(row.last_at), status: row.last_status, note: row.last_note || "", host: pushHostOf(sub.endpoint) } : { at: 0 };
+}
+
+// ---------- 他的回话也敲她（第二步，见 mail.js） ----------
+
+// 他的回话到了，敲哪几台设备：只有这一台（它开着通知的话）。
+// 不照登记簿全敲：登记簿是明文的，偷到登录密码（没有暗号）的人能往里添一行自己的设备；
+// 要是照登记簿全敲，横幅上他说的话就落到别人手里了。发话的这台设备自己报门牌号，小后端只敲报上来的
+export function knockList() {
+  const at = local.get(PUSH_FLAG) === "on" ? local.get(PUSH_AT) : "";
+  return at ? [at] : [];
+}
+
+// 轻轻问一声：替她等回话的那条新路通不通（不带对话，两下很小的敲门）。
+// true 通；false 不通（小后端还是旧的、里面是样板、没建，或者信箱那张表没建）；null 没问成（没网、没登录）
+export async function probeReply() {
+  let fn = await askPushCanReply();
+  let box = null;
+  try {
+    await mailbox.probe();
+    box = true;
+  } catch (e) {
+    box = e.code === "notable" ? false : null;
+  }
+  if (fn === true && box === true) return true;
+  if (fn === false || box === false) return false;
+  if (fn === "away" && box === true) {
+    // 信箱看得到、小后端却没连上。可能只是头一下网络还没醒（刚解锁、刚切回来）：再敲一回
+    fn = await askPushCanReply();
+    if (fn === true) return true;
+    // 还是连不上（或者这回它自己说接不了）：不是没网，是那条路不通（多半是根本没有 push 这个函数）
+    if (fn === "away" || fn === false) return false;
+  }
+  return null;
+}
+
+// 问一回小后端接不接得了回话。true 接得了；false 接不了（它自己答的：还是旧的那份、里面是样板、不认这个人）；
+// "away" 没连上（没网，或者根本没有这个函数）；null 没问成
+async function askPushCanReply() {
+  try {
+    const k = await callPush({ op: "key" });
+    return !!k && Array.isArray(k.can) && k.can.includes("reply");
+  } catch (e) {
+    if (e.code === "unreachable") return "away";
+    if (e.code !== "refused") return null;
+    // 半路上的网关一时出了岔子（5xx）、嫌敲得太勤（429）、登录凭证没带对（401）：这些说明不了小后端接不接得了回话。
+    // 算没问成，下回再问；为这一下把新路关上三分钟不值当
+    if (e.status === 401 || e.status === 429 || (e.status >= 500 && !e.own)) return null;
+    return false;
+  }
 }
 
 // ---------- 从通知回来 ----------

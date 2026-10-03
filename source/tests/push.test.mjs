@@ -135,16 +135,34 @@ const SUBJECT = "mailto:qing@example.com";
   ok(yes.every((x) => fn.pushHost(x) === new URL(x).hostname), "地址：苹果、谷歌、火狐、微软的推送服务认得");
   ok(no.every((x) => fn.pushHost(x) === null), "地址：别的网址、内网地址、冒名的域名、带账号密码的、换了端口的，一律不发");
 
+  // 点了通知回到哪：只认开封府自己住的地方。住在哪由小后端说了算（写死的那个地址；密钥柜里写了 ALLOWED_ORIGIN 就听它的）
   const O = "https://valerie.example";
-  ok(fn.safePage(O + "/kaifengfu/", O) === O + "/kaifengfu/" && fn.safePage(O + "/kaifengfu/dingxiang/", O) === O + "/kaifengfu/dingxiang/", "回到哪：开封府自己的两个入口都行");
-  ok(fn.safePage(O + "/kaifengfu/?a=1#n=x", O) === O + "/kaifengfu/", "回到哪：问号和井号后面的不要");
-  ok(fn.safePage("https://evil.example/kaifengfu/", O) === null && fn.safePage("javascript:alert(1)", O) === null && fn.safePage("", O) === null && fn.safePage("http://valerie.example/", "http://valerie.example") === null,
-    "回到哪：别人的网址、不是 https 的、空的，都不行");
-  ok(fn.safePage("http://127.0.0.1:8080/", "http://127.0.0.1:8080") === "http://127.0.0.1:8080/" && fn.safePage(O + "/" + "a".repeat(300), O) === null && fn.safePage("https://u:p@valerie.example/", O) === null,
-    "回到哪：本机测试的网址放行；太长的、带账号密码的不行");
+  const HOME = "https://valerie9391120.github.io";
+  pushEnv.SUPABASE_URL = "https://abc.supabase.co";
+  ok(fn.safePage(HOME + "/kaifengfu/", HOME) === HOME + "/kaifengfu/" && fn.safePage(HOME + "/kaifengfu/dingxiang/", null) === HOME + "/kaifengfu/dingxiang/", "回到哪：开封府自己的两个入口都行");
+  ok(fn.safePage(HOME + "/kaifengfu/?a=1#n=x", HOME) === HOME + "/kaifengfu/", "回到哪：问号和井号后面的不要");
+  ok(fn.safePage("https://evil.example/kaifengfu/", "https://evil.example") === null && fn.safePage("https://evil.example/kaifengfu/", null) === null && fn.safePage(O + "/kaifengfu/", O) === null && fn.safePage("https://valerie9391120.github.io.evil.example/kaifengfu/", HOME) === null,
+    "回到哪：别处的网址不行，哪怕敲门的人自己报的来处和它对得上（来处不是浏览器发的话，想写什么写什么）");
+  ok(fn.safePage("javascript:alert(1)", HOME) === null && fn.safePage("", HOME) === null && fn.safePage("http://valerie9391120.github.io/kaifengfu/", HOME) === null && fn.safePage(HOME + "/" + "a".repeat(300), HOME) === null && fn.safePage("https://u:p@valerie9391120.github.io/", HOME) === null,
+    "回到哪：不是 https 的、空的、太长的、带账号密码的，都不行");
+  ok(fn.safePage("http://127.0.0.1:8080/", "http://127.0.0.1:8080") === null && fn.safePage("http://localhost:8080/", null) === null, "回到哪：库房不在本机（是真的那一套），本机的网址不认");
+  pushEnv.SUPABASE_URL = "http://127.0.0.1:8787";
+  ok(fn.safePage("http://127.0.0.1:8080/", "http://127.0.0.1:8080") === "http://127.0.0.1:8080/" && fn.safePage("http://localhost:8080/x", null) === "http://localhost:8080/x" && fn.safePage("http://127.0.0.1:8080/", "http://127.0.0.1:9999") === null && fn.safePage(O + "/kaifengfu/", O) === null,
+    "回到哪：在本机上试的时候（库房也在本机）才认本机的网址，还得和敲门的网页同一个来处；别处的照样不认");
+  pushEnv.SUPABASE_URL = "https://abc.supabase.co";
   pushEnv.ALLOWED_ORIGIN = "https://only.example";
-  ok(fn.safePage(O + "/kaifengfu/", null) === null && fn.safePage("https://only.example/kaifengfu/", null) === "https://only.example/kaifengfu/", "回到哪：密钥柜里写了 ALLOWED_ORIGIN，就只认它");
+  ok(fn.safePage(HOME + "/kaifengfu/", null) === null && fn.safePage("https://only.example/kaifengfu/", null) === "https://only.example/kaifengfu/" && fn.safePage("https://only.example/kaifengfu/", "https://whatever.example") === "https://only.example/kaifengfu/",
+    "回到哪：密钥柜里写了 ALLOWED_ORIGIN（网页搬了家），就只认它");
+  pushEnv.ALLOWED_ORIGIN = "https://only.example/kaifengfu/";
+  const withPath = fn.safePage("https://only.example/kaifengfu/", null);
+  pushEnv.ALLOWED_ORIGIN = "*";
+  const star = [fn.safePage(HOME + "/kaifengfu/", null), fn.safePage("https://only.example/kaifengfu/", null)];
+  pushEnv.ALLOWED_ORIGIN = "不是网址";
+  const junk = [fn.safePage(HOME + "/kaifengfu/", null), fn.safePage("https://only.example/kaifengfu/", null)];
+  ok(withPath === "https://only.example/kaifengfu/" && star[0] === HOME + "/kaifengfu/" && star[1] === null && junk[0] === HOME + "/kaifengfu/" && junk[1] === null,
+    "回到哪：ALLOWED_ORIGIN 后面多写了一截路径也认；写的是 *、写得不像网址，就当没写（还是只认原来那个地址）");
   delete pushEnv.ALLOWED_ORIGIN;
+  delete pushEnv.SUPABASE_URL;
   ok(fn.tidy("Bad\nJwt\tToken 中文 " + "x".repeat(300)).length === 120 && fn.tidy(" BadJwtToken\r\n") === "BadJwtToken", "报错原因：只留看得见的英文数字，最长 120 个字");
 }
 
@@ -158,7 +176,7 @@ supa.tokens.set("token-qing", QING);
 supa.tokens.set("token-stranger", STRANGER);
 const ORIGIN = "https://valerie.example";
 const PAGE = ORIGIN + "/kaifengfu/dingxiang/";
-Object.assign(pushEnv, { SUPABASE_URL: FAKE_SUPABASE, SUPABASE_ANON_KEY: "sb_publishable_test", ALLOWED_EMAIL: "Qing@Example.com " });
+Object.assign(pushEnv, { SUPABASE_URL: FAKE_SUPABASE, SUPABASE_ANON_KEY: "sb_publishable_test", ALLOWED_EMAIL: "Qing@Example.com ", ALLOWED_ORIGIN: ORIGIN }); // 测试里的开封府住在 valerie.example
 
 const replies = []; // 函数回过的每一句话，最后查里面有没有私钥
 async function call(body, { token = "token-qing", method = "POST", origin = ORIGIN, raw } = {}) {
@@ -181,8 +199,22 @@ const rowOf = (dev) => supa.table.all().find((r) => r.endpoint === dev.endpoint)
 {
   // ---- 门口 ----
   const pre = await call(null, { method: "OPTIONS", token: "" });
-  ok(pre.status === 200 && pre.headers.get("access-control-allow-origin") === "*" && /authorization/.test(pre.headers.get("access-control-allow-headers")) && /apikey/.test(pre.headers.get("access-control-allow-headers")),
-    "门口：浏览器先来打招呼（OPTIONS），放行，允许带登录凭证");
+  delete pushEnv.ALLOWED_ORIGIN;
+  const preAny = await call(null, { method: "OPTIONS", token: "" });
+  pushEnv.ALLOWED_ORIGIN = ORIGIN;
+  ok(pre.status === 200 && pre.headers.get("access-control-allow-origin") === ORIGIN && preAny.headers.get("access-control-allow-origin") === "*" && /authorization/.test(pre.headers.get("access-control-allow-headers")) && /apikey/.test(pre.headers.get("access-control-allow-headers")),
+    "门口：浏览器先来打招呼（OPTIONS），放行，允许带登录凭证；密钥柜里写了 ALLOWED_ORIGIN 就只许那一处的网页，没写就都许");
+  // ALLOWED_ORIGIN 贴进来的时候多带了斜杠、带了路径：回给浏览器的只到域名为止。
+  // 原样回的话浏览器不认（它拿自己的来处一个字一个字地比），整个开封府就连不上了；点通知回哪儿那头（safePage）本来就是这么认的，两头得一样
+  const seenAs = {};
+  for (const [what, value] of [["带斜杠", ORIGIN + "/"], ["带路径", ORIGIN + "/kaifengfu/"], ["大写", "HTTPS://VALERIE.EXAMPLE"], ["星号", "*"], ["不像网址", "不是网址"], ["带引号", `"${ORIGIN}"`]]) {
+    pushEnv.ALLOWED_ORIGIN = value;
+    seenAs[what] = (await call(null, { method: "OPTIONS", token: "" })).headers.get("access-control-allow-origin");
+    if (what === "带路径") seenAs.回话上的 = (await call({ op: "key" })).headers.get("access-control-allow-origin");
+  }
+  pushEnv.ALLOWED_ORIGIN = ORIGIN;
+  ok(seenAs.带斜杠 === ORIGIN && seenAs.带路径 === ORIGIN && seenAs.回话上的 === ORIGIN && seenAs.大写 === ORIGIN && seenAs.带引号 === ORIGIN && seenAs.星号 === "*" && seenAs.不像网址 === "https://valerie9391120.github.io",
+    `门口：ALLOWED_ORIGIN 多带了斜杠、路径、引号，回给浏览器的都只到域名为止；写的是 * 就都许；写得不像网址，只许开封府原来的地址（${JSON.stringify(seenAs)}）`);
   ok((await call(null, { method: "GET" })).status === 405, "门口：只收 POST");
   const anon = await call({ op: "key" }, { token: "" });
   const fake = await call({ op: "key" }, { token: "made-up" });
@@ -202,8 +234,9 @@ const rowOf = (dev) => supa.table.all().find((r) => r.endpoint === dev.endpoint)
   // 整段粘贴带进来的引号、空白、换行，都不碍事；换了密钥柜里的值不用重新部署
   Object.assign(pushEnv, { VAPID_PUBLIC_KEY: ` "${keys.publicKey}"\n`, VAPID_PRIVATE_KEY: `'${keys.privateKey}' `, VAPID_SUBJECT: `\t${SUBJECT}\n` });
   const ready = await call({ op: "key" });
-  ok(ready.status === 200 && ready.data.configured === true && ready.data.publicKey === keys.publicKey && Object.keys(ready.data).sort().join() === "configured,publicKey",
-    "问钥匙：贴进密钥柜就认（两头带着引号、空白、换行也不碍事），只把公钥交出来");
+  ok(ready.status === 200 && ready.data.configured === true && ready.data.publicKey === keys.publicKey && Object.keys(ready.data).sort().join() === "can,configured,publicKey" && !JSON.stringify(ready.data).includes(keys.privateKey),
+    "问钥匙：贴进密钥柜就认（两头带着引号、空白、换行也不碍事），只把公钥交出来，私钥一个字不带");
+  ok(ready.data.can.join() === "reply" && empty.data.can.join() === "reply", "问钥匙：顺带说这份代码会替她等回话（网页靠这个认新旧）");
   pushEnv.VAPID_PRIVATE_KEY = other.privateKey;
   const broken = await call({ op: "key" });
   ok(broken.data.configured === false && broken.data.message.includes("不是一对"), "问钥匙：私钥换成了另一把，马上说不是一对");
@@ -282,6 +315,18 @@ const rowOf = (dev) => supa.table.all().find((r) => r.endpoint === dev.endpoint)
   register(farPage, QING, "https://evil.example/kaifengfu/");
   const rPage = await call({ op: "test", endpoint: farPage.endpoint });
   ok(rPage.data.results[0].reason === "BadPage" && farPage.hits === 0 && rowOf(farPage).last_note === "BadPage", "登记的回程网址不是开封府自己的：不发");
+  // 偷到登录密码的人：把登记簿里的回程网址改成自己的站，敲门的时候来处也报成那个站（来处不是浏览器发的话随便写）。照样不发
+  const rForged = await call({ op: "test", endpoint: farPage.endpoint }, { origin: "https://evil.example" });
+  delete pushEnv.ALLOWED_ORIGIN; // 密钥柜里没写 ALLOWED_ORIGIN（她的就是这样）：只认写死的那个地址
+  const rForged2 = await call({ op: "test", endpoint: farPage.endpoint }, { origin: "https://evil.example" });
+  const home = push.addDevice();
+  register(home, QING, "https://valerie9391120.github.io/kaifengfu/dingxiang/");
+  const rHome = await call({ op: "test", endpoint: home.endpoint }, { origin: "https://evil.example" });
+  pushEnv.ALLOWED_ORIGIN = ORIGIN;
+  ok(rForged.data.results[0].reason === "BadPage" && rForged2.data.results[0].reason === "BadPage" && farPage.hits === 0,
+    "回程网址被人改成别处、来处也冒成那个站：不发（点了通知只会回开封府自己的地址，带不到假的开封府去）");
+  ok(rHome.data.results[0].ok && home.hits === 1 && push.delivered[push.delivered.length - 1].json.notification.navigate.startsWith("https://valerie9391120.github.io/kaifengfu/dingxiang/#n=test-"),
+    "密钥柜里没写 ALLOWED_ORIGIN：登记的是开封府现在住的那个地址就发，不管敲门的人报的来处是什么");
   const stale = push.addDevice();
   stale.serverKey = other.publicKey; // 这台设备是拿旧钥匙订的
   register(stale);
