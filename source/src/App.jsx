@@ -1684,7 +1684,17 @@ function Tile({ icon, label, sub, onClick }) {
   );
 }
 
-// 长按：手指按住不动 0.45 秒；电脑上右键也算。长按以后松手的那一下不算点击
+// 这一回手指落下以来，屏幕上有没有同时出现过两根手指。长按只认一根：两根手指是在捏，不是在按。
+// 整页不许捏以后，她照老习惯在气泡、照片上捏一下，不该把长按的菜单捏出来。
+// 挂在整页上、抢在前头听：第二根手指落在别的东西上，被按着的那个气泡自己是听不到的
+let twoFingers = false;
+if (typeof document !== "undefined") {
+  // 每回有手指落下的时候现数。只在落下的时候数就够了：屏幕上只剩一根、又落下一根，还是两根；
+  // 全抬起来以后再落下的头一根，数出来是一根，就是新的一回（不用另外去听“抬起”）
+  document.addEventListener("touchstart", (e) => { twoFingers = e.touches.length > 1; }, { capture: true, passive: true });
+}
+
+// 长按：一根手指按住不动 0.45 秒；电脑上右键也算。长按以后松手的那一下不算点击
 function useLongPress(onLong) {
   const press = useRef(null);
   const fired = useRef(false);
@@ -1702,6 +1712,7 @@ function useLongPress(onLong) {
         y: t.clientY,
         timer: setTimeout(() => {
           press.current = null;
+          if (twoFingers) return;
           fired.current = true;
           onLong(el.getBoundingClientRect());
         }, 450),
@@ -1785,6 +1796,7 @@ function PhotoImg({ data, onOpen }) {
     <img
       src={data}
       alt=""
+      className="kfs-photo"
       draggable={false}
       onClick={() => onOpen && onOpen(data)}
       style={{
@@ -2065,6 +2077,8 @@ function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, onOpenPhoto, o
       y: t.clientY,
       timer: setTimeout(() => {
         press.current = null;
+        // 长按只认一根手指（见 useLongPress 上面那段）
+        if (twoFingers) return;
         fired.current = true;
         if (onLongPress) onLongPress(row, el.getBoundingClientRect());
       }, 450),
@@ -5314,14 +5328,27 @@ export default function App({ account = {} }) {
   };
 
   // ---- 侧滑手势 ----
+  // 只认一根手指。落下了第二根，这一回就不算划侧栏了（拖到一半的弹回去），等手指全抬起来再从头认：
+  // 整页不许捏以后，两根手指往里一捏，头一根正好是往右走的，原来会被当成右划、把侧栏带出来
   const onTouchStart = (e) => {
     if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView) return;
+    if (e.touches.length > 1) {
+      touch.current = null;
+      setDragX(null);
+      return;
+    }
     const t = e.touches[0];
     touch.current = { x: t.clientX, y: t.clientY, dir: null, base: drawerOpen ? drawerW : 0, dx: 0 };
   };
   const onTouchMove = (e) => {
     const s = touch.current;
     if (!s) return;
+    // 手指还按着的工夫里冒出了菜单、面板（长按气泡就是）：底下的侧栏不跟着这根手指走，这一回也不算了
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView) {
+      touch.current = null;
+      setDragX(null);
+      return;
+    }
     const t = e.touches[0];
     const dx = t.clientX - s.x;
     const dy = t.clientY - s.y;
@@ -5692,7 +5719,7 @@ export default function App({ account = {} }) {
         <div
           ref={scrollRef}
           onClick={() => memePanel && setMemePanel(false)}
-          className="relative z-10 flex-1 overflow-y-auto kfs-scroll"
+          className="kfs-chat-scroll relative z-10 flex-1 overflow-y-auto kfs-scroll"
           style={{ padding: "8px 14px 12px" }}
         >
           {messages.length === 0 && !loading && (
@@ -6155,10 +6182,11 @@ export default function App({ account = {} }) {
         </Sheet>
       )}
 
+      {/* 点开的照片：点一下关掉。整页不许捏以后这里也放大不了：卿卿说不用（点开的只有她自己发的照片，原图在她相册里） */}
       {viewer && (
         <div
           onClick={() => setViewer(null)}
-          className="absolute inset-0 z-50 flex items-center justify-center kfs-in"
+          className="kfs-viewer absolute inset-0 z-50 flex items-center justify-center kfs-in"
           style={{ background: "rgba(var(--k-dim),0.74)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
         >
           <img src={viewer} alt="" style={{ maxWidth: "92%", maxHeight: "86%", borderRadius: 18, objectFit: "contain", boxShadow: "0 20px 60px rgba(0,0,0,0.35)" }} />

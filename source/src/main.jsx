@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import Gate from "./Gate.jsx";
 import { initGap } from "./gap.js";
 import { initKeyboardFit } from "./keyboard.js";
+import { initNoZoom } from "./nozoom.js";
 import { initTheme } from "./theme.js";
 
 // 主题：这台手机上选过就用选的，没选过就看是从哪个入口进来的（见 theme.js）
@@ -11,6 +12,8 @@ initTheme();
 initGap();
 // 键盘弹出来时，输入框整块贴在键盘上面（见 keyboard.js）
 initKeyboardFit();
+// 整页不许捏（见 nozoom.js）
+initNoZoom();
 
 // 够不着的时候（data-kfs-gap="bottom"），页面最底下淡进系统画的那条的颜色（就是网页底色 --k-base）
 
