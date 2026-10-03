@@ -352,8 +352,15 @@ export async function probeReply() {
   }
   if (fn === true && box === true) return true;
   if (fn === false || box === false) return false;
-  // 信箱看得到、小后端却连不上：不是没网，是那条路不通（多半是根本没有 push 这个函数）
-  if (fn === null && box === true) return false;
+  if (fn === null && box === true) {
+    // 信箱看得到、小后端却没连上。可能只是头一下网络还没醒（刚解锁、刚切回来）：再敲一回
+    try {
+      const k = await callPush({ op: "key" });
+      if (!!k && Array.isArray(k.can) && k.can.includes("reply")) return true;
+    } catch (e) {}
+    // 还是不行：不是没网，是那条路不通（多半是根本没有 push 这个函数）
+    return false;
+  }
   return null;
 }
 

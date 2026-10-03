@@ -1079,7 +1079,7 @@ const drive = async (p, step = 500, max = 400000) => {
   const t0 = Date.now();
   const out = await drive(w.relay.ask(ARGS), 100);
   const job = w.sent[0].job;
-  ok(out.e && !out.e.code && out.e.message.includes("连不上开封府的后端") && w.jobs().join() === job && Date.now() - t0 < 1000 && w.getFails === 98, "话没连上、信箱也没看成（真没网）：看一眼就照实说连不上，不让她对着“正在输入”干等；这一回还记着（它多半还在办）");
+  ok(out.e && out.e.code === "offline" && out.e.message.includes("连不上开封府的后端") && w.jobs().join() === job && Date.now() - t0 < 1000 && w.getFails === 98, "话没连上、信箱也没看成（真没网）：看一眼就照实说连不上，不让她对着“正在输入”干等；这一回还记着（它多半还在办）");
   // 她点“重发”：网络好了，那一回的回话已经在信箱里：取它，不花第二回钱
   w.getFails = 0;
   await w.done(w.sent[0]);
@@ -1539,7 +1539,7 @@ const drive = async (p, step = 500, max = 400000) => {
   wb.comeBack();
   const tb = Date.now();
   for (let i = 0; i < 100 && !resB; i++) await clock.tick(500);
-  ok(resB && resB.e && resB.e.message.includes("连不上") && Date.now() - tb >= 30000 && Date.now() - tb < 40000 && wb.aborted === 1 && wb.jobs().length === 1, `直接等着、回来以后信箱一直看不成：半分钟照实说连不上（${Math.round((Date.now() - tb) / 1000)} 秒），悬着的那头掐掉，这一回还记着`);
+  ok(resB && resB.e && resB.e.code === "offline" && resB.e.message.includes("连不上") && Date.now() - tb >= 30000 && Date.now() - tb < 40000 && wb.aborted === 1 && wb.jobs().length === 1, `直接等着、回来以后信箱一直看不成：半分钟照实说连不上（${Math.round((Date.now() - tb) / 1000)} 秒），悬着的那头掐掉，这一回还记着`);
   // 看不成的那半分钟不把挂起的工夫算进去：挂起以前有一眼没看成，挂了十分钟回来，头一眼又没看成，不能马上说连不上
   const wc = world();
   wc.hint = true;
@@ -1587,6 +1587,45 @@ const drive = async (p, step = 500, max = 400000) => {
   const kept = wd.rows.has(jobD);
   await wd.relay.discard(jobD);
   ok(kept && !wd.rows.has(jobD), "收掉一格：说了“只收还在等的”，放好了的就留着；没说就照收");
+  // 直接等着的时候看出那一格早断了：也一样，只收还写着“在等”的
+  const we = world();
+  we.hint = true;
+  we.replies.push((p) => { we.working(p); return new Promise(() => {}); });
+  let flippedE = false;
+  we.onRemove = async () => { if (!flippedE) { flippedE = true; await we.done(we.sent[0]); } };
+  const outE = await drive(we.relay.ask(ARGS), 1000);
+  const listE = await we.relay.collect();
+  ok(outE.e && outE.e.message.includes("那边断了") && we.removedWorking.join() === we.sent[0].job && listE.length === 1 && listE[0].state === "done", "直接等着的时候看出那一格早断了、删的那一下回话正好放进来：也不删，下一遍取得到");
+
+  // 刚回到眼前、头一眼悬了八秒才算没看成：这时候离回来已经八秒多了，照样算“刚回来”，再看一眼
+  const wm = world();
+  wm.hint = true;
+  wm.replies.push(async (p) => { await wm.done(p); wm.hang = "get"; wm.backAt = Date.now(); throw coded("unreachable", "连不上"); });
+  let resM = null;
+  wm.relay.ask(ARGS).then((v) => { resM = v; }, (e) => { resM = { e }; });
+  for (let i = 0; i < 17; i++) await clock.tick(500); // 八秒半：悬着的那一眼到点了
+  wm.hang = "";
+  for (let i = 0; i < 10 && !resM; i++) await clock.tick(500);
+  ok(!!resM && resM.via === "mailbox", `刚回到眼前、头一眼悬了八秒才算没看成：照样再看一眼，取到了（${resM && resM.e ? resM.e.message : "取到了"}）`);
+
+  // 守着信箱的那一回：手机被挂起的那一段不算在“等了多久”里
+  const wl = world();
+  const kl = b64u(crypto.randomBytes(32));
+  const infoL = { v: 1, job: "jobLONGNAP1", chat: "A", last: "m1", key: kl, at: 1 };
+  const pl = { job: "jobLONGNAP1", key: kl, note: await vaultjs.seal(vault, JSON.stringify(infoL)) };
+  wl.working(pl);
+  let resL = null;
+  wl.relay.resume("jobLONGNAP1", infoL).then((v) => { resL = v; }, (e) => { resL = { e }; });
+  await clock.tick(2000);
+  wl.visible = false;
+  mock.timers.setTime(Date.now() + 10 * 60 * 1000); // 挂起十分钟
+  wl.beat("jobLONGNAP1"); // 他还在回
+  wl.comeBack();
+  for (let i = 0; i < 4; i++) { await clock.tick(2000); wl.beat("jobLONGNAP1"); }
+  const stillL = resL;
+  await wl.done(pl);
+  await clock.tick(2500);
+  ok(stillL === null && !!resL && resL.via === "mailbox", `守着信箱的那一回、挂起十分钟回来他还在回：挂起的那一段不算，接着等（${resL && resL.e ? resL.e.message : "等到了"}）`);
   clock.off();
 }
 

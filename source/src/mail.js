@@ -28,7 +28,7 @@ const DEAD_MS = 25 * 1000; // 信箱里那一格这么久没人摸过，就当�
 const WAIT_MS = 260 * 1000; // 一回最多等这么久（切走又回来的，从回来那一刻重新算）
 const BOX_MS = 8 * 1000; // 看一眼信箱最多等这么久，等不到算没看成（刚回来的那一下，请求有时会悬着不动）
 const BACK_PAUSE = 500; // 刚回到眼前，歇这么久再敲网络的门（iOS 上一回来就发的请求会悬很久才报错）
-const PATIENT_MS = 5 * 1000; // 刚回到眼前这么久之内没看成信箱：网络多半还没醒，不算数，多试几回
+const PATIENT_MS = 5 * 1000; // 刚回到眼前这么久之内开始看的那一眼没看成：网络多半还没醒，不算数，多试几回
 const YIELD_MS = 150; // 直接等的那头断了，先让一让再去看信箱：手机刚被叫醒的时候，“断了”可能比“回到眼前了”先到
 const BLIND_MS = 30 * 1000; // 直接等着的时候信箱连着这么久都看不成：当成真没网，照实说
 const QUICK_MS = 3 * 1000; // 她点重发的时候先同步看一眼别处回上了没有，最多等这么久
@@ -105,6 +105,8 @@ export async function chatTag(nameFor, chatId) {
 }
 
 const useOld = (why) => Object.assign(new Error(why || "走老路"), { code: "oldpath" });
+// 没连上（话没送到、信箱也看不成）。带着 code：她不在眼前的时候碰上这个，外头先不报错，等她回来再发
+const offline = () => Object.assign(new Error("连不上开封府的后端，看看网络"), { code: "offline" });
 const answered = () => Object.assign(new Error("别处已经回上了"), { code: "answered" });
 
 // ---------- 一回传话 ----------
@@ -282,6 +284,7 @@ export function createRelay(d) {
     let absent = 0;
     for (;;) {
       await breath();
+      const began = d.now();
       let row;
       try {
         row = await timed(d.box.get(job));
@@ -289,11 +292,12 @@ export function createRelay(d) {
       } catch (e) {
         if (e && e.code === "notable") return ABSENT;
         misses++;
-        // 没看成的这一刻，她刚回到眼前（或者页面还藏着）：网络多半还没醒，不算数，多试几回。
+        // 这一眼是她刚回到眼前那几秒里看的（或者页面还藏着）：网络多半还没醒，没看成不算数，多试几回。
+        // 算的是这一眼“开始看”的时候离她回来多久：悬了八秒才报没看成的，也还是刚回来那一眼。
         // 平时一回没看成就是真没网，照实说，不让她对着“正在输入”干等
         // （这一回还记着：等会儿自己再看、她点重发，都先来信箱里找）
-        const patient = !d.visible() || sinceBack() < PATIENT_MS + BOX_MS;
-        if ((d.online && !d.online()) || misses >= (patient ? 4 : 1)) throw new Error("连不上开封府的后端，看看网络");
+        const patient = !d.visible() || sinceBack() - (d.now() - began) < PATIENT_MS;
+        if ((d.online && !d.online()) || misses >= (patient ? 4 : 1)) throw offline();
         await d.sleep(800 * misses);
         continue;
       }
@@ -391,7 +395,7 @@ export function createRelay(d) {
         // 这一回还记着：等会儿自己再看、她点重发，都先去信箱里找，不重发
         if (!seen && d.now() - blindSince > BLIND_MS) {
           if (ctl) ctl.abort();
-          throw new Error("连不上开封府的后端，看看网络");
+          throw offline();
         }
         // 这一眼看成了才算数：没看成的时候不知道回话到没到，不能说等太久
         if (seen && d.now() - started > WAIT_MS) {
@@ -497,7 +501,7 @@ export function createRelay(d) {
   //   data 是 Anthropic 回的那一整段；used 是最后用的哪种写法（带没带缓存、带没带工具）；
   //   settle() 等回话落进对话、存好以后叫。
   // 抛的错：code 是 oldpath：新路不通，请走老路；code 是 answered：别的设备已经把回话放进对话了；
-  //   别的：message 就是给她看的话
+  //   code 是 offline：没连上（这一回还记着）；别的：message 就是给她看的话
   async function ask(args) {
     // 为同一句话发出去的上一回还没着落：先去信箱里看，不重发（重发就是花两回钱、回两遍）。
     // 这一步在最前头：新路这会儿停着也要先找回那一回，不然走老路又问一遍

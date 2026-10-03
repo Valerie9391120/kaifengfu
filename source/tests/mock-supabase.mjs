@@ -87,6 +87,7 @@ let pushFnState = "ok"; // ok 部署了；missing 还没建这个函数（照 Su
 // old 部署的还是第一步那份代码（不认识“替她等回话”）；template 建了函数、里面还是 Supabase 给的样板
 let replyDrop = 0; // 往后这么多回“替她等回话”：小后端照常办完，回话却没送回网页（连接断了）
 const pushOps = []; // 每一回敲 push 函数的门，是来做什么的（key、test、reply）
+let pushNotFound = 0; // 函数还没建的时候，有人来敲过几回门（浏览器先来打招呼的那一下也算）
 function pushSecrets(text) {
   // 她在 Supabase 的 Secrets 里一次贴好几行“名字=值”，这里照着收
   for (const k of ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"]) delete pushEnv[k];
@@ -106,6 +107,7 @@ function pushReset() {
   pushHold = 0;
   replyDrop = 0;
   pushOps.length = 0;
+  pushNotFound = 0;
   claudeHold = 0;
   for (const k of Object.keys(pushEnv)) delete pushEnv[k];
   Object.assign(pushEnv, { SUPABASE_URL: `http://127.0.0.1:${PORT}`, SUPABASE_ANON_KEY: "sb_publishable_test", ALLOWED_EMAIL: "qing@example.com", ANTHROPIC_API_KEY: "sk-ant-test" });
@@ -177,6 +179,7 @@ http
     const url = new URL(req.url, "http://x");
     // push 函数还没建：网关回 404，浏览器先来打招呼的那一下就过不去
     if (url.pathname === "/functions/v1/push" && (pushFnState === "missing" || pushFnState === "missing-cors")) {
+      pushNotFound++;
       res.writeHead(404, { ...(pushFnState === "missing-cors" ? cors : {}), "Content-Type": "application/json" });
       return res.end(JSON.stringify({ code: "NOT_FOUND", message: "Requested function was not found" }));
     }
@@ -196,7 +199,7 @@ http
     }
     // ---- 信箱的调试口 ----
     // 看：信箱里现在有什么、每一回读写
-    if (url.pathname === "/__debug/mail") return send(res, 200, { rows: mail.all(), log: mail.log, ops: pushOps });
+    if (url.pathname === "/__debug/mail") return send(res, 200, { rows: mail.all(), log: mail.log, ops: pushOps, notFound: pushNotFound });
     // table=missing 还没建信箱那张表；drop=N 往后 N 回“替她等回话”办完了却送不回网页；rows=clear 把信箱清空
     if (url.pathname === "/__debug/mail-setup") {
       if (url.searchParams.has("table")) mail.state.missing = url.searchParams.get("table") === "missing";

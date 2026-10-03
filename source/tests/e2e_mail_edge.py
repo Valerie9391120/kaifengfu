@@ -157,6 +157,45 @@ def regen(browser):
     _, msgs = chat_of(pa)
     ok(healed and len(msgs[-1].get("alts") or []) == 2 and msgs[-1].get("job") and len(calls()) - c0 == 1 and wait_mock(lambda: box()["rows"] == []) and pa.get_by_text("2/2").count() == 1,
        f"重新回答没连上：过几秒自己去信箱里把新回答取出来（{took:.1f} 秒），那句“没成功”收掉；只问了一回")
+    # 平常的一句话也一样：直接等的那头断了、信箱那一眼也没看成，过几秒自己取
+    c1 = len(calls())
+    mock("/__debug/claude-hold?ms=1500")
+    mock("/__debug/mail-setup?drop=1")
+    state["asleep"] = True
+    say(pa, "第二句")
+    pa.get_by_text(re.compile("点这里重发")).first.wait_for(timeout=15000)
+    state["asleep"] = False
+    t1 = time.time()
+    healed2 = wait_js(pa, shown("收到：第二句"), 12000)
+    took2 = time.time() - t1
+    time.sleep(1.0)
+    ok(healed2 and note_count(pa) == 0 and len(calls()) - c1 == 1 and wait_mock(lambda: box()["rows"] == []),
+       f"平常的话没连上：过几秒自己去信箱里把回话取出来（{took2:.1f} 秒），不用她点重发；只问了一回")
+    A.close()
+
+
+# 重新回答的工夫里她又说了一句，结果重新回答没成：旧回答放回来，她新说的那一句不丢，接着回它
+def typed(browser):
+    A = phone(browser, notify=False)
+    pa = page_of(A, "typed")
+    first_time(pa)
+    chat(pa, "甲一")
+    _, before = chat_of(pa)
+    mock("/__debug/claude-fail?kind=broken")
+    mock("/__debug/claude-hold?ms=3000")
+    pa.get_by_role("button", name="重新回答").last.click()
+    ok(wait_mock(working, 8), "重新回答没成、她新说了一句·准备：他在重新回答")
+    say(pa, "新说的一句")
+    pa.get_by_text(re.compile("重新回答没成功")).first.wait_for(timeout=20000)
+    mock("/__debug/claude-fail")
+    time.sleep(0.5)
+    cid, failed = chat_of(pa)
+    ok([m["id"] for m in failed[:2]] == [m["id"] for m in before] and not failed[1].get("alts") and len(failed) == 3 and failed[2].get("text") == "新说的一句" and count_text(pa, "新说的一句") == 1 and count_text(pa, "收到：甲一") == 1,
+       "重新回答没成：旧回答放回来，她这工夫里新说的那一句还在（画面上、存档里都在）")
+    pa.get_by_text("收到：新说的一句").last.wait_for(timeout=20000)
+    pa.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.2)
+    after = chat_by(pa, cid)
+    ok(len(after) == 4 and after[3]["role"] == "him" and after[2].get("text") == "新说的一句", "重新回答没成以后：她新说的那一句照常回上了")
     A.close()
 
 
@@ -182,6 +221,31 @@ def stale(browser):
     ok(hint == "ok" and tried == 1 and early == 0 and len(calls()) - c0 == 1 and calls()[-1]["via"] == "claude" and note_count(pa) == 0 and pa.evaluate("localStorage.getItem('kfs-relay')") is None,
        "记着新路是通的、小后端却不接了：切走的那一下交不成，不从藏着的页面走老路（那一回会白问）；照旧等她停手那两秒多，走老路回上了，只问了一回")
     mock("/__debug/push-setup")
+    A.close()
+
+
+# 发完就切走，切走的那一下网正好断了（话没送到）：不报错，等她回到眼前自己补发
+def blip(browser):
+    A = phone(browser, notify=False)
+    pa = page_of(A, "blip")
+    net = {"down": False}
+    pa.route(re.compile(re.escape(MOCK) + "/.*"), lambda route: route.abort("internetdisconnected") if net["down"] else route.continue_())
+    first_time(pa)
+    chat(pa, "第一句")
+    ok(pa.evaluate("localStorage.getItem('kfs-relay')") == "ok", "切走时断网·准备：这台设备上新路走通过")
+    c0 = len(calls())
+    say(pa, "发完就走")
+    pa.wait_for_timeout(400)
+    net["down"] = True                       # 进电梯了
+    pa.evaluate("window.__away(true)")
+    pa.wait_for_timeout(7000)                # 页面还醒着的那几秒里，话交不出去、信箱也看不成
+    noted = note_count(pa)
+    net["down"] = False
+    pa.evaluate("window.__away(false)")
+    got = wait_js(pa, shown("收到：发完就走"), 15000)
+    pa.get_by_text("第二条").last.wait_for(timeout=10000); pa.wait_for_timeout(1200)
+    ok(noted == 0 and got and note_count(pa) == 0 and len(calls()) - c0 == 1 and calls()[-1]["via"] == "push" and jobs(pa) == [],
+       "发完就切走、那一下网正好断了：不在她不在的时候报错；她回到眼前自己补发，回上了，只问了一回")
     A.close()
 
 
@@ -342,7 +406,7 @@ def refail(browser):
     A.close()
 
 
-SCENES = [("cold", cold), ("avatar", avatar), ("back", back), ("regen", regen), ("stale", stale), ("edit", edit), ("pair", pair), ("resend", resend), ("refail", refail)]
+SCENES = [("cold", cold), ("avatar", avatar), ("back", back), ("regen", regen), ("typed", typed), ("stale", stale), ("blip", blip), ("edit", edit), ("pair", pair), ("resend", resend), ("refail", refail)]
 want = [a for a in sys.argv[1:] if not a.startswith("-")]
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])

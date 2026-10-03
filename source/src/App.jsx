@@ -3564,6 +3564,7 @@ export default function App({ account = {} }) {
   const backAtRef = useRef(-Infinity); // 上一回从后台回到眼前是几点
   const memesReady = useRef(null); // 仓库里新加的表情包读回来没有（读不回来也算完）
   const mailGate = useRef(null); // 头一遍看信箱之前要等的那一下（见 checkMail）
+  const backResend = useRef(false); // 她不在眼前的时候有一句话没连上：等她回来再发（见 askGuangyi）
   const latest = useRef({}); // 最新一遍画面里的那几个函数（给一开机就挂上的监听用，免得它们拿着旧的）
   const [noticeBack, setNoticeBack] = useState(0); // 这次打开以来，上一回点着测试通知回来是什么时候（通知面板里要说）
   const [copySheet, setCopySheet] = useState("");
@@ -4227,6 +4228,10 @@ export default function App({ account = {} }) {
       } else if (e && e.code === "later") {
         // 切走的那一下没交成（见 requestReply）：照旧等她停手那两秒多。她不在的时候定时器不走，回来了才发
         scheduleReply(2200);
+      } else if (e && e.code === "offline" && document.visibilityState !== "visible" && !resume) {
+        // 她不在眼前的时候没连上（多半是切走的那一下网正好断了）：这会儿不报错，等她回到眼前再发。
+        // 那一回还记着：到时候先去信箱里找（万一其实送到了），没有才重发
+        backResend.current = true;
       } else {
         if (chatIdRef.current === id) setErrorNote(`消息没送到（${String(e.message || e).slice(0, 90)}）。点这里重发`);
         // 这一回也许其实已经交给小后端了（只是这头没连上）：过几秒自己去信箱里看一眼，回话在就取出来，不用她点
@@ -4781,7 +4786,12 @@ export default function App({ account = {} }) {
     store.flush().catch(() => {});
   };
 
-  latest.current = { checkMail, openFromNotice, leaving };
+  // 她不在的时候没送成的那一句：回到眼前以后补发（已经有一句排着队等发，就不另排了）
+  const resendSoon = () => {
+    if (!timerRef.current) scheduleReply(700);
+  };
+
+  latest.current = { checkMail, openFromNotice, leaving, resendSoon };
 
   // ---- 通知 ----
   // 开过通知的设备，每次打开都悄悄重新登记一遍（见 push.js）；她点通知回来的，记下是哪一条
@@ -4825,6 +4835,11 @@ export default function App({ account = {} }) {
         backAtRef.current = Date.now();
         latest.current.checkMail();
         warmSoon(700);
+        // 她不在的时候有一句话没连上、没送成：现在补发（晚一点发，躲开刚回来那一下）
+        if (backResend.current) {
+          backResend.current = false;
+          latest.current.resendSoon();
+        }
       } else latest.current.leaving();
     };
     const onHide = () => latest.current.leaving();
