@@ -96,7 +96,7 @@ const csp = [
 ].join("; ");
 
 // 整页不许捏（卿卿定的：开封府是固定的，不跟着双指放大缩小）。这是三道里的头一道，另两道见 src/nozoom.js。
-// 主屏幕上的网页认这几个“不缩放”；Safari 里直接打开的不认（苹果给看不清字的人留的口子）
+// 主屏幕上的网页多半认这几个“不缩放”；Safari 里直接打开的不认（苹果给看不清字的人留的口子）
 const VIEWPORT = "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
 
 for (const e of ENTRANCES) {
