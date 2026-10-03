@@ -1518,11 +1518,14 @@ const drive = async (p, step = 500, max = 400000) => {
   wq.replies.push(async (p) => { await wq.done(p); wq.getFails = 2; throw coded("unreachable", "连不上"); });
   let resQ = null;
   wq.relay.ask(ARGS).then((v) => { resQ = v; }, (e) => { resQ = { e }; });
-  await clock.tick(200);
+  await until(() => wq.sent.length === 1);
+  await breathe();
+  await clock.tick(200); // 让过那一百五十毫秒，头一眼：页面还藏着，没看成
   const early = resQ;
+  const hiddenMiss = wq.getFails === 1;
   wq.comeBack();
   for (let i = 0; i < 30 && !resQ; i++) await clock.tick(300);
-  ok(early === null && !!resQ && resQ.via === "mailbox" && wq.sent.length === 1, `“断了”比“回到眼前了”先到：页面还藏着的那一眼没看成不算数，回到眼前就取到（${resQ && resQ.e ? resQ.e.message : "取到了"}）`);
+  ok(hiddenMiss && early === null && !!resQ && resQ.via === "mailbox" && wq.sent.length === 1, `“断了”比“回到眼前了”先到：页面还藏着的那一眼没看成不算数，回到眼前就取到（${resQ && resQ.e ? resQ.e.message : "取到了"}）`);
   // 直接等的那头一断，先让一让再去看信箱（让“回到眼前了”先记下是几点）
   const wy = world();
   wy.hint = true;
