@@ -317,10 +317,9 @@ def scroll(browser):
     ok(pa.evaluate(TOP) == 0 and b["shown"], "点顶栏中间（头像和名字）：滑回最顶，圆钮出来（好回来）")
     pa.touchscreen.tap(b["cx"], b["cy"]); pa.wait_for_timeout(700)
     ok(pa.evaluate(GAP) <= 1, "再点圆钮：回到最底下")
-    strip = pa.evaluate("(() => { const r = document.querySelector('.kfs-top-strip').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, h: r.height }; })()")
-    pa.touchscreen.tap(strip["x"], strip["y"]); pa.wait_for_timeout(700)
-    ok(strip["h"] >= 12 and pa.evaluate(TOP) == 0, "点顶栏上面那一条（时间电量那儿）：也回最顶")
-    pa.touchscreen.tap(pa.evaluate(BTN)["cx"], pa.evaluate(BTN)["cy"]); pa.wait_for_timeout(700)
+    # 顶栏上面那一条（时间电量那儿）原来铺过一层去接点击，她在手机上试了点不着（系统不交给网页），拆了：点那儿什么都不动
+    pa.touchscreen.tap(196, 5); pa.wait_for_timeout(500)
+    ok(pa.locator(".kfs-top-strip").count() == 0 and pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], "点顶栏上面的空当：什么都不动（那一层拆了）")
     # 顶栏两头的按钮照旧，不把聊天记录带走
     pa.get_by_role("button", name="打开侧栏").tap(); pa.wait_for_timeout(700)
     opened = pa.evaluate(REACHABLE)
@@ -400,7 +399,7 @@ def scroll(browser):
     b = pa.evaluate(BTN)
     pa.touchscreen.tap(b["cx"], b["cy"]); pa.wait_for_timeout(700)
 
-    # 输入框有焦点（键盘开着）的时候点圆钮、点顶栏：焦点不许被抢走，不然键盘就收了
+    # 输入框有焦点（键盘开着）的时候点圆钮、点顶栏中间：焦点不许被抢走，不然键盘就收了
     FOCUS = "document.activeElement === document.querySelector('.kfs-composer textarea')"
     pa.evaluate("document.querySelector('.kfs-composer textarea').focus({ preventScroll: true })")
     drag(pa, f, 380, 700)
@@ -409,9 +408,6 @@ def scroll(browser):
     ok(pa.evaluate(GAP) <= 1 and pa.evaluate(FOCUS), "输入框有焦点的时候点圆钮：回到底，焦点还在输入框上")
     pa.touchscreen.tap(bar["x"], bar["y"]); pa.wait_for_timeout(700)
     ok(pa.evaluate(TOP) == 0 and pa.evaluate(FOCUS), "点顶栏中间：回顶，焦点还在")
-    pa.touchscreen.tap(pa.evaluate(BTN)["cx"], pa.evaluate(BTN)["cy"]); pa.wait_for_timeout(700)
-    pa.touchscreen.tap(strip["x"], strip["y"]); pa.wait_for_timeout(700)
-    ok(pa.evaluate(TOP) == 0 and pa.evaluate(FOCUS), "点顶栏上面那一条：回顶，焦点还在")
     pa.touchscreen.tap(pa.evaluate(BTN)["cx"], pa.evaluate(BTN)["cy"]); pa.wait_for_timeout(700)
     pa.evaluate("document.activeElement && document.activeElement.blur()")
 
@@ -425,9 +421,6 @@ def scroll(browser):
     # 面板开着的时候点顶栏：只收面板，不回顶
     pa.touchscreen.tap(bar["x"], bar["y"]); pa.wait_for_timeout(600)
     ok(pa.evaluate(TOP) == t0 and pa.locator(".kfs-sheet.overflow-y-auto").count() == 0, "表情包面板开着的时候点顶栏中间：只收面板，聊天记录不动")
-    pa.get_by_role("button", name="表情包").tap(); pa.wait_for_timeout(500)
-    pa.touchscreen.tap(strip["x"], strip["y"]); pa.wait_for_timeout(600)
-    ok(pa.evaluate(TOP) == t0 and pa.locator(".kfs-sheet.overflow-y-auto").count() == 0, "点顶栏上面那一条：也只收面板")
     pa.get_by_role("button", name="表情包").tap(); pa.wait_for_timeout(500)
     b = pa.evaluate(BTN)
     pa.touchscreen.tap(b["cx"], b["cy"]); pa.wait_for_timeout(700)

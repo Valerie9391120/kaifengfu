@@ -5740,15 +5740,6 @@ export default function App({ account = {} }) {
           style={{ top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 100%" }}
         />
 
-        {/* 顶栏上面那一条（时间、电量那儿）：点了也回最顶。iPhone 肯不肯把那儿的点击交给网页，要她的手机说了算 */}
-        <div
-          aria-hidden="true"
-          onClick={() => (memePanel ? setMemePanel(false) : follow.top())}
-          onMouseDown={(e) => e.preventDefault()}
-          className="kfs-top-strip absolute z-10"
-          style={{ top: 0, left: 0, right: 0, height: "calc(12px + env(safe-area-inset-top))" }}
-        />
-
         {/* 顶栏 */}
         <div
           onClick={() => memePanel && setMemePanel(false)}
@@ -5758,7 +5749,9 @@ export default function App({ account = {} }) {
           <IconBtn onClick={() => setDrawerOpen(true)} label="打开侧栏">
             <Icon name="menu" />
           </IconBtn>
-          {/* 点中间这一块（头像和名字）：聊天记录滑回最顶，跟点手机顶上回顶一个意思。
+          {/* 点中间这一块（头像和名字）：聊天记录滑回最顶。
+              卿卿本来要的是点顶栏上面那一条（时间、电量那儿）。那一条是系统的地盘，点了不交给网页：
+              铺过一层去接，她在手机上（iOS 26）试了点不着，拆了，回顶就落在这儿（她定的）。
               表情包面板开着的时候，这一下只管收面板（顶栏本来就是点了收面板的） */}
           <div className="kfs-bar-mid relative flex-1 flex flex-col items-center min-w-0" onClick={() => !memePanel && follow.top()} onMouseDown={(e) => e.preventDefault()}>
             <Avatar av={avatars.him} who="him" size={30} />
