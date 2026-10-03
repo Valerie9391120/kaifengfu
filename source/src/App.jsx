@@ -1686,6 +1686,18 @@ function Tile({ icon, label, sub, onClick }) {
 }
 
 // 长按：手指按住不动 0.45 秒；电脑上右键也算。长按以后松手的那一下不算点击
+// 这一回手指落下以来，屏幕上有没有同时出现过两根手指。长按只认一根：两根手指是在捏，不是在按。
+// 整页不许捏以后，她照老习惯在气泡、照片上捏一下，不该把长按的菜单捏出来。
+// 挂在整页上、抢在前头听：第二根手指落在别的东西上，被按着的那个气泡自己是听不到的
+let twoFingers = false;
+if (typeof document !== "undefined") {
+  // 落下的时候现数：屏幕上只有这一根，就是新的一回（上一回的“抬起”万一没报到这儿，也不会一直记着）
+  document.addEventListener("touchstart", (e) => { twoFingers = e.touches.length > 1; }, { capture: true, passive: true });
+  const lifted = (e) => { if (e.touches.length === 0) twoFingers = false; };
+  document.addEventListener("touchend", lifted, { capture: true, passive: true });
+  document.addEventListener("touchcancel", lifted, { capture: true, passive: true });
+}
+
 function useLongPress(onLong) {
   const press = useRef(null);
   const fired = useRef(false);
@@ -1703,6 +1715,7 @@ function useLongPress(onLong) {
         y: t.clientY,
         timer: setTimeout(() => {
           press.current = null;
+          if (twoFingers) return;
           fired.current = true;
           onLong(el.getBoundingClientRect());
         }, 450),
@@ -2067,6 +2080,8 @@ function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, onOpenPhoto, o
       y: t.clientY,
       timer: setTimeout(() => {
         press.current = null;
+        // 长按只认一根手指（见 useLongPress 上面那段）
+        if (twoFingers) return;
         fired.current = true;
         if (onLongPress) onLongPress(row, el.getBoundingClientRect());
       }, 450),
@@ -5321,7 +5336,7 @@ export default function App({ account = {} }) {
   const onTouchStart = (e) => {
     if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView) return;
     if (e.touches.length > 1) {
-      touch.current = { multi: true };
+      touch.current = { dead: true };
       setDragX(null);
       return;
     }
@@ -5330,7 +5345,13 @@ export default function App({ account = {} }) {
   };
   const onTouchMove = (e) => {
     const s = touch.current;
-    if (!s || s.multi) return;
+    if (!s || s.dead) return;
+    // 手指还按着的工夫里冒出了菜单、面板（长按气泡就是）：底下的侧栏不跟着这根手指走，这一回也不算了
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView) {
+      touch.current = { dead: true };
+      setDragX(null);
+      return;
+    }
     const t = e.touches[0];
     const dx = t.clientX - s.x;
     const dy = t.clientY - s.y;
@@ -5342,14 +5363,10 @@ export default function App({ account = {} }) {
     s.dx = dx;
     setDragX(Math.max(0, Math.min(drawerW, s.base + dx)));
   };
-  const onTouchEnd = (e) => {
+  const onTouchEnd = () => {
     const s = touch.current;
-    if (s && s.multi) {
-      if (!e || !e.touches || e.touches.length === 0) touch.current = null;
-      return;
-    }
     touch.current = null;
-    if (!s || s.dir !== "h") return;
+    if (!s || s.dead || s.dir !== "h") return;
     const open = s.base === 0 ? s.dx > 50 : !(s.dx < -50);
     setDrawerOpen(open);
     setDragX(null);
@@ -6169,7 +6186,7 @@ export default function App({ account = {} }) {
       )}
 
       {/* 点开的照片：双指捏着放大缩小（整页不许捏了，这一页自己认，见 PhotoViewer.jsx） */}
-      {viewer && <PhotoViewer src={viewer} onClose={() => setViewer(null)} />}
+      {viewer && <PhotoViewer key={viewer} src={viewer} onClose={() => setViewer(null)} />}
 
       {splash && (
         <SplashByTheme

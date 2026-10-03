@@ -50,8 +50,15 @@ body {
   background: rgb(var(--k-base));
   overscroll-behavior: none;
   -webkit-text-size-adjust: 100%;
-  /* 整页不许捏：只许上下左右滑，双指放大缩小、双击放大都不算（三道里的第二道，见 src/nozoom.js）。
-     里面会滚的地方照滚；看照片那一页自己认双指（PhotoViewer.jsx） */
+}
+
+/* 整页不许捏：只许上下左右滑，双指放大缩小、双击放大都不算（三道里的第二道，见 src/nozoom.js）。
+   每个元素都写上，不能只写在 html、body 上：iPhone 的 WebKit 走到每个会滚的盒子（聊天记录、弹出面板、输入框）
+   就把这条规矩重新算，那一层和它里面的又回到“随便”（WebKit Bug 252665；Chrome 不这样，所以在 Chrome 里试不出来）。
+   里面会滚的地方照滚。要别的规矩的自己写在身上：看照片那一页、丁香开屏的滑块是 none */
+html,
+body,
+* {
   touch-action: pan-x pan-y;
 }
 

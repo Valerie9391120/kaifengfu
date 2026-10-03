@@ -5,20 +5,22 @@
 //
 // 几处讲究：
 // - 挪图直接改样式，不走 React 的状态：手指一动就重画整棵树，跟不上手
-// - 一处都不 preventDefault：这一页的 touch-action 是 none，浏览器自己就不滚不缩。
-//   这样“点一下关掉”还是浏览器报的 click（它只在一根手指、没挪动、按得不久的时候报），
-//   长按照片出来的那个“存储图像”也还在
-// - 刚捏完、拖完的那一下不算点：有的浏览器挪得少也报 click
+// - 一处都不 preventDefault：这一页（连同里面的图）的 touch-action 是 none，浏览器自己就不滚不缩。
+//   这样“点一下关掉”还是浏览器报的 click，长按照片出来的那个“存储图像”也还在
+// - 捏过、划过的那一回，抬手以后报来的 click 不算点。按“这一回手指”记，不按钟点记：
+//   iPhone 在这种不滚的页面上，按住划一下再抬手也可能报 click；页面忙的时候 click 还会来得很晚。
+//   每一回手指全抬起来的时候重新记，所以刚捏完紧接着点一下，照样关得掉
+// - 弹回去的那一下还没走完手指又落下来：从图这会儿实际在的地方接着来（见 zoom.js 的 adopt）
 // =====================================================
 import { useEffect, useRef } from "react";
 import { createZoom } from "./zoom.js";
 
-const AFTER_MOVE = 350; // 图动过以后这么多毫秒里的 click 不算
+const BACK = 260; // 松手弹回去的那一下走多少毫秒
 
 export default function PhotoViewer({ src, onClose }) {
   const stageRef = useRef(null);
   const imgRef = useRef(null);
-  const movedAt = useRef(0);
+  const swallow = useRef(false); // 刚才那一回手指捏过、划过：它抬手以后报来的 click 不算
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -39,12 +41,14 @@ export default function PhotoViewer({ src, onClose }) {
       };
       return size;
     };
+    let backUntil = 0; // 弹回去的那一下到几点走完
     const zoom = createZoom({
       box: () => size || measure(),
       paint: (v, smooth) => {
-        img.style.transition = smooth ? "transform .26s cubic-bezier(.2,.8,.2,1)" : "none";
+        img.style.transition = smooth ? `transform ${BACK}ms cubic-bezier(.2,.8,.2,1)` : "none";
         img.style.transform = v.s === 1 && !v.x && !v.y ? "none" : `translate3d(${v.x.toFixed(2)}px, ${v.y.toFixed(2)}px, 0) scale(${v.s.toFixed(4)})`;
         stage.dataset.zoom = String(Math.round(v.s * 100) / 100);
+        backUntil = smooth ? Date.now() + BACK + 40 : 0;
       },
     });
     // 手指的位置从这一页的中心量起
@@ -56,12 +60,21 @@ export default function PhotoViewer({ src, onClose }) {
     };
     const onStart = (e) => {
       measure();
+      // 弹回去的那一下还没走完：图这会儿实际在哪，就从哪接着来（手指还按着的时候 adopt 自己不理）
+      if (backUntil && Date.now() < backUntil) {
+        try {
+          const m = new DOMMatrixReadOnly(getComputedStyle(img).transform);
+          zoom.adopt({ s: m.a, x: m.e, y: m.f });
+        } catch (x) {
+          // 读不出来就照算的来，顶多跳一下
+        }
+      }
       zoom.start(points(e.touches));
     };
     const onMove = (e) => zoom.move(points(e.touches));
     const onEnd = (e) => {
-      if (zoom.moved()) movedAt.current = Date.now();
       zoom.end(points(e.touches));
+      if (e.touches.length === 0) swallow.current = zoom.moved();
     };
     const onResize = () => {
       measure();
@@ -89,7 +102,10 @@ export default function PhotoViewer({ src, onClose }) {
       aria-label="看照片"
       data-zoom="1"
       onClick={() => {
-        if (Date.now() - movedAt.current < AFTER_MOVE) return;
+        if (swallow.current) {
+          swallow.current = false;
+          return;
+        }
         onClose();
       }}
       className="kfs-viewer absolute inset-0 z-50 flex items-center justify-center kfs-in"
@@ -100,7 +116,7 @@ export default function PhotoViewer({ src, onClose }) {
         src={src}
         alt=""
         draggable={false}
-        style={{ maxWidth: "92%", maxHeight: "86%", borderRadius: 18, objectFit: "contain", boxShadow: "0 20px 60px rgba(0,0,0,0.35)" }}
+        style={{ maxWidth: "92%", maxHeight: "86%", borderRadius: 18, objectFit: "contain", boxShadow: "0 20px 60px rgba(0,0,0,0.35)", touchAction: "none" }}
       />
     </div>
   );

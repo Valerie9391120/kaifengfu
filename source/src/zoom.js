@@ -13,13 +13,18 @@ export const LIMIT = {
   max: 5, // 最多放大五倍
   give: 0.35, // 拉过头了还跟着走一点：过头的那一截只算三成半，松手弹回去（所以捏得再狠，手里的图也不小过 0.65 倍）
   ceil: 7, // 拉得再开，手里的图也不大过七倍
+  snap: 1.05, // 松手的时候不到这个倍数，就当没放大，回原样（两根手指点一下、抖出来的那一点点不留着）
   slop: 3, // 一根手指挪了不到这么多像素，图不跟着动（手指按下去本来就会抖）
   tap: 10, // 挪了不到这么多像素，抬手那一下还算“点一下”（浏览器自己也是差不多这个数才不报 click）
 };
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+// 过了头的那一截带阻力；unsoft 是反着算回去（手里看到的 → 没带阻力的时候该是多少）
 const soft = (v, lo, hi) => (v < lo ? lo - (lo - v) * LIMIT.give : v > hi ? hi + (v - hi) * LIMIT.give : v);
+const unsoft = (v, lo, hi) => (v < lo ? lo - (lo - v) / LIMIT.give : v > hi ? hi + (v - hi) / LIMIT.give : v);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+// 两根手指隔多远。叠在一起（不到一个像素）的按一个像素算：不除以零，落下和动的时候是同一个算法
+const gap = (a, b) => Math.max(1, dist(a, b));
 const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 const same = (a, b) => a.s === b.s && a.x === b.x && a.y === b.y;
 
@@ -29,10 +34,10 @@ export function reach(s, box) {
   return { x: Math.max(0, (box.w * s - box.W) / 2), y: Math.max(0, (box.h * s - box.H) / 2) };
 }
 
-// 松手以后该停在哪：倍数收回一到五倍之间，图的边不许跑进那一页里面来。
+// 松手以后该停在哪：倍数收回一到五倍之间（差一点点没到原样的就回原样），图的边不许跑进那一页里面来。
 // anchor 是最后那一回双指中间的那一点：倍数被收回来的时候，那一点底下的图不动
 export function settle(view, box, anchor) {
-  const s = clamp(view.s, LIMIT.min, LIMIT.max);
+  const s = view.s < LIMIT.snap ? LIMIT.min : Math.min(view.s, LIMIT.max);
   let { x, y } = view;
   if (s !== view.s && anchor) {
     const k = s / view.s;
@@ -46,10 +51,10 @@ export function settle(view, box, anchor) {
 
 // 认手势的那个小东西。paint(view, smooth)：把图挪到 view；smooth 是松手弹回去的那一下，要带过渡
 export function createZoom({ box, paint }) {
-  let view = { s: 1, x: 0, y: 0 };
+  let view = { s: 1, x: 0, y: 0 }; // 眼下图的样子（带着阻力的，就是画在屏幕上的）
   let g = null; // 这一回手势：{ kind: "pinch", from, a, b, m0, d0 } 或 { kind: "drag", from, a, p0 }
   let anchor = null; // 最后那一回双指中间的那一点
-  let moved = false; // 这一回手指落下以来，是不是真的捏过、拖过（是的话，抬手那一下不算“点一下关掉”）
+  let moved = false; // 这一回手指落下以来，是不是真的捏过、划过（是的话，抬手那一下不算“点一下关掉”）
 
   const show = (next, smooth) => {
     view = next;
@@ -60,13 +65,21 @@ export function createZoom({ box, paint }) {
     const r = reach(s, box());
     return { s, x: soft(x, -r.x, r.x), y: soft(y, -r.y, r.y) };
   };
+  // 从眼下的样子接着来。眼下的样子可能正拉过了头（带着阻力），接着算要从“没带阻力的时候该是多少”算起：
+  // 不然换一下手指（抬起一根、又落下一根），阻力就在同一截上再打一遍折，图会跳一下。
+  // shown 是眼下画着的倍数（算位置、认“放大了没有”用它）
+  const base = () => {
+    const r = reach(view.s, box());
+    return { s: unsoft(view.s, LIMIT.min, LIMIT.max), shown: view.s, x: unsoft(view.x, -r.x, r.x), y: unsoft(view.y, -r.y, r.y) };
+  };
   const find = (touches, id) => touches.find((t) => t.id === id);
   const begin = (touches) => {
     if (touches.length >= 2) {
+      // 三根以上：认排在最前头的那两根
       const [a, b] = touches;
-      g = { kind: "pinch", from: view, a: a.id, b: b.id, m0: mid(a, b), d0: Math.max(1, dist(a, b)) };
+      g = { kind: "pinch", from: base(), a: a.id, b: b.id, m0: mid(a, b), d0: gap(a, b) };
     } else if (touches.length === 1) {
-      g = { kind: "drag", from: view, a: touches[0].id, p0: { x: touches[0].x, y: touches[0].y } };
+      g = { kind: "drag", from: base(), a: touches[0].id, p0: { x: touches[0].x, y: touches[0].y } };
     } else g = null;
   };
 
@@ -88,26 +101,27 @@ export function createZoom({ box, paint }) {
         const b = find(touches, g.b);
         if (!a || !b) return;
         const m = mid(a, b);
-        const s = Math.min(LIMIT.ceil, soft((g.from.s * dist(a, b)) / g.d0, LIMIT.min, LIMIT.max));
-        const k = s / g.from.s;
+        const s = Math.min(LIMIT.ceil, soft((g.from.s * gap(a, b)) / g.d0, LIMIT.min, LIMIT.max));
+        const k = s / g.from.shown;
         // 两根手指刚落下时中间那一点底下的图，跟着手指中间那一点走：捏哪儿，哪儿就在手底下放大
         anchor = m;
         moved = true;
         show(held(s, m.x - (g.m0.x - g.from.x) * k, m.y - (g.m0.y - g.from.y) * k));
         return;
       }
-      // 没放大的时候，图不跟着一根手指走（那多半是要点一下关掉，或者手滑了一下）
-      if (g.from.s <= LIMIT.min) return;
       const p = find(touches, g.a);
       if (!p) return;
       const dx = p.x - g.p0.x;
       const dy = p.y - g.p0.y;
       const far = Math.hypot(dx, dy);
+      // 划出去这么远就不算“点一下”了，放没放大都一样（没放大的时候划一下，不该把照片关掉）
+      if (far >= LIMIT.tap) moved = true;
+      // 没放大的时候，图不跟着一根手指走
+      if (g.from.shown <= LIMIT.min) return;
+      // 放大着的时候点一下，手指难免带着图挪几个像素：图跟着走，但这还算点，不算拖
       if (!g.live && far < LIMIT.slop) return;
       g.live = true;
-      // 放大着的时候点一下，手指难免带着图挪几个像素：图跟着走，但这还算点，不算拖
-      if (far >= LIMIT.tap) moved = true;
-      show(held(g.from.s, g.from.x + dx, g.from.y + dy));
+      show(held(g.from.shown, g.from.x + dx, g.from.y + dy));
     },
 
     // 有手指抬起（或者被系统打断）。还剩着手指：从眼下的样子接着来，图不跳。都抬起来了：该弹回去的弹回去
@@ -126,6 +140,13 @@ export function createZoom({ box, paint }) {
       if (g) return;
       const rest = settle(view, box(), null);
       if (!same(rest, view)) show(rest, false);
+    },
+
+    // 弹回去的那一下还没走完，手指又落下来了：图这会儿实际在哪（PhotoViewer 从页面上读的），就从哪接着来。
+    // 不然算的是“已经弹到位”的样子，画面却还在半路，手指一动图会跳
+    adopt(now) {
+      if (g || !now || ![now.s, now.x, now.y].every(Number.isFinite) || now.s <= 0) return;
+      show({ s: now.s, x: now.x + 0, y: now.y + 0 }, false);
     },
   };
 }
