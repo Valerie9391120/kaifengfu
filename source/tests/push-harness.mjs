@@ -139,10 +139,14 @@ const SUB_COLS = ["user_id", "endpoint", "p256dh", "auth", "page", "created_at",
 
 export function createLedgerTable() {
   const rows = new Map(); // user_id|endpoint → 行
-  const state = { missing: false }; // 还没建表
+  const state = { missing: false, failGet: 0 }; // missing：还没建表；failGet：往后这么多回“读”不成（503）
   // 回 { status, body }；body 是 undefined 就是没有正文
   function handle(method, params, userId, bodyText) {
     if (state.missing) return { status: 404, body: { code: "PGRST205", details: null, hint: null, message: "Could not find the table 'public.push_subs' in the schema cache" } };
+    if (method === "GET" && state.failGet > 0) {
+      state.failGet--;
+      return { status: 503, body: { message: "upstream connect error" } };
+    }
     if (!userId) return { status: 401, body: { code: "42501", message: "permission denied for table push_subs" } };
     const eq = params.get("endpoint");
     if (eq !== null && !eq.startsWith("eq.")) return { status: 400, body: { message: "bad filter: " + eq } };
@@ -197,9 +201,13 @@ export function createMailTable() {
   const rows = new Map(); // user_id|job → 行
   // missing：还没建表；down：库房这会儿出岔子（一律 503）；failPatch：往后这么多回“改”不成（503）
   const state = { missing: false, down: false, failPatch: 0 };
-  const log = []; // 每一回读写：{ method, query, user }
+  const log = []; // 每一回读写：{ method, query, user, sets }；sets 是“改”的那几栏（摸一下只改 beat_at，放信还改 sealed）
   function handle(method, params, userId, bodyText) {
-    log.push({ method, query: params.toString(), user: userId || "" });
+    let sets = [];
+    try {
+      if (method === "PATCH") sets = Object.keys(JSON.parse(bodyText || "{}"));
+    } catch (e) {}
+    log.push({ method, query: params.toString(), user: userId || "", sets, at: Date.now() });
     if (state.missing) return { status: 404, body: { code: "PGRST205", details: null, hint: null, message: "Could not find the table 'public.mailbox' in the schema cache" } };
     if (state.down) return { status: 503, body: { message: "upstream connect error" } };
     if (!userId) return { status: 401, body: { code: "42501", message: "permission denied for table mailbox" } };
@@ -253,6 +261,13 @@ export function createMailTable() {
     }
     if (method === "DELETE") {
       for (const r of mine) rows.delete(r.user_id + "|" + r.job);
+      // 带着 select 来的（要它把删掉的那几行报回来，PostgREST 的 return=representation）：回删掉的那几行
+      const back = params.get("select");
+      if (back) {
+        const cols = back.split(",");
+        for (const c of cols) if (!MAIL_COLS.includes(c)) return { status: 400, body: { code: "42703", message: `column mailbox.${c} does not exist` } };
+        return { status: 200, body: mine.map((r) => Object.fromEntries(cols.map((c) => [c, r[c] === undefined ? null : r[c]]))) };
+      }
       return { status: 204 };
     }
     return { status: 405, body: { message: "method not allowed" } };

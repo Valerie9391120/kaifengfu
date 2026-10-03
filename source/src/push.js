@@ -336,13 +336,7 @@ export function knockList() {
 // 轻轻问一声：替她等回话的那条新路通不通（不带对话，两下很小的敲门）。
 // true 通；false 不通（小后端还是旧的、里面是样板、没建，或者信箱那张表没建）；null 没问成（没网、没登录）
 export async function probeReply() {
-  let fn = null;
-  try {
-    const k = await callPush({ op: "key" });
-    fn = !!k && Array.isArray(k.can) && k.can.includes("reply");
-  } catch (e) {
-    fn = e.code === "refused" ? false : null;
-  }
+  let fn = await askPushCanReply();
   let box = null;
   try {
     await mailbox.probe();
@@ -352,16 +346,30 @@ export async function probeReply() {
   }
   if (fn === true && box === true) return true;
   if (fn === false || box === false) return false;
-  if (fn === null && box === true) {
+  if (fn === "away" && box === true) {
     // 信箱看得到、小后端却没连上。可能只是头一下网络还没醒（刚解锁、刚切回来）：再敲一回
-    try {
-      const k = await callPush({ op: "key" });
-      if (!!k && Array.isArray(k.can) && k.can.includes("reply")) return true;
-    } catch (e) {}
-    // 还是不行：不是没网，是那条路不通（多半是根本没有 push 这个函数）
-    return false;
+    fn = await askPushCanReply();
+    if (fn === true) return true;
+    // 还是连不上（或者这回它自己说接不了）：不是没网，是那条路不通（多半是根本没有 push 这个函数）
+    if (fn === "away" || fn === false) return false;
   }
   return null;
+}
+
+// 问一回小后端接不接得了回话。true 接得了；false 接不了（它自己答的：还是旧的那份、里面是样板、不认这个人）；
+// "away" 没连上（没网，或者根本没有这个函数）；null 没问成
+async function askPushCanReply() {
+  try {
+    const k = await callPush({ op: "key" });
+    return !!k && Array.isArray(k.can) && k.can.includes("reply");
+  } catch (e) {
+    if (e.code === "unreachable") return "away";
+    if (e.code !== "refused") return null;
+    // 半路上的网关一时出了岔子（5xx）、嫌敲得太勤（429）、登录凭证没带对（401）：这些说明不了小后端接不接得了回话。
+    // 算没问成，下回再问；为这一下把新路关上三分钟不值当
+    if (e.status === 401 || e.status === 429 || (e.status >= 500 && !e.own)) return null;
+    return false;
+  }
 }
 
 // ---------- 从通知回来 ----------

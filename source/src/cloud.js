@@ -80,6 +80,7 @@ export async function callClaude(body, beta) {
 // 出了岔子的时候带一个 code，面板好分清是哪一种：
 //   auth 没登录；unreachable 连不上（多半是 Supabase 里还没建 push 这个函数）；
 //   refused 小后端说不行（message 是它的原话）；notable 库房里还没有登记簿那张表
+// refused 的还带着 status（回来的状态码）；是小后端自己说的话（不是半路上的网关出的岔子）再带一个 own
 const coded = (code, message) => Object.assign(new Error(message), { code });
 
 // 敲通知那个小后端（push 函数）的门
@@ -101,9 +102,9 @@ export async function callPush(body) {
   try {
     d = await res.json();
   } catch (e) {}
-  if (d && d.type === "error" && d.error) throw coded("refused", d.error.message || `小后端说不行（${res.status}）`);
+  if (d && d.type === "error" && d.error) throw Object.assign(coded("refused", d.error.message || `小后端说不行（${res.status}）`), { status: res.status, own: true });
   if (res.status === 404) throw coded("unreachable", "Supabase 里还没有 push 这个函数");
-  if (!res.ok || !d) throw coded("refused", (d && (d.message || d.msg)) || `小后端出错了（${res.status}）`);
+  if (!res.ok || !d) throw Object.assign(coded("refused", (d && (d.message || d.msg)) || `小后端出错了（${res.status}）`), { status: res.status });
   return d;
 }
 
@@ -134,6 +135,22 @@ export const pushLedger = {
 };
 
 // ---------- 信箱：替她等回话的那条路（见 mail.js） ----------
+const TOKEN_WAIT = 8000; // 交话之前取登录凭证最多等这么久
+// 等一件事，最多等 ms 毫秒；等不到就算出错
+const within = (work, ms) =>
+  new Promise((yes, no) => {
+    const t = setTimeout(() => no(new Error("timeout")), ms);
+    work.then(
+      (v) => {
+        clearTimeout(t);
+        yes(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        no(e);
+      }
+    );
+  });
 
 // 登录凭证至少还得能用这么多秒：小后端要拿着它等上两分多钟，等完还要往信箱里放东西。快到期了就先换一张新的
 export async function freshToken(seconds) {
@@ -148,7 +165,14 @@ export async function freshToken(seconds) {
 //   unreachable  没连上，或者连到一半断了：办没办不知道，得去信箱里看
 //   gateway      回来的东西读不懂（函数那头崩了、超时了）：办没办也不知道
 export async function callReply(payload, { signal } = {}) {
-  const { data } = await supabase.auth.getSession();
+  // 取登录凭证也限时：凭证快到期的时候它要先去换一张，那一下要是悬着不应（刚解锁、网络还没醒），
+  // 这里就跟着一直等：话没交出去，她对着“正在输入”干等一分多钟。八秒等不到就算没连上，照实说（什么都没发出去，不花钱）
+  let data = null;
+  try {
+    ({ data } = await within(supabase.auth.getSession(), TOKEN_WAIT));
+  } catch (e) {
+    throw coded("unreachable", "连不上开封府的后端，看看网络");
+  }
   const token = data && data.session && data.session.access_token;
   if (!token) throw coded("auth", "登录过期了，重新登录一下");
   let res;
@@ -211,13 +235,14 @@ export const mailbox = {
     if (error) throw boxError(error);
     return (data && data[0]) || null;
   },
-  // 删一格。onlyWorking：只在它还写着“在等”的时候删
-  // （收“早断了”的那种用：看的那一眼和删的这一下之间，回话要是正好放进来了，就不删）
+  // 删一格，回删掉了几行。onlyWorking：只在它还写着“在等”的时候删
+  // （收“早断了”的那种用：看的那一眼和删的这一下之间，回话要是正好放进来了，就不删；一行都没删着，外头就知道它留下了）
   async remove(job, onlyWorking) {
     let q = supabase.from("mailbox").delete().eq("job", job);
     if (onlyWorking) q = q.eq("state", "working");
-    const { error } = await quick(q);
+    const { data, error } = await quick(q.select("job"));
     if (error) throw boxError(error);
+    return (data || []).length;
   },
   // 只看这张表在不在（通知面板、开机时问新路通不通用）
   async probe() {

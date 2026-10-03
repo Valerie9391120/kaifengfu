@@ -126,7 +126,7 @@ const answered = () => Object.assign(new Error("别处已经回上了"), { code:
 //   knock()                          回话到了要敲哪几台设备（门牌号）。眼下只有发话的这一台
 //   freshToken(seconds)              登录凭证快到期就先换一张
 //   answered(chat, last, fork, jobs) 别的设备是不是已经把这一句的回话取走、放进对话了（先同步再看）。jobs 是为这一句发出去过的编号
-//   box.remove(job, onlyWorking)     删信箱里那一格；onlyWorking 为真：只在它还写着“在等”的时候删
+//   box.remove(job, onlyWorking)     删信箱里那一格，回删掉了几行；onlyWorking 为真：只在它还写着“在等”的时候删
 export function createRelay(d) {
   const live = new Set(); // 这会儿有人守着的那几回：collect 不碰
   const beats = new Map(); // 编号 → { beat, at }：上回看到那一格被摸，是什么时候
@@ -236,13 +236,16 @@ export function createRelay(d) {
   }
 
   // 收掉一回。stale：是因为它“写着在等、其实早断了”才收的。这种只在它还写着“在等”的时候删：
-  // 看的那一眼和删的这一下之间，小后端要是正好把回话放进来了，就不能删（留着，下一遍看信箱再取）
+  // 看的那一眼和删的这一下之间，小后端要是正好把回话放进来了，就不能删（留着，下一遍看信箱再取）。
+  // 这种删法一行都没删着（那一格多半就是这样留下了）：编号还记着，她点重发的时候先去信箱里找它，不再发一遍
   async function discard(job, stale) {
-    pending.drop(job);
     beats.delete(job);
+    let kept = false;
     try {
-      await timed(d.box.remove(job, !!stale));
+      const n = await timed(d.box.remove(job, !!stale));
+      kept = !!stale && n === 0;
     } catch (e) {}
+    if (!kept) pending.drop(job);
   }
 
   // 回话到手了（直接交来的，或者从信箱里取的；从信箱里取的带着那一格 row）
@@ -352,7 +355,8 @@ export function createRelay(d) {
     try {
       let nextLook = LOOK_FIRST;
       let every = LOOK_EVERY;
-      let blindSince = 0; // 信箱从几点起就一直看不成
+      let blind = 0; // 信箱连着看不成，加起来多久了。手机被挂起的那一段不算：两眼之间最多算十秒
+      let blindAt = 0; // 上一眼没看成是几点（上一眼看成了就是 0）
       for (;;) {
         const waited = d.now() - started;
         const what = await Promise.race([
@@ -369,17 +373,21 @@ export function createRelay(d) {
           // 手机被挂起的那段不算在“等了多久”里：从回来这一刻重新算
           every = WATCH_EVERY;
           started = d.now();
-          blindSince = 0;
+          blind = 0;
+          blindAt = 0;
         }
         await breath();
         let row = null;
         let seen = true;
         try {
           row = await timed(d.box.get(job));
-          blindSince = 0;
+          blind = 0;
+          blindAt = 0;
         } catch (e) {
           seen = false; // 刚回来网络还没醒：过一秒再看
-          if (!blindSince) blindSince = d.now();
+          const now = d.now();
+          if (blindAt) blind += Math.min(now - blindAt, BOX_MS + 2000);
+          blindAt = now;
         }
         if (row && row.state === "done") {
           const result = await openSealed(info.key, row.sealed);
@@ -393,7 +401,7 @@ export function createRelay(d) {
         }
         // 信箱连着半分钟都看不成，直接等的那头也一直没动静：多半是真没网了，照实说，不让她对着“正在输入”干等。
         // 这一回还记着：等会儿自己再看、她点重发，都先去信箱里找，不重发
-        if (!seen && d.now() - blindSince > BLIND_MS) {
+        if (!seen && blind > BLIND_MS) {
           if (ctl) ctl.abort();
           throw offline();
         }
@@ -480,10 +488,14 @@ export function createRelay(d) {
 
   // 守着一回已经发出去的（上次打开时发的、collect 在信箱里看到的）
   async function resume(job, info) {
+    // 这一回记在这台设备上（它多半是别的设备发的，这里本来不记得）：守着的工夫里出了岔子、她点了重发，
+    // 得认得出为这句话已经发过这一回，先去信箱里找，不再发一遍
+    if (info) pending.add({ job, chat: info.chat, last: info.last, fork: info.fork || "", at: d.now() });
     live.add(job);
     try {
       const got = await watch(job, info || null);
       if (got !== ABSENT) return got;
+      pending.drop(job);
       // 信箱里没有这一回了。多半是别的设备（发话的那台）把信取走了：等它把对话传上来，同步下来看
       if (info) {
         for (let i = 0; i < 4; i++) {
@@ -550,6 +562,8 @@ export function createRelay(d) {
     let rows;
     try {
       await breath();
+      // 歇的这半秒里她又切走了（只瞥了一眼）：不看了。外头也不该在这时候动信箱：把信取走，小后端就不敲她了
+      if (d.visible && !d.visible()) return [];
       rows = await timed(d.box.list());
     } catch (e) {
       return e && e.code === "notable" ? [] : null;
@@ -596,6 +610,12 @@ export function createRelay(d) {
       offWhy = "";
     },
     isLive: (job) => live.has(job),
+    // 为这句话（平常的话，不是重新回答）发出去过、还没着落的那一回：{ job, at }；没有就回 null。
+    // 外头开机的时候拿它认“上回打开时发出去、却没送到的那一句”
+    owed: (chat, last) => {
+      const rec = pending.find(chat, last, "");
+      return rec ? { job: rec.job, at: rec.at || 0 } : null;
+    },
     status: () => ({ off: d.now() < offUntil, why: offWhy, last: lastRun }),
   };
 }

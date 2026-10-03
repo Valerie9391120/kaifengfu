@@ -10,7 +10,9 @@ const rows = new Map(); // user_id|key → row
 const claudeLog = []; // 每一回问“Anthropic”：{ body, beta, via }。via 是从哪条路来的：claude 函数（老路），还是 push 函数（新路）
 let claudeFail = null; // 测试用：下一次问 Anthropic 照它的样子报错（workspace：key 没绑工作区；overloaded：太挤）；
 // 这两种一直管用、直到改回来：broken：回回都报 key 没绑工作区；mcp：带着工具的一律不行
+let claudeFailTimes = 0; // overloaded 连着挤几回（不写就是一回）
 let claudeHold = 0; // 测试用：下一次问 Anthropic，压这么多毫秒再答（等的工夫里她切走、关掉）
+let claudeRelease = null; // 正压着的那一回：叫它现在就答
 
 // 假的那边的我：照寄来的话编一条回复。两条路问的都是它
 function fakeAnthropic(body, beta, via) {
@@ -20,7 +22,7 @@ function fakeAnthropic(body, beta, via) {
     return { status: 400, json: { type: "error", error: { type: "invalid_request_error", message: "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use." } } };
   }
   if (claudeFail === "overloaded") {
-    claudeFail = null;
+    if (--claudeFailTimes <= 0) claudeFail = null;
     return { status: 529, json: { type: "error", error: { type: "overloaded_error", message: "Overloaded" } } };
   }
   if (claudeFail === "mcp" && Array.isArray(body.mcp_servers) && body.mcp_servers.length) {
@@ -63,7 +65,14 @@ async function heldAnthropic(body, beta, via) {
   if (claudeHold) {
     const ms = claudeHold;
     claudeHold = 0;
-    await new Promise((r) => setTimeout(r, ms));
+    await new Promise((r) => {
+      const t = setTimeout(r, ms);
+      claudeRelease = () => {
+        clearTimeout(t);
+        r();
+      };
+    });
+    claudeRelease = null;
   }
   return fakeAnthropic(body, beta, via);
 }
@@ -98,7 +107,8 @@ function pushSecrets(text) {
 }
 function pushReset() {
   ledger.rows.clear();
-  ledger.state.missing = false;
+  Object.assign(ledger.state, { missing: false, failGet: 0 });
+  claudeFailTimes = 0;
   mail.rows.clear();
   mail.log.length = 0;
   Object.assign(mail.state, { missing: false, down: false, failPatch: 0 });
@@ -190,6 +200,7 @@ http
     if (url.pathname === "/__debug/claude") return send(res, 200, claudeLog);
     if (url.pathname === "/__debug/claude-fail") {
       claudeFail = url.searchParams.get("kind") || null;
+      claudeFailTimes = Number(url.searchParams.get("times") || 1);
       return send(res, 200, { ok: true });
     }
     // 下一次问 Anthropic 压多少毫秒再答
@@ -197,12 +208,20 @@ http
       claudeHold = Number(url.searchParams.get("ms") || 0);
       return send(res, 200, { ok: true });
     }
+    // 正压着的那一回，现在就答
+    if (url.pathname === "/__debug/claude-release") {
+      const held = !!claudeRelease;
+      if (claudeRelease) claudeRelease();
+      return send(res, 200, { ok: held });
+    }
     // ---- 信箱的调试口 ----
     // 看：信箱里现在有什么、每一回读写
     if (url.pathname === "/__debug/mail") return send(res, 200, { rows: mail.all(), log: mail.log, ops: pushOps, notFound: pushNotFound });
-    // table=missing 还没建信箱那张表；drop=N 往后 N 回“替她等回话”办完了却送不回网页；rows=clear 把信箱清空
+    // table=missing 还没建信箱那张表；drop=N 往后 N 回“替她等回话”办完了却送不回网页；rows=clear 把信箱清空；
+    // failpatch=N 往后 N 回往信箱里“改”（摸一下、放信）都不成（库房一时出岔子）
     if (url.pathname === "/__debug/mail-setup") {
       if (url.searchParams.has("table")) mail.state.missing = url.searchParams.get("table") === "missing";
+      if (url.searchParams.has("failpatch")) mail.state.failPatch = Number(url.searchParams.get("failpatch") || 0);
       if (url.searchParams.has("drop")) replyDrop = Number(url.searchParams.get("drop") || 0);
       if (url.searchParams.get("rows") === "clear") mail.rows.clear();
       return send(res, 200, { ok: true });

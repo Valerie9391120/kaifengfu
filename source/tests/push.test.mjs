@@ -204,6 +204,17 @@ const rowOf = (dev) => supa.table.all().find((r) => r.endpoint === dev.endpoint)
   pushEnv.ALLOWED_ORIGIN = ORIGIN;
   ok(pre.status === 200 && pre.headers.get("access-control-allow-origin") === ORIGIN && preAny.headers.get("access-control-allow-origin") === "*" && /authorization/.test(pre.headers.get("access-control-allow-headers")) && /apikey/.test(pre.headers.get("access-control-allow-headers")),
     "门口：浏览器先来打招呼（OPTIONS），放行，允许带登录凭证；密钥柜里写了 ALLOWED_ORIGIN 就只许那一处的网页，没写就都许");
+  // ALLOWED_ORIGIN 贴进来的时候多带了斜杠、带了路径：回给浏览器的只到域名为止。
+  // 原样回的话浏览器不认（它拿自己的来处一个字一个字地比），整个开封府就连不上了；点通知回哪儿那头（safePage）本来就是这么认的，两头得一样
+  const seenAs = {};
+  for (const [what, value] of [["带斜杠", ORIGIN + "/"], ["带路径", ORIGIN + "/kaifengfu/"], ["大写", "HTTPS://VALERIE.EXAMPLE"], ["星号", "*"], ["不像网址", "不是网址"], ["带引号", `"${ORIGIN}"`]]) {
+    pushEnv.ALLOWED_ORIGIN = value;
+    seenAs[what] = (await call(null, { method: "OPTIONS", token: "" })).headers.get("access-control-allow-origin");
+    if (what === "带路径") seenAs.回话上的 = (await call({ op: "key" })).headers.get("access-control-allow-origin");
+  }
+  pushEnv.ALLOWED_ORIGIN = ORIGIN;
+  ok(seenAs.带斜杠 === ORIGIN && seenAs.带路径 === ORIGIN && seenAs.回话上的 === ORIGIN && seenAs.大写 === ORIGIN && seenAs.带引号 === ORIGIN && seenAs.星号 === "*" && seenAs.不像网址 === "https://valerie9391120.github.io",
+    `门口：ALLOWED_ORIGIN 多带了斜杠、路径、引号，回给浏览器的都只到域名为止；写的是 * 就都许；写得不像网址，只许开封府原来的地址（${JSON.stringify(seenAs)}）`);
   ok((await call(null, { method: "GET" })).status === 405, "门口：只收 POST");
   const anon = await call({ op: "key" }, { token: "" });
   const fake = await call({ op: "key" }, { token: "made-up" });

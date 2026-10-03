@@ -46,6 +46,8 @@ const BANNER_CHARS = 300; // 横幅上最多写多少个字
 const BANNER_BYTES = 1800; // 横幅上的字最多占多少字节（整条通知加密前不能过 MAX_PAYLOAD）
 const BANNER_SOURCE = 60_000; // 写横幅的时候最多看回话的前多少个字（再长也只是为了凑那三百个字，不值得多花工夫）
 const DB_TIMEOUT = 6000; // 读写信箱、登记簿最多等多少毫秒（库房一时不应，不能把回话压在手里不交）
+const STORE_AGAIN = [500, 1000, 2000, 4000, 8000]; // 回话没放进信箱（库房一时出岔子）：交给网页以后，隔这么多毫秒再放一回
+const STORE_GIVE_UP = 20_000; // 放了这么久还放不进去，就不放了
 
 // 只往认得的推送服务发：登记簿里的地址是网页那边写进来的，不能它写什么就去敲什么门
 const PUSH_HOSTS = [/\.push\.apple\.com$/, /^fcm\.googleapis\.com$/, /^updates\.push\.services\.mozilla\.com$/, /\.notify\.windows\.com$/];
@@ -61,7 +63,8 @@ type VapidState = { ok: true; vapid: Vapid } | { ok: false; missing: string[]; m
 type Sent = { host: string; status: number; reason: string };
 type Rec = Record<string, unknown>;
 // 一回传话的结果：status 是 Anthropic 回的状态码，data 是它回的东西（回话，或者报错），used 是最后用的哪种写法
-type Result = { status: number; data: unknown; used: { cache: boolean; mcp: boolean } };
+// used.shaky：换过写法，而且是 Anthropic 一时出岔子才换的（不是它说写得不对）：网页看到这个，不把“不带缓存”记成往后的规矩
+type Result = { status: number; data: unknown; used: { cache: boolean; mcp: boolean; shaky?: boolean } };
 
 // ---------- 小工具 ----------
 
@@ -111,8 +114,11 @@ function tidy(text: string): string {
 }
 
 function cors(): Record<string, string> {
+  // 密钥柜里写了 ALLOWED_ORIGIN 就只许那一处的网页来敲。只取到域名为止（见 homeOrigin）：
+  // 贴进来的要是带着斜杠、带着路径，原样回给浏览器它不认，整个开封府就连不上了
+  const set = env("ALLOWED_ORIGIN");
   return {
-    "Access-Control-Allow-Origin": env("ALLOWED_ORIGIN") || "*",
+    "Access-Control-Allow-Origin": set && set !== "*" ? homeOrigin() : "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
@@ -517,14 +523,17 @@ async function askUpstream(request: Rec, beta: string, apiKey: string, deadline:
   if (plans[0].cache) plans.push({ body: plain, beta, cache: false, mcp: plans[0].mcp });
   if (plans[0].mcp) plans.push({ body: withoutMcp(plain), beta: beta.split(",").filter((b) => b && !b.startsWith("mcp-client")).join(","), cache: false, mcp: false });
   // Anthropic 一时出了岔子（它自己的 5xx、没连上）：歇一下，同一种写法原样再问，整回只多问这一回。
-  // 不因为这一下就换写法：换成不带缓存的问通了，网页会记成“下回别带缓存记号”，往后每句话都按全价算
+  // 不因为这一下就换写法：换成不带缓存的问通了，网页会记成“下回别带缓存记号”，往后每句话都按全价算。
+  // 原样再问还是出岔子，才接着换写法试（她不在跟前，多一种问法多一分回上的指望）；
+  // 这样换来的结果带着 shaky，网页看到就不记那一笔
   let spare = 1;
+  let shaken = false;
   let last: Result = { status: 504, data: oops("等 Anthropic 等得太久，没等到"), used: { cache: false, mcp: false } };
   let i = 0;
   while (i < plans.length) {
     const plan = plans[i];
     const got = await askOnce(plan.body, plan.beta, apiKey, Math.max(1000, deadline - Date.now()));
-    last = { status: got.status, data: got.data, used: { cache: plan.cache, mcp: plan.mcp } };
+    last = { status: got.status, data: got.data, used: shaken ? { cache: plan.cache, mcp: plan.mcp, shaky: true } : { cache: plan.cache, mcp: plan.mcp } };
     if (fine(last)) return last;
     // key 不对、说得太快：换哪种写法都一样，不必再问
     if (got.status === 401 || got.status === 403 || got.status === 429) break;
@@ -534,7 +543,10 @@ async function askUpstream(request: Rec, beta: string, apiKey: string, deadline:
     if ((!same && i + 1 >= plans.length) || deadline - Date.now() < (shaky ? 4500 : 3000)) break;
     if (shaky) await sleep(1500);
     if (same) spare--;
-    else i++;
+    else {
+      if (shaky) shaken = true;
+      i++;
+    }
   }
   return last;
 }
@@ -623,6 +635,16 @@ const NAME_LINE = "^[ \\t]*\\[(?:NAME|Name|name)[:：]([^\\[\\]\\n]*)\\][ \\t]*$
 const NAME_SAMPLE = "新名字"; // 名帖里教他写法时占位用的，照抄出来的不算真改名
 const DOC_SAMPLE = "文件名.md"; // 同上，文档块的
 
+// 把结尾那一串“junk 认的字”去掉。不写成“[…]+$”那样的正则：中间夹着一长串这种字、后面又跟着别的字的时候，
+// 它一个位置一个位置地试，几万个字要算好几秒（这里一回请求只给两秒）
+function dropTail(s: string, junk: (ch: string) => boolean): string {
+  let end = s.length;
+  while (end > 0 && junk(s[end - 1])) end--;
+  return end === s.length ? s : s.slice(0, end);
+}
+const NAME_TAIL = "」』”’\"'》";
+const DOC_TAIL = "\"'“”‘’》」』";
+
 function tidyName(raw: string): string {
   return raw
     .replace(/[\[\]\r\n\t\u2028\u2029]/g, " ")
@@ -638,7 +660,7 @@ function docName(raw: string): string {
     .replace(/\s+/g, " ")
     .trim();
   s = s.replace(/\.(md|markdown|txt)$/i, "").trim();
-  s = s.replace(/^["'“”‘’《「『\s]+|["'“”‘’》」』\s]+$/g, "").replace(/^[.\s]+/, "").trim();
+  s = dropTail(s.replace(/^["'“”‘’《「『\s]+/, ""), (ch) => DOC_TAIL.includes(ch) || /\s/.test(ch)).replace(/^[.\s]+/, "").trim();
   const chars = Array.from(s);
   if (chars.length > 40) s = chars.slice(0, 40).join("").trim();
   return (s || "文档") + ".md";
@@ -657,7 +679,8 @@ function splitDocs(source: string): Array<{ doc: string } | { text: string }> {
     const close = /^[ \t]*\[\/(?:DOC|Doc|doc)\][ \t]*\r?$/gm;
     close.lastIndex = bodyStart;
     const c = close.exec(source);
-    const body = (c ? source.slice(bodyStart, c.index) : source.slice(bodyStart)).replace(/^\r?\n/, "").replace(/\s+$/, "");
+    // 正文这里只看有没有字（空的文档块不算交了文档），用不着收拾两头
+    const body = c ? source.slice(bodyStart, c.index) : source.slice(bodyStart);
     if (m.index > last) parts.push({ text: source.slice(last, m.index) });
     if (body.trim()) parts.push({ doc: docName(m[1]) });
     last = c ? close.lastIndex : source.length;
@@ -699,7 +722,7 @@ function previewOf(reply: string): string {
       let m: RegExpExecArray | null;
       while ((m = marks.exec(chunk)) !== null) {
         // 照抄名帖里教的写法 [NAME:新名字]：是在讲怎么改，不是真改，留着当字
-        if (!m[1] && tidyName(m[3].trim().replace(/^[「『“‘"'《]+/, "").replace(/[」』”’"'》]+$/, "")) === NAME_SAMPLE) continue;
+        if (!m[1] && tidyName(dropTail(m[3].trim().replace(/^[「『“‘"'《]+/, ""), (ch) => NAME_TAIL.includes(ch))) === NAME_SAMPLE) continue;
         if (m.index > last) say(chunk.slice(last, m.index));
         if (m[1] === "MEME") lines.push("[表情包]");
         else if (m[1] === "AVATAR") avatar = true;
@@ -771,7 +794,7 @@ async function relay(req: Request, body: Rec): Promise<Response> {
   const tag = str(body.tag);
   if (!TAG_PATTERN.test(tag)) return refuse(400, "bad_request", "没说是哪段对话");
   const title = str(body.title).slice(0, 200);
-  const knock = (Array.isArray(body.knock) ? body.knock : []).filter((e): e is string => typeof e === "string" && e.length > 0 && e.length <= 1024).slice(0, MAX_DEVICES);
+  const knock = Array.from(new Set((Array.isArray(body.knock) ? body.knock : []).filter((e): e is string => typeof e === "string" && e.length > 0 && e.length <= 1024))).slice(0, MAX_DEVICES);
   const beta = BETA_PATTERN.test(str(body.beta).trim()) ? str(body.beta).trim() : "";
   const request = body.request;
   if (!isRec(request)) return refuse(400, "bad_request", "没有要转的话");
@@ -802,27 +825,46 @@ async function relay(req: Request, body: Rec): Promise<Response> {
     } catch (_) {
       result = { status: 500, data: oops("小后端自己出了岔子"), used: { cache: false, mcp: false } };
     }
-    clearInterval(beats);
 
     // 封好放进信箱（放不进去就再放一回），再交给还等在那头的网页
     let stored = false;
+    let sealed = "";
     try {
-      const sealed = await sealWith(key, JSON.stringify(result));
+      sealed = await sealWith(key, JSON.stringify(result));
       stored = (await box.finish(job, sealed)) || (await box.finish(job, sealed));
     } catch (_) {
       // 封不上、放不进：下面照实说
     }
     handOver(result);
+    const handed = Date.now();
 
-    // 等一会儿再看：信被取走了，她就在开封府里，不敲；还在，就敲她的手机
-    await sleep(GRACE);
+    // 还没放进去（库房一时出了岔子）：接着放。她不在跟前的话，放不进去，这条回好的话就丢了，她回来还得再问一遍、再花一回钱。
+    // 这工夫里那一格照旧隔几秒摸一下：网页看它还活着，不会当它断了、把它收掉
+    try {
+      for (const pause of STORE_AGAIN) {
+        if (stored || !sealed || Date.now() + pause > handed + STORE_GIVE_UP) break;
+        await sleep(pause);
+        stored = await box.finish(job, sealed);
+      }
+    } catch (_) {
+      // 照实说
+    }
+    clearInterval(beats);
+
+    // 从交出去算起等够那几秒再看：信被取走了，她就在开封府里，不敲；还在，就敲她的手机
+    await sleep(Math.max(0, handed + GRACE - Date.now()));
     if (!knock.length || (await box.waiting(job)) === false) return;
     const keys = await loadVapid();
     if (!keys.ok) return;
     // 只敲网页点了名、登记簿里也真有的那几台
     const rows: Row[] = [];
     for (const endpoint of knock) {
-      const found = await book.find(endpoint);
+      let found = await book.find(endpoint);
+      // 登记簿一时没读到：歇一下再读一回（读不到就敲不了：信在信箱里，她却不知道）
+      if (!("rows" in found) && found.status === 502) {
+        await sleep(1000);
+        found = await book.find(endpoint);
+      }
       if ("rows" in found) rows.push(...found.rows);
     }
     if (!rows.length) return;

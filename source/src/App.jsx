@@ -46,6 +46,8 @@ const SPLASH = {
 const RAW_BASE =
   "https://raw.githubusercontent.com/Valerie9391120/meme-library/main/";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
+const OPENED_AT = Date.now(); // 这次打开开封府是几点（认“上回打开时发出去、没送到的那一句”用，见 checkMail）
+const ORPHAN_AGE = 10 * 1000; // 记下不到这么久的那一回先不当它没送到：也许正在路上（同一台设备上另开着一页，刚发出去，大包还没传完）
 const MODELS = [
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6", note: "一直陪你聊的这个" },
   { id: "claude-opus-4-6", label: "Opus 4.6", note: "上一代 Opus" },
@@ -3565,6 +3567,7 @@ export default function App({ account = {} }) {
   const memesReady = useRef(null); // 仓库里新加的表情包读回来没有（读不回来也算完）
   const mailGate = useRef(null); // 头一遍看信箱之前要等的那一下（见 checkMail）
   const backResend = useRef(false); // 她不在眼前的时候有一句话没连上：等她回来再发（见 askGuangyi）
+  const orphansRef = useRef(new Set()); // 上回打开时没送到、这回已经替她补发过的那几回（一回只补一次，见 checkMail）
   const latest = useRef({}); // 最新一遍画面里的那几个函数（给一开机就挂上的监听用，免得它们拿着旧的）
   const [noticeBack, setNoticeBack] = useState(0); // 这次打开以来，上一回点着测试通知回来是什么时候（通知面板里要说）
   const [copySheet, setCopySheet] = useState("");
@@ -4155,8 +4158,9 @@ export default function App({ account = {} }) {
           recheck: !!opts.recheck,
         });
         // 和老路上的记性一样：只有“不带缓存、别的照旧”才通的那种，才记下回别带缓存记号。
-        // 是工具连不上、摘了工具才通的，不算缓存的毛病
-        if (first.cache && !got.used.cache && !!got.used.mcp === !!first.mcp) flagsRef.current.noCache = true;
+        // 是工具连不上、摘了工具才通的，不算缓存的毛病；是 Anthropic 一时出岔子、小后端才换的写法（shaky），也不算：
+        // 记了的话，它挤上两三秒，她这一趟后面的每句话都不带缓存、按全价算
+        if (first.cache && !got.used.cache && !got.used.shaky && !!got.used.mcp === !!first.mcp) flagsRef.current.noCache = true;
         // 从信箱里取的：算小后端放进去那会儿到的（切走半天才回来取，不该显示成刚到）
         return { him: digestReply(got.data, got.used, ctx, got.job, got.at ? Math.min(Date.now(), got.at) : 0), settle: got.settle };
       } catch (e) {
@@ -4232,12 +4236,15 @@ export default function App({ account = {} }) {
           if (more.length) await saveChat(id, next);
         }
       } else if (e && e.code === "later") {
-        // 切走的那一下没交成（见 requestReply）：照旧等她停手那两秒多。她不在的时候定时器不走，回来了才发
-        scheduleReply(2200);
-      } else if (e && e.code === "offline" && document.visibilityState !== "visible" && !resume) {
-        // 她不在眼前的时候没连上（多半是切走的那一下网正好断了）：这会儿不报错，等她回到眼前再发。
-        // 那一回还记着：到时候先去信箱里找（万一其实送到了），没有才重发
-        backResend.current = true;
+        // 切走的那一下没交成（见 requestReply）：等她回到眼前再发。
+        // 不排定时器：页面藏着的那几秒里定时器照走，到点就从藏着的页面走老路，等着的这头马上断，那一回白问
+        if (document.visibilityState === "visible") scheduleReply(700);
+        else backResend.current = true;
+      } else if (e && e.code === "offline" && document.visibilityState !== "visible") {
+        // 她不在眼前的时候没连上（多半是切走的那一下网正好断了）：这会儿不报错（她回来头一眼看到的不该是一行红字）。
+        // 是这台设备自己发的那一回：等她回到眼前再发。那一回还记着：到时候先去信箱里找（万一其实送到了），没有才重发。
+        // 是守着的那一回（别处发的、上次打开时发的）：她回来的时候看信箱那一遍会再认出它，接着守
+        if (!resume) backResend.current = true;
       } else {
         if (chatIdRef.current === id) setErrorNote(`消息没送到（${String(e.message || e).slice(0, 90)}）。点这里重发`);
         // 这一回也许其实已经交给小后端了（只是这头没连上）：过几秒自己去信箱里看一眼，回话在就取出来，不用她点
@@ -4658,10 +4665,14 @@ export default function App({ account = {} }) {
 
   // ---- 信箱：她不在的时候到的回话（那条新路见 mail.js） ----
   // 信箱里的一封回话放进它那段对话。回 applied 放进去了；dup 早放过了；gone 用不着了；failed 那一回没回成（已经告诉她了）；
-  // later 这台设备上的那段对话还没跟上（等同步下来再放，信先留着）；keep 没回成、她眼前又不是那段对话（信先留着）
+  // later 这台设备上的那段对话还没跟上（等同步下来再放，信先留着）；keep 没回成、她眼前又不是那段对话（信先留着）；
+  // busy 那段对话正在重新回答（等它完了再看，信先留着）
   const applyMail = async ({ job, info, row, result }) => {
     const id = info.chat;
     const here = () => chatIdRef.current === id;
+    // 这段对话正在重新回答：画面上旧回答先收起来了（messagesRef 里没有它）。这时候拿画面去认信，
+    // 信箱里要是还留着旧回答的那一封，会把它当成没放过的、又放一遍，回头还把新回答盖掉。等重新回答完了再看
+    if (forkRef.current && forkRef.current.chat === id) return "busy";
     const msgs = here() ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + id), null);
     const fit = mailFit(msgs, info, job);
     if (fit !== "ok") return fit;
@@ -4683,7 +4694,8 @@ export default function App({ account = {} }) {
     const next = mailPut(msgs, info, digestReply(result.data, result.used, info.extra || null, job, stamp));
     if (here()) messagesRef.current = next;
     await saveChat(id, next);
-    if (here()) {
+    // 存的那一下工夫里对话又变了（她发了一句、点了重新回答）：画面已经是更新的那份，不拿这一份旧的去盖
+    if (here() && messagesRef.current === next) {
       setMessages(next);
       setErrorNote("");
     }
@@ -4712,6 +4724,8 @@ export default function App({ account = {} }) {
       // 这一遍没看成（没网、信箱没应）：过一会儿自己再来，不然信在信箱里、屏幕上什么都没有，要等她切走再回来才看得到
       if (list === null) missed = true;
       for (const m of list || []) {
+        // 看的工夫里她切走了：一封都不动（这时候把信取走，小后端就不敲她了）。回来那一遍再办
+        if (document.visibilityState !== "visible") break;
         const age = Date.now() - (Date.parse(m.row.created_at) || 0);
         const stale = age > 3 * 24 * 3600 * 1000; // 放了三天还放不进对话的，收掉
         if (m.state === "unreadable") {
@@ -4721,7 +4735,10 @@ export default function App({ account = {} }) {
         }
         const mine = m.info.chat === chatIdRef.current && !loadingRef.current && !timerRef.current;
         if (m.state === "dead") {
+          // 只收还写着“在等”的：看的那一眼和收的这一下之间回话要是正好放进来了，那一格留着。
+          // 所以过几秒再看一遍：留下了就取出来（下面那句“没送到”跟着收掉）
           await relay.discard(m.job, true);
+          again = true;
           if (mine && mailFit(messagesRef.current, m.info, m.job) === "ok" && needsReply(messagesRef.current)) setErrorNote("消息没送到（那边断了，这一条没回成）。点这里重发");
           continue;
         }
@@ -4731,8 +4748,29 @@ export default function App({ account = {} }) {
           continue;
         }
         const out = await applyMail(m);
+        if (out === "busy") {
+          again = true;
+          continue;
+        }
         if (out === "later") mailLater.current = true;
+        // 放的那一下工夫里她切走了：信先留着（小后端看它还在，照样敲她），回来那一遍认出放过了再收
+        if (document.visibilityState !== "visible" && !stale) break;
         if ((out !== "later" && out !== "keep") || stale) await relay.discard(m.job);
+      }
+      // 上回打开时发出去、却没送到的那一句（切走的那一下话没出去，开封府又被系统收掉了）：那一回还记着，信箱里却没有它。
+      // 眼前正是那段对话、那一句后面还空着：替她补发，不用她再说一遍（发之前照旧先同步看一眼别处回上了没有，见 mail.js 的 ask）。
+      // 只认这次打开之前记下的（这次打开以后没送成的，当场就有“点这里重发”）；一回只补一次
+      if (list !== null && document.visibilityState === "visible" && !loadingRef.current && !timerRef.current) {
+        const msgs = messagesRef.current;
+        // 记着的那一回接的正是眼下最后一条：那一句后面什么都没添过，还空着
+        const owed = msgs.length ? relay.owed(chatIdRef.current, msgs[msgs.length - 1].id) : null;
+        if (owed && owed.at < OPENED_AT && !orphansRef.current.has(owed.job) && !list.some((m) => m.job === owed.job)) {
+          if (Date.now() - owed.at < ORPHAN_AGE) again = true; // 太新，过三秒再看
+          else {
+            orphansRef.current.add(owed.job);
+            askGuangyi(chatIdRef.current, msgs, null, { recheck: true });
+          }
+        }
       }
     } catch (e) {}
     mailBusy.current = false;
