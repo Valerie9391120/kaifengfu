@@ -3,6 +3,7 @@ import MEMES from "../static/memes.json";
 import { store } from "./store.js";
 import { callClaude, callReply, mailbox, freshToken } from "./cloud.js";
 import { openProbe } from "./probe.js";
+import { createFollow } from "./scroll.js";
 import { gapInfo, setFill } from "./gap.js";
 import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
 import SplashDingxiang from "./SplashDingxiang.jsx";
@@ -200,6 +201,13 @@ const GLOBAL_CSS = `
 .kfs-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: rgba(var(--k-soft),.55); animation: kfsDot 1.2s infinite; }
 .kfs-scroll { scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .kfs-scroll::-webkit-scrollbar { display: none; }
+/* 聊天记录不藏滚动条：手机上用系统自带的那根（滚的时候出来、停了自己淡掉、长按能拖）。
+   用鼠标的地方照旧藏着（那儿的滚动条是一直杵在边上的那种） */
+.kfs-chat-scroll { -webkit-overflow-scrolling: touch; }
+@media (hover: hover) and (pointer: fine) {
+  .kfs-chat-scroll { scrollbar-width: none; }
+  .kfs-chat-scroll::-webkit-scrollbar { display: none; }
+}
 .kfs-field::placeholder { color: rgba(var(--k-soft),.45); }
 .kfs-tap { transition: transform .15s ease; }
 .kfs-tap:active { transform: scale(.94); }
@@ -234,6 +242,7 @@ const ICON_PATHS = {
     </>
   ),
   up: <path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" />,
+  down: <path d="M12 5v14M5.5 12.5 12 19l6.5-6.5" />,
   chevR: <path d="m9 6 6 6-6 6" />,
   chevL: <path d="m15 6-6 6 6 6" />,
   music: (
@@ -3600,6 +3609,27 @@ export default function App({ account = {} }) {
   const taRef = useRef(null);
   const listMount = useRef(Date.now());
   const touch = useRef(null);
+  // 聊天记录怎么滚（见 scroll.js）：她在最底下就跟着最新，往上翻了就不拽她。
+  // away：她翻上去了，输入框上面浮出“回到最新”的圆钮
+  const [away, setAway] = useState(false);
+  const followRef = useRef(null);
+  if (!followRef.current) {
+    followRef.current = createFollow({
+      el: () => scrollRef.current,
+      onAway: setAway,
+      raf: (fn) => requestAnimationFrame(fn),
+      caf: (id) => cancelAnimationFrame(id),
+      now: () => performance.now(),
+      still: () => {
+        try {
+          return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        } catch (e) {
+          return false;
+        }
+      },
+    });
+  }
+  const follow = followRef.current;
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -4436,6 +4466,7 @@ export default function App({ account = {} }) {
     const { alts, altIdx, ...node } = msgs[i];
     const next = forkAt(msgs, i, { ...node, id: newId(), text: t, ts: Date.now() });
     messagesRef.current = next;
+    follow.pin(); // 改完的这一句成了最后一句：到底
     setMessages(next);
     setErrorNote("");
     saveChat(chatIdRef.current, next);
@@ -4469,6 +4500,7 @@ export default function App({ account = {} }) {
     const add = list.map((p, i) => ({ id: newId() + i, role: "her", ts: t0 + i, ...p }));
     const next = messagesRef.current.concat(add);
     messagesRef.current = next;
+    follow.pin(); // 她自己发话：就算正翻着旧消息，也回到最底下
     setMessages(next);
     setErrorNote("");
     saveChat(id, next);
@@ -4960,29 +4992,24 @@ export default function App({ account = {} }) {
     return () => clearTimeout(t);
   }, [reveal, messages]);
 
-  // ---- 键盘弹出来：外壳变矮了，聊天记录滚到最新那条 ----
+  // ---- 键盘弹出来：外壳变矮了，聊天记录滚到最新那条（她在翻旧消息也一样：点开键盘就是要说话了） ----
   useEffect(() => {
     const onKb = (e) => {
       if (!e.detail || !e.detail.open) return;
-      const el = scrollRef.current;
-      if (!el) return;
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => {
-          el.scrollTop = el.scrollHeight;
-        })
-      );
+      requestAnimationFrame(() => requestAnimationFrame(() => follow.bottom(false)));
     };
     window.addEventListener("kfs-kb", onKb);
     return () => window.removeEventListener("kfs-kb", onKb);
   }, []);
 
-  // ---- 滚到底 ----
+  // ---- 换了一段对话：从最底下看起 ----
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight;
-    });
+    follow.pin();
+  }, [chatId]);
+
+  // ---- 里面的东西变了：她在最底下就跟到底，往上翻着就不动（见 scroll.js） ----
+  useEffect(() => {
+    requestAnimationFrame(() => follow.changed());
   }, [messages.length, reveal && reveal.count, loading, chatId, memePanel, errorNote]);
 
   // ---- 设置 ----
@@ -5665,6 +5692,14 @@ export default function App({ account = {} }) {
           style={{ top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 100%" }}
         />
 
+        {/* 顶栏上面那一条（时间、电量那儿）：点了也回最顶。iPhone 肯不肯把那儿的点击交给网页，要她的手机说了算 */}
+        <div
+          aria-hidden="true"
+          onClick={() => (memePanel ? setMemePanel(false) : follow.top())}
+          className="kfs-top-strip absolute z-10"
+          style={{ top: 0, left: 0, right: 0, height: "calc(12px + env(safe-area-inset-top))" }}
+        />
+
         {/* 顶栏 */}
         <div
           onClick={() => memePanel && setMemePanel(false)}
@@ -5674,7 +5709,9 @@ export default function App({ account = {} }) {
           <IconBtn onClick={() => setDrawerOpen(true)} label="打开侧栏">
             <Icon name="menu" />
           </IconBtn>
-          <div className="relative flex-1 flex flex-col items-center min-w-0">
+          {/* 点中间这一块（头像和名字）：聊天记录滑回最顶，跟点手机顶上回顶一个意思。
+              表情包面板开着的时候，这一下只管收面板（顶栏本来就是点了收面板的） */}
+          <div className="kfs-bar-mid relative flex-1 flex flex-col items-center min-w-0" onClick={() => !memePanel && follow.top()}>
             <Avatar av={avatars.him} who="him" size={30} />
             {/* 他的名字：默认“光义”，他自己在回复里改（见 names.js）。换了名字时轻轻冒一下。
                 他回话的时候，名字这一行让给“正在输入…”（叠在同一行上，不另起一行）：顶栏不长高，
@@ -5719,7 +5756,11 @@ export default function App({ account = {} }) {
         <div
           ref={scrollRef}
           onClick={() => memePanel && setMemePanel(false)}
-          className="kfs-chat-scroll relative z-10 flex-1 overflow-y-auto kfs-scroll"
+          onScroll={() => follow.scrolled()}
+          onTouchStart={() => follow.touch()}
+          onWheel={() => follow.touch()}
+          onLoadCapture={() => follow.changed()}
+          className="kfs-chat-scroll relative z-10 flex-1 overflow-y-auto"
           style={{ padding: "8px 14px 12px" }}
         >
           {messages.length === 0 && !loading && (
@@ -5806,6 +5847,34 @@ export default function App({ account = {} }) {
               </button>
             </div>
           )}
+        </div>
+
+        {/* 回到最新：她翻上去了才浮出来，点了滑回最底下。不带小点（卿卿定的）。
+            这一格自己不占高度，正好夹在聊天记录和下面那块（表情包面板、输入框）中间，圆钮从这儿往上长 */}
+        <div className="relative z-20 flex-shrink-0" style={{ height: 0 }}>
+          <span
+            className="kfs-latest"
+            aria-hidden={!away}
+            style={{
+              position: "absolute",
+              left: "50%",
+              bottom: 10,
+              transform: `translate(-50%, ${away ? 0 : 6}px)`,
+              opacity: away ? 1 : 0,
+              visibility: away ? "visible" : "hidden",
+              transition: `opacity .18s ease, transform .18s ease, visibility 0s linear ${away ? "0s" : ".18s"}`,
+            }}
+          >
+            <button
+              onClick={() => follow.bottom(true)}
+              aria-label="回到最新"
+              tabIndex={away ? 0 : -1}
+              className="kfs-tap flex items-center justify-center"
+              style={{ ...glass(0.66, 18), width: 38, height: 38, borderRadius: 999, color: T.ink, boxShadow: "0 6px 18px rgba(var(--k-shade),0.16), inset 0 1px 0 rgba(255,255,255,0.75)" }}
+            >
+              <Icon name="down" size={19} sw={2} />
+            </button>
+          </span>
         </div>
 
         {/* 表情包面板 */}

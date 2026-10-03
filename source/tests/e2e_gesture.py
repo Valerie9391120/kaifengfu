@@ -1,4 +1,5 @@
-# 手上的事：整页不许捏，连带着侧栏、长按只认一根手指。真的浏览器，用调试接口发真的触摸（不是鼠标装的）。
+# 手上的事：整页不许捏（连带着侧栏、长按只认一根手指）；聊天记录怎么滚（不拽、回到最新的圆钮、点上面回顶）。
+# 真的浏览器，用调试接口发真的触摸（不是鼠标装的）。
 # 先在 source/ 里 npm run build:test，起好两个服务（见开发说明），再：python3 tests/e2e_gesture.py
 # 每一段从头来过；只想跑其中几段就把名字写在后面：python3 tests/e2e_gesture.py photo
 # KFS_SHOTS=某个目录：顺手存几张截图
@@ -239,7 +240,200 @@ def photo(browser):
     A.close()
 
 
-SCENES = [("nopinch", nopinch), ("photo", photo)]
+# ---------- 聊天记录怎么滚：不拽、回到最新的圆钮、点上面回顶、系统自带的滚动条 ----------
+GAP = "(() => { const e = document.querySelector('.kfs-chat-scroll'); return Math.round(e.scrollHeight - e.clientHeight - e.scrollTop); })()"
+TOP = "Math.round(document.querySelector('.kfs-chat-scroll').scrollTop)"
+# 圆钮：出没出来、在哪
+BTN = """(() => { const s = document.querySelector('.kfs-latest'); const c = getComputedStyle(s); const r = s.querySelector('button').getBoundingClientRect();
+  const list = document.querySelector('.kfs-chat-scroll').getBoundingClientRect(); const comp = document.querySelector('.kfs-composer').getBoundingClientRect();
+  const panel = document.querySelector('.kfs-sheet.overflow-y-auto'); const pt = panel ? panel.getBoundingClientRect().top : null;
+  return { shown: c.visibility === 'visible' && Number(c.opacity) > 0.99, hidden: c.visibility === 'hidden', cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: r.width, h: r.height,
+    bottom: r.bottom, listBottom: list.bottom, mid: list.left + list.width / 2, compTop: comp.top, panelTop: pt }; })()"""
+
+# 一根手指在聊天记录上划：从 y0 到 y1，到了以后停一下再抬（不带惯性，停在哪就是哪）
+def drag(page, f, y0, y1, x=196):
+    f.down([(0, x, y0)]); f.glide([(0, x, y0)], [(0, x, y1)], 12)
+    for _ in range(8):
+        f.move([(0, x, y1)])
+    f.up(); page.wait_for_timeout(350)
+
+def scroll(browser):
+    A = phone(browser)
+    pa = page_of(A, "scroll")
+    first_time(pa)
+    for i in range(7):
+        chat(pa, f"第{i + 1}句")
+    f = Fingers(pa)
+    b = pa.evaluate(BTN)
+    ok(pa.evaluate(GAP) <= 1 and b["hidden"], f"聊完停在最底下：圆钮不出来（离底 {pa.evaluate(GAP)}）")
+
+    # 往上翻：圆钮浮出来
+    drag(pa, f, 400, 680)
+    up1 = pa.evaluate(TOP)
+    b = pa.evaluate(BTN)
+    ok(pa.evaluate(GAP) > 200 and b["shown"], f"往上翻了一截：圆钮浮出来（离底 {pa.evaluate(GAP)}）")
+    ok(abs(b["cx"] - b["mid"]) < 1 and abs(b["w"] - 38) < 0.5 and abs(b["h"] - 38) < 0.5 and abs((b["listBottom"] - b["bottom"]) - 10) < 1 and b["listBottom"] <= b["compTop"] + 0.5,
+       f"圆钮在输入框正上方、左右居中，离输入框 {b['compTop'] - b['bottom']:.0f} 像素")
+    shot(pa, "scroll-button")
+
+    # 不拽：她翻着旧消息的时候，他的回话一条条蹦出来，画面不动
+    say(pa, "翻着旧消息的时候你回你的")
+    pa.wait_for_timeout(400)
+    ok(pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], "她自己发话：回到最底下，圆钮收了")
+    drag(pa, f, 380, 700)
+    held = pa.evaluate(TOP)
+    seen_typing = wait_js(pa, TYPING, 15000)
+    pa.get_by_text("收到：翻着旧消息的时候你回你的").last.wait_for(state="attached", timeout=20000)
+    pa.get_by_text("第二条").nth(7).wait_for(state="attached", timeout=10000)
+    wait_js(pa, "!(" + TYPING + ")", 15000); pa.wait_for_timeout(600)
+    b = pa.evaluate(BTN)
+    ok(seen_typing and abs(pa.evaluate(TOP) - held) <= 1 and pa.evaluate(GAP) > 300 and b["shown"], f"翻着旧消息的时候他回了两条：画面一点没动（{held} → {pa.evaluate(TOP)}），圆钮还在")
+
+    # 点圆钮：滑回最底下
+    pa.touchscreen.tap(b["cx"], b["cy"]); pa.wait_for_timeout(120)
+    mid_gap = pa.evaluate(GAP)
+    pa.wait_for_timeout(600)
+    b = pa.evaluate(BTN)
+    last = pa.evaluate("(() => { const all = [...document.querySelectorAll('.kfs-chat-scroll .items-end span')].filter((e) => e.textContent === '第二条'); const r = all[all.length - 1].getBoundingClientRect(); const l = document.querySelector('.kfs-chat-scroll').getBoundingClientRect(); return r.bottom <= l.bottom && r.top >= l.top; })()")
+    ok(0 < mid_gap and pa.evaluate(GAP) <= 1 and b["hidden"] and last, f"点圆钮：滑回最底下（半路上离底还有 {mid_gap}），最新那条看得见，圆钮收了")
+
+    # 在最底下的时候照旧跟着
+    chat(pa, "在最底下的时候照旧跟着")
+    ok(pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], "在最底下的时候他回话：一条条跟到底，和原来一样")
+
+    # 点上面回顶
+    bar = pa.evaluate("(() => { const r = document.querySelector('.kfs-bar-mid').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()")
+    pa.touchscreen.tap(bar["x"], bar["y"]); pa.wait_for_timeout(700)
+    b = pa.evaluate(BTN)
+    ok(pa.evaluate(TOP) == 0 and b["shown"], "点顶栏中间（头像和名字）：滑回最顶，圆钮出来（好回来）")
+    pa.touchscreen.tap(b["cx"], b["cy"]); pa.wait_for_timeout(700)
+    ok(pa.evaluate(GAP) <= 1, "再点圆钮：回到最底下")
+    strip = pa.evaluate("(() => { const r = document.querySelector('.kfs-top-strip').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, h: r.height }; })()")
+    pa.touchscreen.tap(strip["x"], strip["y"]); pa.wait_for_timeout(700)
+    ok(strip["h"] >= 12 and pa.evaluate(TOP) == 0, "点顶栏上面那一条（时间电量那儿）：也回最顶")
+    pa.touchscreen.tap(pa.evaluate(BTN)["cx"], pa.evaluate(BTN)["cy"]); pa.wait_for_timeout(700)
+    # 顶栏两头的按钮照旧，不把聊天记录带走
+    pa.get_by_role("button", name="打开侧栏").tap(); pa.wait_for_timeout(700)
+    opened = pa.evaluate(REACHABLE)
+    pa.locator("div.absolute.inset-0.z-30").tap(); pa.wait_for_timeout(700)
+    ok(opened and pa.evaluate(GAP) <= 1 and not pa.evaluate(REACHABLE), "点顶栏左边的按钮：照旧开侧栏，聊天记录没被带到顶上去")
+
+    # 键盘弹出来：一下到底（她在翻旧消息也一样）
+    drag(pa, f, 380, 700)
+    ok(pa.evaluate(GAP) > 200, "先翻上去")
+    pa.evaluate("window.dispatchEvent(new CustomEvent('kfs-kb', { detail: { open: true } }))"); pa.wait_for_timeout(300)
+    ok(pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], "键盘弹出来：一下到底")
+
+    # 表情包面板：翻着的时候开，画面不动，圆钮挪到面板上面；在最底下的时候开，照旧贴着底
+    drag(pa, f, 380, 700)
+    t0 = pa.evaluate(TOP)
+    pa.get_by_role("button", name="表情包").tap(); pa.wait_for_timeout(500)
+    b = pa.evaluate(BTN)
+    ok(pa.evaluate(TOP) == t0 and b["shown"] and b["panelTop"] is not None and b["bottom"] <= b["panelTop"] - 5, f"翻着旧消息的时候打开表情包面板：画面不动，圆钮在面板上面（隔 {b['panelTop'] - b['bottom']:.0f}）")
+    shot(pa, "scroll-button-memes")
+    # 面板开着的时候点顶栏：只收面板，不回顶
+    pa.touchscreen.tap(bar["x"], bar["y"]); pa.wait_for_timeout(600)
+    ok(pa.evaluate(TOP) == t0 and pa.locator(".kfs-sheet.overflow-y-auto").count() == 0, "表情包面板开着的时候点顶栏中间：只收面板，聊天记录不动")
+    pa.get_by_role("button", name="表情包").tap(); pa.wait_for_timeout(500)
+    pa.touchscreen.tap(strip["x"], strip["y"]); pa.wait_for_timeout(600)
+    ok(pa.evaluate(TOP) == t0 and pa.locator(".kfs-sheet.overflow-y-auto").count() == 0, "点顶栏上面那一条：也只收面板")
+    pa.get_by_role("button", name="表情包").tap(); pa.wait_for_timeout(500)
+    b = pa.evaluate(BTN)
+    pa.touchscreen.tap(b["cx"], b["cy"]); pa.wait_for_timeout(700)
+    ok(pa.evaluate(GAP) <= 1, "面板开着点圆钮：照样回到最底下")
+    pa.get_by_role("button", name="表情包").tap(); pa.wait_for_timeout(500)
+    pa.get_by_role("button", name="表情包").tap(); pa.wait_for_timeout(500)
+    ok(pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], "在最底下的时候打开表情包面板：聊天记录照旧贴着底")
+    pa.get_by_role("button", name="表情包").tap(); pa.wait_for_timeout(400)
+
+    # 图片晚一步才加载出来（聊天记录变长了，可没人滚）：在最底下就跟到新的底，翻着旧消息就不动
+    grow = """() => { const l = document.querySelector('.kfs-chat-scroll'); const d = document.createElement('div'); d.style.height = '180px'; d.className = 'late'; l.appendChild(d);
+      l.querySelector('img').dispatchEvent(new Event('load')); }"""
+    pa.evaluate(grow); pa.wait_for_timeout(200)
+    ok(pa.evaluate(GAP) <= 1, "在最底下的时候有图片晚到、把聊天记录撑长了：跟到新的底")
+    drag(pa, f, 380, 700)
+    t1 = pa.evaluate(TOP)
+    pa.evaluate(grow); pa.wait_for_timeout(200)
+    ok(pa.evaluate(TOP) == t1 and pa.evaluate(GAP) > 300, "翻着旧消息的时候有图片晚到：画面不动")
+    pa.evaluate("document.querySelectorAll('.kfs-chat-scroll .late').forEach((e) => e.remove())"); pa.wait_for_timeout(200)
+    b = pa.evaluate(BTN)
+    pa.touchscreen.tap(b["cx"], b["cy"]); pa.wait_for_timeout(700)
+
+    # 浏览器报“滚了一下”是晚一拍的：自己刚滚到底、紧接着蹦出一条长的，这时候才报来的那一下不能当成她翻的
+    # （头一版栽在这儿：他的回话带着“思考过程”一起蹦出来的时候，偶尔就不跟了）
+    late = pa.evaluate("""() => { const l = document.querySelector('.kfs-chat-scroll'); const d = document.createElement('div'); d.style.height = '220px'; d.className = 'late'; l.appendChild(d);
+      l.dispatchEvent(new Event('scroll')); l.querySelector('img').dispatchEvent(new Event('load'));
+      return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(Math.round(l.scrollHeight - l.clientHeight - l.scrollTop))))); }""")
+    ok(late <= 1 and pa.evaluate(BTN)["hidden"], f"在最底下的时候蹦出一条长的、晚一拍报来一下“滚了”：照样跟到底（离底 {late}）")
+    pa.evaluate("document.querySelectorAll('.kfs-chat-scroll .late').forEach((e) => e.remove())"); pa.wait_for_timeout(200)
+
+    # 系统开了“减弱动态效果”：一下到，不滑
+    pa.emulate_media(reduced_motion="reduce")
+    drag(pa, f, 380, 700)
+    b = pa.evaluate(BTN)
+    pa.touchscreen.tap(b["cx"], b["cy"]); pa.wait_for_timeout(60)
+    ok(pa.evaluate(GAP) <= 1, "系统开了“减弱动态效果”：点圆钮一下到底，不滑")
+    pa.emulate_media(reduced_motion="no-preference")
+
+    # 滚动条：聊天记录用系统自带的那根，别处照旧藏着
+    bars = pa.evaluate("""[getComputedStyle(document.querySelector('.kfs-chat-scroll')).scrollbarWidth, getComputedStyle(document.querySelector('.kfs-side-scroll')).scrollbarWidth,
+      matchMedia('(hover: hover) and (pointer: fine)').matches, [...document.styleSheets].some((sh) => { try { return [...sh.cssRules].some((r) => r.media && /hover: hover/.test(r.conditionText) && /kfs-chat-scroll/.test(r.cssText)); } catch (e) { return false; } })]""")
+    ok(bars == ["auto", "none", False, True], f"手机上：聊天记录的滚动条不藏（系统自带的那根），侧栏的照旧藏着；用鼠标的地方有一条规矩把它藏回去（{bars}）")
+
+    # 滑到一半她的手指落在聊天记录上：当场停下，听她的
+    drag(pa, f, 380, 700); drag(pa, f, 380, 700)
+    b = pa.evaluate(BTN); far = pa.evaluate(GAP)
+    pa.touchscreen.tap(b["cx"], b["cy"])
+    f.down([(0, 196, 300)]); pa.wait_for_timeout(250)
+    stopped = pa.evaluate(GAP)
+    f.up(); pa.wait_for_timeout(500)
+    ok(far > 400 and 0 < stopped < far and abs(pa.evaluate(GAP) - stopped) <= 1 and pa.evaluate(BTN)["shown"], f"点了圆钮、滑到一半手指落在聊天记录上：当场停住（离底 {far} → {stopped}），圆钮还在")
+
+    # 翻着旧消息的时候改一句以前的话：改完那一句成了最后一句，他的回话要跟得上
+    old = pa.get_by_text("第6句", exact=True)
+    old.evaluate("(e) => e.scrollIntoView({ block: 'end' })"); pa.wait_for_timeout(300)
+    was_away = pa.evaluate(BTN)["shown"]
+    long_press(pa, old)
+    if not pa.get_by_text("编辑", exact=True).count():        # 松手时测试工具补的那一下点击会落在遮罩上把菜单关掉（电脑上的浏览器才这样）：用右键再叫一次
+        old.click(button="right"); pa.wait_for_timeout(500)
+    pa.get_by_text("编辑", exact=True).tap(); pa.wait_for_timeout(300)
+    pa.get_by_placeholder("说话，我听着").fill("第6句改过了")
+    pa.get_by_role("button", name="发送修改").tap()
+    pa.get_by_text("收到：第6句改过了").last.wait_for(state="attached", timeout=20000)
+    wait_js(pa, "!(" + TYPING + ")", 15000); pa.wait_for_timeout(900)
+    ok(was_away and pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], "翻着旧消息的时候改了一句以前的话：改完到底，他的回话跟得上")
+
+    # 换一段对话：从最底下看起，上一段翻到哪不带过来
+    pa.locator("button[aria-label='新对话']").tap(); pa.wait_for_timeout(500)
+    say(pa, "\n".join(f"长长的一句的第{i}行" for i in range(1, 41)))
+    pa.get_by_text("第二条").last.wait_for(state="attached", timeout=25000)
+    wait_js(pa, "!(" + TYPING + ")", 15000); pa.wait_for_timeout(900)
+    tall = pa.evaluate(f"{LIST}.scrollHeight - {LIST}.clientHeight")
+    for _ in range(10):                      # 翻到离顶不远的地方（要比那一段对话能滚的长度小得多，不然换回去被浏览器一收也是底，试不出来）
+        if pa.evaluate(TOP) < 250:
+            break
+        drag(pa, f, 300, 700)
+    here = pa.evaluate(TOP)
+    pa.get_by_role("button", name="打开侧栏").tap(); pa.wait_for_timeout(700)
+    pa.locator(".kfs-history button", has_text="第1句").tap(); pa.wait_for_timeout(1200)
+    if pa.evaluate(REACHABLE):
+        pa.locator("div.absolute.inset-0.z-30").tap(); pa.wait_for_timeout(700)
+    back = pa.evaluate(f"[{GAP}, {LIST}.scrollHeight - {LIST}.clientHeight, {TOP}]")
+    ok(tall > 800 and pa.evaluate(TOP) > 0 and back[1] > here + 200 and back[0] <= 1 and pa.evaluate(BTN)["hidden"] and pa.get_by_text("收到：第6句改过了").count() > 0,
+       f"在另一段长对话里翻到半截（{here}），换回这一段：从最底下看起（离底 {back[0]}），圆钮不出来")
+
+    # 丁香主题下的样子（她用的是这个）
+    open_panel(pa)
+    pa.get_by_role("button", name="丁香主题").tap(); pa.wait_for_timeout(500)
+    close_panel(pa)
+    drag(pa, f, 380, 660)
+    ok(pa.evaluate(BTN)["shown"] and pa.evaluate("document.documentElement.getAttribute('data-kfs-theme')") == "dingxiang", "换成丁香：圆钮照出")
+    shot(pa, "scroll-button-dingxiang")
+    f.close()
+    A.close()
+
+
+SCENES = [("nopinch", nopinch), ("photo", photo), ("scroll", scroll)]
 want = [a for a in sys.argv[1:] if not a.startswith("-")]
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])
