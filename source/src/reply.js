@@ -7,10 +7,23 @@
 import { NAME_MARK, NAME_PLACEHOLDER, cleanMarkName } from "./names.js";
 import { splitDocBlocks } from "./docs.js";
 
+// 按 [SPLIT] 切成一条一条，记号两头的空白不要。
+// 出来的东西和 text.split(/\s*\[SPLIT\]\s*/) 一样，只是不让正则在一长串空白上来回试（几万个连着的空行能把手机卡住好几秒）
+export function splitTurns(text) {
+  const chunks = String(text).split("[SPLIT]");
+  return chunks.map((chunk, i) => {
+    let s = chunk;
+    if (i > 0) s = s.trimStart();
+    if (i < chunks.length - 1) s = s.trimEnd();
+    return s;
+  });
+}
+
 export function splitMarks(text) {
   const parts = [];
-  // 表情包、换头像、改名字三种标记。改名字的要独占一行才算（所以带 m 标志），新名字里可以有空格
-  const re = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]+)\\s*\\]|" + NAME_MARK, "gm");
+  // 表情包、换头像、改名字三种标记。改名字的要独占一行才算（所以带 m 标志），新名字里可以有空格。
+  // 表情包的文件名最长认两百个字（一长串没有右括号的，不来回试）
+  const re = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]{1,200})\\s*\\]|" + NAME_MARK, "gm");
   let last = 0;
   let m;
   while ((m = re.exec(text)) !== null) {
@@ -46,7 +59,7 @@ export function parseReply(text) {
       items.push({ type: "doc", name: part.name, text: part.text, ...(part.cut ? { cut: true } : {}) });
       return;
     }
-    part.value.split(/\s*\[SPLIT\]\s*/).forEach((chunk) => {
+    splitTurns(part.value).forEach((chunk) => {
       splitMarks(chunk).forEach((p) => {
         if (p.type === "meme") items.push({ type: "meme", file: p.value });
         else if (p.type === "avatar") items.push({ type: "avatar", file: p.value });

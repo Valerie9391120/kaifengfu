@@ -49,16 +49,17 @@ supa.tokens.set("tok", USER);
 supa.tokens.set("tok-other", OTHER);
 const ORIGIN = "https://valerie.example";
 const PAGE = ORIGIN + "/kaifengfu/";
-const baseEnv = { SUPABASE_URL: FAKE_SUPABASE, SUPABASE_ANON_KEY: "sb_publishable_test", ALLOWED_EMAIL: USER.email, ANTHROPIC_API_KEY: "sk-ant-test", VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.privateKey, VAPID_SUBJECT: "mailto:qing@example.com" };
+// 测试里的开封府住在 valerie.example：照“网页搬了家”的办法，在密钥柜里写上 ALLOWED_ORIGIN
+const baseEnv = { SUPABASE_URL: FAKE_SUPABASE, SUPABASE_ANON_KEY: "sb_publishable_test", ALLOWED_EMAIL: USER.email, ALLOWED_ORIGIN: ORIGIN, ANTHROPIC_API_KEY: "sk-ant-test", VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.privateKey, VAPID_SUBJECT: "mailto:qing@example.com" };
 Object.assign(pushEnv, baseEnv);
 
 const GRACE = 6000, BEAT = 8000;
 
-async function call(body, { token = "tok" } = {}) {
+async function call(body, { token = "tok", origin = ORIGIN } = {}) {
   const res = await fn.handler(
     new Request(FAKE_SUPABASE + "/functions/v1/push", {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: "Bearer " + token, apikey: "sb_publishable_test", origin: ORIGIN },
+      headers: { "content-type": "application/json", authorization: "Bearer " + token, apikey: "sb_publishable_test", origin },
       body: typeof body === "string" ? body : JSON.stringify(body),
     })
   );
@@ -108,6 +109,7 @@ function resetWorld() {
   supa.mail.log.length = 0;
   Object.assign(supa.mail.state, { missing: false, down: false, failPatch: 0 });
   supa.table.rows.clear();
+  supa.seen.length = 0;
   push.reset();
   KNOCK = [];
   claude.reset();
@@ -245,6 +247,48 @@ function resetWorld() {
   await clock.tick(GRACE + 200);
   await Promise.all(background);
   ok(r3.status === 200 && push.log.length === 0, "点名点得不像话（不是字、太长、太多）：照常回话，不敲、不出错");
+  // 点了七台：只查、只敲前五台
+  push.reset();
+  const seven = [];
+  for (let i = 0; i < 7; i++) seven.push(addDevice("ok", PAGE, "2026-10-04T10:00:0" + i + ".000Z"));
+  supa.seen.length = 0;
+  const o4 = order({ knock: seven.map((d) => d.endpoint) });
+  await call(o4);
+  await clock.tick(GRACE + 200);
+  await Promise.all(background);
+  const lookups = supa.seen.filter((x) => x.method === "GET" && x.path.startsWith("/rest/v1/push_subs"));
+  ok(lookups.length === 5 && push.delivered.length === 5 && seven.slice(5).every((d) => d.hits === 0), "点名点了七台：只去登记簿里查前五台、只敲这五台");
+  // 门牌号长得不像话（一千多个字）：登记簿里就算真有这一行，也不去查、不去敲
+  push.reset();
+  const longEnd = "https://web.push.apple.com/" + "x".repeat(1100);
+  const lent = push.addDevice();
+  supa.table.rows.set(USER.id + "|" + longEnd, { user_id: USER.id, endpoint: longEnd, p256dh: lent.p256dh, auth: lent.auth, page: PAGE, created_at: "2026-10-05T10:00:00.000Z", updated_at: "2026-10-05T10:00:00.000Z", last_at: null, last_status: null, last_note: null });
+  supa.seen.length = 0;
+  await call(order({ knock: [longEnd] }));
+  await clock.tick(GRACE + 200);
+  await Promise.all(background);
+  ok(push.log.length === 0 && supa.seen.filter((x) => x.path.startsWith("/rest/v1/push_subs")).length === 0, "点名的门牌号长得不像话：登记簿里真有这一行也不查、不敲");
+
+  // 偷到登录密码的人：把她那一行的回程网址改成自己的站，再叫小后端等一回话、点她那台设备的名，来处也冒成那个站。
+  // 密钥柜里没写 ALLOWED_ORIGIN（她的就是这样）：只认开封府现在住的那个地址，不发
+  push.reset();
+  delete pushEnv.ALLOWED_ORIGIN;
+  const victim = addDevice("ok", "https://evil.example/kaifengfu/");
+  const o5 = order({ knock: [victim.endpoint], title: "光义" });
+  const r5 = await call(o5, { origin: "https://evil.example" });
+  await clock.tick(GRACE + 200);
+  await Promise.all(background);
+  ok(r5.status === 200 && victim.hits === 0 && push.delivered.length === 0 && supa.table.rows.get(USER.id + "|" + victim.endpoint).last_note === "BadPage",
+    "回程网址被人改成别处、来处也冒成那个站：回话照办，横幅不发（点了通知带不到假的开封府去）");
+  // 她自己的设备（登记的是开封府现在住的地址）：照敲，不管这一回敲门的人报的来处是什么
+  const hers = addDevice("ok", "https://valerie9391120.github.io/kaifengfu/dingxiang/");
+  const o6 = order({ knock: [hers.endpoint] });
+  await call(o6, { origin: "https://valerie9391120.github.io" });
+  await clock.tick(GRACE + 200);
+  await Promise.all(background);
+  const n6 = push.delivered.find((d) => d.endpoint === hers.endpoint);
+  ok(!!n6 && n6.json.notification.navigate === `https://valerie9391120.github.io/kaifengfu/dingxiang/#n=r.${o6.tag}.${o6.job}`, "密钥柜里没写 ALLOWED_ORIGIN：登记的是开封府现在住的那个地址，照敲，点了回到那个入口");
+  Object.assign(pushEnv, baseEnv);
   clock.off();
 }
 
@@ -388,6 +432,31 @@ function resetWorld() {
     claude.script.length = 0;
   }
 
+  // Anthropic 一时太挤（它自己的 5xx）：歇一下，同一种写法原样再问，不因为这一下就换成不带缓存的
+  // （换了问通的话，网页会记成“下回别带缓存记号”，往后每句话都按全价算）
+  claude.script.push(upstreamError(529, "overloaded_error", "Overloaded"), said("带着缓存问通了"));
+  const beforeS = claude.calls.length;
+  const shaky = call(order({ request: rich, beta: "mcp-client-2025-11-20" }));
+  await until(() => claude.calls.length === beforeS + 1);
+  await breathe();
+  await clock.tick(1500);
+  const rs = await shaky;
+  ok(claude.calls.length === beforeS + 2 && JSON.stringify(claude.calls[beforeS + 1].body) === JSON.stringify(rich) && JSON.stringify(rs.data.result.used) === JSON.stringify({ cache: true, mcp: true }),
+    "换写法：Anthropic 一时太挤（529），歇一秒半照原样再问一回，问通了：用的还是带缓存、带工具的那种");
+  // 原样再问还是太挤：才接着换写法试（整回只多问那一回）
+  claude.script.push(upstreamError(529, "overloaded_error", "Overloaded"), upstreamError(500, "api_error", "Internal"), upstreamError(503, "api_error", "Unavailable"), said("第三种通了"));
+  const beforeT = claude.calls.length;
+  const stormy = call(order({ request: rich, beta: "mcp-client-2025-11-20" }));
+  for (let i = 1; i <= 3; i++) {
+    await until(() => claude.calls.length === beforeT + i);
+    await breathe();
+    await clock.tick(1500);
+  }
+  const rt = await stormy;
+  const sent = claude.calls.slice(beforeT).map((c) => (fn.hasCache(c.body) ? "缓存" : "") + (fn.hasMcp(c.body) ? "工具" : "") || "素的");
+  ok(sent.join() === "缓存工具,缓存工具,工具,素的" && rt.data.result.status === 200 && JSON.stringify(rt.data.result.used) === JSON.stringify({ cache: false, mcp: false }),
+    `换写法：一直出岔子：同一种只多问一回，然后照旧一种一种往下换（${sent.join(" → ")}）`);
+
   // 没带缓存记号、带着工具：两种写法（带工具、不带工具）
   const plainMcp = JSON.parse(JSON.stringify(noCache));
   claude.script.push(upstreamError(400, "invalid_request_error", "mcp"), said("行"));
@@ -413,6 +482,7 @@ function resetWorld() {
 // ================= 小后端：还在等的时候隔几秒摸一下信箱 =================
 {
   resetWorld();
+  addDevice();
   clock.on();
   let release;
   const gate = new Promise((r) => (release = r));
@@ -434,6 +504,11 @@ function resetWorld() {
   await clock.tick(BEAT * 2);
   await Promise.all(background);
   ok(r.data.result.status === 200 && mailRow(o.job).state === "done" && supa.mail.log.filter((x) => x.method === "PATCH").length === patches, "还在等：回话到了就不再摸");
+  const beats = supa.mail.log.filter((x) => x.method === "PATCH");
+  ok(beats.length === 3 && beats.every((x) => x.query.includes("state=eq.working")), "还在等：摸的、放信的那几下都只认还写着“在等”的那一格（放好了的不再动它）");
+  const db = supa.seen.filter((x) => x.path.startsWith("/rest/v1/"));
+  ok(db.length >= 5 && db.every((x) => x.timed) && ["POST", "PATCH", "GET"].every((m) => db.some((x) => x.method === m && x.path.startsWith("/rest/v1/mailbox"))),
+    "读写库房（开一格、摸一下、放信、看信还在不在）每一下都带着限时的信号：库房悬着不应，不会把回话压在手里");
 
   // 同一个编号再来一回：不接（这一回已经在办了）
   const again = await call(o);
@@ -467,6 +542,17 @@ function resetWorld() {
   await Promise.all(background);
   ok(push.delivered.some((d) => d.endpoint === dev2.endpoint && d.json.notification.title === "光义"), "再放一回放进了的：横幅照常写他的话");
 
+  // 等够那几秒去看信还在不在，库房正好没应（问不到）：宁可多敲一下，不能因为问不到就不敲
+  push.reset();
+  const devQ = addDevice();
+  const oq = order();
+  await call(oq);
+  supa.mail.state.down = true;
+  await clock.tick(GRACE + 100);
+  await Promise.all(background);
+  supa.mail.state.down = false;
+  ok(push.delivered.some((d) => d.endpoint === devQ.endpoint && d.json.notification.navigate.endsWith(oq.job)), "问不到信还在不在（库房一时没应）：照样敲她（信要是其实被取走了，顶多多敲一下）");
+
   // 通知的钥匙没放：不敲，信照样在信箱里
   push.reset();
   addDevice();
@@ -488,6 +574,7 @@ function resetWorld() {
   ok(r4.status === 200 && push.log.length === 0 && mailRow(o4.job).state === "done", "一台设备都没开通知：不敲，信照样在信箱里");
 
   // 门牌号作废的设备：划掉
+  KNOCK = [];
   const gone = addDevice("gone");
   const fine = addDevice("ok");
   const o5 = order();
@@ -556,6 +643,12 @@ function resetWorld() {
     "[MEME:]",
     "[SPLIT]",
     "[SPLIT]\n[SPLIT]\n只有这句",
+    "[NAME:小狐]\u00a0[SPLIT]",
+    "在\u3000[SPLIT]\u00a0[NAME:小狐]\u00a0",
+    "一\ufeff[SPLIT]\u2028[NAME:小狐]\u2029[SPLIT]\u000b二",
+    "[MEME:" + "名".repeat(200) + "]",
+    "[MEME:" + "名".repeat(201) + "]",
+    "[DOC:\u00a0 带着怪空白.md \t]\n正文\n[/DOC]",
   ];
   const diff = corpus.filter((t) => fn.previewOf(t) !== expect(t));
   ok(diff.length === 0, `横幅：${corpus.length} 条各式各样的回话，小后端拆出来的和网页拆出来的一模一样${diff.length ? "（对不上的：" + JSON.stringify(diff.map((t) => [t, fn.previewOf(t), expect(t)])) + "）" : ""}`);
@@ -567,19 +660,35 @@ function resetWorld() {
     return seed / 0x80000000;
   };
   const bits = ["在呢", "*笑*", "好", " ", "\n", "\n\n", "[SPLIT]", "\n[SPLIT]\n", " [SPLIT] ", "[MEME:a.jpg]", "[AVATAR:b.jpg]", "[NAME:小狐]", "\n[NAME:小狐]\n", "[NAME:新名字]", "\n[NAME:新名字]\n", "\n [NAME:「新名字」] \n",
-    "<thinking>", "</thinking>", "[DOC:x.md]\n", "\n[DOC:x.md]\n", "\n[/DOC]\n", "[/DOC]", "\n[DOC:文件名.md]\n", "\r\n", "\t", "：", "$&", "*", "[", "]", "一家人 👨\u200d👩\u200d👧\u200d👦"];
+    "<thinking>", "</thinking>", "[DOC:x.md]\n", "\n[DOC:x.md]\n", "\n[/DOC]\n", "[/DOC]", "\n[DOC:文件名.md]\n", "\r\n", "\t", "：", "$&", "*", "[", "]", "一家人 👨\u200d👩\u200d👧\u200d👦",
+    "\u00a0", "\u3000", "\ufeff", "\u000b", "\u2028", "[DOC: x .md ]\n", "[MEME: a.jpg ]"];
   const off = [];
-  for (let i = 0; i < 4000; i++) {
+  const splitOff = [];
+  for (let i = 0; i < 20000; i++) {
     let t = "";
     for (let k = 1 + Math.floor(rnd() * 12); k > 0; k--) t += bits[Math.floor(rnd() * bits.length)];
     if (fn.previewOf(t) !== expect(t)) off.push(t);
+    // 网页那头按 [SPLIT] 切的新写法，和原来那条正则切出来的一样
+    if (JSON.stringify(replyjs.splitTurns(t)) !== JSON.stringify(t.split(/\s*\[SPLIT\]\s*/))) splitOff.push(t);
   }
-  ok(off.length === 0, `横幅：随机拼的四千条回话，两边拆出来的也一模一样${off.length ? "（对不上 " + off.length + " 条，头一条：" + JSON.stringify([off[0], fn.previewOf(off[0]), expect(off[0])]) + "）" : ""}`);
-  // 几万个连着的空行：小后端不照抄网页那条会慢的正则，一眨眼就拆完（它一回请求只有两秒可算）
-  const blank = "在呢" + "\n".repeat(25000) + "[SPLIT]" + " ".repeat(25000) + "好";
-  const t0 = performance.now();
-  const quick = fn.previewOf(blank);
-  ok(quick === "在呢\n好" && quick === expect(blank) && performance.now() - t0 < 300, `横幅：五万个连着的空白，拆得出来（和网页拆的一样）、不拖（${Math.round(performance.now() - t0)} 毫秒）`);
+  ok(splitOff.length === 0, `分条：按 [SPLIT] 切的写法（不用正则在空白上来回试），切出来的和原来那条正则一模一样${splitOff.length ? "（对不上：" + JSON.stringify(splitOff[0]) + "）" : ""}`);
+  ok(off.length === 0, `横幅：随机拼的两万条回话，两边拆出来的也一模一样${off.length ? "（对不上 " + off.length + " 条，头一条：" + JSON.stringify([off[0], fn.previewOf(off[0]), expect(off[0])]) + "）" : ""}`);
+  // 会让正则来回试的几种写法：两头都一眨眼拆完（小后端一回请求只有两秒可算；手机上卡住更难看）。
+  // 原来的写法：五万个空行后面不跟 [SPLIT] 要算好几秒；[DOC: 后面几千个空格、没有右括号，要算十几秒；一万个没有右括号的 [MEME: 将近两秒
+  const slow = [
+    ["五万个连着的空行、后面不是 [SPLIT]", "在呢" + "\n".repeat(50000) + "好", "在呢" + "\n".repeat(50000) + "好"],
+    ["[SPLIT] 两边各两万五千个空白", "在呢" + "\n".repeat(25000) + "[SPLIT]" + " ".repeat(25000) + "好", "在呢\n好"],
+    ["[DOC: 后面四千个空格、没有右括号", "看\n[DOC:" + " ".repeat(4000) + "\n完", null],
+    ["一万个没有右括号的 [MEME:", "[MEME:".repeat(10000), null],
+  ];
+  for (const [what, text, want] of slow) {
+    const t0 = performance.now();
+    const quick = fn.previewOf(text);
+    const mid = performance.now();
+    const here = expect(text);
+    const t1 = performance.now();
+    ok(quick === here && (want === null || quick === want) && mid - t0 < 300 && t1 - mid < 300, `不拖：${what}：小后端 ${Math.round(mid - t0)} 毫秒、网页 ${Math.round(t1 - mid)} 毫秒就拆完，两边拆的一样`);
+  }
   ok(fn.previewOf("好".repeat(100000) + "[SPLIT]尾巴") === "好".repeat(60000), "横幅：回话太长只看前六万个字（横幅上本来也只写三百个）");
 
   // 太长的截掉
@@ -634,6 +743,15 @@ function resetWorld() {
   const other = [her("a", 1), him("b", 2), her("c", 3), him("另一个版本", 4)];
   ok(mailFit(other, finfo, "J2") === "gone" && mailFit(full.slice(0, 3).concat([her("event", 9)]).map((m, i) => (i === 3 ? { id: "e", role: "event" } : m)).concat([him("x", 10)]), finfo, "J2") === "gone",
     "取信·重新回答：要换掉的那一条不在了、那一句后面已经有别的回话：这封不要了");
+  // 要换掉的那一条被她翻走了（外面摆着的是它的另一个版本）：新回答加成那一条的又一个版本，不扔
+  const twoVersions = forkAt(full.slice(0, 4), 3, him("v2", 50));
+  const third = mailPut(twoVersions, finfo, him("rJ3", 150, "J3"));
+  ok(mailFit(twoVersions, finfo, "J3") === "ok" && third.length === 4 && third[3].id === "rJ3" && third[3].altIdx === 2 && third[3].alts.map((a) => a.node.id).join() === "old,v2,rJ3" && mailFit(third, finfo, "J3") === "dup",
+    "取信·重新回答：要换掉的那一条被她翻成了另一个版本：新回答照样加成那一条的又一个版本（三个都翻得到），不扔");
+  // 条子里说要换掉的是她的一句话（不该有的事）：不在她的话上开分支，当平常的回话放
+  const odd = { v: 1, chat: "C", last: "c", fork: "c", key: "k", at: 10 };
+  const plain = mailPut(chat, odd, him("rJ4", 9, "J4"));
+  ok(mailFit(chat, odd, "J4") === "ok" && plain.map((m) => m.id).join() === "a,b,c,rJ4" && !plain[2].alts && !plain[3].alts, "取信·重新回答：条子指着的是她的话：不在她的话上开分支，当平常的回话接在后面");
   const back = thread.switchAlt(forked, 3, 0);
   ok(hasJob(back, "J2") && mailFit(back, finfo, "J2") === "dup" && back.map((m) => m.id).join() === "a,b,c,old,旧的后话", "取信：她翻回旧分支以后，收在别的分支里的那条也认得出（不会再放一遍）");
   const nested = forkAt([her("a"), him("b", 2, "J9"), her("c")], 0, her("a2"));
@@ -654,6 +772,7 @@ function world({ visible = true } = {}) {
     rows: new Map(), removed: [], sent: [], replies: [], aborted: 0,
     storage: "", vis: new Set(), freshed: 0, synced: 0, answered: false, hint: false,
     backAt: -Infinity, probe: true, probes: 0, knock: ["https://web.push.apple.com/this-device"], hang: "", looks: [],
+    removedWorking: [], askedJobs: null, onRemove: null,
   };
   const never = new Promise(() => {});
   const box = {
@@ -672,7 +791,17 @@ function world({ visible = true } = {}) {
       const r = w.rows.get(job);
       return r ? { ...r } : null;
     },
-    async remove(job) { w.removed.push(job); w.rows.delete(job); },
+    // onlyWorking：只在那一格还写着“在等”的时候删（和真的信箱一样）
+    async remove(job, onlyWorking) {
+      if (w.onRemove) await w.onRemove(job);
+      if (onlyWorking) {
+        w.removedWorking.push(job);
+        const r = w.rows.get(job);
+        if (r && r.state !== "working") return;
+      }
+      w.removed.push(job);
+      w.rows.delete(job);
+    },
   };
   w.relay = createRelay({
     callReply: (payload, opts = {}) => {
@@ -689,14 +818,15 @@ function world({ visible = true } = {}) {
     online: () => w.online,
     onVisible: (f) => { w.vis.add(f); return () => w.vis.delete(f); },
     sinceBack: () => Date.now() - w.backAt,
-    probe: async () => { w.probes++; if (w.probe instanceof Error) throw w.probe; return w.probe; },
+    probe: async () => { w.probes++; if (w.hang === "probe") return never; if (w.probe instanceof Error) throw w.probe; return w.probe; },
     knock: () => w.knock,
     now: () => Date.now(),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     storage: { get: () => w.storage, set: (t) => { w.storage = t; } },
     hint: { get: () => w.hint, set: (v) => { w.hint = v; } },
-    freshToken: async (s) => { w.freshed = s; },
-    answered: async () => { w.synced++; return w.answered; },
+    freshToken: async (s) => { w.freshed = s; if (w.hang === "token") return never; },
+    // answered 可以是一个函数 (jobs) => 真假：照“同步下来的对话里有没有这几回的回话”来答
+    answered: async (chat, last, fork, jobs) => { w.synced++; w.askedJobs = jobs; if (w.hang === "answered") return never; return typeof w.answered === "function" ? w.answered(jobs, fork) : w.answered; },
   });
   // 小后端那头的动静
   w.working = (p, at = stamp()) => w.rows.set(p.job, { job: p.job, state: "working", note: p.note, sealed: null, created_at: at, beat_at: at, done_at: null });
@@ -947,7 +1077,7 @@ const drive = async (p, step = 500, max = 400000) => {
   const w = world();
   w.replies.push(async (p) => { w.working(p); w.getFails = 99; throw coded("unreachable", "连不上"); });
   const t0 = Date.now();
-  const out = await drive(w.relay.ask(ARGS));
+  const out = await drive(w.relay.ask(ARGS), 100);
   const job = w.sent[0].job;
   ok(out.e && !out.e.code && out.e.message.includes("连不上开封府的后端") && w.jobs().join() === job && Date.now() - t0 < 1000 && w.getFails === 98, "话没连上、信箱也没看成（真没网）：看一眼就照实说连不上，不让她对着“正在输入”干等；这一回还记着（它多半还在办）");
   // 她点“重发”：网络好了，那一回的回话已经在信箱里：取它，不花第二回钱
@@ -989,6 +1119,7 @@ const drive = async (p, step = 500, max = 400000) => {
   const found = await drive(wo.relay.ask(ARGS));
   ok(tripped.e && tripped.e.code === "oldpath" && wo.relay.status().off && !!found.v && found.v.job === wo.sent[0].job && wo.sent.length === 2,
     "新路这会儿停着：为这句话发出去的那一回还记着，照样先去信箱里取它，不走老路再问一遍");
+  ok(wo.hint === true && wo.relay.status().off && wo.relay.trusted() === false, "新路这会儿停着：哪怕刚从信箱里取到过一回（记号又写上了“通”），她切走的那一下也不抢着交（停着的这几分钟不算通）");
 
   // 换了一句话（她又说了一句）：那是新的一回
   const w2 = world();
@@ -1209,12 +1340,13 @@ const drive = async (p, step = 500, max = 400000) => {
   const mid = await w2.relay.collect();
   ok(mid.length === 0 && w2.relay.isLive(w2.sent[0].job), "看信箱：正有人守着的那一回不在里面（免得两头各放一遍）");
 
-  // 没网、没这张表：看不了
+  // 没看成（没网）回 null：外头过一会儿再来；信箱那张表还没建：回空的，没什么可取的，也不用再来
   const w3 = world();
   w3.listFails = 1;
   const none = await w3.relay.collect();
   w3.table = false;
-  ok(none === null && (await w3.relay.collect()) === null, "看信箱：没网、信箱那张表没建，这一遍就不看了");
+  const noTable = await w3.relay.collect();
+  ok(none === null && Array.isArray(noTable) && noTable.length === 0, "看信箱：这一遍没看成（没网）说没看成，外头好过一会儿再来；信箱那张表还没建，就是没有信");
   // 看的那一下悬着不应：八秒算没看成，下一遍照常能看
   const w3b = world();
   w3b.hang = "list";
@@ -1241,6 +1373,7 @@ const drive = async (p, step = 500, max = 400000) => {
   const liveNow = w4.relay.isLive("jobRESUME01") && (await w4.relay.collect()).length === 0;
   await w4.done(p4);
   await clock.tick(2500);
+  ok(w4.hint === true && w4.probes === 0, "接着守：取到了，这台设备就知道新路是通的（不用再问一声）");
   ok(liveNow && !!res4 && res4.via === "mailbox" && res4.info.extra.slugs.s0 === "笔记" && !w4.relay.isLive("jobRESUME01") && res4.at === Date.parse(w4.rows.get("jobRESUME01").done_at),
     "接着守：上次打开时发出去的那一回，守到回话放进来；条子里记的东西（接了哪些工具）原样带回来；带着小后端放进信箱的时间");
   // 守着守着信没了：是别的设备（发话的那台）取走了。等它把对话传上来，同步下来一看有回话了，就不报错
@@ -1258,12 +1391,202 @@ const drive = async (p, step = 500, max = 400000) => {
   // 真没了（等了几眼对话里也没有回话）：照实说没回成
   const w5b = world();
   const out5 = await drive(w5b.relay.resume("jobNOWHERE1", { ...info4, job: "jobNOWHERE1" }));
-  ok(out5.e && !out5.e.code && out5.e.message.includes("那边断了") && w5b.synced === 3, "接着守：信箱里根本没有这一回，对话里也没有回话：照实说没回成");
+  ok(out5.e && !out5.e.code && out5.e.message.includes("那边断了") && w5b.synced === 4, "接着守：信箱里根本没有这一回，隔两秒看一回、看了四回对话里也没有回话：照实说没回成");
   // 没带条子去守：自己从那一格上拆
   const w6 = world();
   await w6.done(p4);
   const out6 = await drive(w6.relay.resume("jobRESUME01", null));
   ok(!!out6.v && out6.v.info.chat === "A", "接着守：没带条子也行，从那一格上拆");
+  clock.off();
+}
+
+// ---- 第二遍审出来的那几处 ----
+{
+  clock.on();
+  const fine = (w) => async (p) => { await w.done(p); return { type: "reply", job: p.job, result: GOOD }; };
+
+  // 重新回答：信箱里没有这一回了，是别的设备取走、放进对话的。那一句后面本来就有回话，只能靠编号认
+  const f = world();
+  f.hint = true;
+  f.answered = (jobs) => jobs.length === 1 && jobs[0] === f.sent[0].job; // 同步下来的对话里有这一回的回话
+  f.replies.push(async () => { throw coded("unreachable", "连不上"); });
+  const outF = await drive(f.relay.ask({ ...ARGS, fork: "oldReply" }), 200);
+  ok(outF.e && outF.e.code === "answered" && f.sent.length === 1 && f.askedJobs.join() === f.sent[0].job, "重新回答、信箱里没有这一回了：带着这一回的编号去问别处回上了没有，回上了就不重发（不花第二回钱，也不盖掉她已经看到的那个版本）");
+  // 为这句话记着的上一回，信箱里没有了、别处回上了：不重发
+  const wa = world();
+  wa.hint = true;
+  wa.replies.push(async (p) => { wa.working(p); wa.getFails = 99; throw coded("unreachable", "连不上"); });
+  await drive(wa.relay.ask(ARGS), 100);
+  wa.getFails = 0;
+  wa.rows.clear();
+  wa.answered = true;
+  const outA = await drive(wa.relay.ask(ARGS), 200);
+  ok(outA.e && outA.e.code === "answered" && wa.sent.length === 1 && wa.jobs().length === 0 && wa.askedJobs.join() === wa.sent[0].job, "她点重发、记着的那一回信箱里已经没有了、别处已经回上了：不重发");
+
+  // 她点“重发”、这台设备不记得为这句话发过哪一回（多半是别的设备发的）：先同步看一眼
+  const r1 = world();
+  r1.hint = true;
+  r1.answered = true;
+  const outR1 = await drive(r1.relay.ask({ ...ARGS, recheck: true }), 200);
+  const r2 = world();
+  r2.hint = true;
+  r2.replies.push(fine(r2));
+  const outR2 = await drive(r2.relay.ask({ ...ARGS, recheck: true }), 200);
+  const r3 = world();
+  r3.hint = true;
+  r3.replies.push(fine(r3));
+  const outR3 = await drive(r3.relay.ask(ARGS), 200);
+  ok(outR1.e && outR1.e.code === "answered" && r1.sent.length === 0 && r1.synced === 1 && r1.askedJobs.length === 0, "她点重发、这台设备不记得发过：先同步看一眼，别处已经回上了就不发");
+  ok(!!outR2.v && r2.synced === 1 && r2.sent.length === 1 && !!outR3.v && r3.synced === 0, "她点重发、别处没回上：照常发；平常发话不多问这一句（不拖慢每一句话）");
+  const r4 = world();
+  r4.hint = true;
+  r4.hang = "answered";
+  r4.replies.push(fine(r4));
+  const t4 = Date.now();
+  const outR4 = await drive(r4.relay.ask({ ...ARGS, recheck: true }), 200);
+  ok(!!outR4.v && Date.now() - t4 >= 3000 && Date.now() - t4 < 4000, `她点重发、那一眼悬着不应：等三秒就照常发（${Date.now() - t4} 毫秒）`);
+
+  // 问一声、换登录凭证悬着不应：都有时限，不让她那句话卡在这儿
+  const pb = world();
+  pb.hang = "probe";
+  const tp = Date.now();
+  const outP = await drive(pb.relay.ask(ARGS), 500);
+  ok(outP.e && outP.e.code === "oldpath" && pb.sent.length === 0 && Date.now() - tp >= 8000 && Date.now() - tp < 9500 && !pb.relay.status().off, `问新路通不通的那一声悬着不应：八秒当没问成，这一句走老路（${Date.now() - tp} 毫秒）`);
+  const tk = world();
+  tk.hint = true;
+  tk.hang = "token";
+  tk.replies.push(fine(tk));
+  const tt = Date.now();
+  const outT = await drive(tk.relay.ask(ARGS), 200);
+  ok(!!outT.v && Date.now() - tt >= 4000 && Date.now() - tt < 5000, `换登录凭证悬着不应：等四秒照常发（${Date.now() - tt} 毫秒）`);
+  const sh = world();
+  sh.hint = true;
+  sh.hang = "answered";
+  sh.replies.push(async () => { throw coded("unreachable", "连不上"); }, fine(sh));
+  const ts = Date.now();
+  const outS = await drive(sh.relay.ask(ARGS), 500);
+  ok(!!outS.v && sh.sent.length === 2 && Date.now() - ts < 13000, `问别处回上了没有的那一眼悬着不应：八秒当没回上，接着办（${Date.now() - ts} 毫秒）`);
+
+  // 开机问出来不通：记下，这几分钟里不再问；过了三分钟自己再问
+  const wn = world();
+  wn.probe = false;
+  const warm1 = await wn.relay.warm();
+  const warm2 = await wn.relay.warm();
+  ok(warm1 === false && warm2 === false && wn.probes === 1 && wn.relay.status().off && !wn.relay.trusted(), "开机问出来新路不通：记下，这几分钟里切回来多少趟都不再问");
+  wn.probe = true;
+  await clock.tick(3 * 60 * 1000 + 1000);
+  await breathe();
+  ok(wn.probes === 2 && wn.relay.trusted() && !wn.relay.status().off, "开机问出来不通：过三分钟自己再问一声，通了就记着");
+  // 新路停着的那几分钟里：不去问
+  const wf = world();
+  wf.hint = true;
+  wf.replies.push(async () => { throw coded("refused", "不认识这个动作", { reason: "old" }); });
+  await settled(wf.relay.ask(ARGS));
+  const asked = wf.probes;
+  ok((await wf.relay.warm()) === false && wf.probes === asked && wf.relay.status().off, "新路刚被拒过、停着的那几分钟里：开机、切回来都不去问");
+
+  // 刚回到眼前、手机自己说没网：看一眼就照实说，不试四回
+  const wo2 = world();
+  wo2.hint = true;
+  wo2.replies.push(async (p) => { wo2.working(p); wo2.getFails = 99; wo2.backAt = Date.now(); wo2.online = false; throw coded("unreachable", "连不上"); });
+  const outO = await drive(wo2.relay.ask(ARGS), 100);
+  ok(outO.e && outO.e.message.includes("连不上") && wo2.getFails === 98, "刚回到眼前、手机自己说没网：看一眼就照实说，不白试四回");
+
+  // 早就守着的那一回（不是刚回来才开始找的）：她切走又回来，头两眼没看成，不报“连不上”
+  const wp = world();
+  const kp = b64u(crypto.randomBytes(32));
+  const infoP = { v: 1, job: "jobPATIENT1", chat: "A", last: "m1", key: kp, at: 1 };
+  const pp = { job: "jobPATIENT1", key: kp, note: await vaultjs.seal(vault, JSON.stringify(infoP)) };
+  wp.working(pp);
+  let resP = null;
+  wp.relay.resume("jobPATIENT1", infoP).then((v) => { resP = v; }, (e) => { resP = { e }; });
+  await clock.tick(2000);
+  wp.visible = false;
+  mock.timers.setTime(Date.now() + 10 * 60 * 1000);
+  await wp.done(pp);
+  wp.getFails = 2;
+  wp.comeBack();
+  for (let i = 0; i < 30 && !resP; i++) await clock.tick(300);
+  ok(!!resP && resP.via === "mailbox" && wp.getFails === 0, `早就守着的那一回、她切走十分钟又回来、头两眼没看成：不报连不上，网络醒了就取到（${resP && resP.e ? resP.e.message : "取到了"}）`);
+  // “断了”比“回到眼前了”先到（手机刚被叫醒）：页面还藏着的时候没看成，不算数
+  const wq = world({ visible: false });
+  wq.hint = true;
+  wq.replies.push(async (p) => { await wq.done(p); wq.getFails = 2; throw coded("unreachable", "连不上"); });
+  let resQ = null;
+  wq.relay.ask(ARGS).then((v) => { resQ = v; }, (e) => { resQ = { e }; });
+  await clock.tick(200);
+  const early = resQ;
+  wq.comeBack();
+  for (let i = 0; i < 30 && !resQ; i++) await clock.tick(300);
+  ok(early === null && !!resQ && resQ.via === "mailbox" && wq.sent.length === 1, `“断了”比“回到眼前了”先到：页面还藏着的那一眼没看成不算数，回到眼前就取到（${resQ && resQ.e ? resQ.e.message : "取到了"}）`);
+  // 直接等的那头一断，先让一让再去看信箱（让“回到眼前了”先记下是几点）
+  const wy = world();
+  wy.hint = true;
+  wy.replies.push(async (p) => { await wy.done(p); throw coded("unreachable", "连不上"); });
+  const ty = Date.now();
+  await drive(wy.relay.ask(ARGS), 50);
+  ok(wy.looks.length >= 1 && wy.looks[0] - ty >= 150, `直接等的那头断了：先让一百五十毫秒再去看信箱（${wy.looks[0] - ty} 毫秒）`);
+
+  // 直接等着、她回来以后信箱一直看不成：半分钟照实说；这一回还记着
+  const wb = world();
+  wb.hint = true;
+  wb.replies.push((p) => { wb.working(p); return new Promise(() => {}); });
+  let resB = null;
+  wb.relay.ask(ARGS).then((v) => { resB = v; }, (e) => { resB = { e }; });
+  await until(() => wb.sent.length === 1);
+  wb.visible = false;
+  wb.getFails = 99999;
+  wb.comeBack();
+  const tb = Date.now();
+  for (let i = 0; i < 100 && !resB; i++) await clock.tick(500);
+  ok(resB && resB.e && resB.e.message.includes("连不上") && Date.now() - tb >= 30000 && Date.now() - tb < 40000 && wb.aborted === 1 && wb.jobs().length === 1, `直接等着、回来以后信箱一直看不成：半分钟照实说连不上（${Math.round((Date.now() - tb) / 1000)} 秒），悬着的那头掐掉，这一回还记着`);
+  // 看不成的那半分钟不把挂起的工夫算进去：挂起以前有一眼没看成，挂了十分钟回来，头一眼又没看成，不能马上说连不上
+  const wc = world();
+  wc.hint = true;
+  wc.replies.push(() => new Promise(() => {}));
+  let resC = null;
+  wc.relay.ask(ARGS).then((v) => { resC = v; }, (e) => { resC = { e }; });
+  await until(() => wc.sent.length === 1);
+  await wc.done(wc.sent[0]);
+  wc.getFails = 1;
+  await clock.tick(45500); // 四十五秒那一眼：没看成
+  wc.visible = false;
+  mock.timers.setTime(Date.now() + 10 * 60 * 1000);
+  wc.getFails = 1;
+  wc.comeBack();
+  for (let i = 0; i < 20 && !resC; i++) await clock.tick(500);
+  ok(!!resC && resC.via === "mailbox", `挂起以前有一眼没看成、挂了十分钟回来头一眼又没看成：不马上说连不上，下一眼取到（${resC && resC.e ? resC.e.message : "取到了"}）`);
+  // 钟一下子跳了十分钟（没收到“回到眼前”），那一眼又没看成：不说“等了太久”，下一眼取到
+  const ws = world();
+  ws.hint = true;
+  ws.replies.push(() => new Promise(() => {}));
+  let resS = null;
+  ws.relay.ask(ARGS).then((v) => { resS = v; }, (e) => { resS = { e }; });
+  await until(() => ws.sent.length === 1);
+  await ws.done(ws.sent[0]);
+  await clock.tick(44000);
+  mock.timers.setTime(Date.now() + 10 * 60 * 1000);
+  ws.getFails = 1;
+  await clock.tick(1500);
+  const afterMiss = resS;
+  await clock.tick(1500);
+  ok(afterMiss === null && !!resS && resS.via === "mailbox", `钟一下子走了十分钟、那一眼信箱又没看成：没看成的时候不说“等了太久”，下一眼取到（${resS && resS.e ? resS.e.message : "取到了"}）`);
+
+  // 收“早断了”的那一格：只在它还写着“在等”的时候删。看的那一眼和删的这一下之间回话正好放进来了：不删，下一遍取得到
+  const wd = world();
+  wd.hint = true;
+  wd.replies.push(async (p) => { wd.working(p); throw coded("unreachable", "连不上"); });
+  let flipped = false;
+  wd.onRemove = async () => { if (!flipped) { flipped = true; await wd.done(wd.sent[0]); } };
+  const outD = await drive(wd.relay.ask(ARGS), 1000);
+  const jobD = wd.sent[0].job;
+  const listD = await wd.relay.collect();
+  ok(outD.e && outD.e.message.includes("那边断了") && wd.removedWorking.join() === jobD && wd.rows.has(jobD) && listD.length === 1 && listD[0].state === "done" && listD[0].result.data.content[0].text === "在呢",
+    "收“早断了”的那一格：删的那一下回话正好放进来了，就不删；下一遍看信箱取得到，没丢");
+  await wd.relay.discard(jobD, true);
+  const kept = wd.rows.has(jobD);
+  await wd.relay.discard(jobD);
+  ok(kept && !wd.rows.has(jobD), "收掉一格：说了“只收还在等的”，放好了的就留着；没说就照收");
   clock.off();
 }
 

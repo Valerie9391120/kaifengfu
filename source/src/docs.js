@@ -119,7 +119,8 @@ export function cleanDocName(raw) {
 export function splitDocBlocks(text) {
   const src = String(text || "");
   const parts = [];
-  const open = /^[ \t]*\[(?:DOC|Doc|doc)[:：][ \t]*([^\[\]\n]*?)[ \t]*\][ \t]*\r?$/gm;
+  // 文件名两头的空白留给 cleanDocName 收拾：正则里不另外去认（认的话，碰上一长串空格后面没有右括号，要来回试很久，手机会卡住）
+  const open = /^[ \t]*\[(?:DOC|Doc|doc)[:：]([^\[\]\n]*)\][ \t]*\r?$/gm;
   let last = 0;
   let m;
   while ((m = open.exec(src)) !== null) {

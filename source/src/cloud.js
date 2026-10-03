@@ -211,8 +211,12 @@ export const mailbox = {
     if (error) throw boxError(error);
     return (data && data[0]) || null;
   },
-  async remove(job) {
-    const { error } = await quick(supabase.from("mailbox").delete().eq("job", job));
+  // 删一格。onlyWorking：只在它还写着“在等”的时候删
+  // （收“早断了”的那种用：看的那一眼和删的这一下之间，回话要是正好放进来了，就不删）
+  async remove(job, onlyWorking) {
+    let q = supabase.from("mailbox").delete().eq("job", job);
+    if (onlyWorking) q = q.eq("state", "working");
+    const { error } = await quick(q);
     if (error) throw boxError(error);
   },
   // 只看这张表在不在（通知面板、开机时问新路通不通用）

@@ -285,15 +285,17 @@ with sync_playwright() as p:
     ok(wait_mock(lambda: box()["rows"] == []), "从图标进来：一进门就把信箱里的信取了")
     time.sleep(0.8)
     ok(count_text(pb, "收到：另一段对话") == 1 and count_text(pb, "收到：我关掉了哦") == 0, "从图标进来：眼前还是上次停的那段对话")
-    cid2, msgs2 = chat_of(pb)
-    ok(cid2 == cid and msgs2[-1]["role"] == "him" and msgs2[-1]["items"][0]["text"] == "收到：我关掉了哦" and msgs2[-2]["text"] == "我关掉了哦" and len(calls()) == n2 + 1,
+    msgs2 = json.loads(pb.evaluate(KV, "kfs2:chat:" + cid) or "[]")
+    ok(msgs2[-1]["role"] == "him" and msgs2[-1]["items"][0]["text"] == "收到：我关掉了哦" and msgs2[-2]["text"] == "我关掉了哦" and len(calls()) == n2 + 1,
        "从图标进来：回话放进了它那段对话、接在那一句后面；Anthropic 没有多问")
+    ok(pb.evaluate(KV, "kfs2:lastChat") == other_id, "从图标进来：信放进的是别的对话，“上次停在哪段”不跟着变（下回开门还是她上次看的那段）")
     pb.close()
 
     # 再来一回，这回点着横幅回来
     pc = A.new_page()
     pc.on("pageerror", lambda e: errors.append("C: " + str(e)))
     pc.goto(BASE); kite(pc)
+    ok(count_text(pc, "收到：另一段对话") == 1 and count_text(pc, "收到：我关掉了哦") == 0, "再开一回：开门还是她上次看的那段对话")
     pc.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
     pc.locator("button", has_text="老公在吗").first.click(); time.sleep(0.8)
     mock("/__debug/claude-hold?ms=3000")
@@ -457,7 +459,9 @@ with sync_playwright() as p:
     ]:
         mock(setup)
         pe.reload(); kite(pe)          # 重新打开：上一种情形里“新路不通”的记性清掉
+        time.sleep(1.2)                # 开机那一声“新路通不通”问完
         c0, o0 = len(calls()), len(box()["ops"])
+        asked = box()["ops"].count("key")
         say(pe, f"老路 {state} 一")
         pe.get_by_text(f"收到：老路 {state} 一").last.wait_for(timeout=20000)
         pe.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.2)
@@ -466,8 +470,11 @@ with sync_playwright() as p:
         say(pe, f"老路 {state} 二")
         pe.get_by_text(f"收到：老路 {state} 二").last.wait_for(timeout=20000)
         pe.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.2)
-        ok(first_via == "claude" and calls()[-1]["via"] == "claude" and len(calls()) == c0 + 2 and tried <= 1 and box()["ops"][o0:].count("reply") == tried and pe.get_by_text("点这里重发").count() == 0,
-           f"{name}：话照样回上了，走的是老路（claude 函数）；新路的门只敲了头一回（{tried} 回），第二句直接走老路；一回都没多问")
+        # 头一种情形里这台设备还记着“新路是通的”（上一句刚走通过），所以整包寄过去一回、被拒了才知道；
+        # 后三种是重新打开以后：记号已经擦了，开机先轻轻问了一声就知道不通，那一大包对话一回都没往新路上寄
+        want = 1 if state == "table" else 0
+        ok(first_via == "claude" and calls()[-1]["via"] == "claude" and len(calls()) == c0 + 2 and tried == want and box()["ops"][o0:].count("reply") == want and pe.get_by_text("点这里重发").count() == 0,
+           f"{name}：话照样回上了，走的是老路（claude 函数）；整包对话往新路上寄了 {tried} 回（该是 {want} 回），第二句直接走老路；一回都没多问")
         _, m = chat_of(pe)
         ok(m[-1]["role"] == "him" and "job" not in m[-1], f"{name}：走老路回来的那一条，和从前一样")
         if state == "table":

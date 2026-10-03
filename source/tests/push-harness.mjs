@@ -306,7 +306,7 @@ export function createFakeSupabase() {
     const u = new URL(url);
     const headers = Object.fromEntries(Object.entries(init.headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
     const user = tokens.get((headers.authorization || "").replace(/^Bearer /, "")) || null;
-    seen.push({ method: init.method || "GET", path: u.pathname + u.search, apikey: headers.apikey || "" });
+    seen.push({ method: init.method || "GET", path: u.pathname + u.search, apikey: headers.apikey || "", timed: !!init.signal });
     const reply = (status, body) => new Response(body === undefined || status === 204 ? null : JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
     if (u.pathname === "/auth/v1/user") return user ? reply(200, { id: user.id, email: user.email }) : reply(401, { msg: "invalid JWT" });
     if (u.pathname === "/rest/v1/push_subs") {

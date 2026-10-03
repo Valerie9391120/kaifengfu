@@ -19,7 +19,8 @@
 //   VAPID_PUBLIC_KEY   公钥，87 个字符，B 开头
 //   VAPID_PRIVATE_KEY  私钥，43 个字符
 //   VAPID_SUBJECT      mailto:一个真的邮箱（推送服务出了事找得到人；别人踩过：占位的假邮箱苹果回 403）
-// 和 claude 那个函数共用的照旧：ANTHROPIC_API_KEY（替她等回话要用）、ALLOWED_EMAIL、ALLOWED_ORIGIN（后两样可以没有）
+// 和 claude 那个函数共用的照旧：ANTHROPIC_API_KEY（替她等回话要用）、ALLOWED_EMAIL、ALLOWED_ORIGIN（后两样可以没有；
+// 开封府的网页不在 HOME_ORIGIN 那个地址了，才要写 ALLOWED_ORIGIN：点了通知只回这一处）
 // =====================================================
 
 const te = new TextEncoder();
@@ -48,6 +49,11 @@ const DB_TIMEOUT = 6000; // 读写信箱、登记簿最多等多少毫秒（库�
 
 // 只往认得的推送服务发：登记簿里的地址是网页那边写进来的，不能它写什么就去敲什么门
 const PUSH_HOSTS = [/\.push\.apple\.com$/, /^fcm\.googleapis\.com$/, /^updates\.push\.services\.mozilla\.com$/, /\.notify\.windows\.com$/];
+
+// 开封府的网页住在这儿：点了通知只回这里（搬了家就在密钥柜里写 ALLOWED_ORIGIN，见 safePage）
+const HOME_ORIGIN = "https://valerie9391120.github.io";
+// 库房在本机：是在本机上试
+const LOCAL_BASE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/;
 
 type Row = { endpoint: string; p256dh: string; auth: string; page: string };
 type Vapid = { publicKey: string; signer: CryptoKey; subject: string };
@@ -267,16 +273,35 @@ function pushHost(endpoint: string): string | null {
   }
 }
 
-// 点了通知回到哪：只能是开封府自己的网址（和敲门的网页同一个来处），问号和井号后面的不要
+// 开封府的网页住在哪。密钥柜里写了 ALLOWED_ORIGIN（不是 *）就听它的，没写就是 HOME_ORIGIN
+function homeOrigin(): string {
+  const set = env("ALLOWED_ORIGIN");
+  if (set && set !== "*") {
+    try {
+      return new URL(set).origin;
+    } catch (_) {
+      // 写得不像网址就当没写
+    }
+  }
+  return HOME_ORIGIN;
+}
+
+// 点了通知回到哪：只能是开封府自己的网页，问号和井号后面的不要。
+// 住在哪由这头说了算（见 homeOrigin），不听登记簿的，也不听敲门的人自己报的来处：
+// 登记簿谁登录了都能改，来处（Origin）只要不是浏览器发的，想写什么写什么。
+// 不然偷到登录密码的人把登记簿里的回程网址改成别处，再叫这里发一条通知，她一点就被带到假的开封府去了。
+// 本机的网页只在本机上试的时候认（连库房都在本机），这时候还要和敲门的网页同一个来处
 function safePage(page: string, origin: string | null): string | null {
   try {
     const u = new URL(page);
-    const local = u.hostname === "127.0.0.1" || u.hostname === "localhost";
-    if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) return null;
     if (u.username || u.password) return null;
-    if (origin && u.origin !== origin) return null;
-    const allowed = env("ALLOWED_ORIGIN");
-    if (allowed && allowed !== "*" && u.origin !== allowed) return null;
+    const local = u.protocol === "http:" && (u.hostname === "127.0.0.1" || u.hostname === "localhost");
+    if (local) {
+      if (!LOCAL_BASE.test(env("SUPABASE_URL"))) return null;
+      if (origin && u.origin !== origin) return null;
+    } else if (u.protocol !== "https:" || u.origin !== homeOrigin()) {
+      return null;
+    }
     u.hash = "";
     u.search = "";
     return u.href.length <= 300 ? u.href : null;
@@ -491,11 +516,12 @@ async function askUpstream(request: Rec, beta: string, apiKey: string, deadline:
   const plans = [{ body: request, beta, cache: hasCache(request), mcp: hasMcp(request) }];
   if (plans[0].cache) plans.push({ body: plain, beta, cache: false, mcp: plans[0].mcp });
   if (plans[0].mcp) plans.push({ body: withoutMcp(plain), beta: beta.split(",").filter((b) => b && !b.startsWith("mcp-client")).join(","), cache: false, mcp: false });
-  // 只有一种写法的时候，Anthropic 一时出了岔子（它自己的 5xx、没连上）就原样再问一回
-  const only = plans.length === 1;
-  if (only) plans.push(plans[0]);
+  // Anthropic 一时出了岔子（它自己的 5xx、没连上）：歇一下，同一种写法原样再问，整回只多问这一回。
+  // 不因为这一下就换写法：换成不带缓存的问通了，网页会记成“下回别带缓存记号”，往后每句话都按全价算
+  let spare = 1;
   let last: Result = { status: 504, data: oops("等 Anthropic 等得太久，没等到"), used: { cache: false, mcp: false } };
-  for (let i = 0; i < plans.length; i++) {
+  let i = 0;
+  while (i < plans.length) {
     const plan = plans[i];
     const got = await askOnce(plan.body, plan.beta, apiKey, Math.max(1000, deadline - Date.now()));
     last = { status: got.status, data: got.data, used: { cache: plan.cache, mcp: plan.mcp } };
@@ -503,10 +529,12 @@ async function askUpstream(request: Rec, beta: string, apiKey: string, deadline:
     // key 不对、说得太快：换哪种写法都一样，不必再问
     if (got.status === 401 || got.status === 403 || got.status === 429) break;
     const shaky = got.status >= 500;
-    if (only && !shaky) break;
+    const same = shaky && spare > 0;
     // 没有下一种了，或者剩的工夫不够再问一回：到此为止
-    if (i + 1 >= plans.length || deadline - Date.now() < (shaky ? 4500 : 3000)) break;
+    if ((!same && i + 1 >= plans.length) || deadline - Date.now() < (shaky ? 4500 : 3000)) break;
     if (shaky) await sleep(1500);
+    if (same) spare--;
+    else i++;
   }
   return last;
 }
@@ -619,7 +647,8 @@ function docName(raw: string): string {
 // 把文档块整块摘出来：[{ doc: 文件名 } | { text: 别的字 }]
 function splitDocs(source: string): Array<{ doc: string } | { text: string }> {
   const parts: Array<{ doc: string } | { text: string }> = [];
-  const open = /^[ \t]*\[(?:DOC|Doc|doc)[:：][ \t]*([^\[\]\n]*?)[ \t]*\][ \t]*\r?$/gm;
+  // 文件名两头的空白留给下面收拾：正则里不另外去认（认的话，碰上一长串空格后面没有右括号，要来回试很久）
+  const open = /^[ \t]*\[(?:DOC|Doc|doc)[:：]([^\[\]\n]*)\][ \t]*\r?$/gm;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = open.exec(source)) !== null) {
@@ -653,10 +682,15 @@ function previewOf(reply: string): string {
       lines.push(`[文档] ${part.doc}`);
       continue;
     }
-    // 网页那头是按 /\s*\[SPLIT\]\s*/ 切的；这里只按 [SPLIT] 切，两头的空白留给下面逐段收拾，出来的东西一样。
-    // 不照抄那条正则：碰上几万个连着的空行，它一个位置一个位置地试，要算好几秒，这里一回请求只给两秒
-    for (const chunk of part.text.split("[SPLIT]")) {
-      const marks = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]+)\\s*\\]|" + NAME_LINE, "gm");
+    // 按 [SPLIT] 切开，记号两头的空白不要：和网页那头（src/reply.js 的 splitTurns）一样。
+    // 不写成 /\s*\[SPLIT\]\s*/ 那样的正则：碰上几万个连着的空行，它一个位置一个位置地试，要算好几秒，这里一回请求只给两秒
+    const chunks = part.text.split("[SPLIT]");
+    for (let k = 0; k < chunks.length; k++) {
+      let chunk = chunks[k];
+      if (k > 0) chunk = chunk.trimStart();
+      if (k < chunks.length - 1) chunk = chunk.trimEnd();
+      // 表情包的文件名最长认两百个字：一长串没有右括号的，不来回试
+      const marks = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]{1,200})\\s*\\]|" + NAME_LINE, "gm");
       const say = (piece: string) => {
         const t = piece.trim().replace(/\*/g, "").trim();
         if (piece.trim() && t) lines.push(t);

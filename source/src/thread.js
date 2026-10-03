@@ -73,16 +73,17 @@ export function mailFit(msgs, info, job) {
   if (!Array.isArray(msgs) || !msgs.length) return "later";
   if (hasJob(msgs, job)) return "dup";
   if (!msgs.some((m) => m.id === info.last)) return "later";
-  // 重新回答：要换掉的那一条还在外面摆着，就在它上面开新分支
+  // 重新回答：要换掉的那一条还在（摆在外面，或者被翻成了它的另一个版本），就在它上面再开一个版本
   if (forkTarget(msgs, info) >= 0) return "ok";
-  // 平常的回话；或者是重新回答、要换掉的那一条却不在了（被翻走、被改掉）：那一句后面还空着就放，当平常的回话放
+  // 平常的回话；或者是重新回答、要换掉的那一条却哪儿都找不到了：那一句后面还空着就放，当平常的回话放
   return answeredAfter(msgs, info.last) ? "gone" : "ok";
 }
 
-// 重新回答要换掉的是第几条；不是重新回答、或者那一条不在外面摆着，回 -1
+// 重新回答要换掉的是第几条；不是重新回答、或者哪儿都找不到那一条，回 -1。
+// 那一条被她翻走了（外面摆着的是它的另一个版本）也算找到：新回答照样加成那一条的又一个版本
 function forkTarget(msgs, info) {
   if (!info.fork) return -1;
-  const j = msgs.findIndex((m) => m.id === info.fork);
+  const j = msgs.findIndex((m) => m.id === info.fork || (m.alts || []).some((a) => a.node && a.node.id === info.fork));
   return j >= 0 && msgs[j].role === "him" ? j : -1;
 }
 
