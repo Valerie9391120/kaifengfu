@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import MEMES from "../static/memes.json";
 import { store } from "./store.js";
 import { callClaude, callReply, mailbox, freshToken } from "./cloud.js";
@@ -201,7 +201,7 @@ const GLOBAL_CSS = `
 .kfs-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: rgba(var(--k-soft),.55); animation: kfsDot 1.2s infinite; }
 .kfs-scroll { scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .kfs-scroll::-webkit-scrollbar { display: none; }
-/* 聊天记录不藏滚动条：手机上用系统自带的那根（滚的时候出来、停了自己淡掉、长按能拖）。
+/* 聊天记录不藏滚动条：手机上用系统自带的那根（滚的时候出来、停了自己淡掉；长按能不能拖，要她的手机说了算）。
    用鼠标的地方照旧藏着（那儿的滚动条是一直杵在边上的那种） */
 .kfs-chat-scroll { -webkit-overflow-scrolling: touch; }
 @media (hover: hover) and (pointer: fine) {
@@ -3612,6 +3612,7 @@ export default function App({ account = {} }) {
   // 聊天记录怎么滚（见 scroll.js）：她在最底下就跟着最新，往上翻了就不拽她。
   // away：她翻上去了，输入框上面浮出“回到最新”的圆钮
   const [away, setAway] = useState(false);
+  const rowsRef = useRef(null); // 聊天记录里面装着一条条话的那一层（量它多高）
   const followRef = useRef(null);
   if (!followRef.current) {
     followRef.current = createFollow({
@@ -3626,6 +3627,18 @@ export default function App({ account = {} }) {
         } catch (e) {
           return false;
         }
+      },
+      // 叫聊天记录把惯性停下：先不许它滚（位置不变），画过一帧再放开。iPhone 上停惯性的老办法：
+      // 不许滚的那一帧，系统把它那个会滚的盒子整个拆了，惯性跟着没了；放开以后再搭一个新的，位置照旧。
+      // 两个方向一起写：只写竖着的，横着万一也滚得动，盒子拆不掉。
+      // 要等两回动画帧：头一回还赶在画之前，那时候就放开的话，系统压根没见着“不许滚”
+      halt: (el) => {
+        el.style.overflow = "hidden";
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            el.style.overflow = "";
+          })
+        );
       },
     });
   }
@@ -4321,6 +4334,7 @@ export default function App({ account = {} }) {
     setLoading(true);
     setErrorNote("");
     setReveal(null);
+    follow.pin(); // 点了重新回答：新回答接在最后，到底等着看（旧回答一收，她多半已经被浏览器收到底了；这里是把话说死）
     forkRef.current = { chat: id, full }; // 存档里先别丢旧回答（见 saveChat）
     messagesRef.current = base; // 先把旧回答收起来
     setMessages(base);
@@ -4425,6 +4439,19 @@ export default function App({ account = {} }) {
     setCopySheet(text); // 都不行就把字摊开，让她自己选
   };
 
+  // ---- 输入框跟着字数长高（最高 120） ----
+  // 量的时候得先把它放成“自己看着办”，读出来再定。放开的那一下它矮回一行，上面的聊天记录跟着高了一截，
+  // 浏览器会把聊天记录的位置往回收；再定回去的时候，位置它不一定给放回来（Chrome 会放，iPhone 上不一定）。
+  // 不放回来的话，草稿打到两行以上，每敲一个字聊天记录就往下掉一截；掉得超过 64 像素（四五行）还会被当成她翻走了。
+  // 所以量之前把聊天记录的位置记下，量完放回去
+  const fitComposer = (el) => {
+    const list = scrollRef.current;
+    const keep = list ? list.scrollTop : 0;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+    if (list && Math.abs(list.scrollTop - keep) >= 1) list.scrollTop = keep;
+  };
+
   // ---- 编辑她发过的话 ----
   const startEdit = (row) => {
     setMenu(null);
@@ -4437,8 +4464,7 @@ export default function App({ account = {} }) {
       const el = taRef.current;
       if (!el) return;
       el.focus();
-      el.style.height = "auto";
-      el.style.height = Math.min(el.scrollHeight, 120) + "px";
+      fitComposer(el);
     }, 60);
   };
   const cancelEdit = () => {
@@ -4859,6 +4885,8 @@ export default function App({ account = {} }) {
       id = await chatOfTag(tag);
     }
     if (id && id !== chatIdRef.current) await openChat(id);
+    // 那段对话本来就开着（比方她翻着旧消息的时候切走的）：点横幅就是来看这一条的，到底
+    else if (id) follow.bottom(false);
     checkMail();
   };
 
@@ -4993,24 +5021,36 @@ export default function App({ account = {} }) {
   }, [reveal, messages]);
 
   // ---- 键盘弹出来：外壳变矮了，聊天记录滚到最新那条（她在翻旧消息也一样：点开键盘就是要说话了） ----
+  // 只认输入框的键盘：在弹出面板里打字（改昵称、填 key）的时候，后面的聊天记录不跟着动
   useEffect(() => {
     const onKb = (e) => {
       if (!e.detail || !e.detail.open) return;
+      if (document.activeElement !== taRef.current) return;
       requestAnimationFrame(() => requestAnimationFrame(() => follow.bottom(false)));
     };
     window.addEventListener("kfs-kb", onKb);
     return () => window.removeEventListener("kfs-kb", onKb);
   }, []);
 
-  // ---- 换了一段对话：从最底下看起 ----
-  useEffect(() => {
+  // ---- 换了一段对话：从最底下看起（要排在下面那一条前头：先记“到底”，再报“变了”） ----
+  useLayoutEffect(() => {
     follow.pin();
   }, [chatId]);
 
-  // ---- 里面的东西变了：她在最底下就跟到底，往上翻着就不动（见 scroll.js） ----
+  // ---- 聊天记录变了：她在最底下就跟到底，往上翻着就不动（见 scroll.js） ----
+  // 两处报，报的是同一件事，多报不碍事：
+  // 1. 这里，对话一变当场报，不等下一帧。换到一段正好一样高的对话（大小没变，下面那个不会报）靠的也是它
+  // 2. 下面那个量大小的：聊天记录多高、那个盒子多高，哪个变了都报（图片出来、思考过程点开、键盘、面板、输入框长高……）
+  useLayoutEffect(() => {
+    follow.changed();
+  }, [messages, reveal && reveal.count, loading, chatId, memePanel, errorNote]);
   useEffect(() => {
-    requestAnimationFrame(() => follow.changed());
-  }, [messages.length, reveal && reveal.count, loading, chatId, memePanel, errorNote]);
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(() => follow.changed());
+    if (scrollRef.current) ro.observe(scrollRef.current);
+    if (rowsRef.current) ro.observe(rowsRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   // ---- 设置 ----
   const updateSettings = (patch) => {
@@ -5696,6 +5736,7 @@ export default function App({ account = {} }) {
         <div
           aria-hidden="true"
           onClick={() => (memePanel ? setMemePanel(false) : follow.top())}
+          onMouseDown={(e) => e.preventDefault()}
           className="kfs-top-strip absolute z-10"
           style={{ top: 0, left: 0, right: 0, height: "calc(12px + env(safe-area-inset-top))" }}
         />
@@ -5711,7 +5752,7 @@ export default function App({ account = {} }) {
           </IconBtn>
           {/* 点中间这一块（头像和名字）：聊天记录滑回最顶，跟点手机顶上回顶一个意思。
               表情包面板开着的时候，这一下只管收面板（顶栏本来就是点了收面板的） */}
-          <div className="kfs-bar-mid relative flex-1 flex flex-col items-center min-w-0" onClick={() => !memePanel && follow.top()}>
+          <div className="kfs-bar-mid relative flex-1 flex flex-col items-center min-w-0" onClick={() => !memePanel && follow.top()} onMouseDown={(e) => e.preventDefault()}>
             <Avatar av={avatars.him} who="him" size={30} />
             {/* 他的名字：默认“光义”，他自己在回复里改（见 names.js）。换了名字时轻轻冒一下。
                 他回话的时候，名字这一行让给“正在输入…”（叠在同一行上，不另起一行）：顶栏不长高，
@@ -5759,7 +5800,6 @@ export default function App({ account = {} }) {
           onScroll={() => follow.scrolled()}
           onTouchStart={() => follow.touch()}
           onWheel={() => follow.touch()}
-          onLoadCapture={() => follow.changed()}
           className="kfs-chat-scroll relative z-10 flex-1 overflow-y-auto"
           style={{ padding: "8px 14px 12px" }}
         >
@@ -5783,6 +5823,8 @@ export default function App({ account = {} }) {
               )}
             </div>
           )}
+          {/* 一条条话都装在这一层里：量它多高，变了就报给 scroll.js（见上面那个量大小的） */}
+          <div ref={rowsRef} className="kfs-chat-rows">
           {rows.map((row) => {
             if (row.type === "sep") {
               return (
@@ -5821,7 +5863,10 @@ export default function App({ account = {} }) {
                   key={row.key}
                   msg={row.msg}
                   open={!!openThinking[row.msg.id]}
-                  onToggle={() => setOpenThinking((o) => ({ ...o, [row.msg.id]: !o[row.msg.id] }))}
+                  onToggle={() => {
+                    follow.loose(); // 她自己点开的：聊天记录变高了不是新话来了，别把刚点开的字带走
+                    setOpenThinking((o) => ({ ...o, [row.msg.id]: !o[row.msg.id] }));
+                  }}
                 />
               );
             }
@@ -5847,6 +5892,7 @@ export default function App({ account = {} }) {
               </button>
             </div>
           )}
+          </div>
         </div>
 
         {/* 回到最新：她翻上去了才浮出来，点了滑回最底下。不带小点（卿卿定的）。
@@ -5862,11 +5908,13 @@ export default function App({ account = {} }) {
               transform: `translate(-50%, ${away ? 0 : 6}px)`,
               opacity: away ? 1 : 0,
               visibility: away ? "visible" : "hidden",
+              pointerEvents: away ? "auto" : "none",
               transition: `opacity .18s ease, transform .18s ease, visibility 0s linear ${away ? "0s" : ".18s"}`,
             }}
           >
             <button
               onClick={() => follow.bottom(true)}
+              onMouseDown={(e) => e.preventDefault()} // 不抢输入框的焦点：键盘开着的时候点它，键盘不收（和输入框那几个按钮一样）
               aria-label="回到最新"
               tabIndex={away ? 0 : -1}
               className="kfs-tap flex items-center justify-center"
@@ -5991,9 +6039,7 @@ export default function App({ account = {} }) {
                 onFocus={() => memePanel && setMemePanel(false)}
                 onChange={(e) => {
                   setInput(e.target.value);
-                  const el = e.target;
-                  el.style.height = "auto";
-                  el.style.height = Math.min(el.scrollHeight, 120) + "px";
+                  fitComposer(e.target);
                   // 她还在打字，就再等等
                   if (timerRef.current) scheduleReply(2800);
                 }}
