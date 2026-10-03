@@ -50,6 +50,9 @@ body {
   background: rgb(var(--k-base));
   overscroll-behavior: none;
   -webkit-text-size-adjust: 100%;
+  /* 整页不许捏：只许上下左右滑，双指放大缩小、双击放大都不算（三道里的第二道，见 src/nozoom.js）。
+     里面会滚的地方照滚；看照片那一页自己认双指（PhotoViewer.jsx） */
+  touch-action: pan-x pan-y;
 }
 
 #root {

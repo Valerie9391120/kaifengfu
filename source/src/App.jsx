@@ -6,6 +6,7 @@ import { openProbe } from "./probe.js";
 import { gapInfo, setFill } from "./gap.js";
 import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
 import SplashDingxiang from "./SplashDingxiang.jsx";
+import PhotoViewer from "./PhotoViewer.jsx";
 import { HER_NAME, HIS_NAME, NAME_KEYS, NAME_MARK, NAME_PLACEHOLDER, cleanName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, DOC_NAME_PLACEHOLDER, docFmtOf, readDoc, wrapDocForModel, missingDocNote, docBlocksToNote, replyRoom } from "./docs.js";
 import { parseReply, settleAvatarItems } from "./reply.js";
@@ -1785,6 +1786,7 @@ function PhotoImg({ data, onOpen }) {
     <img
       src={data}
       alt=""
+      className="kfs-photo"
       draggable={false}
       onClick={() => onOpen && onOpen(data)}
       style={{
@@ -5314,14 +5316,21 @@ export default function App({ account = {} }) {
   };
 
   // ---- 侧滑手势 ----
+  // 只认一根手指。落下了第二根，这一回就不算划侧栏了（拖到一半的弹回去），等手指全抬起来再从头认：
+  // 整页不许捏以后，两根手指往里一捏，头一根正好是往右走的，原来会被当成右划、把侧栏带出来
   const onTouchStart = (e) => {
     if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView) return;
+    if (e.touches.length > 1) {
+      touch.current = { multi: true };
+      setDragX(null);
+      return;
+    }
     const t = e.touches[0];
     touch.current = { x: t.clientX, y: t.clientY, dir: null, base: drawerOpen ? drawerW : 0, dx: 0 };
   };
   const onTouchMove = (e) => {
     const s = touch.current;
-    if (!s) return;
+    if (!s || s.multi) return;
     const t = e.touches[0];
     const dx = t.clientX - s.x;
     const dy = t.clientY - s.y;
@@ -5333,8 +5342,12 @@ export default function App({ account = {} }) {
     s.dx = dx;
     setDragX(Math.max(0, Math.min(drawerW, s.base + dx)));
   };
-  const onTouchEnd = () => {
+  const onTouchEnd = (e) => {
     const s = touch.current;
+    if (s && s.multi) {
+      if (!e || !e.touches || e.touches.length === 0) touch.current = null;
+      return;
+    }
     touch.current = null;
     if (!s || s.dir !== "h") return;
     const open = s.base === 0 ? s.dx > 50 : !(s.dx < -50);
@@ -5692,7 +5705,7 @@ export default function App({ account = {} }) {
         <div
           ref={scrollRef}
           onClick={() => memePanel && setMemePanel(false)}
-          className="relative z-10 flex-1 overflow-y-auto kfs-scroll"
+          className="kfs-chat-scroll relative z-10 flex-1 overflow-y-auto kfs-scroll"
           style={{ padding: "8px 14px 12px" }}
         >
           {messages.length === 0 && !loading && (
@@ -6155,15 +6168,8 @@ export default function App({ account = {} }) {
         </Sheet>
       )}
 
-      {viewer && (
-        <div
-          onClick={() => setViewer(null)}
-          className="absolute inset-0 z-50 flex items-center justify-center kfs-in"
-          style={{ background: "rgba(var(--k-dim),0.74)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)" }}
-        >
-          <img src={viewer} alt="" style={{ maxWidth: "92%", maxHeight: "86%", borderRadius: 18, objectFit: "contain", boxShadow: "0 20px 60px rgba(0,0,0,0.35)" }} />
-        </div>
-      )}
+      {/* 点开的照片：双指捏着放大缩小（整页不许捏了，这一页自己认，见 PhotoViewer.jsx） */}
+      {viewer && <PhotoViewer src={viewer} onClose={() => setViewer(null)} />}
 
       {splash && (
         <SplashByTheme
