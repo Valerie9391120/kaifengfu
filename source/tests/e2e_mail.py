@@ -438,6 +438,15 @@ with sync_playwright() as p:
     pe.get_by_text("收到：没网的时候").last.wait_for(timeout=20000)
     pe.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.5)
     ok(len(calls()) == n7 + 1 and calls()[-1]["via"] == "push" and jobs(pe) == [], "网回来了点重发：发出去了，只问了一回，走的还是新路")
+    # 新路通不通还没问成（问的那会儿没网）：回到眼前的时候自己再问一声，不用等她发下一句
+    pe.evaluate("localStorage.removeItem('kfs-relay')")
+    pe.route(re.compile(re.escape(MOCK) + "/.*"), dead)
+    pe.evaluate("window.__away(true)"); pe.evaluate("window.__away(false)")
+    time.sleep(2.5)
+    unknown = pe.evaluate("localStorage.getItem('kfs-relay')")
+    pe.unroute(re.compile(re.escape(MOCK) + "/.*"), dead)
+    pe.evaluate("window.__away(true)"); pe.evaluate("window.__away(false)")
+    ok(unknown is None and wait_js(pe, "localStorage.getItem('kfs-relay') === 'ok'", 8000), "新路通不通还没问成（那会儿没网）：再回到眼前的时候自己问一声，问到了记下，她下一句发完就能切走")
 
     # ================= 新路不通：自己走回老路，聊天不断 =================
     for state, name, setup, undo in [
@@ -474,7 +483,11 @@ with sync_playwright() as p:
             pe.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.2)
             ok(early == 0 and len(calls()) == c2 + 1 and pe.evaluate("localStorage.getItem('kfs-relay')") is None, "走老路的时候切走：话不抢着交出去，照旧等她停手两秒多再发")
         mock(undo)
+    # 第一步就开了通知的设备，那时候还没在这台设备上记门牌号（kfs-push-at）：装成那样再重新打开
+    pe.evaluate("localStorage.removeItem('kfs-push-at')")
     pe.reload(); kite(pe)
+    ok(wait_js(pe, "localStorage.getItem('kfs-push-at') === JSON.parse(localStorage.getItem('__fake_push__')).device.endpoint", 8000),
+       "第一步就开了通知的设备：换上新代码头一回打开，重新登记的那一下把门牌号补上了（回话到了才知道敲哪台）")
     say(pe, "新路又通了")
     pe.get_by_text("收到：新路又通了").last.wait_for(timeout=20000)
     ok(calls()[-1]["via"] == "push", "她在 Supabase 补好了、重新打开：又走回新路")

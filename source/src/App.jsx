@@ -4764,14 +4764,25 @@ export default function App({ account = {} }) {
     Promise.race([memesReady.current, new Promise((done) => setTimeout(done, 2500))]).then(() => {
       if (!gone) latest.current.checkMail();
     });
+    // 新路通不通还不知道的时候（开机那一下没网、没问成）再问一声；已经知道了就什么都不做。
+    // 回到眼前的那一下晚一点问：iOS 上一回来就发的请求会悬很久
+    let warmTimer = null;
+    const warmSoon = (ms) => {
+      clearTimeout(warmTimer);
+      warmTimer = setTimeout(() => getRelay().warm(), ms);
+    };
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         backAtRef.current = Date.now();
         latest.current.checkMail();
+        warmSoon(700);
       } else latest.current.leaving();
     };
     const onHide = () => latest.current.leaving();
-    const onOnline = () => latest.current.checkMail();
+    const onOnline = () => {
+      latest.current.checkMail();
+      warmSoon(0);
+    };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("pagehide", onHide);
     window.addEventListener("online", onOnline);
@@ -4780,6 +4791,7 @@ export default function App({ account = {} }) {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("pagehide", onHide);
       window.removeEventListener("online", onOnline);
+      clearTimeout(warmTimer);
       clearTimeout(mailTimer.current);
     };
   }, [booted]);
