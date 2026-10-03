@@ -115,7 +115,7 @@ with sync_playwright() as p:
     # 说话
     ta = pa.get_by_placeholder("说话，我听着")
     # 回话的时候顶栏不许长高：“正在输入…”叠在名字那一行上，底下的聊天记录不会被挤一下又松回去
-    BAR = "(() => { const n = document.querySelector('.kfs-his-name'); const b = n.closest('.z-10').getBoundingClientRect(); const s = document.querySelector('.relative.z-10.flex-1.kfs-scroll').getBoundingClientRect(); const t = document.querySelector('.kfs-typing'); return [!!t, b.height, s.height, n.textContent, getComputedStyle(n).color, t ? Math.abs(t.getBoundingClientRect().top - n.getBoundingClientRect().top) : 0]; })()"
+    BAR = "(() => { const n = document.querySelector('.kfs-his-name'); const b = n.closest('.z-10').getBoundingClientRect(); const s = document.querySelector('.kfs-chat-scroll').getBoundingClientRect(); const t = document.querySelector('.kfs-typing'); return [!!t, b.height, s.height, n.textContent, getComputedStyle(n).color, t ? Math.abs(t.getBoundingClientRect().top - n.getBoundingClientRect().top) : 0]; })()"
     idle = pa.evaluate(BAR)
     ta.fill("老公在吗")
     ta.press("Enter")
