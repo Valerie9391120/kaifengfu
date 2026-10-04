@@ -200,8 +200,9 @@ const MAIL_COLS = ["user_id", "job", "state", "note", "sealed", "created_at", "b
 export function createMailTable() {
   const rows = new Map(); // user_id|job → 行
   // missing：还没建表；down：库房这会儿出岔子（一律 503）；failPatch：往后这么多回“改”不成（503）；
-  // cutPatch：往后这么多回“改”根本连不上（不是回 503，是敲门的那一下就报错）
-  const state = { missing: false, down: false, failPatch: 0, cutPatch: 0 };
+  // cutPatch：往后这么多回“改”根本连不上（不是回 503，是敲门的那一下就报错）；
+  // lostPatch：往后这么多回“改”其实改成了，回音却没传回去（照样回 503）；failGet：往后这么多回“读”不成（503）
+  const state = { missing: false, down: false, failPatch: 0, cutPatch: 0, lostPatch: 0, failGet: 0 };
   const log = []; // 每一回读写：{ method, query, user, sets, prefer }；sets 是“改”的那几栏（摸一下只改 beat_at，放信还改 sealed）
   // prefer：敲门的人带的 Prefer 头（PostgREST 看它决定“改”完要不要把改到的那几行报回来）
   function handle(method, params, userId, bodyText, prefer = "") {
@@ -222,6 +223,10 @@ export function createMailTable() {
     }
     const mine = [...rows.values()].filter((r) => r.user_id === userId && Object.entries(filters).every(([c, v]) => r[c] === v));
     if (method === "GET") {
+      if (state.failGet > 0) {
+        state.failGet--;
+        return { status: 503, body: { message: "upstream connect error" } };
+      }
       const sel = (params.get("select") || "*") === "*" ? MAIL_COLS : params.get("select").split(",");
       for (const c of sel) if (!MAIL_COLS.includes(c)) return { status: 400, body: { code: "42703", message: `column mailbox.${c} does not exist` } };
       const order = params.get("order");
@@ -263,6 +268,10 @@ export function createMailTable() {
       for (const c of Object.keys(patch)) if (!MAIL_COLS.includes(c)) return { status: 400, body: { code: "PGRST204", message: `Could not find the '${c}' column of 'mailbox' in the schema cache` } };
       for (const r of mine) if (bad({ ...r, ...patch })) return { status: 400, body: { code: "23514", message: 'new row for relation "mailbox" violates check constraint' } };
       for (const r of mine) Object.assign(r, patch, { user_id: userId });
+      if (state.lostPatch > 0) {
+        state.lostPatch--;
+        return { status: 503, body: { message: "upstream connect error" } };
+      }
       // 说了 return=representation 的：把改到的那几行报回来（一行都没改到就是个空的单子）；没说的照旧什么都不回
       if (/(^|[,\s])return=representation(\s|,|$)/.test(String(prefer || ""))) {
         const cols = (params.get("select") || "*") === "*" ? MAIL_COLS : params.get("select").split(",");

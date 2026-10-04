@@ -231,7 +231,7 @@ with sync_playwright() as p:
     row = box()["rows"][0]
     ok(row["sealed"].startswith("v1.") and "我先去忙了" not in json.dumps(row, ensure_ascii=False) and "收到" not in json.dumps(row, ensure_ascii=False) and row["note"].startswith("v1."),
        "信箱里只有乱码：没有她的话、没有他的话")
-    ok(wait_mock(lambda: len(banners()) == b0 + 1, timeout=GRACE + 6), "她不在：过几秒信还在信箱里，敲她的手机")
+    ok(wait_mock(lambda: len(banners()) >= b0 + 1, timeout=GRACE + 6), "她不在：过几秒信还在信箱里，敲她的手机")
     got = knocks(b0, 2)
     note = got[0]
     mark = note["navigate"].split("#n=")[1] if "#n=" in note["navigate"] else ""

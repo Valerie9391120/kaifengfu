@@ -62,6 +62,14 @@ def hang(page, cdp, rid, banner):
     return False
 
 
+# 照一条横幅的样子直接挂一条（名字、字、记号都一样），说好“别自己收”：要挂得久、等着看它还在不在的那一条用这个
+# （交给 sw.js 挂的，这个浏览器二十几秒就自己收了，分不清是它收的还是开封府收的）
+def pin(page, banner):
+    n = banner["json"]["notification"]
+    page.evaluate("(n) => navigator.serviceWorker.getRegistration().then((r) => r.showNotification(n.title, { body: n.body, tag: n.tag, requireInteraction: true }))", n)
+    return wait_hung(page, lambda l: any(x["tag"] == n["tag"] for x in l), 3)
+
+
 # 他一回说了四样（带标题和加粗的一句、一张表情包、两句话）：敲四条，照先后、隔一秒；横幅上是平常的字
 def bubbles(browser):
     A = phone(browser)
@@ -107,8 +115,8 @@ def comeback(browser):
     taken = wait_mock(lambda: box()["rows"] == [], 8)
     pa.wait_for_timeout(4500)                # 要是没停，这工夫里后面几条早该到了
     got = banners()[b0:]
-    ok(two and taken and 2 <= len(got) <= 3 and bodies(got) == six[:len(got)],
-       f"他说了六句、敲到第二条她回来了：信一取走，剩下的不敲了（一共敲了 {len(got)} 条：正在路上的那一条拦不住，最多多一条）")
+    ok(two and taken and 2 <= len(got) <= 4 and bodies(got) == six[:len(got)],
+       f"他说了六句、敲到第二条她回来了：信一取走，剩下的不敲了（一共敲了 {len(got)} 条：她回来到信取走的那一两秒里正赶上的，拦不住）")
     ok(wait_js(pa, shown("第六句"), 15000), "她回来：六句都在对话里")
     A.close()
 
@@ -161,7 +169,7 @@ def tidy(browser):
     pa.wait_for_timeout(400)
     pa.evaluate("window.__away(true)")
     yi = knocks(b1, 2)
-    put2 = len(yi) == 2 and all(hang(pa, cdp, rid, b) for b in yi) and hang(pa, cdp, rid, jia[0])
+    put2 = len(yi) == 2 and all(hang(pa, cdp, rid, b) for b in yi) and pin(pa, jia[0])
     yours = yi[0]["json"]["notification"]["tag"].rsplit(".", 2)[0] + "." if yi else "?"
     ok(put2 and yours != mine and len(hung(pa)) == 5, f"两段对话·准备：乙段的两条、甲段的一条旧横幅都挂着（两段对话的那串字不一样）（{put2}、{yours != mine}、挂着 {[x['tag'][-6:] + '|' + x['body'][:6] for x in hung(pa)]}）")
     pa.evaluate("window.__away(false)")
@@ -199,16 +207,34 @@ def offline(browser):
         pa.wait_for_timeout(200)             # 一边等横幅，一边让被拦下的请求转起来
     got = banners()[b0:]
     put = len(got) == 2 and all(hang(pa, cdp, rid, b) for b in got)
+    # 她还没回来，开封府在后台动了一下（手机说网通了）：这时候它不去看信箱，更不许给“过一会儿再收”上弦
+    pa.evaluate("window.dispatchEvent(new Event('online'))")
+    pa.wait_for_timeout(500)
     pa.evaluate("window.__away(false)")      # 她回来的那一下，信箱还是看不成
     end = time.time() + 5
     while time.time() < end:
         pa.wait_for_timeout(200)
     still = hung(pa)
-    ok(put and len(still) == 2 and not pa.evaluate(shown("收到：我先去忙了")), f"她回来的那一下信箱没看成：回话还没进对话，两条横幅先不收（还挂着 {len(still)} 条）")
+    ok(put and len(still) == 2 and not pa.evaluate(shown("收到：我先去忙了")), f"她回来的那一下信箱没看成：回话还没进对话，两条横幅先不收（还挂着 {len(still)} 条）；她不在的时候后台动的那一下也没给“过一会儿再收”上弦")
     st["asleep"] = False                     # 网好了：自己再看一遍，取到信，横幅收掉
     got_it = wait_js(pa, shown("收到：我先去忙了"), 25000)
     cleared = wait_hung(pa, lambda l: len(l) == 0, 10)
     ok(got_it and cleared, "网好了：信取到、回话进了对话，横幅跟着收掉")
+    # 看成了信箱（上了“过一会儿再收”的弦）、不到一秒她又切走了：那两遍得撤掉。
+    # 不然她再回来的那一下信箱没看成，它们照样到点把横幅收了
+    pa.wait_for_timeout(7500)                # 上面那一遍上的弦先走完
+    pa.evaluate("window.dispatchEvent(new Event('online'))")      # 眼前、有网：看一遍信箱，看成了
+    pa.wait_for_timeout(700)
+    pa.evaluate("window.__away(true)")
+    put2 = all(hang(pa, cdp, rid, b) for b in got)                # 她不在的时候又挂上两条
+    st["asleep"] = True
+    pa.evaluate("window.__away(false)")      # 回来的那一下信箱看不成
+    end = time.time() + 8
+    while time.time() < end:
+        pa.wait_for_timeout(200)
+    left = hung(pa)
+    st["asleep"] = False
+    ok(put2 and len(left) == 2, f"刚看成信箱就切走、再回来的那一下信箱没看成：切走的时候“过一会儿再收”已经撤了，横幅没被收走（还挂着 {len(left)} 条）")
     cdp.detach()
     A.close()
 

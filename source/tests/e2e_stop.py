@@ -1227,11 +1227,11 @@ def orphan(browser):
         state = (started, away, k, pressed, jia[-1].get("text"), jia[-1].get("stopped"), yi[-1].get("text"), yi[-1].get("stopped"), notes(pa), key(pa), typing(pa))
         ok(state == (True, (2, ["working"] if reach else []), "停", True, "甲二", True, "乙二", True, 1, "发语音", False), f"乙二{tag}、等着轮到，甲二正补发着：按停，两句上都记了“停了”（{state}）")
         ok(jobs(pa) == [] and emptied, f"乙二{tag}：按停以后，记着的那两回都不再记着（原来记着 {away[0]} 回，现在 {len(jobs(pa))} 回），信箱里的格子都收掉了")
-        done = wait_turning(pa, lambda: len(calls()) == c0 + (2 if reach else 1), 40)     # 那边照旧办完
+        done = wait_turning(pa, lambda: len(calls()) == c0 + (2 if reach else 1), 40)     # 那边到此为止（他还没想完的，小后端摸信箱的时候发现那一格没了，掐了；正好想完了的，回话没处放）
         pa.wait_for_timeout(5000)
         yi = chat_by(pa, cid); jia = chat_by(pa, others[0])
         after = (done, jia[-1]["role"], yi[-1]["role"], len(box()["rows"]), typing(pa), notes(pa), sorted(asked_since(c0)))
-        ok(after == (True, "her", "her", 0, False, 1, ["乙二", "甲二"] if reach else ["甲二"]), f"乙二{tag}：那边回完了，两段对话里都没有回话冒出来（{after}）")
+        ok(after == (True, "her", "her", 0, False, 1, ["乙二", "甲二"] if reach else ["甲二"]), f"乙二{tag}：那边到此为止（掐了，或者正好想完了），两段对话里都没有回话冒出来（{after}）")
         c1 = len(calls())
         pa.close()                                             # 她把开封府关了（眼前是乙段，小字在乙二底下）
         pb = page_of(A, "orphan2")
@@ -1266,11 +1266,11 @@ def back_stop(browser):
     emptied = wait_turning(pa, lambda: box()["rows"] == [], 3)
     ok(away == (0, 1, ["working"]) and (k, pressed) == ("停", True) and soon == ("发语音", 1, False) and jobs(pa) == [] and emptied,
        f"回来半秒多按停（补发{'已经发出去了' if busy else '还排着队'}）：马上停下，小字出来；记着的那一回不再记着，信箱里那一格收掉（她不在的时候 {away}，按完 {soon}）")
-    done = wait_turning(pa, lambda: len(calls()) == c0 + 1, 20)                           # 那边照旧办完
+    done = wait_turning(pa, lambda: len(calls()) == c0 + 1, 20)                           # 那边到此为止（掐了，或者正好想完了）
     pa.wait_for_timeout(5000)
     cid, msgs = chat_of(pa)
     ok(done and msgs[-1]["role"] == "her" and msgs[-1].get("stopped") is True and count_text(pa, "收到：到了却没听见回音") == 0 and notes(pa) == 1 and not typing(pa) and box()["rows"] == [],
-       "那边回完了：没有回话冒出来，小字还在")
+       "那边到此为止（掐了，或者正好想完了）：没有回话冒出来，小字还在")
     pa.close()
     pb = page_of(A, "back_stop2")
     pb.goto(BASE); kite(pb)
@@ -1312,12 +1312,12 @@ def lost_more(browser):
     emptied = wait_turning(pa, lambda: box()["rows"] == [], 3)
     ok(rec0 == 1 and at == ("停", False) and pressed and soon == ("发语音", 1, False) and jobs(pa) == [] and emptied,
        f"头一句那一回还记着、她又说了一句（还排着队）就按停：记着的那一回不再记着，信箱里那一格收掉（按的时候 {at}，按完 {soon}，还记着 {len(jobs(pa))} 回）")
-    done = wait_turning(pa, lambda: len(calls()) == c0 + 1, 25)                           # 那边照旧办完头一句那一回
+    done = wait_turning(pa, lambda: len(calls()) == c0 + 1, 25)                           # 头一句那一回到此为止（掐了，或者正好想完了）
     pa.wait_for_timeout(5000)
     cid, msgs = chat_of(pa)
     ok(done and [m.get("text") for m in msgs[-2:]] == ["头一句", "又说一句"] and [m["role"] for m in msgs[-2:]] == ["her", "her"] and msgs[-1].get("stopped") is True and count_text(pa, "收到：头一句") == 0
        and notes(pa) == 1 and not typing(pa) and box()["rows"] == [],
-       "那边回完了头一句那一回：没有回话冒出来（它接的虽然不是最后一句，也一并作废了）；小字在最后一句底下")
+       "头一句那一回到此为止：没有回话冒出来（它接的虽然不是最后一句，也一并作废了）；小字在最后一句底下")
     pa.get_by_text(NOTE, exact=True).tap()
     got = wait_js(pa, shown("收到：头一句 / 又说一句"), 20000)
     pa.get_by_text("第二条").last.wait_for(timeout=10000); pa.wait_for_timeout(1500)

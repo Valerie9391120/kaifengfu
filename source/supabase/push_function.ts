@@ -40,11 +40,11 @@ const SEND_TIMEOUT = 10000; // 敲推送服务的门最多等多少毫秒
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const SMALL_BODY = 4000; // 别的动作寄来的东西最多这么长
 const MAX_BODY = 40_000_000; // 一回传话寄来的东西最多这么长（带着照片的对话有好几兆）
-const REPLY_BUDGET = 125_000; // 等 Anthropic 最多等多少毫秒（免费档的函数最多活 150 秒，留出收尾的工夫）
+const REPLY_BUDGET = 125_000; // 等 Anthropic 最多等多少毫秒，从这一回敲门算（这份代码被叫起来一趟最多活 LIFE 那么久，留出收尾的工夫）
 const BEAT = 8000; // 还在等的时候，隔多少毫秒去信箱里摸一下：网页靠它看这一回还活着没有
 const GRACE = 6000; // 回话放进信箱以后等多少毫秒再敲手机：她就在开封府里的话，这工夫里网页已经把信取走了
 const LIFE = 150_000; // 这份代码被叫起来一趟最多活多少毫秒（免费档）：到点就被收掉，没敲完的横幅就丢了
-const LAST_CALL = 12_000; // 离到点不到这么多毫秒的时候，剩下的气泡并成一条横幅敲出去，免得全丢
+const LAST_CALL = 20_000; // 离到点不到这么多毫秒的时候，剩下的气泡并成一条横幅敲出去，免得全丢（留够敲这一条的工夫：推送服务慢的时候一下要十来秒）
 const BANNER_GAP = 1000; // 一个气泡敲一条横幅，敲完隔多少毫秒敲下一条
 const REPLY_TTL = 12 * 3600; // 回话的通知，手机不在线的话推送服务替我们留多少秒
 const BANNER_CHARS = 300; // 一条横幅上最多写多少个字
@@ -489,10 +489,9 @@ function fine(result: { status: number; data: unknown }): boolean {
 
 // ---------- 问 Anthropic ----------
 
-// 她按了停、这一回不要了：照这个样子交回去（多半没人看：按停的那台设备早就不等了）
+// 她按了停、把那一问掐了：那一问照这个样子交回去（多半没人看：按停的那台设备早就不等了）
 const STOPPED = 499;
 const STOPPED_SAY = "这一回停掉了，没有回话";
-const stoppedResult = (): Result => ({ status: STOPPED, data: oops(STOPPED_SAY), used: { cache: false, mcp: false } });
 
 // 问一回。最多等 ms 毫秒；stop 那根线一拉（她按了停），当场不等了。不管成不成都回 { status, data }，不抛错
 async function askOnce(body: Rec, beta: string, apiKey: string, ms: number, stop?: AbortSignal): Promise<{ status: number; data: unknown }> {
@@ -602,6 +601,20 @@ function mailbox(req: Request) {
     Prefer: "return=minimal",
   };
   const at = (job: string) => `${base}?job=eq.${encodeURIComponent(job)}`;
+  // 这一格还在不在（她取走就删了）。在回 true，不在回 false，问不到回 null
+  async function waiting(job: string): Promise<boolean | null> {
+    try {
+      const r = await fetch(`${at(job)}&select=job`, { headers, signal: AbortSignal.timeout(DB_TIMEOUT) });
+      if (!r.ok) {
+        await r.body?.cancel();
+        return null;
+      }
+      const rows = await r.json();
+      return Array.isArray(rows) && rows.length > 0;
+    } catch (_) {
+      return null;
+    }
+  }
   return {
     // 开一格，写上“在等”。ok 开好了；missing 那张表还没建；duplicate 这个编号已经有一格了；error 别的岔子
     async open(job: string, note: string): Promise<"ok" | "missing" | "duplicate" | "error"> {
@@ -635,31 +648,30 @@ function mailbox(req: Request) {
         return null;
       }
     },
-    // 回话封好了，放进去。放成了回 true
-    async finish(job: string, sealed: string): Promise<boolean> {
+    // 回话封好了，放进去。stored 放进去了；gone 那一格没了（她按了停、或者网页已经把它收了），没处放；failed 没放成（库房出岔子），可以再放
+    async finish(job: string, sealed: string): Promise<"stored" | "gone" | "failed"> {
       try {
         const now = new Date().toISOString();
-        const r = await fetch(`${at(job)}&state=eq.working`, { method: "PATCH", headers, body: JSON.stringify({ state: "done", sealed, done_at: now, beat_at: now }), signal: AbortSignal.timeout(DB_TIMEOUT) });
-        await r.body?.cancel();
-        return r.ok;
-      } catch (_) {
-        return false;
-      }
-    },
-    // 这一格还在不在（她取走就删了）。在回 true，不在回 false，问不到回 null
-    async waiting(job: string): Promise<boolean | null> {
-      try {
-        const r = await fetch(`${at(job)}&select=job`, { headers, signal: AbortSignal.timeout(DB_TIMEOUT) });
+        const r = await fetch(`${at(job)}&state=eq.working&select=job`, {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=representation" },
+          body: JSON.stringify({ state: "done", sealed, done_at: now, beat_at: now }),
+          signal: AbortSignal.timeout(DB_TIMEOUT),
+        });
         if (!r.ok) {
           await r.body?.cancel();
-          return null;
+          return "failed";
         }
         const rows = await r.json();
-        return Array.isArray(rows) && rows.length > 0;
+        if (Array.isArray(rows) && rows.length > 0) return "stored";
+        // 一行都没改到。要么那一格没了；要么上一回其实放进去了、只是这头没听见回音（它已经写着“放好了”，这一下就改不到它）：看一眼
+        const there = await waiting(job);
+        return there === true ? "stored" : there === false ? "gone" : "failed";
       } catch (_) {
-        return null;
+        return "failed";
       }
     },
+    waiting,
   };
 }
 
@@ -973,19 +985,20 @@ async function relay(req: Request, body: Rec): Promise<Response> {
     } catch (_) {
       result = { status: 500, data: oops("小后端自己出了岔子"), used: { cache: false, mcp: false } };
     }
-    // 她按了停：这一回不要了。不放信、不敲手机，网页那头也早就不等了
+    // 她按了停：这一回不要了。不放信、不敲手机。手上这份（多半就是那句“停掉了”）照旧交给网页那头：按停的那台设备早就不等了
     if (stop.signal.aborted) {
       clearInterval(beats);
-      handOver(stoppedResult());
+      handOver(result);
       return;
     }
 
     // 封好放进信箱（放不进去就再放一回），再交给还等在那头的网页
-    let stored = false;
+    let put: "stored" | "gone" | "failed" = "failed";
     let sealed = "";
     try {
       sealed = await sealWith(key, JSON.stringify(result));
-      stored = (await box.finish(job, sealed)) || (await box.finish(job, sealed));
+      put = await box.finish(job, sealed);
+      if (put === "failed") put = await box.finish(job, sealed);
     } catch (_) {
       // 封不上、放不进：下面照实说
     }
@@ -996,14 +1009,18 @@ async function relay(req: Request, body: Rec): Promise<Response> {
     // 这工夫里那一格照旧隔几秒摸一下：网页看它还活着，不会当它断了、把它收掉
     try {
       for (const pause of STORE_AGAIN) {
-        if (stored || !sealed || Date.now() + pause > handed + STORE_GIVE_UP) break;
+        if (put !== "failed" || !sealed || Date.now() + pause > handed + STORE_GIVE_UP) break;
         await sleep(pause);
-        stored = await box.finish(job, sealed);
+        put = await box.finish(job, sealed);
       }
     } catch (_) {
       // 照实说
     }
     clearInterval(beats);
+    const stored = put === "stored";
+    // 放的时候发现那一格没了：她按了停（回话到得比下一回摸信箱还早，上面没来得及掐），或者网页已经直接拿到回话、把那一格收了。
+    // 没有信等着她取，也就没什么可敲的。不等下面“过几秒再看一眼”：那一眼要是正好问不成，会当成信还在、敲出一串她不要的横幅
+    if (put === "gone") return;
 
     // 从交出去算起等够那几秒再看：信被取走了，她就在开封府里，不敲；还在，就敲她的手机
     await sleep(Math.max(0, handed + GRACE - Date.now()));
@@ -1033,8 +1050,9 @@ async function relay(req: Request, body: Rec): Promise<Response> {
         if ((await box.waiting(job)) === false) return;
       }
       const rest = said.bodies.slice(i);
-      const last = rest.length > 1 && (worker.closing || Date.now() - lifeFrom > LIFE - LAST_CALL);
-      const body = last ? clip(rest.join("\n"), BANNER_CHARS, BANNER_BYTES) : rest[0];
+      const last = worker.closing || Date.now() - lifeFrom > LIFE - LAST_CALL;
+      // 并的是两条往上；只剩一条的原样敲（它已经截过一回，再截一回会多截掉一截）
+      const body = last && rest.length > 1 ? clip(rest.join("\n"), BANNER_CHARS, BANNER_BYTES) : rest[0];
       const sent = await deliver(book, origin, doors, keys.vapid, (page) => replyNotice(page, { title: said.title, body }, job, tag, i), REPLY_TTL);
       // 门牌号作废了的那几台（已经从登记簿里划掉了）：后面几条不再敲它
       doors = doors.filter((_, k) => !(sent[k] && sent[k].removed));

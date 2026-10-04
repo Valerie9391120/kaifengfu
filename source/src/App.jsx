@@ -5063,8 +5063,9 @@ export default function App({ account = {} }) {
         }
       }
       // 信箱看成了（到了的回话都进对话了）：眼前这段对话的横幅用不着了，收掉。
-      // 没看成的时候不收：回话还没进对话，横幅上那几行字她还用得着
-      if (list !== null) tidyBanners();
+      // 没看成的时候不收：回话还没进对话，横幅上那几行字她还用得着。
+      // 她不在眼前的时候根本没去看（上面那个空单子）：也不算看成，连“过一会儿再收”的弦都不上
+      if (list !== null && document.visibilityState === "visible") tidyBanners();
     } catch (e) {}
     mailBusy.current = false;
     const soon = mailAgain.current;
@@ -5085,17 +5086,24 @@ export default function App({ account = {} }) {
   const tidyBanners = () => {
     const run = async () => {
       const id = chatIdRef.current;
-      if (!id || document.visibilityState !== "visible") return;
+      if (!id) return;
       try {
         if (!tagsRef.current[id]) tagsRef.current[id] = await chatTag((name) => store.nameFor(name), id);
-        // 算那串字的工夫里她翻走了、切走了：不收
+        // 她不在眼前（开封府在后台自己动了一下；算那串字的工夫里才切走的也算）、或者已经翻到别的对话了：不收
         if (chatIdRef.current !== id || document.visibilityState !== "visible") return;
         await clearReplyNotices(tagsRef.current[id]);
       } catch (e) {}
     };
     run();
+    // 过一会儿再收的那两遍，只在“这一趟一直在眼前”的时候作数：她一切走就撤掉（见 leaving）。
+    // 到点的时候晚了一大截的也不收（定时器中间被系统停过：她切走又回来了）。回来以后看信箱的那一遍看成了，自会重新来过
     bannerTimers.current.forEach(clearTimeout);
-    bannerTimers.current = [2500, 7000].map((ms) => setTimeout(run, ms));
+    const armed = Date.now();
+    bannerTimers.current = [2500, 7000].map((ms) =>
+      setTimeout(() => {
+        if (Date.now() - armed < ms + 1500) run();
+      }, ms)
+    );
   };
 
   // 通知网址里的那串字是哪段对话
@@ -5143,6 +5151,9 @@ export default function App({ account = {} }) {
   // 只在新路走通过的设备上这么干：走老路的话，话一交出去她就走了，等着的这头断掉，那一回白问，
   // 回来看到的是“消息没送到”；不如照旧等她回来再送
   const leaving = () => {
+    // 收横幅的那两遍“过一会儿再收”撤掉：它们是替“她还在眼前”上的弦。留着的话，她回来的那一下信箱没看成，它们照样到点把横幅收了
+    bannerTimers.current.forEach(clearTimeout);
+    bannerTimers.current = [];
     // 先把话交出去：切走以后页面只剩两三秒，这一包最要紧
     if (timerRef.current && getRelay().trusted()) {
       disarm();
