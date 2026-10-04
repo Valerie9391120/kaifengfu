@@ -11,13 +11,14 @@
 // 是标题就回 { level: 几个井号, text: 标题的字 }，不是回 null。
 // 不写成一条正则从头配到尾：一行里要是有几千个连着的空格，那种写法要来回试上千万次，气泡每画一遍都卡一下
 const HEAD = /^ {0,3}(#{1,6})[ \t\u00a0\u3000]+(?=\S)/;
+const SPACE = /[ \t\u00a0\u3000]/; // 算空格的那几样
 function heading(line) {
   const m = HEAD.exec(line);
   if (!m) return null;
   let text = line.slice(m[0].length).trimEnd();
   let j = text.length;
   while (text[j - 1] === "#") j--;
-  if (j < text.length && (text[j - 1] === " " || text[j - 1] === "\t")) text = text.slice(0, j).trimEnd();
+  if (j < text.length && SPACE.test(text[j - 1])) text = text.slice(0, j).trimEnd();
   return { level: m[1].length, text };
 }
 
@@ -25,9 +26,11 @@ function heading(line) {
 //   两个星号围着的是加粗，里头可以再夹一个星号围着的（那一截又粗又斜）；
 //   一个星号围着的是淡斜体，里头可以再夹两个星号围着的（那一截又粗又斜）；
 //   三个星号围着的，就是“加粗，里头整个是淡斜体”，不用另写。
-// 淡斜体收尾的那个星号后面不能紧跟着星号：那是下一个加粗的开头，不是收尾。
+// 淡斜体收尾的那个星号，不能正好是一个认得成的加粗的头一个星号：那是下一个加粗的开头，不是收尾。
 // （“* **苹果**：好吃”“5 * 2 = 10，**记住**”：没有这一条，前头那个零散的星号会把加粗的头一个星号吃掉，又成了“斜体、多一个星号”。）
-const MARKS = /(\*\*(?:[^*\n]|\*[^*\n]+\*)+\*\*)|(\*(?:[^*\n]|\*\*[^*\n]+\*\*)+\*(?!\*))/g;
+// 只看“后面是不是紧跟着星号”不行：“*推了推眼镜***听话**”里动作收尾的星号后面也跟着星号，那个动作得照旧是淡斜体。
+const BOLD = "\\*\\*(?:[^*\\n]|\\*[^*\\n]+\\*)+\\*\\*";
+const MARKS = new RegExp("(" + BOLD + ")|(\\*(?:[^*\\n]|\\*\\*[^*\\n]+\\*\\*)+\\*(?!" + BOLD.slice(2) + "))", "g");
 const EM_IN_BOLD = /\*[^*\n]+\*/g;
 const BOLD_IN_EM = /\*\*[^*\n]+\*\*/g;
 // 围着的那一截里头再拆一层。inner：去了外头星号的字；marks：认里头夹着的那一种（它两头各 n 个星号）；base：外头是哪一种
@@ -61,8 +64,8 @@ export function richInline(text) {
   let last = 0;
   for (const m of src.matchAll(MARKS)) {
     if (m.index > last) out.push(rest(src.slice(last, m.index)));
-    if (m[1]) out.push(...inside(m[1].slice(2, -2), EM_IN_BOLD, 1, { b: true, i: false }));
-    else out.push(...inside(m[2].slice(1, -1), BOLD_IN_EM, 2, { b: false, i: true }));
+    const parts = m[1] ? inside(m[1].slice(2, -2), EM_IN_BOLD, 1, { b: true, i: false }) : inside(m[2].slice(1, -1), BOLD_IN_EM, 2, { b: false, i: true });
+    for (const p of parts) out.push(p); // 不写成 push(...parts)：一截里头夹了几万样的话，那种写法会撑爆
     last = m.index + m[0].length;
   }
   if (last < src.length) out.push(rest(src.slice(last)));
@@ -71,7 +74,9 @@ export function richInline(text) {
 
 // 一整段字拆成一块一块：标题 { t: "h", level: 几个井号, parts }，别的 { t: "p", parts }。
 // 不是标题的那几行连在一起算一块，中间的换行照留。紧挨着标题的空行不要（标题自己上下留了空）；别处的空行照留。
-// 三个反引号围起来的代码里头，井号开头的是注释，不当标题
+// 三个反引号围起来的代码里头，井号开头的是注释，不当标题。
+// 认进没进代码：一行里“三个反引号”出现了单数回，就算进去（或者出来）了。
+// 这样写在列表圆点后头、写在一句话后头的（“代码：```sh”）也认得；一行里自己开自己关的（“```ls``` 这样”）不算进去
 export function richBlocks(text) {
   const out = [];
   if (!text) return out;
@@ -85,7 +90,7 @@ export function richBlocks(text) {
   };
   for (const line of String(text || "").split("\n")) {
     const h = fenced ? null : heading(line);
-    if (/^\s*```/.test(line)) fenced = !fenced;
+    if ((line.split("```").length - 1) % 2) fenced = !fenced;
     if (h) {
       flush(true);
       out.push({ t: "h", level: h.level, parts: richInline(h.text) });

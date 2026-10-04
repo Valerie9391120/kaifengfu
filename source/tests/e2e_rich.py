@@ -96,12 +96,13 @@ with sync_playwright() as p:
     ok(got and len(b["kids"]) == 1 and b["kids"][0]["cls"] == "kfs-head" and b["kids"][0]["size"] == 18 and 10 <= under <= 12, f"整个气泡只有一个标题：照样是标题，底下只有气泡自己的边（{under} 像素），不多留空")
 
     # ---- 星号打头的列表、每一项开头加粗（前头那个星号不许把加粗吃掉）；淡斜体里头夹着加粗 ----
-    got = reply(pa, "* **苹果**：好吃\n* **香蕉**：一般\n5 * 2 = 10，**记住**\n*低声说：**不许走**。*", "不许走")
+    got = reply(pa, "* **苹果**：好吃\n* **香蕉**：一般\n5 * 2 = 10，**记住**\n*低声说：**不许走**。*\n嗯。*推了推眼镜***听话**", "听话")
     b = his(pa)
     kinds = [(k["tag"], k["text"], k["weight"], k["italic"]) for k in b["kids"]]
     ok(got and kinds == [("span", "* ", 400, False), ("strong", "苹果", 600, False), ("span", "：好吃\n* ", 400, False), ("strong", "香蕉", 600, False), ("span", "：一般\n5 * 2 = 10，", 400, False), ("strong", "记住", 600, False), ("span", "\n", 400, False),
-                         ("em", "低声说：", 400, True), ("em", "不许走", 600, True), ("em", "。", 400, True)],
-       f"星号打头的列表、乘号后头的加粗：照认，圆点和乘号照摆；淡斜体里头夹着的加粗又粗又斜（{[(k[0], k[1]) for k in kinds]}）")
+                         ("em", "低声说：", 400, True), ("em", "不许走", 600, True), ("em", "。", 400, True),
+                         ("span", "\n嗯。", 400, False), ("em", "推了推眼镜", 400, True), ("strong", "听话", 600, False)],
+       f"星号打头的列表、乘号后头的加粗：照认，圆点和乘号照摆；淡斜体里头夹着的加粗又粗又斜；动作后面紧跟着加粗，动作照旧淡斜（{[(k[0], k[1]) for k in kinds]}）")
 
     # ---- 三个反引号围起来的代码：里头井号开头的是注释，不当标题 ----
     got = reply(pa, "给你看：\n```python\n# 这是注释\nprint(1)\n```\n# 这才是标题", "这才是标题")
