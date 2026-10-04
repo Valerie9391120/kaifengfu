@@ -104,14 +104,10 @@ export function richBlocks(text) {
   return out;
 }
 
-// 只要字的地方（历史对话里那一行预览）：星号去掉，标题行开头的井号去掉
+// 只要字的地方（历史对话里那一行预览、对话的名字）：就是气泡里摆出来的那些字，一块一行。
+// 当了记号的井号、星号不带；没当记号的（#标签、零散的星号、代码里的注释）照留
 export function plainOf(text) {
-  return String(text || "")
-    .split("\n")
-    .map((line) => {
-      const h = heading(line);
-      return h ? h.text : line;
-    })
-    .join("\n")
-    .replace(/\*/g, "");
+  return richBlocks(text)
+    .map((b) => b.parts.map((p) => p.s).join(""))
+    .join("\n");
 }

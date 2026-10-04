@@ -1050,7 +1050,8 @@ function makeTitle(msgs, memeLookup) {
     const v = (first.text || "").trim();
     return v ? (v.length > 18 ? v.slice(0, 18) + "…" : v) : "[语音]";
   }
-  const t = (first.text || "").replace(/\s+/g, " ").trim();
+  // 名字照气泡里摆出来的字起：她头一句要是带着井号、星号的记号，名字里不带
+  const t = plainOf(first.text || "").replace(/\s+/g, " ").trim();
   return t.length > 18 ? t.slice(0, 18) + "…" : t || "新对话";
 }
 
@@ -1063,7 +1064,7 @@ function makePreview(msgs) {
     if (last.kind === "photo") return "[照片]";
     if (last.kind === "doc") return `[文档] ${last.name || ""}`.trim();
     if (last.kind === "voice") return `[语音] ${last.text || ""}`;
-    return last.text || "";
+    return plainOf(last.text || "");
   }
   const t = (last.items || []).find((it) => it.type === "text");
   if (t) return plainOf(t.text);
