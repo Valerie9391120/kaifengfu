@@ -8,7 +8,7 @@
     "build:test": "KFS_TEST_URL=http://127.0.0.1:8787 KFS_OUT=dist-test node build.mjs",
     "mock": "node tests/mock-supabase.mjs",
     "test:unit": "esbuild tests/engine.test.mjs --bundle --platform=node --format=esm --outfile=.cache/engine.test.mjs --log-level=warning && node .cache/engine.test.mjs && esbuild tests/liquid.test.mjs --bundle --platform=node --format=esm --outfile=.cache/liquid.test.mjs --log-level=warning && node .cache/liquid.test.mjs && esbuild tests/names.test.mjs --bundle --platform=node --format=esm --outfile=.cache/names.test.mjs --log-level=warning && node .cache/names.test.mjs && esbuild tests/docx.test.mjs --bundle --platform=node --format=esm --outfile=.cache/docx.test.mjs --log-level=warning && node .cache/docx.test.mjs && esbuild tests/docs.test.mjs --bundle --platform=node --format=esm --outfile=.cache/docs.test.mjs --log-level=warning && node .cache/docs.test.mjs && esbuild tests/nozoom.test.mjs --bundle --platform=node --format=esm --outfile=.cache/nozoom.test.mjs --log-level=warning && node .cache/nozoom.test.mjs && esbuild tests/scroll.test.mjs --bundle --platform=node --format=esm --outfile=.cache/scroll.test.mjs --log-level=warning && node .cache/scroll.test.mjs && node tests/push.test.mjs && node tests/mail.test.mjs",
-    "test:e2e": "python3 tests/e2e.py && python3 tests/e2e_push.py && python3 tests/e2e_mail.py && python3 tests/e2e_mail_edge.py && python3 tests/e2e_gesture.py"
+    "test:e2e": "python3 tests/e2e.py && python3 tests/e2e_push.py && python3 tests/e2e_mail.py && python3 tests/e2e_mail_edge.py && python3 tests/e2e_gesture.py && python3 tests/e2e_stop.py"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",

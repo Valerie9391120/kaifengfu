@@ -41,6 +41,8 @@ const mailjs = await loadBundle("src/mail.js");
 const thread = await loadBundle("src/thread.js");
 const replyjs = await loadBundle("src/reply.js");
 const vaultjs = await loadBundle("src/vault.js");
+const docsjs = await loadBundle("src/docs.js");
+const namesjs = await loadBundle("src/names.js");
 
 const vapid = makeVapidKeys();
 const USER = { id: "11111111-1111-1111-1111-111111111111", email: "qing@example.com" };
@@ -811,6 +813,59 @@ function resetWorld() {
   }
   ok(splitOff.length === 0, `分条：按 [SPLIT] 切的写法（不用正则在空白上来回试），切出来的和原来那条正则一模一样${splitOff.length ? "（对不上：" + JSON.stringify(splitOff[0]) + "）" : ""}`);
   ok(off.length === 0, `横幅：随机拼的两万条回话，两边拆出来的也一模一样${off.length ? "（对不上 " + off.length + " 条，头一条：" + JSON.stringify([off[0], fn.previewOf(off[0]), expect(off[0])]) + "）" : ""}`);
+
+  // ---- 反过来写回去（reply.js 的 rawOf）：她按停把他的回话掐断以后，剩下的那几样要写回他的写法 ----
+  {
+    const { rawOf } = replyjs;
+    const T = (text) => ({ type: "text", text });
+    ok(rawOf([T("在呢"), { type: "meme", file: "a.jpg" }, T("好")], "") === "在呢\n[SPLIT]\n[MEME:a.jpg]\n[SPLIT]\n好" && rawOf([T("……")]) === "……" && rawOf([], "") === "" && rawOf(null) === "",
+      "写回去：一样一条，中间用 [SPLIT] 隔开；表情包写回 [MEME:…]");
+    ok(rawOf([T("行"), { type: "avatar", file: "b.jpg", prev: null }], "小狐") === "[NAME:小狐]\n[SPLIT]\n行\n[SPLIT]\n[AVATAR:b.jpg]", "写回去：换头像写回 [AVATAR:…]（换之前那张不往里写）；改过名字的，改名的记号写在最前头");
+    const docRaw = rawOf([T("给你"), { type: "doc", name: "清单.md", text: "# 买菜\n- 葱" }, T("收好")], "");
+    ok(docRaw === "给你\n[SPLIT]\n[DOC:清单.md]\n# 买菜\n- 葱\n[/DOC]\n[SPLIT]\n收好", "写回去：文档写回一整块，开头结尾的记号各占一行");
+    // 没写完的文档（没有结尾的记号）后面什么都不能跟：改名的记号要是写在后面，会被算成文档的正文
+    const cutDoc = parseReply("<thinking>x</thinking>\n" + rawOf([T("看"), { type: "doc", name: "长文.md", text: "没写完", cut: true }], "小狐"));
+    ok(cutDoc.rename === "小狐" && cutDoc.items.length === 2 && cutDoc.items[1].type === "doc" && cutDoc.items[1].cut === true && cutDoc.items[1].text === "没写完", "写回去：最后一样是没写完的文档、这一条里又改了名字：再拆，文档还是没写完的那份，名字也还认得出");
+    const holder = parseReply(rawOf([{ type: "doc", name: "文件名.md", text: "真的叫这个名字" }], ""));
+    ok(holder.items.length === 1 && holder.items[0].type === "doc" && holder.items[0].name === "文件名.md" && holder.items[0].text === "真的叫这个名字", "写回去：文档真叫“文件名.md”（教写法时占位的那个名字）：再拆还是一份文档，不会被当成在讲写法");
+
+    // 拿上面那一批、再加随机拼的几万条：拆开、只留头几样（一样、两样……全留）、写回去、再拆，得到的还是那几样。
+    // 再拆的时候前头垫一段心里话：对话里存的 raw 本来就是摘掉了头一段心里话以后的
+    const reparse = (raw) => parseReply("<thinking>x</thinking>\n" + raw);
+    const nameLine = () => new RegExp(namesjs.NAME_MARK, "m");
+    const docOpen = () => /^[ \t]*\[(?:DOC|Doc|doc)[:：]([^\[\]\n]*)\][ \t]*\r?$/gm;
+    const docClose = () => /^[ \t]*\[\/(?:DOC|Doc|doc)\][ \t]*\r?$/m;
+    // 学不了的三种，都是他写岔了才有的样子（见 rawOf 上面那段）：
+    //   一句话自己长得就像记号（改名的、文档开头的记号紧贴着别的东西写，原来当字显示了）；
+    //   文档的正文里夹着一行结尾的记号（原来那一行后面跟着怪空白，没被认成结尾）；
+    //   名字再收拾一遍会变（太长截断以后露出个引号）
+    const odd = (items, rename) =>
+      items.some((it) => (it.type === "text" && (nameLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "doc" && docClose().test(it.text))) ||
+      (!!rename && namesjs.cleanMarkName(rename) !== rename);
+    const flat = (items) => JSON.stringify(items.map((it) => (it.type === "doc" ? { ...it, name: docsjs.cleanDocName(it.name) } : it)));
+    let tried = 0, skipped = 0;
+    const wrong = [];
+    const roundTrip = (t) => {
+      const p = parseReply(t);
+      for (let k = 1; k <= p.items.length; k++) {
+        const kept = p.items.slice(0, k);
+        if (odd(kept, p.rename)) { skipped++; continue; }
+        tried++;
+        const q = reparse(rawOf(kept, p.rename || ""));
+        if (flat(q.items) !== flat(kept) || (q.rename || "") !== (p.rename || "")) { wrong.push([t, k, rawOf(kept, p.rename || "")]); return; }
+      }
+    };
+    corpus.forEach(roundTrip);
+    const fromCorpus = tried;
+    seed = 20261004;
+    for (let i = 0; i < 30000; i++) {
+      let t = "";
+      for (let k = 1 + Math.floor(rnd() * 12); k > 0; k--) t += bits[Math.floor(rnd() * bits.length)];
+      roundTrip(t);
+    }
+    ok(wrong.length === 0 && fromCorpus > 60 && tried > 30000 && tried > skipped * 2,
+      `写回去：${tried} 回（上面那一批加随机拼的三万条，每条从留一样试到全留），写回去再拆，得到的都还是留下的那几样、名字也对${wrong.length ? "（对不上 " + wrong.length + " 回，头一回：" + JSON.stringify(wrong[0]) + "）" : ""}（另有 ${skipped} 回是他写岔了的样子，学不了，不算）`);
+  }
   // 会让正则来回试的几种写法：两头都一眨眼拆完（小后端一回请求只有两秒可算；手机上卡住更难看）。
   // 原来的写法：五万个空行后面不跟 [SPLIT] 要算好几秒；[DOC: 后面几千个空格、没有右括号，要算十几秒；一万个没有右括号的 [MEME: 将近两秒
   const slow = [
@@ -907,6 +962,46 @@ function resetWorld() {
   ok(hasJob(back, "J2") && mailFit(back, finfo, "J2") === "dup" && back.map((m) => m.id).join() === "a,b,c,old,旧的后话", "取信：她翻回旧分支以后，收在别的分支里的那条也认得出（不会再放一遍）");
   const nested = forkAt([her("a"), him("b", 2, "J9"), her("c")], 0, her("a2"));
   ok(hasJob(nested, "J9") && !hasJob(nested, "J8"), "取信：改过她的话、整段收进旧分支的，里面的回话也认得出");
+
+  // ---- 她按了停 ----
+  const { markStopped, stoppedAt, cutReply } = thread;
+  const marked = markStopped(chat);
+  ok(marked !== chat && marked[2].stopped === true && !chat[2].stopped && marked[0] === chat[0] && marked[1] === chat[1] && stoppedAt(marked) === "c" && stoppedAt(chat) === "" && markStopped(marked) === marked,
+    "按停·作废：在她最后那句话上记一笔“停了”（原来那份不动）；底下那行小字认的就是它；记过了再记，原样交回");
+  const withEv = markStopped(chat.concat([ev("e")]));
+  ok(withEv.length === 4 && withEv[2].stopped === true && !withEv[3].stopped && stoppedAt(withEv) === "c", "按停·作废：她那句后面夹着换头像的提示：照样记在她那句上");
+  const hisLast = chat.slice(0, 2);
+  ok(markStopped(hisLast) === hisLast && markStopped([]).length === 0 && stoppedAt([]) === "" && stoppedAt(hisLast) === "", "按停·作废：最后一句是他的话、对话是空的：没什么可记的，原样交回");
+  ok(stoppedAt(marked.concat([her("d", 4)])) === "" && stoppedAt(marked.concat([him("r", 5)])) === "" && stoppedAt(marked.concat([ev("e2")])) === "c" && needsReply(marked),
+    "按停·作废：那一句后面她又说了别的、有了回话，那一笔就不作数了（小字不摆）；只多了一行换头像提示的还作数；那一句照旧算“还欠一个回复”");
+  const edited = forkAt(marked, 2, (({ stopped, ...rest }) => ({ ...rest, id: "c2", text: "改过的" }))(marked[2]));
+  ok(stoppedAt(edited) === "" && edited[2].alts[0].node.stopped === true && stoppedAt(thread.switchAlt(edited, 2, 0)) === "c", "按停·作废：她把那一句改了，改出来的新话上没有这一笔；翻回原来那一句，小字还在");
+  // 她点了那行小字：那一笔擦掉
+  const { unmarkStopped } = thread;
+  const wiped = unmarkStopped(marked);
+  ok(wiped !== marked && !("stopped" in wiped[2]) && JSON.stringify(wiped) === JSON.stringify(chat) && wiped[0] === marked[0] && wiped[1] === marked[1] && marked[2].stopped === true && stoppedAt(wiped) === "" && needsReply(wiped),
+    "按停·作废：她点了那行小字：那一笔擦掉（原来那份不动），这一句又和平常的话一样，照旧算“还欠一个回复”");
+  const wipedEv = unmarkStopped(withEv);
+  ok(wipedEv.length === 4 && !("stopped" in wipedEv[2]) && wipedEv[3] === withEv[3] && stoppedAt(wipedEv) === "" && withEv[2].stopped === true, "按停·作废：那一句后面夹着换头像的提示：那一笔照样擦得到");
+  const moot = marked.concat([her("d", 4)]);
+  ok(unmarkStopped(chat) === chat && unmarkStopped(hisLast) === hisLast && unmarkStopped([]).length === 0 && unmarkStopped(moot) === moot && moot[2].stopped === true,
+    "按停·作废：没有那一笔、那一笔已经不作数了（后面她又说了别的）：没什么可擦的，原样交回");
+
+  const full4 = { id: "h", role: "him", ts: 9, items: [{ type: "text", text: "一" }, { type: "meme", file: "a.jpg" }, { type: "avatar", file: "b.jpg", prev: null }, { type: "text", text: "四" }], raw: "一 [MEME:a.jpg]\n[AVATAR:b.jpg]\n[SPLIT]\n四\n[NAME:小狐]", thinking: "想了想", tools: ["笔记"], toolNote: "", job: "J7", rename: "小狐" };
+  const talk = [her("a", 1), full4, her("z", 10)];
+  const cut = cutReply(talk, "h", 2);
+  ok(!!cut && cut.msgs.length === 3 && cut.msgs[0] === talk[0] && cut.msgs[2] === talk[2] && cut.msgs[1].items.length === 2 && cut.msgs[1].items[1].file === "a.jpg" && cut.msgs[1].cut === true && cut.dropped.length === 2 && cut.dropped[0].type === "avatar" && cut.dropped[1].text === "四" && full4.items.length === 4 && !full4.cut,
+    "按停·掐断：只留已经蹦出来的头两样，后面的不要了；不要了的那几样另外交出来（里面有换头像，外头要把头像换回去）；原来那份不动");
+  ok(cut.msgs[1].raw === "[NAME:小狐]\n[SPLIT]\n一\n[SPLIT]\n[MEME:a.jpg]" && JSON.stringify(replyjs.parseReply(cut.msgs[1].raw).items) === JSON.stringify(cut.msgs[1].items) && replyjs.parseReply(cut.msgs[1].raw).rename === "小狐",
+    "按停·掐断：往后寄给那边的我的“他自己说过的话”照剩下的重写：他只当自己就说了这么多（再拆一遍，正是留下的那两样）");
+  ok(cut.msgs[1].thinking === "想了想" && cut.msgs[1].job === "J7" && cut.msgs[1].rename === "小狐" && cut.msgs[1].tools.join() === "笔记" && cut.msgs[1].id === "h" && cut.msgs[1].ts === 9 && hasJob(cut.msgs, "J7"),
+    "按停·掐断：心里话、用了什么工具、改的名字、是哪一回的回话，都照旧留着（信箱那头还认得出这一回放过了）");
+  ok(cutReply(talk, "h", 4) === null && cutReply(talk, "h", 9) === null && cutReply(talk, "没有这一条", 1) === null && cutReply(talk, "a", 1) === null && cutReply(talk, "h", 0).msgs[1].items.length === 1 && cutReply(talk, "h", 3).dropped.length === 1 && cutReply(talk, "h", 3).msgs[1].raw.includes("[AVATAR:b.jpg]"),
+    "按停·掐断：都蹦完了、没有这一条、那一条是她的话：没什么可掐的；至少留一样；换头像的那一样已经蹦出来了就留着");
+  const forked4 = forkAt([her("a", 1), him("旧回答", 2)], 1, full4);
+  const cutFork = cutReply(forked4, "h", 1);
+  ok(cutFork.msgs[1].alts.length === 2 && cutFork.msgs[1].altIdx === 1 && thread.switchAlt(cutFork.msgs, 1, 0)[1].id === "旧回答" && thread.switchAlt(thread.switchAlt(cutFork.msgs, 1, 0), 1, 1)[1].items.length === 1,
+    "按停·掐断：掐的是重新回答出来的那个版本：别的版本照旧翻得到，翻回来还是掐断以后的样子");
 }
 
 // ================= 手机这一头：一回传话（src/mail.js） =================
@@ -923,7 +1018,7 @@ function world({ visible = true } = {}) {
     rows: new Map(), removed: [], sent: [], replies: [], aborted: 0,
     storage: "", vis: new Set(), freshed: 0, synced: 0, answered: false, hint: false,
     backAt: -Infinity, probe: true, probes: 0, knock: ["https://web.push.apple.com/this-device"], hang: "", looks: [],
-    removedWorking: [], askedJobs: null, onRemove: null, removeFails: 0,
+    removedWorking: [], askedJobs: null, onRemove: null, removeFails: 0, halted: "",
   };
   const never = new Promise(() => {});
   const box = {
@@ -964,7 +1059,7 @@ function world({ visible = true } = {}) {
     },
     box,
     seal: (t) => vaultjs.seal(vault, t),
-    unseal: (t) => vaultjs.unseal(vault, t),
+    unseal: (t) => { if (w.onUnseal) w.onUnseal(); return vaultjs.unseal(vault, t); },
     nameFor: (n) => vaultjs.rowKeyFor(vault, n),
     visible: () => w.visible,
     online: () => w.online,
@@ -976,6 +1071,7 @@ function world({ visible = true } = {}) {
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     storage: { get: () => w.storage, set: (t) => { w.storage = t; } },
     hint: { get: () => w.hint, set: (v) => { w.hint = v; } },
+    halted: { get: () => (w.haltedBroken ? "" : w.halted), set: (t) => { if (!w.haltedBroken) w.halted = t; } },
     freshToken: async (s) => { w.freshed = s; if (w.hang === "token") return never; },
     // answered 可以是一个函数 (jobs) => 真假：照“同步下来的对话里有没有这几回的回话”来答
     answered: async (chat, last, fork, jobs) => { w.synced++; w.askedJobs = jobs; if (w.hang === "answered") return never; return typeof w.answered === "function" ? w.answered(jobs, fork) : w.answered; },
@@ -990,6 +1086,7 @@ function world({ visible = true } = {}) {
   };
   w.comeBack = () => { w.visible = true; w.backAt = Date.now(); for (const f of [...w.vis]) f(); };
   w.jobs = () => { try { return JSON.parse(w.storage || "[]").map((x) => x.job); } catch (e) { return []; } };
+  w.halts = () => { try { return JSON.parse(w.halted || "[]"); } catch (e) { return []; } };
   return w;
 }
 const ARGS = { body: { model: "claude-sonnet-4-6", max_tokens: 100, messages: [] }, beta: "", chat: "chatA", last: "m7", fork: "", title: "光义", extra: null };
@@ -1966,6 +2063,279 @@ const drive = async (p, step = 500, max = 400000) => {
   const afterBack = resJ;
   for (let i = 0; i < 30 && !resJ; i++) await clock.tick(500); // 再十五秒：过了半分钟
   ok(before === null && afterBack === null && resJ && resJ.e && resJ.e.code === "offline", `信箱看不成二十五秒、她切走又回来、再看不成二十秒：从回来那一刻重新算，不说连不上；再过十五秒才说（${resJ && resJ.e ? resJ.e.message : "没说"}）`);
+  clock.off();
+}
+
+// ---- 她按了停（ask、resume 的 signal） ----
+{
+  clock.on();
+  const times = (list, job) => list.filter((j) => j === job).length;
+  const good = (w) => async (p) => { await w.done(p); return { type: "reply", job: p.job, result: GOOD }; };
+  const watching = (p) => { let out = null; p.then((v) => { out = { v }; }, (e) => { out = { e }; }); return () => out; };
+
+  // 直接等着的时候按停
+  const w = world();
+  w.hint = true;
+  const ctl = new AbortController();
+  w.replies.push((p) => { w.working(p); return new Promise(() => {}); });
+  const out = watching(w.relay.ask({ ...ARGS, signal: ctl.signal }));
+  await until(() => w.sent.length === 1);
+  await breathe();
+  const job = w.sent[0].job;
+  const before = { out: out(), jobs: w.jobs().join(), row: w.rows.has(job) };
+  ctl.abort();
+  await breathe();
+  ok(before.out === null && before.jobs === job && before.row && out() && out().e && out().e.code === "stopped" && w.aborted === 1,
+    "按停：正直接等着回话的时候按：这一问马上以“停了”收场（外头不报错、不重发），直接等的那头掐掉");
+  ok(w.jobs().length === 0 && !w.rows.has(job) && times(w.removed, job) === 1 && w.relay.wasHalted(job) && w.halts().join() === job && !w.relay.isLive(job),
+    "按停：这一回不再记着，信箱里那一格当场收掉（小后端回完了放不进去，六秒后看那一格不在，也不敲手机），编号记进“按了停的”");
+  // 按停的那一下小后端还没来得及开出那一格：过后它开出来了。隔半秒、再一秒半、再五秒、再十五秒、再四十秒，各再收一遍
+  // （每一遍都卡着两边看：差一百毫秒还没收，到点了收掉）
+  const swept = [];
+  for (const gap of [500, 1500, 5000, 15000, 40000]) {
+    w.working(w.sent[0]);
+    await clock.tick(gap - 100);
+    const early = w.rows.has(job);
+    await clock.tick(150);
+    swept.push(early && !w.rows.has(job));
+  }
+  w.working(w.sent[0]);
+  await clock.tick(120000);
+  ok(swept.join() === "true,true,true,true,true" && times(w.removed, job) === 6 && w.rows.has(job), `按停：那一格要是晚一步才开出来：隔半秒、一秒半、五秒、十五秒、四十秒各再收一遍（一共六遍，最后一遍在一分钟以后），之后不再追着收（${swept.join()}，收了 ${times(w.removed, job)} 遍）`);
+  // 再晚的：回话放进来了。看信箱的时候认得出是她停掉的那一回：收掉，不往对话里放
+  await w.done(w.sent[0]);
+  const listed = await w.relay.collect();
+  await breathe();
+  ok(Array.isArray(listed) && listed.length === 0 && !w.rows.has(job) && times(w.removed, job) === 7, "按停：停掉的那一回的回话后来还是进了信箱：看信箱的时候见一回收一回，不交出去（不会再冒进对话）");
+  // 停了以后她点小字让他回：是新的一回，不去找停掉的那一回
+  w.replies.push(good(w));
+  const again = await settled(w.relay.ask(ARGS));
+  ok(!!again.v && w.sent.length === 2 && again.v.job === w.sent[1].job && again.v.job !== job && !w.relay.wasHalted(again.v.job), "按停以后再要回话：发新的一回");
+  // “按了停的”记在这台设备上：重开一遍（另起一个）还认得
+  const w1 = world();
+  w1.halted = w.halted;
+  await w1.done(w.sent[0]);
+  const listed1 = await w1.relay.collect();
+  ok(w1.relay.wasHalted(job) && listed1.length === 0, "按停：停掉的那几回记在这台设备上，开封府重开以后在信箱里碰上也还认得、照收");
+
+  // 回话和“停”前后脚到：算停了
+  const wr = world();
+  wr.hint = true;
+  const cr = new AbortController();
+  let release = null;
+  wr.replies.push((p) => new Promise((resolve) => { release = () => resolve({ type: "reply", job: p.job, result: GOOD }); }));
+  const outR = watching(wr.relay.ask({ ...ARGS, signal: cr.signal }));
+  await until(() => !!release);
+  await wr.done(wr.sent[0]); // 小后端把回话放进信箱了，
+  release(); // 也交到了还等着的这一头；
+  cr.abort(); // 同一下，她按了停
+  await breathe();
+  const jr = wr.sent[0].job;
+  ok(outR() && outR().e && outR().e.code === "stopped" && !wr.rows.has(jr) && wr.relay.wasHalted(jr) && wr.jobs().length === 0, "按停：回话和“停”前后脚到：算停了，回话不交出去，那一格收掉");
+
+  // 话还没出手机就按了停：不发了，没什么可收的
+  for (const [name, hang, known] of [["还在问新路通不通", "probe", false], ["还在换登录凭证", "token", true]]) {
+    const w2 = world();
+    w2.hint = known;
+    w2.hang = hang;
+    const c2 = new AbortController();
+    const out2 = watching(w2.relay.ask({ ...ARGS, signal: c2.signal }));
+    await breathe();
+    const waiting = out2() === null;
+    c2.abort();
+    await breathe();
+    ok(waiting && out2() && out2().e && out2().e.code === "stopped" && w2.sent.length === 0 && w2.removed.length === 0 && w2.halts().length === 0 && w2.jobs().length === 0, `按停：话还没出手机（${name}）就按了：不发了，什么都没记、没什么可收的`);
+  }
+
+  // 直接等的那头断了、正守着信箱的时候按停
+  const w3 = world();
+  w3.hint = true;
+  const c3 = new AbortController();
+  w3.replies.push(async (p) => { w3.working(p); throw coded("unreachable", "连不上"); });
+  const out3 = watching(w3.relay.ask({ ...ARGS, signal: c3.signal }));
+  for (let i = 0; i < 3; i++) { await clock.tick(2000); w3.beat(w3.sent[0].job); }
+  const still3 = out3() === null;
+  c3.abort();
+  await breathe();
+  const j3 = w3.sent[0].job;
+  ok(still3 && out3() && out3().e && out3().e.code === "stopped" && !w3.rows.has(j3) && times(w3.removed, j3) === 1 && w3.jobs().length === 0 && w3.relay.wasHalted(j3) && w3.sent.length === 1, "按停：直接等的那头断了、正守着信箱等的时候按：一样作废，那一格收掉（收一遍），不重发");
+
+  // 守着上次发出去的那一回（resume）的时候按停
+  const w4 = world();
+  const c4 = new AbortController();
+  const note4 = await vaultjs.seal(vault, JSON.stringify({ v: 1, job: "jobResume0000000001", chat: "chatA", last: "m7", key: b64u(crypto.randomBytes(32)), at: Date.now() }));
+  w4.working({ job: "jobResume0000000001", note: note4 });
+  const info4 = await readNote((t) => vaultjs.unseal(vault, t), note4, "jobResume0000000001");
+  const out4 = watching(w4.relay.resume("jobResume0000000001", info4, c4.signal));
+  await clock.tick(2000);
+  const still4 = out4() === null && w4.jobs().join() === "jobResume0000000001";
+  c4.abort();
+  await breathe();
+  ok(still4 && out4() && out4().e && out4().e.code === "stopped" && !w4.rows.has("jobResume0000000001") && times(w4.removed, "jobResume0000000001") === 1 && w4.jobs().length === 0 && w4.relay.wasHalted("jobResume0000000001"), "按停：守着上次打开时发出去的那一回的时候按：一样作废");
+  // 守着的那一回信箱里没有了、正同步着看别处回上了没有的时候按停：不等那一下有着落
+  const w4b = world();
+  const c4b = new AbortController();
+  w4b.hang = "answered";
+  const out4b = watching(w4b.relay.resume("jobResume0000000002", { ...info4, job: "jobResume0000000002" }, c4b.signal));
+  await breathe();
+  await clock.tick(2000);
+  const still4b = out4b() === null && w4b.synced === 1;
+  c4b.abort();
+  await breathe();
+  ok(still4b && out4b() && out4b().e && out4b().e.code === "stopped" && w4b.relay.wasHalted("jobResume0000000002"), "按停：守着的那一回信箱里没有了、正同步着看别处回上了没有的时候按：马上以“停了”收场，不等同步有着落");
+
+  // 线早就拉了（递进来的时候已经是按了停的）：什么都不发，也不等（这时候问新路通不通的那一下悬着）
+  const w4c = world();
+  w4c.hang = "probe";
+  const c4c = new AbortController();
+  c4c.abort();
+  const out4c = watching(w4c.relay.ask({ ...ARGS, signal: c4c.signal }));
+  await breathe();
+  ok(out4c() && out4c().e && out4c().e.code === "stopped" && w4c.sent.length === 0 && w4c.jobs().length === 0 && w4c.halts().length === 0, "按停：递进来的时候线已经拉了：当场以“停了”收场，什么都不发、不等");
+
+  // 回话已经从信箱里取到手、正拆着的那一下她按了停：也算停了，不交出去
+  const w4d = world();
+  const c4d = new AbortController();
+  const key4d = b64u(crypto.randomBytes(32));
+  const note4d = await vaultjs.seal(vault, JSON.stringify({ v: 1, job: "jobResume0000000003", chat: "chatA", last: "m7", key: key4d, at: Date.now() }));
+  await w4d.done({ job: "jobResume0000000003", note: note4d, key: key4d });
+  w4d.onUnseal = () => c4d.abort(); // 那一格已经看到了、正拆条子：这时候她按了停
+  const out4d = await settled(w4d.relay.resume("jobResume0000000003", null, c4d.signal));
+  await breathe();
+  ok(out4d.e && out4d.e.code === "stopped" && !w4d.rows.has("jobResume0000000003") && w4d.relay.wasHalted("jobResume0000000003") && w4d.jobs().length === 0, "按停：回话已经从信箱里取到手、正拆着的那一下按：也算停了，不交出去，那一格收掉");
+
+  // 为同一句话发出去的上一回还没着落、她点了重发、正去信箱里找它的时候按停：那一回作废
+  const w5 = world();
+  w5.hint = true;
+  w5.replies.push(async (p) => { w5.working(p); throw coded("unreachable", "连不上"); });
+  w5.getFails = 99;
+  const first5 = await drive(w5.relay.ask(ARGS), 500, 20000);
+  w5.getFails = 0;
+  const j5 = w5.sent[0].job;
+  const c5 = new AbortController();
+  const out5 = watching(w5.relay.ask({ ...ARGS, recheck: true, signal: c5.signal }));
+  await clock.tick(2000);
+  w5.beat(j5);
+  const still5 = out5() === null;
+  c5.abort();
+  await breathe();
+  ok(first5.e && first5.e.code === "offline" && still5 && out5() && out5().e && out5().e.code === "stopped" && !w5.rows.has(j5) && w5.jobs().length === 0 && w5.relay.wasHalted(j5) && w5.sent.length === 1,
+    "按停：上一回没连上、还记着，她点重发、正去信箱里找那一回的时候按：那一回作废（收掉、不再记着），没有另发一回");
+
+  // 里头正卡在慢的一步上（收一格收了八秒才有着落）、出来的是别的错：对外头还是“停了”，那一回照样作废
+  const w6 = world();
+  const c6 = new AbortController();
+  w6.rows.set("jobBroken0000000001", { job: "jobBroken0000000001", state: "working", note: "乱写的条子", sealed: null, created_at: stamp(), beat_at: stamp(), done_at: null });
+  let hung = 0;
+  w6.onRemove = () => (hung++ === 0 ? new Promise(() => {}) : null);
+  const out6 = watching(w6.relay.resume("jobBroken0000000001", null, c6.signal));
+  await clock.tick(1000);
+  c6.abort();
+  await breathe();
+  const slow6 = out6() === null;
+  await clock.tick(9000);
+  ok(hung >= 1 && slow6 && out6() && out6().e && out6().e.code === "stopped" && w6.relay.wasHalted("jobBroken0000000001"), "按停：里头正卡在慢的一步上、出来的本该是别的错：交出去的还是“停了”，那一回照样记成作废");
+
+  // 她不在的时候没送成、还记着的那一回（这会儿没人守着）：她在那段对话里按了停，这一回也作废（forget）
+  const wf = world();
+  wf.hint = true;
+  wf.relay.forget("chatA"); // 什么都没记着的时候叫：什么都不做
+  await breathe();
+  const idleF = wf.removed.length === 0 && wf.halts().length === 0;
+  wf.replies.push(async (p) => { wf.working(p); throw coded("unreachable", "连不上"); });
+  wf.getFails = 99;
+  const lostF = await drive(wf.relay.ask(ARGS), 500, 20000);
+  wf.getFails = 0;
+  const jf = wf.sent[0].job;
+  const keptF = wf.jobs().join() === jf && wf.rows.has(jf) && !!wf.relay.owed("chatA", "m7") && !wf.relay.isLive(jf);
+  wf.relay.forget("chatA");
+  await breathe();
+  ok(idleF && lostF.e && lostF.e.code === "offline" && keptF && wf.jobs().length === 0 && wf.relay.owed("chatA", "m7") === null && !wf.rows.has(jf) && times(wf.removed, jf) === 1 && wf.relay.wasHalted(jf) && wf.halts().join() === jf,
+    "按停：没送成、还记着的那一回（这会儿没人守着）：她在那段对话里按了停，这一回也作废：不再记着（下回打开不会替她补发），那一格当场收掉，编号记进“按了停的”");
+  for (let i = 0; i < 126; i++) await clock.tick(500); // 一分多钟：一步一步拨，过后的那五遍才排得上
+  await wf.done(wf.sent[0]); // 那一回其实送到了：回话后来还是进了信箱
+  const listedF = await wf.relay.collect();
+  await breathe();
+  wf.replies.push(good(wf));
+  const againF = await settled(wf.relay.ask(ARGS));
+  ok(times(wf.removed, jf) === 7 && Array.isArray(listedF) && listedF.length === 0 && !wf.rows.has(jf) && !!againF.v && wf.sent.length === 2 && againF.v.job === wf.sent[1].job && againF.v.job !== jf,
+    `按停：这样作废的那一回和正等着的时候按停的一样收拾：过后再收五遍，回话后来进了信箱也不交出去；她再要回话，发的是新的一回（收了 ${times(wf.removed, jf)} 遍）`);
+
+  // 只管那一段对话、这会儿没人守着的那几回：正守着的不碰（那一回 guarded 自己会收拾，这儿再收就收了两轮），别的对话记着的也不碰
+  const wg = world();
+  wg.hint = true;
+  for (const more of [{ last: "m5" }, { last: "m6", fork: "old6" }, { chat: "chatB", last: "n1" }]) {
+    wg.replies.push(async (p) => { wg.working(p); throw coded("unreachable", "连不上"); });
+    wg.getFails = 99;
+    await drive(wg.relay.ask({ ...ARGS, ...more }), 500, 20000);
+  }
+  wg.getFails = 0;
+  wg.replies.push((p) => { wg.working(p); return new Promise(() => {}); });
+  const cg = new AbortController();
+  const outG = watching(wg.relay.ask({ ...ARGS, signal: cg.signal }));
+  await until(() => wg.sent.length === 4);
+  await breathe();
+  const [g5, g6, gB, g7] = wg.sent.map((p) => p.job);
+  const beforeG = wg.jobs().join() === [g5, g6, gB, g7].join() && wg.relay.isLive(g7) && !wg.relay.isLive(g5) && wg.rows.size === 4;
+  wg.relay.forget("chatA");
+  await breathe();
+  ok(beforeG && wg.jobs().join() === [gB, g7].join() && wg.relay.wasHalted(g5) && wg.relay.wasHalted(g6) && !wg.relay.wasHalted(gB) && !wg.relay.wasHalted(g7) && [...wg.rows.keys()].join() === [gB, g7].join() && outG() === null && wg.relay.isLive(g7) && times(wg.removed, g7) === 0,
+    "按停：作废的是那一段对话记着、这会儿没人守着的那几回（接在哪一句后面的都算，重新回答的也算）；正守着的那一回不碰，别的对话记着的也不碰");
+  cg.abort(); // 正守着的那一回：按停的那一下它自己收场
+  await breathe();
+  const stoppedG = outG() && outG().e && outG().e.code === "stopped";
+  for (let i = 0; i < 126; i++) await clock.tick(500);
+  ok(stoppedG && wg.jobs().join() === gB && wg.relay.wasHalted(g7) && times(wg.removed, g7) === 6 && times(wg.removed, g5) === 6 && times(wg.removed, g6) === 6 && times(wg.removed, gB) === 0 && wg.rows.has(gB) && !!wg.relay.owed("chatB", "n1"),
+    `按停：正守着的那一回由它自己那一问收拾，前后只收一轮（${times(wg.removed, g7)} 遍）；别的对话那一回原样记着，回头照旧补发`);
+
+  // 没按停的：一切照旧（带着 signal 也一样）
+  const w7 = world();
+  w7.hint = true;
+  const c7 = new AbortController();
+  w7.replies.push(good(w7));
+  const fine = await settled(w7.relay.ask({ ...ARGS, signal: c7.signal }));
+  await fine.v.settle();
+  c7.abort(); // 回话已经落进对话以后才按：这一问早就收场了，什么都不动
+  await breathe();
+  ok(!!fine.v && fine.v.via === "direct" && w7.halts().length === 0 && w7.removed.join() === w7.sent[0].job && !w7.relay.wasHalted(w7.sent[0].job), "带着停的线、没按停：照常交到；回话落进对话以后才按的，这一回不算停掉的");
+
+  // “按了停的”最多记二十回
+  const w8 = world();
+  w8.hint = true;
+  const jobs8 = [];
+  for (let i = 0; i < 23; i++) {
+    const c8 = new AbortController();
+    w8.replies.push((p) => { w8.working(p); return new Promise(() => {}); });
+    const o8 = watching(w8.relay.ask({ ...ARGS, last: "n" + i, signal: c8.signal }));
+    await until(() => w8.sent.length === i + 1);
+    await breathe();
+    c8.abort();
+    await breathe();
+    jobs8.push(w8.sent[i].job);
+    if (!(o8() && o8().e && o8().e.code === "stopped")) jobs8.push("没停成");
+  }
+  const w8b = world();
+  w8b.halted = w8.halted; // 重开一遍：只认得记在设备上的那二十回
+  ok(jobs8.length === 23 && w8.halts().length === 20 && w8.halts().join() === jobs8.slice(3).join() && !w8b.relay.wasHalted(jobs8[0]) && w8b.relay.wasHalted(jobs8[3]) && w8b.relay.wasHalted(jobs8[22]) && w8.relay.wasHalted(jobs8[0]) && w8.rows.size === 0,
+    "按停：停掉的编号记在设备上的最多二十回，新的挤掉旧的（这次打开以来停掉的，这一趟里都还认得）");
+  await clock.tick(10000);
+
+  // 设备上记不进去（存不了东西的浏览器）：这一趟里照样认得停掉的那一回
+  const w9 = world();
+  w9.hint = true;
+  w9.haltedBroken = true;
+  const c9 = new AbortController();
+  w9.replies.push((p) => { w9.working(p); return new Promise(() => {}); });
+  const out9 = watching(w9.relay.ask({ ...ARGS, signal: c9.signal }));
+  await until(() => w9.sent.length === 1);
+  await breathe();
+  c9.abort();
+  await breathe();
+  await clock.tick(10000);
+  await w9.done(w9.sent[0]);
+  const listed9 = await w9.relay.collect();
+  await breathe();
+  ok(out9() && out9().e && out9().e.code === "stopped" && w9.halted === "" && w9.relay.wasHalted(w9.sent[0].job) && listed9.length === 0 && !w9.rows.has(w9.sent[0].job), "按停：设备上记不进去的时候，这一趟里照样认得停掉的那一回：后来进了信箱的回话照收、不交出去");
   clock.off();
 }
 
