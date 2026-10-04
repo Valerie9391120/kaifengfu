@@ -15,21 +15,22 @@ function heading(line) {
   if (!m) return null;
   let text = line.slice(m[0].length).trimEnd();
   let j = text.length;
-  while (j > 0 && text[j - 1] === "#") j--;
-  if (j < text.length && j > 0 && (text[j - 1] === " " || text[j - 1] === "\t")) text = text.slice(0, j).trimEnd();
+  while (text[j - 1] === "#") j--;
+  if (j < text.length && (text[j - 1] === " " || text[j - 1] === "\t")) text = text.slice(0, j).trimEnd();
   return { level: m[1].length, text };
 }
 
 // 一行（或者连着的几行）里的加粗和淡斜体。回 [{ s: 字, b: 加不加粗, i: 是不是淡斜体 }]，照原来的次序。
-// 星号里面不能再有星号、不能跨行；三个的先认，再认两个的，最后认一个的
+// 星号里面不能再有星号、不能跨行。一个、两个、三个星号开头的各认各的（开头连着几个星号就只配得上那一种）
 const MARKS = /\*\*\*[^*\n]+\*\*\*|\*\*[^*\n]+\*\*|\*[^*\n]+\*/g;
 // 认剩下的那一截（两对星号中间的、或者一对都没认出来的一整段）：两头要是都顶着星号，也算围起来的，哪怕中间跨了行。
-// 原来线上就是这样（他把跨了两行的动作用星号围起来，整段是淡斜体），留着；两头各两个、各三个星号的照加粗、又粗又斜算
+// 原来线上就是这样（他把跨了两行的动作用星号围起来，整段是淡斜体），留着；两头各两个、各三个星号的照加粗、又粗又斜算。
+// 整截全是星号的（他拿一排星号当分隔线）不算围着什么，照原样摆
 function rest(seg) {
   const head = /^\*{1,3}/.exec(seg);
   const tail = /\*{1,3}$/.exec(seg);
   const n = head && tail ? Math.min(head[0].length, tail[0].length) : 0;
-  if (!n || seg.length <= 2 * n) return { s: seg, b: false, i: false };
+  if (!n || !/[^*]/.test(seg)) return { s: seg, b: false, i: false };
   return { s: seg.slice(n, -n), b: n >= 2, i: n !== 2 };
 }
 export function richInline(text) {

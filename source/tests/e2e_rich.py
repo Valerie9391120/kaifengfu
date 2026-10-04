@@ -13,7 +13,7 @@ HIS = """() => {
   const cs = getComputedStyle(b);
   const kids = [...b.children].map((e) => { const s = getComputedStyle(e); const r = e.getBoundingClientRect();
     return { tag: e.tagName.toLowerCase(), cls: e.className, text: e.textContent, size: parseFloat(s.fontSize), weight: Number(s.fontWeight), italic: s.fontStyle === 'italic', opacity: Number(s.opacity),
-      top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), block: s.display === 'block',
+      top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), high: Math.round(r.height), block: s.display === 'block',
       inner: [...e.children].map((c) => { const t = getComputedStyle(c); return { tag: c.tagName.toLowerCase(), text: c.textContent, weight: Number(t.fontWeight), italic: t.fontStyle === 'italic', opacity: Number(t.opacity) }; }) }; });
   const r = b.getBoundingClientRect();
   return { text: b.textContent, size: parseFloat(cs.fontSize), weight: Number(cs.fontWeight), kids, top: Math.round(r.top), bottom: Math.round(r.bottom), count: all.length };
@@ -63,6 +63,7 @@ with sync_playwright() as p:
     hs = [k for k in b["kids"] if k["cls"] == "kfs-h"]
     ok(got and [(h["tag"], h["text"], h["size"]) for h in hs] == [("div", "今天的打算", 20), ("div", "下午", 18), ("div", "三级 粗", 16.5), ("div", "四级", 15.5)] and all(h["weight"] == 600 and h["block"] for h in hs),
        f"井号开头、后面跟空格的那几行：标题，自己占一行，加粗，一级二级三级比平常的字大（{[(h['text'], h['size'], h['weight']) for h in hs]}）")
+    ok([h["high"] for h in hs] == [28, 25, 23, 22], f"标题那一行的行高比正文紧一点（字号的 1.4 倍）：{[h['high'] for h in hs]} 像素")
     ok("#标签不算" in b["text"] and "# " not in b["text"] and "##" not in b["text"] and "*" not in b["text"] and b["text"].startswith("先说结论今天的打算"),
        f"井号后面不跟空格的（#标签）照原样摆；标题的井号、加粗的星号都不显示（{b['text'][:40]}…）")
     kinds = [(k["tag"], k["text"]) for k in b["kids"]]
@@ -75,19 +76,20 @@ with sync_playwright() as p:
     gap_above = h1["top"] - first["bottom"]
     gap_below = body["top"] - h1["bottom"]
     tops = [k["top"] for k in b["kids"] if k["tag"] in ("div",)]
-    ok(tops == sorted(tops) and len(set(tops)) == len(tops) and 4 <= gap_above <= 14 and 0 <= gap_below <= 10 and all(h["left"] == first["left"] for h in hs),
+    ok(tops == sorted(tops) and len(set(tops)) == len(tops) and 10 <= gap_above <= 12 and 4 <= gap_below <= 6 and all(h["left"] == first["left"] for h in hs),
        f"标题一行一个、从上往下排，和气泡里别的字左边对齐；标题上面留一点空（{gap_above} 像素），下面紧跟正文（{gap_below} 像素）")
     # 头一样就是标题：上面不另留空
     got = reply(pa, "# 开头就是标题\n正文一句", "正文一句")
     b = his(pa)
     h = b["kids"][0]
     pad = h["top"] - b["top"]
-    ok(got and h["cls"] == "kfs-h" and h["text"] == "开头就是标题" and 8 <= pad <= 14 and [(k["tag"], k["text"]) for k in b["kids"]] == [("div", "开头就是标题"), ("span", "正文一句")],
+    ok(got and h["cls"] == "kfs-h" and h["text"] == "开头就是标题" and 10 <= pad <= 12 and [(k["tag"], k["text"]) for k in b["kids"]] == [("div", "开头就是标题"), ("span", "正文一句")],
        f"气泡里头一样就是标题：上面只有气泡自己的边（{pad} 像素），不另留空")
     # 只有一个标题
     got = reply(pa, "## 只有一个标题", "只有一个标题")
     b = his(pa)
-    ok(got and len(b["kids"]) == 1 and b["kids"][0]["cls"] == "kfs-h" and b["kids"][0]["size"] == 18 and b["bottom"] - b["kids"][0]["bottom"] <= 14, "整个气泡只有一个标题：照样是标题，底下不多留空")
+    under = b["bottom"] - b["kids"][0]["bottom"]
+    ok(got and len(b["kids"]) == 1 and b["kids"][0]["cls"] == "kfs-h" and b["kids"][0]["size"] == 18 and 10 <= under <= 12, f"整个气泡只有一个标题：照样是标题，底下只有气泡自己的边（{under} 像素），不多留空")
 
     # ---- 一对星号围着两行：原来就是整段淡斜体，不动 ----
     got = reply(pa, "*走过去\n把窗关上*", "把窗关上")

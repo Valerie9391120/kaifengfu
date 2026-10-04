@@ -9,6 +9,17 @@ const B = (s) => ({ s, b: true, i: false }); // 加粗
 const I = (s) => ({ s, b: false, i: true }); // 淡斜体
 const BI = (s) => ({ s, b: true, i: true }); // 又粗又淡斜
 const same = (a, b) => J(a) === J(b);
+// 随机数（mulberry32）：给一个种子，回一个“掷 n 面骰子”的函数。种子一样，掷出来的一样
+const dice = (seed) => {
+  let a = seed >>> 0;
+  return (n) => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) % n;
+  };
+};
 
 // 原来线上的那个画法（只认一个星号的淡斜体），留在这儿当对照：没有两个星号连着的话，新的得和它一模一样
 const old = (text) =>
@@ -33,6 +44,10 @@ ok(same(richInline("*走过去\n把窗关上*"), [I("走过去\n把窗关上")])
 ok(same(richInline("**头一行\n第二行**"), [B("头一行\n第二行")]) && same(richInline("***头一行\n第二行***"), [BI("头一行\n第二行")]), "两对、三对星号围着两行：加粗、又粗又斜（原来是“斜体、两头各剩一个星号”）");
 ok(same(richInline("**头一行\n第二行*"), [I("*头一行\n第二行")]) && same(richInline("*甲\n*乙\n丙*"), [I("甲\n*乙\n丙")]) && same(richInline("*甲*\n*乙\n丙*"), [I("甲"), T("\n*乙\n丙*")]) && same(richInline("*甲*\n*乙\n丙*"), old("*甲*\n*乙\n丙*")),
   "两头的星号不一样多：照少的那一头算，多出来的星号留在字里；中间零散的星号照摆；认剩下的那一截得是两头都顶着星号");
+ok(same(richInline("*甲**\n乙\n**丙*"), [I("甲"), I("\n乙\n"), I("丙")]) && same(richInline("*甲**\n乙\n**丙*"), old("*甲**\n乙\n**丙*")), "两对星号中间夹着的那一截，两头也顶着星号：一样认（和原来一样）");
+ok(same(richInline("****甲\n乙****"), [BI("*甲\n乙*")]) && same(richInline("****甲****"), [T("*"), BI("甲"), T("*")]), "两头各四个星号：最多认三个，多出来的照摆（一行的、跨行的一个算法）");
+ok([1, 2, 3, 4, 5, 6, 7, 10, 40].every((k) => same(richInline("*".repeat(k)), [T("*".repeat(k))])) && same(richInline("上面\n**********\n下面"), [T("上面\n**********\n下面")]),
+  "一排星号（他拿来当分隔线的）：不管几个，照原样摆");
 ok(same(richInline("*****"), [T("*****")]) && same(richInline("***"), [T("***")]) && same(richInline("* 第一项\n* 第二项"), [T("* 第一项\n* 第二项")]) && same(richInline("第一行*\n*第二行"), [T("第一行*\n*第二行")]),
   "全是星号的、只有开头顶着星号的（列表）、星号在中间的：不认");
 ok(same(richInline("2*3*4"), old("2*3*4")) && same(richInline("* 列表似的一行"), [T("* 列表似的一行")]) && same(richInline("a * b * c"), old("a * b * c")), "乘号、列表那种单个的星号：和原来怎么认的一样");
@@ -43,8 +58,8 @@ ok(same(richInline("**甲**乙"), richInline("**甲**乙")) && same(richInline("
 
 // 没有两个星号连着的：和原来线上的画法一模一样（随便拼的两万句）
 {
-  let seed = 20261004;
-  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const seed = 20261004;
+  const rnd = dice(seed);
   const bits = ["*", "*", "字", "a", " ", "\n", "，", "#", "1"];
   let bad = "";
   let n = 0;
@@ -60,8 +75,8 @@ ok(same(richInline("**甲**乙"), richInline("**甲**乙")) && same(richInline("
 }
 // 拆完再拼回去，字一个不少（去掉的只有那几对星号）
 {
-  let seed = 7;
-  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const seed = 7;
+  const rnd = dice(seed);
   const bits = ["*", "*", "*", "字", "a", " ", "\n"];
   let bad = "";
   for (let k = 0; k < 20000 && !bad; k++) {
@@ -92,7 +107,7 @@ ok(same(richBlocks("# ###"), [H(1, T("###"))]) && same(richBlocks("# a ## b ##")
   // 一行里几万个连着的空格：也是一眨眼的事（气泡每画一遍都要认一回）
   const long = "# 标题" + " ".repeat(60000) + "尾巴" + " ".repeat(60000) + "## ";
   const t0 = Date.now();
-  const got = richBlocks(long + "\n" + "*".repeat(30000) + "字" + " ".repeat(30000) + "*\n" + "#".repeat(40000));
+  const got = richBlocks(long + "\n" + "*".repeat(30000) + "字" + " ".repeat(30000) + "*\n" + "#".repeat(40000) + "\n" + "*".repeat(40000) + "字");
   const plain = plainOf(long);
   const took = Date.now() - t0;
   ok(got.length === 2 && got[0].t === "h" && got[0].parts[0].s === "标题" + " ".repeat(60000) + "尾巴" && plain === "标题" + " ".repeat(60000) + "尾巴" && took < 300, `一行里夹着几万个连着的空格、星号、井号：照认，不卡（${took} 毫秒）`);
@@ -109,8 +124,8 @@ ok(same(richBlocks("# 标题\n"), [H(1, T("标题"))]) && same(richBlocks("# 标
 ok(same(richBlocks("**跨着\n# 标题\n关上**"), [P(T("**跨着")), H(1, T("标题")), P(T("关上**"))]), "加粗跨不过标题那一行");
 // 没有标题行的话：就是一整段，和单认那一行的结果一样（随便拼的）
 {
-  let seed = 99;
-  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const seed = 99;
+  const rnd = dice(seed);
   const bits = ["*", "字", "a", " ", "\n", "#", "#标", "。"];
   let bad = "";
   let n = 0;
@@ -130,8 +145,8 @@ ok(plainOf("# 今天的打算\n**先**吃饭，*伸懒腰*") === "今天的打�
 ok(plainOf("#标签 留着") === "#标签 留着" && plainOf("学 C# 的第 # 天") === "学 C# 的第 # 天" && plainOf("# ") === "# ", "预览：不是标题的井号留着");
 ok(plainOf("") === "" && plainOf(null) === "" && plainOf("平常的话") === "平常的话" && plainOf("甲\n\n乙") === "甲\n\n乙", "预览：平常的话原样，空的还是空的");
 {
-  let seed = 5;
-  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const seed = 5;
+  const rnd = dice(seed);
   const bits = ["*", "字", "a", " ", "\n", "#标", "。"];
   let bad = "";
   for (let k = 0; k < 5000 && !bad; k++) {
