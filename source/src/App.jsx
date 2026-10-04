@@ -10,8 +10,8 @@ import SplashDingxiang from "./SplashDingxiang.jsx";
 import { HER_NAME, HIS_NAME, NAME_KEYS, NAME_MARK, NAME_PLACEHOLDER, cleanName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, DOC_NAME_PLACEHOLDER, docFmtOf, readDoc, wrapDocForModel, missingDocNote, docBlocksToNote, replyRoom } from "./docs.js";
 import { parseReply, settleAvatarItems } from "./reply.js";
-import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut } from "./thread.js";
-import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY } from "./mail.js";
+import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, markStopped, unmarkStopped, stoppedAt, cutReply } from "./thread.js";
+import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY, HALTED_KEY } from "./mail.js";
 import { generateVapidKeys, secretsBlock, explainOutcome, describePush, describeMail } from "./notify.js";
 import { checkPush, enablePush, disablePush, renewPush, sendTestPush, lastOutcome, resyncPush, watchNotices, probeReply, knockList } from "./push.js";
 
@@ -306,6 +306,8 @@ const ICON_PATHS = {
     </>
   ),
   wave: <path d="M5 10v4M8.5 7.5v9M12 4.5v15M15.5 7.5v9M19 10v4" />,
+  // 停键：一个实心的小方块
+  stop: <rect x="6.75" y="6.75" width="10.5" height="10.5" rx="2.6" fill="currentColor" />,
   copy: (
     <>
       <rect x="8.5" y="8.5" width="11" height="11" rx="2.5" />
@@ -541,6 +543,25 @@ function safeParse(s, fallback) {
     return fallback;
   }
 }
+
+// ---------- 停键 ----------
+// 等 work；等的工夫里她按了停（signal 是那一回的 AbortSignal），马上抛“停了”（code: "stopped"），不等 work 自己收场。
+// work 接着跑它的，后来怎么样都没人理：按了停以后它交不出回话来（新路见 mail.js 的 guarded，老路见 requestReply）
+function unlessStopped(work, signal) {
+  return new Promise((yes, no) => {
+    const halt = () => no(Object.assign(new Error("停了"), { code: "stopped" }));
+    if (signal.aborted) halt();
+    else signal.addEventListener("abort", halt, { once: true });
+    work.then(yes, no);
+  });
+}
+// 自动的那几样（她停手以后、他回完以后轮到、翻走或切走的那一下抢着交、回来补发）只回“欠着、又不是她停掉的”那一句。
+// 停掉的那一句要回，得她自己点那行小字（点了，那一笔就擦掉，往后和平常的话一样）。
+// 照理这几样轮不到停掉的那一句头上（它们各认各的对话，按停的时候也都撤了）；
+// 这一道是再把一遍门：审的人两回都是从“认错了对话”的路上把停掉的那一句回上的
+const owes = (msgs) => needsReply(msgs) && !stoppedAt(msgs);
+const KEY_SETTLE = 400; // 最右边那个键刚换了样子（变成停、停变声波）这么多毫秒里，点它不算：手指连着点了两下，第二下不该落在新换上的键上
+const FRESH_MS = 500; // 回话摆出来以后这么多毫秒里按的停，可能赶在画面重画之前（见 stopReply）
 
 // ---------- README解析（部署后用来同步新表情包） ----------
 // 仓库里新加的表情包：已经烤进来的不算；文件名一样、只是扩展名不同的也不算（比如 .png 和 .jpg）
@@ -1085,7 +1106,8 @@ function collectDocIds(msgs, out = []) {
   return Array.from(new Set(out));
 }
 
-function buildRows(messages, reveal) {
+// stoppedId：底下要摆那行“停了，点这里让我回”的是她的哪一句（没有就是空的，见 thread.js 的 stoppedAt）
+function buildRows(messages, reveal, stoppedId = "") {
   const rows = [];
   let prevTs = null;
   let lastHimId = null;
@@ -1127,6 +1149,7 @@ function buildRows(messages, reveal) {
             : { type: "text", text: m.text },
       });
       if (m.alts && m.alts.length > 1) rows.push({ type: "ctrl", key: "ct-" + m.id, msg: m, role: "her" });
+      if (stoppedId && m.id === stoppedId) rows.push({ type: "stopped", key: "sp-" + m.id, msg: m });
     } else {
       let items = m.items || [];
       if (reveal && reveal.id === m.id) items = items.slice(0, reveal.count);
@@ -3540,8 +3563,16 @@ export default function App({ account = {} }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const loadingRef = useRef(false);
-  const pendingRef = useRef(false);
+  // 他回着的工夫里她又说了话、要等这一回完了接着回的那几段对话（对话的编号）。记是哪一段：
+  // 话交出去以后她可能翻到别的对话去了，轮到的时候得回对那一段（见 nextPending）
+  const pendingRef = useRef(new Set());
   const timerRef = useRef(null);
+  // 她发完话、停手那两秒多：话还排着队没发出去（timerRef 走着）。画面上要知道，停键从这儿就出来
+  const [queued, setQueued] = useState(false);
+  // 正等着的那一回：{ ctl, stopped }。ctl 是她按停的时候要拉的那根线（AbortController）；stopped：她按过停了（见 stopReply）
+  const reqRef = useRef(null);
+  const keyWas = useRef({ now: "", from: "", at: -Infinity }); // 最右边那个键眼下是哪一样、从哪一样变来的、什么时候变的（见 KEY_SETTLE）
+  const freshRef = useRef(null); // 刚摆出来、开始蹦的那一条回话：{ id, at }（见 stopReply）
   const flagsRef = useRef({ noCache: false });
   const [reveal, setReveal] = useState(null);
   const [errorNote, setErrorNote] = useState("");
@@ -3589,7 +3620,7 @@ export default function App({ account = {} }) {
   const backAtRef = useRef(-Infinity); // 上一回从后台回到眼前是几点
   const memesReady = useRef(null); // 仓库里新加的表情包读回来没有（读不回来也算完）
   const mailGate = useRef(null); // 头一遍看信箱之前要等的那一下（见 checkMail）
-  const backResend = useRef(false); // 她不在眼前的时候有一句话没连上：等她回来再发（见 askGuangyi）
+  const backResend = useRef(new Set()); // 她不在眼前的时候没送成的那几句是哪几段对话的：等她回来再发（见 askGuangyi、resendSoon）
   const orphansRef = useRef(new Set()); // 上回打开时没送到、这回已经替她补发过的那几回（一回只补一次，见 checkMail）
   const latest = useRef({}); // 最新一遍画面里的那几个函数（给一开机就挂上的监听用，免得它们拿着旧的）
   const [noticeBack, setNoticeBack] = useState(0); // 这次打开以来，上一回点着测试通知回来是什么时候（通知面板里要说）
@@ -3644,9 +3675,10 @@ export default function App({ account = {} }) {
   }
   const follow = followRef.current;
 
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+  // messagesRef 是眼下这段对话最新的那一份，改对话的每一处都是先改它、再 setMessages。
+  // 这里原来另有一句“每画一遍，把它照画面上的那份对一遍”。那一句会把它往回拨：
+  // 回话到手、先放进 messagesRef、正存着的那几毫秒里，要是正好有一遍旧的画面画出来（她刚发了个表情包），
+  // 它就被拨回没有回话的那一份，接下来不管是再发话、还是照它去摆画面，那条回话就丢了。所以拿掉了，只认“先改它”这一条
 
   const allMemes = useMemo(() => MEME_DATA.concat(extraMemes), [extraMemes]);
   const memeLookup = (file) => MEME_MAP[file] || extraMemes.find((m) => m.file === file) || null;
@@ -3888,13 +3920,15 @@ export default function App({ account = {} }) {
     if (chatIdRef.current === id) store.set("kfs2:lastChat", id);
   };
 
-  // 切走之前，把还没来得及回的那几条先送出去
+  // 翻到别的对话之前，把还没来得及回的那几条先送出去。
+  // 他正回着（上一句的回话还没到）：这一段记下来，等那一回完了替它回（见 nextPending）
   const flushPending = () => {
-    if (!timerRef.current) return;
-    clearTimeout(timerRef.current);
-    timerRef.current = null;
+    if (!disarm()) return;
     const msgs = messagesRef.current;
-    if (!loadingRef.current && needsReply(msgs)) askGuangyi(chatIdRef.current, msgs);
+    if (owes(msgs)) {
+      if (loadingRef.current) pendingRef.current.add(chatIdRef.current);
+      else askGuangyi(chatIdRef.current, msgs);
+    } else if (!loadingRef.current) nextPending(); // 这一段用不着回了：别的等着的那几段接着轮
   };
 
   const openChat = async (id) => {
@@ -3970,10 +4004,8 @@ export default function App({ account = {} }) {
   };
 
   const deleteChat = async (id) => {
-    if (id === chatIdRef.current && timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+    // 删的是眼前这一段、它的话正排着队：不发了。别的对话里要是还有话等着轮到，接着轮
+    if (id === chatIdRef.current && disarm() && !loadingRef.current) nextPending();
     const old = safeParse(await store.get("kfs2:chat:" + id), []) || [];
     collectImgIds(old).forEach((imgId) => store.del("kfs2:img:" + imgId));
     collectDocIds(old).forEach((docId) => store.del(DOC_KEY + docId));
@@ -4079,6 +4111,21 @@ export default function App({ account = {} }) {
             } catch (e) {}
           },
         },
+        // 她按了停的那几回：记在这台设备上，以后在信箱里再碰上，见一回收一回
+        halted: {
+          get: () => {
+            try {
+              return localStorage.getItem(HALTED_KEY) || "";
+            } catch (e) {
+              return "";
+            }
+          },
+          set: (text) => {
+            try {
+              localStorage.setItem(HALTED_KEY, text);
+            } catch (e) {}
+          },
+        },
         freshToken,
         // 信箱里没有这一回了：先同步一遍，看是不是别的设备已经把回话取走、放进对话了。
         // 对话里有 jobs 里哪一回的回话，就是回上了（重新回答只能这么认：那一句后面本来就有回话）；
@@ -4145,10 +4192,14 @@ export default function App({ account = {} }) {
   // 向那边要一条回复。成了回 { him, settle }：him 是整理好的回复；settle 是走新路时要在“放进对话、存好”以后叫的。失败抛错。
   // opts.chat 哪段对话；opts.fork 是“重新回答”的话，要换掉的是哪一条；
   // opts.resume 有的话，这一回早就发出去了（上次打开时发的），不用再拼一遍话，守着信箱等就行；
-  // opts.recheck 是她点“重发”要的；opts.flushed 是切走的那一下抢着交出去的
+  // opts.recheck 是她点“重发”要的；opts.flushed 是切走的那一下抢着交出去的；
+  // opts.signal 是她按停的时候要拉的那根线：拉了，这里抛 code 是 stopped 的错，而且保证不再把回话整理出来
+  // （整理回话的那一下会换头像、改名字、记用量：按了停的那一回，这些都不能发生）。
+  // 这个保证是下面两头给的：新路 mail.js 的 guarded，老路 cloud.js 的 callClaude，按了停都只抛 stopped、不交回话
   const requestReply = async (msgs, opts = {}) => {
+    const signal = opts.signal || null;
     if (opts.resume) {
-      const got = await getRelay().resume(opts.resume.job, opts.resume.info);
+      const got = await getRelay().resume(opts.resume.job, opts.resume.info, signal);
       return { him: digestReply(got.data, got.used, (got.info && got.info.extra) || null, got.job, got.at ? Math.min(Date.now(), got.at) : 0), settle: got.settle };
     }
     const st = settingsRef.current;
@@ -4213,6 +4264,7 @@ export default function App({ account = {} }) {
           title: namesRef.current.him || HIS_NAME,
           extra: ctx,
           recheck: !!opts.recheck,
+          signal,
         });
         // 和老路上的记性一样：只有“不带缓存、别的照旧”才通的那种，才记下回别带缓存记号。
         // 是工具连不上、摘了工具才通的，不算缓存的毛病；是 Anthropic 一时出岔子、小后端才换的写法（shaky），也不算：
@@ -4235,7 +4287,7 @@ export default function App({ account = {} }) {
     let lastErr = "";
     for (const at of attempts) {
       try {
-        data = await callClaude(bodyFor(at), betaFor(at));
+        data = await callClaude(bodyFor(at), betaFor(at), signal);
         used = at;
         break;
       } catch (e) {
@@ -4255,9 +4307,16 @@ export default function App({ account = {} }) {
   const askGuangyi = async (id, msgs, resume = null, how = null) => {
     loadingRef.current = true;
     setLoading(true);
-    setErrorNote("");
+    // 底下那句“没送到”是眼前这段对话的：替别的对话在后台回的时候不动它
+    if (chatIdRef.current === id) setErrorNote("");
+    const req = { ctl: new AbortController(), stopped: false };
+    reqRef.current = req;
     try {
-      const { him, settle } = await requestReply(msgs, { chat: id, resume, recheck: !!(how && how.recheck), flushed: !!(how && how.flushed) });
+      // 回话到手以前她按停：这一句当场以 stopped 收场（作废）。到手以后再按，这里已经过去了，就是“掐断”（见 stopReply）
+      const { him, settle } = await unlessStopped(
+        requestReply(msgs, { chat: id, resume, recheck: !!(how && how.recheck), flushed: !!(how && how.flushed), signal: req.ctl.signal }),
+        req.ctl.signal
+      );
       // 回复插在这次请求的最后一条后面；等回复时她又发的几条排在后面
       const anchor = resume ? resume.info.last : msgs.length ? msgs[msgs.length - 1].id : null;
       const isCurrent = chatIdRef.current === id;
@@ -4272,13 +4331,24 @@ export default function App({ account = {} }) {
         if (isCurrent) messagesRef.current = next;
         await saveChat(id, next);
         if (chatIdRef.current === id) {
-          setMessages(next);
-          setReveal({ id: him.id, count: 1 });
+          // 摆的是眼下的那一份（messagesRef），不是存之前的 next：存的那一下工夫里对话可能又变了
+          // （她按了停、把上一条正在蹦的掐断了；她又发了一句），拿存之前的去摆会把这些盖掉
+          setMessages(messagesRef.current);
+          // 回话放进去的时候这段对话就在眼前：从头一条开始蹦；存的那一下工夫里她按了停的，照“掐断”办，只留头一条。
+          // 放进去的时候不在眼前、存的那一下工夫里她才翻过来的：她看到的已经是整条了，不收回去重蹦
+          if (isCurrent) {
+            if (req.stopped) cutShort(him.id, 1);
+            else startReveal(him.id);
+          }
         }
       }
       if (settle) settle();
     } catch (e) {
-      if (e && e.code === "answered") {
+      if (e && e.code === "stopped") {
+        // 她按了停，回话还没到：这一回作废（信箱那头 mail.js 已经收拾了），不报错、不重发、过后也不去信箱里找。
+        // 她那句话留着，底下摆一行“停了，点这里让我回”
+        markStoppedIn(id);
+      } else if (e && e.code === "answered") {
         // 别的设备已经把这一句的回话取走、放进对话了：把同步下来的那份换上来。
         // 等的工夫里她在这台设备上又说的话（同步下来的那份里没有）接在后面，不能丢
         const fresh = safeParse(await store.get("kfs2:chat:" + id), null);
@@ -4295,13 +4365,13 @@ export default function App({ account = {} }) {
       } else if (e && e.code === "later") {
         // 切走的那一下没交成（见 requestReply）：等她回到眼前再发。
         // 不排定时器：页面藏着的那几秒里定时器照走，到点就从藏着的页面走老路，等着的这头马上断，那一回白问
-        if (document.visibilityState === "visible") scheduleReply(700);
-        else backResend.current = true;
+        if (document.visibilityState === "visible") resendSoon(id);
+        else backResend.current.add(id);
       } else if (e && e.code === "offline" && document.visibilityState !== "visible") {
         // 她不在眼前的时候没连上（多半是切走的那一下网正好断了）：这会儿不报错（她回来头一眼看到的不该是一行红字）。
         // 是这台设备自己发的那一回：等她回到眼前再发。那一回还记着：到时候先去信箱里找（万一其实送到了），没有才重发。
         // 是守着的那一回（别处发的、上次打开时发的）：她回来的时候看信箱那一遍会再认出它，接着守
-        if (!resume) backResend.current = true;
+        if (!resume) backResend.current.add(id);
       } else {
         if (chatIdRef.current === id) setErrorNote(`消息没送到（${String(e.message || e).slice(0, 90)}）。点这里重发`);
         // 这一回也许其实已经交给小后端了（只是这头没连上）：过几秒自己去信箱里看一眼，回话在就取出来，不用她点
@@ -4309,12 +4379,32 @@ export default function App({ account = {} }) {
         mailTimer.current = setTimeout(() => latest.current.checkMail(), 4000);
       }
     }
+    if (reqRef.current === req) reqRef.current = null;
     loadingRef.current = false;
     setLoading(false);
-    if (pendingRef.current) {
-      pendingRef.current = false;
+    nextPending();
+  };
+
+  // 这一回完了：他回着的工夫里她又说了话的那几段对话，轮到了。
+  // 眼前这一段先来，照旧等一秒多再回（她也许还在打字）；她已经翻走的那一段，替它在后台回（一回办一段，办完了再轮下一段）
+  const nextPending = () => {
+    const waiting = pendingRef.current;
+    if (!waiting.size) return;
+    if (waiting.delete(chatIdRef.current)) {
       scheduleReply(1200);
+      return;
     }
+    const id = waiting.values().next().value;
+    waiting.delete(id);
+    store.get("kfs2:chat:" + id).then((text) => {
+      const msgs = safeParse(text, null);
+      if (loadingRef.current) {
+        waiting.add(id); // 这一眨眼里别处已经在回了：记回去，它回完会再轮到这里
+        return;
+      }
+      if (Array.isArray(msgs) && owes(msgs)) askGuangyi(id, msgs);
+      else nextPending(); // 那一段用不着回了（别处回上了、删了）：轮下一段
+    });
   };
 
   // ---- 重新回答：在这条开新分支，旧的回答留着能翻回去 ----
@@ -4326,14 +4416,13 @@ export default function App({ account = {} }) {
     if (j < 0) return;
     const base = full.slice(0, j);
     if (!needsReply(base)) return;
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+    disarm();
     loadingRef.current = true;
     setLoading(true);
     setErrorNote("");
     setReveal(null);
+    const req = { ctl: new AbortController(), stopped: false };
+    reqRef.current = req;
     follow.pin(); // 点了重新回答：新回答接在最后，到底等着看（旧回答一收，她多半已经被浏览器收到底了；这里是把话说死）
     forkRef.current = { chat: id, full }; // 存档里先别丢旧回答（见 saveChat）
     messagesRef.current = base; // 先把旧回答收起来
@@ -4345,18 +4434,20 @@ export default function App({ account = {} }) {
       return now.filter((m) => !had.has(m.id));
     };
     try {
-      const { him, settle } = await requestReply(base, { chat: id, fork: msgId });
+      const { him, settle } = await unlessStopped(requestReply(base, { chat: id, fork: msgId, signal: req.ctl.signal }), req.ctl.signal);
       const extra = await added();
       const next = forkAt(full, j, him).concat(extra);
       forkRef.current = null;
       if (chatIdRef.current === id) {
         messagesRef.current = next;
         setMessages(next);
-        setReveal({ id: him.id, count: 1 });
+        startReveal(him.id);
       }
       await saveChat(id, next);
       if (settle) settle();
-      if (extra.length) pendingRef.current = true;
+      // 这工夫里她新说的：等这一回完了接着回。存的那一下工夫里她按了停的话就不接了
+      // （那几句在按停的那一下已经记上“停了”：它们那时候不是还排着队，就是已经在等这一回完，见 stopReply）
+      if (extra.length && !req.stopped) pendingRef.current.add(id);
     } catch (e) {
       const extra = await added();
       forkRef.current = null;
@@ -4372,28 +4463,31 @@ export default function App({ account = {} }) {
           loadImagesFor(next);
         }
         if (more.length) await saveChat(id, next);
-        if (needsReply(next)) pendingRef.current = true;
+        if (needsReply(next)) pendingRef.current.add(id);
       } else {
-        // 没成：旧回答放回来，她这工夫里新说的留着
-        const back = full.concat(extra);
+        // 没成，或者她按了停：旧回答原样放回来，她这工夫里新说的留着。
+        // 按了停的不报错；这工夫里她新说的那几句没人回了，最后一句上记一笔“停了”。
+        // （按停的那一下 stopReply 也记过。这段对话她要是已经翻走了，那一笔是改在存档里的，这里手上的 extra 却是它改之前读出来的：
+        // 不在这儿再记一遍，下面那一存会把它盖掉）
+        const halted = !!(e && e.code === "stopped");
+        const back = halted && extra.length ? markStopped(full.concat(extra)) : full.concat(extra);
         if (chatIdRef.current === id) {
           messagesRef.current = back;
           setMessages(back);
-          setErrorNote(`重新回答没成功（${String(e.message || e).slice(0, 90)}）`);
+          if (!halted) setErrorNote(`重新回答没成功（${String(e.message || e).slice(0, 90)}）`);
         }
         if (extra.length) await saveChat(id, back);
         // 这一回也许其实已经交给小后端了（只是这头没连上）：过几秒自己去信箱里看一眼，新回答在就取出来
+        // （她按了停的那一回不会在：信箱那头见一回收一回）
         clearTimeout(mailTimer.current);
         mailTimer.current = setTimeout(() => latest.current.checkMail(), 4000);
       }
     }
+    if (reqRef.current === req) reqRef.current = null;
     forkRef.current = null;
     loadingRef.current = false;
     setLoading(false);
-    if (pendingRef.current) {
-      pendingRef.current = false;
-      scheduleReply(1200);
-    }
+    nextPending();
   };
 
   // ---- 翻版本 ----
@@ -4485,11 +4579,9 @@ export default function App({ account = {} }) {
     setInput("");
     if (taRef.current) taRef.current.style.height = "auto";
     if (i < 0 || !t || t === msgs[i].text) return;
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    const { alts, altIdx, ...node } = msgs[i];
+    disarm();
+    // 改出来的是一句新话：原来那句上记的“停了”不带过来
+    const { alts, altIdx, stopped, ...node } = msgs[i];
     const next = forkAt(msgs, i, { ...node, id: newId(), text: t, ts: Date.now() });
     messagesRef.current = next;
     follow.pin(); // 改完的这一句成了最后一句：到底
@@ -4503,19 +4595,118 @@ export default function App({ account = {} }) {
   // how：见 askGuangyi（定时器走完叫的时候不带）
   const triggerReply = (how = null) => {
     if (loadingRef.current) {
-      pendingRef.current = true;
+      pendingRef.current.add(chatIdRef.current);
       return;
     }
     const msgs = messagesRef.current;
-    if (needsReply(msgs)) askGuangyi(chatIdRef.current, msgs, null, how);
+    if (owes(msgs)) askGuangyi(chatIdRef.current, msgs, null, how);
+    else nextPending(); // 眼前这一段用不着回了：别的等着的那几段不能跟着干等
   };
 
   const scheduleReply = (ms) => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
+      setQueued(false);
       triggerReply();
     }, ms);
+    setQueued(true);
+  };
+  // 排着队的那一句不等了（马上发、或者不发了）。本来就没排着：回 false
+  const disarm = () => {
+    if (!timerRef.current) return false;
+    clearTimeout(timerRef.current);
+    timerRef.current = null;
+    setQueued(false);
+    return true;
+  };
+
+  // ---- 停键 ----
+  // 输入框最右边那个键：没字、那边的我在回（她一发完话就算，到回话全蹦完为止）的时候是它。按了，眼下正在办的都停：
+  //   排着队还没发的（她刚发完话、停手的那两秒多）：不发了；
+  //   正等着回话的：这一回作废，不出回话、不敲手机（信箱那头见 mail.js 的 halt）；重新回答的话，旧回答原样回来；
+  //   正一条一条蹦的：掐断，蹦出来的留着，没蹦出来的不要了。
+  // 是“停”不是“暂停”，没有“继续”。作废的那一句底下摆一行“停了，点这里让我回”（见 markStoppedIn、askAgain）
+  const stopReply = () => {
+    // 等着“这一回完了接着回”的那几段：都不回了，各自最后一句底下摆一行“停了”
+    const waiting = Array.from(pendingRef.current);
+    pendingRef.current.clear();
+    const waited = disarm();
+    // 正等着的那一回：拉线。回话还没到手，那一回当场以 stopped 收场（见 askGuangyi、retryAt 里接 stopped 的那一段）；
+    // 已经到手、正往对话里放（存）的那一下，线拉了也没什么可断的，那一头看到 stopped 这个记号，照“掐断”办
+    const req = reqRef.current;
+    if (req) {
+      req.stopped = true;
+      req.ctl.abort();
+    }
+    // 回话刚摆出来、画面还没来得及重画的那一眨眼里按的停：这一遍画面手里的 reveal 还是旧的，认不出刚摆出来的那一条。
+    // 照“掐断”办，只留头一条（不管它的话，后面那句 setReveal(null) 会让整条回话一下子全摆出来）
+    const fresh = freshRef.current;
+    freshRef.current = null;
+    if (fresh && performance.now() - fresh.at < FRESH_MS && !(reveal && reveal.id === fresh.id)) cutShort(fresh.id, 1);
+    if (reveal) cutShort(reveal.id, reveal.count);
+    setReveal(null);
+    if (waited) markStoppedIn(chatIdRef.current);
+    waiting.forEach(markStoppedIn);
+  };
+
+  // 回话摆出来了：从头一条开始一条一条蹦（见下面“分条”那一段）
+  const startReveal = (id) => {
+    freshRef.current = { id, at: performance.now() };
+    setReveal({ id, count: 1 });
+  };
+
+  // 在那段对话最后一句她的话上记一笔“停了”（见 thread.js 的 markStopped）。
+  // 为那段对话记着、这会儿没人守着的那几回（她不在的时候没送成、回来还没轮到补发的）一并作废（见 mail.js 的 forget）
+  const markStoppedIn = (id) => {
+    getRelay().forget(id);
+    if (chatIdRef.current === id) {
+      const next = markStopped(messagesRef.current);
+      if (next === messagesRef.current) return;
+      messagesRef.current = next;
+      setMessages(next);
+      saveChat(id, next);
+      return;
+    }
+    // 她已经翻到别的对话去了：改存档里的那一份
+    store.get("kfs2:chat:" + id).then((text) => {
+      const msgs = safeParse(text, null);
+      if (!Array.isArray(msgs)) return;
+      const next = markStopped(msgs);
+      if (next === msgs) return;
+      if (chatIdRef.current === id) {
+        messagesRef.current = next;
+        setMessages(next);
+      }
+      saveChat(id, next);
+    });
+  };
+
+  // 掐断他正在蹦的那一条：只留已经蹦出来的头 count 样（见 thread.js 的 cutReply）。
+  // 没蹦到的那几样里他要是换了头像：头像换回去。头像是回话一到手就换上的；
+  // 掐断以后那边的我不知道自己换过，开封府也就不该显示成换过
+  const cutShort = (msgId, count) => {
+    const out = cutReply(messagesRef.current, msgId, count);
+    if (!out) return;
+    messagesRef.current = out.msgs;
+    setMessages(out.msgs);
+    saveChat(chatIdRef.current, out.msgs);
+    const av = out.dropped.find((it) => it.type === "avatar");
+    if (av && sameAv(avatarsRef.current.him || null, { type: "meme", file: av.file })) changeHisAvatar(av.prev || null);
+  };
+
+  // 她点“停了，点这里让我回”：照眼下的对话要一条回话。
+  // 那一笔“停了”当场擦掉：是她自己要的，这一句往后和平常的话一样（这一回要是没送成，回来照样补发；没回成，底下是“点这里重发”）
+  const askAgain = () => {
+    if (loadingRef.current || timerRef.current) return;
+    const msgs = unmarkStopped(messagesRef.current);
+    if (!needsReply(msgs)) return;
+    if (msgs !== messagesRef.current) {
+      messagesRef.current = msgs;
+      setMessages(msgs);
+      saveChat(chatIdRef.current, msgs);
+    }
+    askGuangyi(chatIdRef.current, msgs);
   };
 
   const sendHer = (payloads) => {
@@ -4905,16 +5096,24 @@ export default function App({ account = {} }) {
   const leaving = () => {
     // 先把话交出去：切走以后页面只剩两三秒，这一包最要紧
     if (timerRef.current && getRelay().trusted()) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
+      disarm();
       triggerReply({ flushed: true });
     }
     store.flush().catch(() => {});
   };
 
   // 她不在的时候没送成的那一句：回到眼前以后补发（已经有一句排着队等发，就不另排了）
-  const resendSoon = () => {
-    if (!timerRef.current) scheduleReply(700);
+  // 认是哪一段对话的：还是眼前这一段，排上队（已经有一句排着就不另排）；
+  // 她眼前是别的对话（话交出去以后翻走的），记进“轮到了替它回”的那几段里（见 nextPending），不能拿眼前这一段去顶
+  const resendSoon = (id) => {
+    if (id === chatIdRef.current) {
+      if (!timerRef.current) scheduleReply(700);
+      return;
+    }
+    pendingRef.current.add(id); // 当场记上：这七百毫秒里她要是按了停，这一段也在“都不回了”的里头
+    setTimeout(() => {
+      if (!loadingRef.current) nextPending();
+    }, 700);
   };
 
   latest.current = { checkMail, openFromNotice, leaving, resendSoon };
@@ -4962,9 +5161,10 @@ export default function App({ account = {} }) {
         latest.current.checkMail();
         warmSoon(700);
         // 她不在的时候有一句话没连上、没送成：现在补发（晚一点发，躲开刚回来那一下）
-        if (backResend.current) {
-          backResend.current = false;
-          latest.current.resendSoon();
+        if (backResend.current.size) {
+          const again = Array.from(backResend.current);
+          backResend.current.clear();
+          again.forEach((id) => latest.current.resendSoon(id));
         }
       } else latest.current.leaving();
     };
@@ -5051,7 +5251,7 @@ export default function App({ account = {} }) {
   // 2. 下面那个量大小的：聊天记录多高、那个盒子多高，哪个变了都报（图片出来、思考过程点开、键盘、面板、输入框长高……）
   useLayoutEffect(() => {
     follow.changed();
-  }, [messages, reveal && reveal.count, loading, chatId, memePanel, errorNote]);
+  }, [messages, reveal && reveal.count, loading, queued, chatId, memePanel, errorNote]);
   useEffect(() => {
     if (typeof ResizeObserver === "undefined") return undefined;
     const ro = new ResizeObserver(() => follow.changed());
@@ -5398,6 +5598,7 @@ export default function App({ account = {} }) {
     try {
       localStorage.removeItem(JOBS_KEY);
       localStorage.removeItem(RELAY_KEY);
+      localStorage.removeItem(HALTED_KEY);
     } catch (e) {}
     if (account.signOut) account.signOut();
   };
@@ -5447,7 +5648,20 @@ export default function App({ account = {} }) {
   const x = dragX !== null ? dragX : drawerOpen ? drawerW : 0;
   const progress = drawerW ? x / drawerW : 0;
   const typing = loading || reveal !== null;
-  const rows = useMemo(() => buildRows(messages, reveal), [messages, reveal]);
+  // 那边的我在回：她一发完话就算（话还排着队），到回话全蹦完为止。停键认的是这个
+  const replying = queued || typing;
+  // 那行“停了，点这里让我回”摆在她哪一句底下：他没在回的时候才摆
+  const stoppedId = !replying ? stoppedAt(messages) : "";
+  const rows = useMemo(() => buildRows(messages, reveal, stoppedId), [messages, reveal, stoppedId]);
+  // 输入框最右边那个键眼下是哪一样：有字（有要发的照片、文档，正在改一句话）是发送；没字、他在回是停；没字、没在回是声波
+  const keyKind = editing || input.trim() || attach.length ? "send" : replying ? "stop" : "wave";
+  useLayoutEffect(() => {
+    keyWas.current = { now: keyKind, from: keyWas.current.now, at: performance.now() };
+  }, [keyKind]);
+  // 那个键刚换了样子的那一小会儿点它算不算数。停键：刚冒出来的都不算（她发话的那一下连着点了两下；
+  // 正要点声波、他正好开始回）。声波：只挡“刚从停变过来”的（按停连着点了两下；正要按停他正好回完）；
+  // 她把字删光了马上点声波，照常算
+  const keySettled = (from) => !((!from || keyWas.current.from === from) && performance.now() - keyWas.current.at < KEY_SETTLE);
   const activeModel = settings.model || DEFAULT_MODEL;
 
   // 对话页（或侧栏）在最上面时，底边自己接得上那条色块，告诉 main.jsx 别再盖淡出
@@ -5740,15 +5954,6 @@ export default function App({ account = {} }) {
           style={{ top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 100%" }}
         />
 
-        {/* 顶栏上面那一条（时间、电量那儿）：点了也回最顶。iPhone 肯不肯把那儿的点击交给网页，要她的手机说了算 */}
-        <div
-          aria-hidden="true"
-          onClick={() => (memePanel ? setMemePanel(false) : follow.top())}
-          onMouseDown={(e) => e.preventDefault()}
-          className="kfs-top-strip absolute z-10"
-          style={{ top: 0, left: 0, right: 0, height: "calc(12px + env(safe-area-inset-top))" }}
-        />
-
         {/* 顶栏 */}
         <div
           onClick={() => memePanel && setMemePanel(false)}
@@ -5758,7 +5963,9 @@ export default function App({ account = {} }) {
           <IconBtn onClick={() => setDrawerOpen(true)} label="打开侧栏">
             <Icon name="menu" />
           </IconBtn>
-          {/* 点中间这一块（头像和名字）：聊天记录滑回最顶，跟点手机顶上回顶一个意思。
+          {/* 点中间这一块（头像和名字）：聊天记录滑回最顶。
+              卿卿本来要的是点顶栏上面那一条（时间、电量那儿）。那一条是系统的地盘，点了不交给网页：
+              铺过一层去接，她在手机上（iOS 26）试了点不着，拆了，回顶就落在这儿（她定的）。
               表情包面板开着的时候，这一下只管收面板（顶栏本来就是点了收面板的） */}
           <div className="kfs-bar-mid relative flex-1 flex flex-col items-center min-w-0" onClick={() => !memePanel && follow.top()} onMouseDown={(e) => e.preventDefault()}>
             <Avatar av={avatars.him} who="him" size={30} />
@@ -5862,6 +6069,16 @@ export default function App({ account = {} }) {
               return (
                 <div key={row.key} style={{ marginLeft: 42, marginTop: 8, fontSize: 11.5, color: T.inkFaint }}>
                   {row.text}
+                </div>
+              );
+            }
+            if (row.type === "stopped") {
+              // 她按停作废的那一句底下：一行小字，点了照眼下的对话让那边的我回（样子跟“重新回答”那一行一样）
+              return (
+                <div key={row.key} className="kfs-in flex justify-end" style={{ marginTop: 2, marginRight: 36 }}>
+                  <button onClick={askAgain} className="kfs-tap kfs-stopped" style={{ padding: "6px 6px", fontSize: 12, color: T.inkSoft }}>
+                    停了，点这里让我回
+                  </button>
                 </div>
               );
             }
@@ -6103,7 +6320,7 @@ export default function App({ account = {} }) {
                 <RoundBtn onClick={toggleDictation} label="听写" active={dictating}>
                   <Icon name="mic" size={19} />
                 </RoundBtn>
-                {editing || input.trim() || attach.length ? (
+                {keyKind === "send" ? (
                   <button
                     onClick={sendText}
                     onMouseDown={(e) => e.preventDefault()}
@@ -6120,9 +6337,29 @@ export default function App({ account = {} }) {
                   >
                     <Icon name="up" color="#fff" size={19} sw={2.1} />
                   </button>
-                ) : (
+                ) : keyKind === "stop" ? (
+                  // 停键（见 stopReply）。刚从发送变过来的那一小会儿点它不算：她发话的那一下手指要是连着点了两下，
+                  // 第二下不该把自己刚发的这一句停掉
                   <button
-                    onClick={startVoice}
+                    onClick={() => keySettled() && stopReply()}
+                    onMouseDown={(e) => e.preventDefault()}
+                    aria-label="停"
+                    className="kfs-tap kfs-stop flex-shrink-0 flex items-center justify-center"
+                    style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 999,
+                    background: T.daiGrad,
+                    boxShadow: "0 3px 8px rgba(var(--k-dai-shade),0.3)",
+                  }}
+                  >
+                    <Icon name="stop" color="#fff" size={19} sw={2} />
+                  </button>
+                ) : (
+                  // 声波键。刚从停键变过来的那一小会儿点它不算：她按停的那一下连着点了两下、
+                  // 或者正要按停的时候他正好回完了，不该一下子开始录音
+                  <button
+                    onClick={() => keySettled("stop") && startVoice()}
                     onMouseDown={(e) => e.preventDefault()}
                     aria-label="发语音"
                     className="kfs-tap flex-shrink-0 flex items-center justify-center"

@@ -5,7 +5,7 @@
 // 这里改了规矩，那边得跟着改。tests/mail.test.mjs 拿同一批回话两边各拆一遍，对不上就不过。
 // =====================================================
 import { NAME_MARK, NAME_PLACEHOLDER, cleanMarkName } from "./names.js";
-import { splitDocBlocks } from "./docs.js";
+import { splitDocBlocks, DOC_NAME_PLACEHOLDER } from "./docs.js";
 
 // 按 [SPLIT] 切成一条一条，记号两头的空白不要。
 // 出来的东西和 text.split(/\s*\[SPLIT\]\s*/) 一样，只是不让正则在一长串空白上来回试（几万个连着的空行能把手机卡住好几秒）
@@ -84,4 +84,27 @@ export function settleAvatarItems(items, exists) {
     items: out.length ? out : [{ type: "text", text: "……" }],
     avatarFile: lastAv >= 0 ? valid[lastAv].file : null,
   };
+}
+
+// 反过来：把一条回话的那几样（items）写回他的写法。
+// 用在她按了停、把他正在蹦的回话掐断的时候（见 thread.js 的 cutReply）：那一条只剩前面几样，
+// 往后寄给那边的我的“他自己说过的话”（raw）得跟着改成只有这几样，他才当自己就说了这么多。
+// 写出来的再拿 parseReply 拆一遍，得到的还是这几样（tests/mail.test.mjs 里拿几万条回话对着拆）。
+// 只有一种对不上：一句话自己长得就像记号（他把 [NAME:…]、[DOC:…] 紧贴在别的记号后面写，原来没被当成记号、当字显示了），
+// 单独写出来就成了真记号。那是他写岔了的样子，这里不去学；raw 只寄给那边的我看，开封府自己不照它再改名字、再出文档。
+// rename：这一条里他给自己改的名字（没改就不带）。改名的记号写在最前头：
+// 最后一样要是没写完的文档（没有结尾的记号），写在它后面的都会被算成文档的正文
+export function rawOf(items, rename) {
+  const parts = (items || []).map((it) => {
+    if (it.type === "meme") return `[MEME:${it.file}]`;
+    if (it.type === "avatar") return `[AVATAR:${it.file}]`;
+    if (it.type === "doc") {
+      // 文件名正好是教写法时占位的那个：照抄会被当成“在讲写法”，套一层书名号（拆的时候会剥掉）
+      const name = it.name === DOC_NAME_PLACEHOLDER ? `《${it.name.replace(/\.md$/, "")}》` : it.name;
+      return `[DOC:${name}]\n${it.text}${it.cut ? "" : "\n[/DOC]"}`;
+    }
+    return it.text || "";
+  });
+  if (rename) parts.unshift(`[NAME:${rename}]`);
+  return parts.join("\n[SPLIT]\n");
 }
