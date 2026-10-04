@@ -14,7 +14,7 @@ import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mail
 import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY, HALTED_KEY } from "./mail.js";
 import { generateVapidKeys, secretsBlock, explainOutcome, describePush, describeMail } from "./notify.js";
 import { checkPush, enablePush, disablePush, renewPush, sendTestPush, lastOutcome, resyncPush, watchNotices, probeReply, knockList, clearReplyNotices } from "./push.js";
-import { pad, WEEK, START, dayNumber, nextAnniv, dateLabel, sepLabel, shortDate, timeAgo } from "./days.js";
+import { pad, WEEK, START, dayNumber, sepLabel, shortDate, timeAgo } from "./days.js";
 import { newId, fmtChars } from "./util.js";
 import { MEME_DATA, MEME_MAP, RAW_BASE, memeSrc, newMemesFrom, parseReadme } from "./memes.js";
 import { urlToThumb, fileToAvatar, fileToPhoto } from "./images.js";
@@ -27,6 +27,8 @@ import { twoFingers, useLongPress } from "./ui/press.js";
 import { Glows, IconBtn, SHEET_TITLE, Sheet, Toggle, RoundBtn, safeTopPx } from "./ui/parts.jsx";
 import { buildSystem, withNowNote } from "./prompt/system.js";
 import { sameAv, buildMessages } from "./prompt/messages.js";
+import { DaysCard, Tile, HistoryCard } from "./side/Cards.jsx";
+import { ChatMenu } from "./side/ChatMenu.jsx";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -531,120 +533,6 @@ function SplashByTheme({ theme, fading, onEnter }) {
   return theme === "dingxiang" ? <SplashDingxiang fading={fading} onEnter={onEnter} /> : <Splash fading={fading} onEnter={onEnter} />;
 }
 
-// 侧栏最上面那张卡片。flex-shrink-0 不能丢：侧栏上面那段是竖着排的弹性盒子，东西放不下的时候
-// 会先压这张卡片（它带 overflow-hidden，压得动），“在一起的第几天”就只露半截、纪念日那行整行不见。
-// 不许压，放不下就让那一段自己滚
-function DaysCard({ now }) {
-  const n = dayNumber(now);
-  const a = nextAnniv(now);
-  const today = a.days === 0;
-  return (
-    <div
-      className="kfs-days relative overflow-hidden flex-shrink-0"
-      style={{ ...glass(0.5, 26), borderRadius: 28, padding: "20px 20px 18px" }}
-    >
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          right: -40,
-          top: -40,
-          width: 160,
-          height: 160,
-          borderRadius: "50%",
-          background:
-            "radial-gradient(circle, rgba(255,238,200,0.95) 0%, rgba(255,238,200,0) 68%)",
-        }}
-      />
-      <div className="relative" style={{ fontSize: 13, color: T.inkSoft }}>
-        {dateLabel(now)}
-      </div>
-      <div className="relative flex items-baseline" style={{ marginTop: 12, color: T.ink, gap: 6 }}>
-        <span style={{ fontSize: 14 }}>在一起的第</span>
-        <span style={{ fontFamily: SERIF, fontSize: 54, lineHeight: 1 }}>{n}</span>
-        <span style={{ fontSize: 14 }}>天</span>
-      </div>
-      <div
-        className="relative"
-        style={{ marginTop: 12, fontSize: 12.5, color: today ? T.gold : T.inkSoft }}
-      >
-        {today ? `今天是我们的${a.name}纪念日` : `离${a.name}纪念日还有 ${a.days} 天`}
-      </div>
-    </div>
-  );
-}
-
-function Tile({ icon, label, sub, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className="kfs-tap flex flex-col justify-between text-left"
-      style={{ ...glass(0.46, 22), borderRadius: 24, padding: 16, aspectRatio: "1 / 0.92" }}
-    >
-      <span
-        className="flex items-center justify-center"
-        style={{
-          width: 38,
-          height: 38,
-          borderRadius: 14,
-          background: "rgba(255,255,255,0.7)",
-          color: T.dai,
-        }}
-      >
-        <Icon name={icon} size={20} />
-      </span>
-      <span className="block min-w-0 w-full">
-        <span className="block" style={{ fontSize: 15, color: T.ink }}>
-          {label}
-        </span>
-        <span className="block truncate" style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 2 }}>
-          {sub}
-        </span>
-      </span>
-    </button>
-  );
-}
-
-function RecentItem({ c, currentId, onOpen, onLongPress }) {
-  const lp = useLongPress((rect) => onLongPress && onLongPress(c, rect));
-  return (
-    <button
-      {...lp}
-      onClick={() => onOpen(c.id)}
-      className="w-full text-left block"
-      style={{ padding: "9px 0", borderTop: "1px solid rgba(255,255,255,0.65)", WebkitTouchCallout: "none" }}
-    >
-      <span className="block truncate" style={{ fontSize: 14, color: c.id === currentId ? T.dai : T.ink }}>
-        {c.title}
-      </span>
-      <span className="block truncate" style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 2 }}>
-        {c.preview}
-      </span>
-    </button>
-  );
-}
-
-// 侧栏里的历史对话：只列最近的两条（卿卿定的），再多的点标题进历史对话页看
-const RECENT_MAX = 2;
-
-function HistoryCard({ index, currentId, onOpenAll, onOpen, onLongPress }) {
-  const recent = index.slice(0, RECENT_MAX);
-  return (
-    <div className="kfs-history" style={{ ...glass(0.46, 24), borderRadius: 24, padding: "10px 16px 6px" }}>
-      <button onClick={onOpenAll} className="kfs-tap w-full flex items-center justify-between" style={{ padding: "6px 0" }}>
-        <span style={{ fontSize: 15, color: T.ink }}>历史对话</span>
-        <Icon name="chevR" size={17} color={T.inkSoft} />
-      </button>
-      {recent.length === 0 ? (
-        <p style={{ fontSize: 12.5, color: T.inkSoft, padding: "6px 0 10px" }}>
-          聊过的对话会出现在这里
-        </p>
-      ) : (
-        recent.map((c) => <RecentItem key={c.id} c={c} currentId={currentId} onOpen={onOpen} onLongPress={onLongPress} />)
-      )}
-    </div>
-  );
-}
-
 function PhotoImg({ data, onOpen }) {
   if (!data) {
     return (
@@ -1047,52 +935,6 @@ function MsgMenu({ menu, now, busy, onClose, onCopy, onEdit, onRetry }) {
             </button>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-// 长按一段对话：重命名、删除（删除要点两下）
-function ChatMenu({ menu, onClose, onRename, onDelete }) {
-  const { chat, rect } = menu;
-  const [armed, setArmed] = useState(false);
-  // 长按松手那一下有时会补一个点击，落在遮罩上就把菜单关了；刚弹出来的一小会儿不认
-  const shownAt = useRef(Date.now());
-  const menuW = 200;
-  const menuH = 44 + 2 * 47;
-  const vw = typeof window !== "undefined" ? window.innerWidth : 390;
-  const vh = typeof window !== "undefined" ? Math.max(window.innerHeight, Math.round(document.body.getBoundingClientRect().height) || 0) : 844;
-  let top = rect.bottom + 8;
-  if (top + menuH > vh - 12) top = Math.max(12 + safeTopPx(), rect.top - menuH - 8);
-  const left = Math.max(12, Math.min(rect.left + 12, vw - menuW - 12));
-  return (
-    <div
-      className="absolute inset-0 z-50"
-      onClick={() => Date.now() - shownAt.current > 400 && onClose()}
-      style={{ background: "rgba(var(--k-dim),0.14)" }}
-    >
-      <div
-        className="kfs-in"
-        role="menu"
-        onClick={(e) => e.stopPropagation()}
-        style={{ position: "fixed", top, left, width: menuW, ...glass(0.86, 30), borderRadius: 22, padding: "4px 0 6px" }}
-      >
-        <div className="truncate" style={{ padding: "10px 18px 6px", fontSize: 12, color: T.inkSoft }}>
-          {chat.title}
-        </div>
-        <button onClick={() => onRename(chat)} role="menuitem" className="w-full flex items-center text-left" style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: T.ink }}>
-          <Icon name="pen" size={19} />
-          重命名
-        </button>
-        <button
-          onClick={() => (armed ? onDelete(chat) : setArmed(true))}
-          role="menuitem"
-          className="w-full flex items-center text-left"
-          style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: "#B4544A" }}
-        >
-          <Icon name="trash" size={19} />
-          {armed ? "再点一次，删掉" : "删除"}
-        </button>
       </div>
     </div>
   );
