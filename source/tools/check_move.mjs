@@ -1,17 +1,19 @@
-// 搬家的检查：把 App.jsx 里的东西原样搬到别的文件以后，五道一起验。
+// 搬家的检查：把 App.jsx 里的东西原样搬到别的文件以后，六道一起验。
 // 在 source/ 里跑：
-//   node tools/check_move.mjs baseline   搬之前跑一次，把现在的包记下来（.cache/move-baseline.js）
+//   node tools/check_move.mjs baseline   搬之前跑一次，把现在的包、注释、样式表记下来（.cache/move-baseline*）
 //   node tools/check_move.mjs            每搬一块跑一次
 //
-// 五道各拦一种错：
+// 六道各拦一种错：
 //   1 打得出包      门牌号写错（import 的路径不对、要的名字那边没 export）
 //   2 没有漏引      用了某个名字、新家忘了引进来。打包器不管这个，包照打，点到那儿才白屏
 //   3 没改没丢      和搬之前的包一行一行对：原来的每一行都得还在
 //   4 没有绕圈      甲引乙、乙又引甲。打包器也不管，可顶层的常量会在还没备好的时候被用到
 //   5 注释没丢      包里不带注释，第 3 道看不见它们；这个仓库的“为什么”都写在注释里，剪的时候落下一段就找不回来了
+//   6 样式表没变    样式表是 tailwind 扫着源码里的类名现生成的（tailwind.config.cjs 的 content）。
+//                   文件搬到它扫不到的地方、类名被剪断，样式就少一块，前五道都只看代码，看不见
 //
 // 第 3 道认不出第 2 种错（漏引的那个名字，打包器会给自家同名的改个编号让开，抹掉编号以后两边看着一样），
-// 所以五道都要过，不能只看一道。
+// 所以六道都要过，不能只看一道。
 //
 // 第 2 道要三个包，不进 package.json，用之前装一下：
 //   npm install --no-save eslint@9 eslint-plugin-react globals
@@ -21,6 +23,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 
 
 const BASE = ".cache/move-baseline.js";
 const BASE_NOTES = ".cache/move-baseline-notes.json";
+const BASE_CSS = ".cache/move-baseline.css";
 const LINT_PKGS = ["eslint", "eslint-plugin-react", "globals"];
 
 // 和 build.mjs 一样的打法，只是不压缩（压缩了就没法一行一行对）
@@ -42,7 +45,8 @@ async function bundle() {
 
 // ---------- 第 3 道：和搬之前的包对 ----------
 const MARK = /^\/\/ (src|static|node_modules)\//; // 打包器标的“下面这段是哪个文件的”
-const JSX_RT = /^var import_jsx_runtime = __toESM\(require_jsx_runtime\(\)(, 1)?\);$/; // 每个带尖括号的新文件各多这一句
+// 每个新文件自己引一回 react、带尖括号的再引一回 jsx-runtime，包里各多一句“把这个包接进来”。只许多这一种
+const CJS_IN = /^var import_[A-Za-z_$]+ = __toESM\(require_[A-Za-z_$]+\(\)(, 1)?\);$/;
 const strip = (l) => l.replace(/\b([A-Za-z_$]+?)\d+\b/g, "$1"); // 抹掉打包器给重名变量加的编号（Fragment4 → Fragment）
 const linesOf = (t) => t.split("\n").filter((l) => l.trim() !== "" && !MARK.test(l));
 
@@ -71,7 +75,7 @@ function compare(before, after) {
   const sa = onlyA.map(strip);
   const sb = onlyB.map(strip);
   const lost = minus(sa, sb); // 抹掉编号还是对不上的：真丢了、真改了
-  const added = minus(sb, sa).filter((l) => !JSX_RT.test(l.trim()));
+  const added = minus(sb, sa).filter((l) => !CJS_IN.test(l.trim()));
   // 哪些名字被打包器换了编号：带编号的名字只在一边出现的（两边都有的，是它本来就带着数字）
   const ids = (list) => new Set(list.flatMap((l) => l.match(/\b[A-Za-z_$]+?\d+\b/g) || []));
   const idsB = ids(onlyB);
@@ -130,6 +134,14 @@ function noteLines() {
   return out;
 }
 
+// ---------- 第 6 道：样式表没变 ----------
+// 和 build.mjs 里是同一条命令。生成不出来就回 null
+function styleSheet() {
+  const out = ".cache/move-check.css";
+  const r = spawnSync("npx", ["tailwindcss", "-c", "tailwind.config.cjs", "-i", "src/input.css", "-o", out, "--minify"], { encoding: "utf8" });
+  return r.status === 0 && existsSync(out) ? readFileSync(out, "utf8") : null;
+}
+
 // ---------- 跑 ----------
 const say = (ok, title, detail) => console.log(`${ok ? "✓" : "✗"} ${title}${detail ? "\n" + detail : ""}`);
 const indent = (list, n = 8) => list.slice(0, n).map((l) => "    " + l.trim().slice(0, 140)).join("\n") + (list.length > n ? `\n    …还有 ${list.length - n} 行` : "");
@@ -141,6 +153,9 @@ if (mode === "baseline") {
   mkdirSync(".cache", { recursive: true });
   writeFileSync(BASE, r.outputFiles[0].text);
   writeFileSync(BASE_NOTES, JSON.stringify(noteLines()));
+  const css = styleSheet();
+  if (css === null) { console.log("样式表没生成出来，基线没记全"); process.exit(1); }
+  writeFileSync(BASE_CSS, css);
   const n = readFileSync("src/App.jsx", "utf8").trimEnd().split("\n").length;
   console.log(`记下了：${BASE}（App.jsx 现在 ${n} 行）。搬吧，每搬一块跑一次 node tools/check_move.mjs`);
   process.exit(0);
@@ -211,6 +226,18 @@ if (!existsSync(BASE_NOTES)) {
   say(!gone.length, gone.length ? `5 注释少了 ${gone.length} 行` : "5 注释没丢", gone.length ? indent(gone) : `    搬之前带注释的 ${before.length} 行都还在`);
 }
 
+// 6 样式表没变
+if (!existsSync(BASE_CSS)) {
+  bad++;
+  say(false, "6 没对成：没有搬之前的样式表", "    先在没动过的代码上跑 node tools/check_move.mjs baseline");
+} else {
+  const before = readFileSync(BASE_CSS, "utf8");
+  const now = styleSheet();
+  const same = now === before;
+  if (!same) bad++;
+  say(same, now === null ? "6 没对成：样式表没生成出来" : same ? "6 样式表没变" : "6 样式表变了", now === null ? "" : same ? `    ${before.length} 个字，一个不差` : `    搬之前 ${before.length} 个字，现在 ${now.length} 个字`);
+}
+
 const n = readFileSync("src/App.jsx", "utf8").trimEnd().split("\n").length;
-console.log(`\nApp.jsx 现在 ${n} 行。${bad ? `有 ${bad} 道没过，别往下搬。` : "五道都过了。"}`);
+console.log(`\nApp.jsx 现在 ${n} 行。${bad ? `有 ${bad} 道没过，别往下搬。` : "六道都过了。"}`);
 process.exit(bad ? 1 : 0);
