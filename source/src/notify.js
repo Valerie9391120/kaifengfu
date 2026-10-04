@@ -173,6 +173,8 @@ export function describePush(state) {
   lines.push(`钥匙：${{ ok: "放好了", missing: "还没放", bad: "不对" }[setup.keys] || "还看不到"}`);
   if (setup.say) lines.push(`它说：${setup.say}`);
   lines.push(`替你等回话：${{ ok: "会", old: "这份代码还不会" }[setup.relay] || "还看不到"}；信箱：${{ ok: "有", missing: "还没建", error: "读不到" }[setup.mail] || "没查"}`);
+  // 这两样是后来添的（10 月 4 日那一份起才会）：小后端里还是早一些的那份代码的话，照旧一回敲一条、按了停它照旧等完
+  if (setup.relay === "ok") lines.push(`横幅一个气泡敲一条：${setup.bubbles === "ok" ? "会" : "这份代码还不会"}；你按停它就不等了：${setup.halt === "ok" ? "会" : "这份代码还不会"}`);
   lines.push(`服务线程：${state.worker === "ok" ? "在" : state.worker || "还没起"}`);
   lines.push(`这台设备的门牌号：${state.host ? serviceName(state.host) + "给的（" + state.host + "）" : "还没有"}`);
   lines.push(`这台设备开过通知：${yes(state.flag)}；登记簿里一共 ${state.devices} 台`);
@@ -189,6 +191,15 @@ export function describeMail(status) {
   if (last && last.path === "old") parts.push(`上一回回话：网页自己等的${last.why ? "（" + last.why + "）" : ""}`);
   if (status.off) parts.push(`小后端这会儿没接回话${status.why ? "（" + status.why + "）" : ""}，过几分钟再试它`);
   return parts.join("；");
+}
+
+// ---------- 他的回话的横幅 ----------
+
+// 小后端敲的每一条回话横幅，自己带着一个记号（通知的 tag）：r.<对话的那串打乱的字>.<这一回的编号>.<这一回的第几条>。
+// 读出来 { chat, job, nth }；不是这种的（测试通知、早一些的小后端敲的没带记号的、别的东西）回 null
+export function parseBannerTag(tag) {
+  const m = /^r\.([A-Za-z0-9_-]{8,64})\.([A-Za-z0-9_-]{8,64})\.(\d{1,6})$/.exec(String(tag || ""));
+  return m ? { chat: m[1], job: m[2], nth: Number(m[3]) } : null;
 }
 
 // ---------- 从通知回来 ----------

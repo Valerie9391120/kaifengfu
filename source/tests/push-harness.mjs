@@ -11,7 +11,7 @@ import { transformSync, buildSync } from "esbuild";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = path.join(HERE, "..", "supabase", "push_function.ts");
 // 函数文件本身不往外交东西；测试要摸里面的零件，就在转出来的那份末尾补一行 export
-const INTERNALS = ["b64uEncode", "b64uDecode", "checkVapid", "vapidToken", "encryptPayload", "pushHost", "safePage", "tidy", "previewOf", "clip", "bannerOf", "hasCache", "withoutCache", "hasMcp", "withoutMcp", "askUpstream", "sealWith", "fine"];
+const INTERNALS = ["b64uEncode", "b64uDecode", "checkVapid", "vapidToken", "encryptPayload", "pushHost", "safePage", "tidy", "plainOf", "bubblesOf", "clip", "bannerOf", "replyNotice", "hasCache", "withoutCache", "hasMcp", "withoutMcp", "askOnce", "askUpstream", "sealWith", "fine", "worker"];
 
 export const b64u = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 export const unb64u = (s) => Buffer.from(String(s).replace(/-/g, "+").replace(/_/g, "/"), "base64");
@@ -199,15 +199,18 @@ const MAIL_COLS = ["user_id", "job", "state", "note", "sealed", "created_at", "b
 
 export function createMailTable() {
   const rows = new Map(); // user_id|job → 行
-  // missing：还没建表；down：库房这会儿出岔子（一律 503）；failPatch：往后这么多回“改”不成（503）
-  const state = { missing: false, down: false, failPatch: 0 };
-  const log = []; // 每一回读写：{ method, query, user, sets }；sets 是“改”的那几栏（摸一下只改 beat_at，放信还改 sealed）
-  function handle(method, params, userId, bodyText) {
+  // missing：还没建表；down：库房这会儿出岔子（一律 503）；failPatch：往后这么多回“改”不成（503）；
+  // cutPatch：往后这么多回“改”根本连不上（不是回 503，是敲门的那一下就报错）；
+  // lostPatch：往后这么多回“改”其实改成了，回音却没传回去（照样回 503）；failGet：往后这么多回“读”不成（503）
+  const state = { missing: false, down: false, failPatch: 0, cutPatch: 0, lostPatch: 0, failGet: 0 };
+  const log = []; // 每一回读写：{ method, query, user, sets, prefer }；sets 是“改”的那几栏（摸一下只改 beat_at，放信还改 sealed）
+  // prefer：敲门的人带的 Prefer 头（PostgREST 看它决定“改”完要不要把改到的那几行报回来）
+  function handle(method, params, userId, bodyText, prefer = "") {
     let sets = [];
     try {
       if (method === "PATCH") sets = Object.keys(JSON.parse(bodyText || "{}"));
     } catch (e) {}
-    log.push({ method, query: params.toString(), user: userId || "", sets, at: Date.now() });
+    log.push({ method, query: params.toString(), user: userId || "", sets, prefer: String(prefer || ""), at: Date.now() });
     if (state.missing) return { status: 404, body: { code: "PGRST205", details: null, hint: null, message: "Could not find the table 'public.mailbox' in the schema cache" } };
     if (state.down) return { status: 503, body: { message: "upstream connect error" } };
     if (!userId) return { status: 401, body: { code: "42501", message: "permission denied for table mailbox" } };
@@ -220,6 +223,10 @@ export function createMailTable() {
     }
     const mine = [...rows.values()].filter((r) => r.user_id === userId && Object.entries(filters).every(([c, v]) => r[c] === v));
     if (method === "GET") {
+      if (state.failGet > 0) {
+        state.failGet--;
+        return { status: 503, body: { message: "upstream connect error" } };
+      }
       const sel = (params.get("select") || "*") === "*" ? MAIL_COLS : params.get("select").split(",");
       for (const c of sel) if (!MAIL_COLS.includes(c)) return { status: 400, body: { code: "42703", message: `column mailbox.${c} does not exist` } };
       const order = params.get("order");
@@ -249,6 +256,10 @@ export function createMailTable() {
       return { status: 201 };
     }
     if (method === "PATCH") {
+      if (state.cutPatch > 0) {
+        state.cutPatch--;
+        throw new TypeError("error sending request: connection reset");
+      }
       if (state.failPatch > 0) {
         state.failPatch--;
         return { status: 503, body: { message: "upstream connect error" } };
@@ -257,6 +268,16 @@ export function createMailTable() {
       for (const c of Object.keys(patch)) if (!MAIL_COLS.includes(c)) return { status: 400, body: { code: "PGRST204", message: `Could not find the '${c}' column of 'mailbox' in the schema cache` } };
       for (const r of mine) if (bad({ ...r, ...patch })) return { status: 400, body: { code: "23514", message: 'new row for relation "mailbox" violates check constraint' } };
       for (const r of mine) Object.assign(r, patch, { user_id: userId });
+      if (state.lostPatch > 0) {
+        state.lostPatch--;
+        return { status: 503, body: { message: "upstream connect error" } };
+      }
+      // 说了 return=representation 的：把改到的那几行报回来（一行都没改到就是个空的单子）；没说的照旧什么都不回
+      if (/(^|[,\s])return=representation(\s|,|$)/.test(String(prefer || ""))) {
+        const cols = (params.get("select") || "*") === "*" ? MAIL_COLS : params.get("select").split(",");
+        for (const c of cols) if (!MAIL_COLS.includes(c)) return { status: 400, body: { code: "42703", message: `column mailbox.${c} does not exist` } };
+        return { status: 200, body: mine.map((r) => Object.fromEntries(cols.map((c) => [c, r[c] === undefined ? null : r[c]]))) };
+      }
       return { status: 204 };
     }
     if (method === "DELETE") {
@@ -282,20 +303,26 @@ export function createMailTable() {
 //   { hang: true } 一直不答，等到函数那头等不下去（它带着限时的信号来）；{ wait: 一个 Promise } 等它好了再答（后面跟上面任意一种）
 // 也可以放一个函数 (body, call) => 上面这种写法
 export function createFakeAnthropic() {
-  const calls = []; // 每一回：{ body, beta, key, version }
+  const calls = []; // 每一回：{ body, beta, key, version }；函数那头中途把线掐了的那一回另带 cut: true
   const script = [];
   const hello = (body) => ({ status: 200, json: { id: "msg_test", type: "message", role: "assistant", model: body.model, content: [{ type: "text", text: "<thinking>（测试心声）</thinking>\n收到" }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 } } });
   const self = { calls, script, answer: hello, receive, reset };
   async function receive(url, init = {}) {
+    // 敲门之前那根“不等了”的线就已经拉了：和真的 fetch 一样，当场报错，门都不敲（不算问过一回）
+    if (init.signal && init.signal.aborted) throw init.signal.reason instanceof Error ? init.signal.reason : new DOMException("The operation was aborted.", "AbortError");
     const headers = Object.fromEntries(Object.entries(init.headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
     const body = JSON.parse(init.body);
     const call = { body, beta: headers["anthropic-beta"] || "", key: headers["x-api-key"] || "", version: headers["anthropic-version"] || "" };
     calls.push(call);
     let plan = script.length ? script.shift() : self.answer;
     if (typeof plan === "function") plan = await plan(body, call);
+    // 函数那头不等了（等够了，或者她按了停）：照它掐线时给的缘故报错，和真的 fetch 一样；没给缘故就当是等够了
     const gaveUp = () =>
       new Promise((_, reject) => {
-        const stop = () => reject(new DOMException("The operation timed out.", "TimeoutError"));
+        const stop = () => {
+          call.cut = true;
+          reject(init.signal && init.signal.reason instanceof Error ? init.signal.reason : new DOMException("The operation timed out.", "TimeoutError"));
+        };
         if (init.signal && init.signal.aborted) stop();
         else if (init.signal) init.signal.addEventListener("abort", stop);
       });
@@ -332,7 +359,7 @@ export function createFakeSupabase() {
       return reply(r.status, r.body);
     }
     if (u.pathname === "/rest/v1/mailbox") {
-      const r = mail.handle(init.method || "GET", u.searchParams, user && user.id, init.body);
+      const r = mail.handle(init.method || "GET", u.searchParams, user && user.id, init.body, headers.prefer || "");
       return reply(r.status, r.body);
     }
     return reply(404, { message: "not found" });

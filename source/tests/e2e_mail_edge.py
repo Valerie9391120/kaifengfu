@@ -34,7 +34,7 @@ def cold(browser):
     say(pa, "我先去忙了")
     ok(wait_mock(working, 8), "信箱没看成·准备：发一句、开封府被收掉")
     pa.close()
-    ok(wait_mock(lambda: len(banners()) == b0 + 1, GRACE + 12), "信箱没看成·准备：回话进了信箱，横幅到了")
+    ok(wait_mock(lambda: len(banners()) >= b0 + 1, GRACE + 12), "信箱没看成·准备：回话进了信箱，横幅到了")
     state = {"asleep": True, "failed": 0}
     def box_route(route):
         if state["asleep"] and route.request.method == "GET":
@@ -630,14 +630,14 @@ def peek(browser):
     pa.wait_for_timeout(300)
     seen = count_text(pa, "收到：我先去忙了")
     pa.evaluate("window.__away(true)")       # 又锁上
-    end = time.time() + GRACE + 6
-    while time.time() < end and len(banners()) == b0:
+    end = time.time() + GRACE + 9
+    while time.time() < end and len(banners()) < b0 + 2:
         pa.wait_for_timeout(150)
-    pa.wait_for_timeout(800)
+    pa.wait_for_timeout(1500)                # 他回了两句，敲两条；再等一等，看有没有多敲
     kept = len(box()["rows"])
     knocked = len(banners()) - b0
-    ok(seen == 0 and knocked == 1 and kept == 1 and "收到：我先去忙了" in banners()[-1]["json"]["notification"]["body"],
-       f"回话刚进信箱、她瞥了一眼（不到半秒）又锁上：那一眼没把信取走（信箱里还有 {kept} 封），横幅照样到了（{knocked} 条）")
+    ok(seen == 0 and knocked == 2 and kept == 1 and [b["json"]["notification"]["body"] for b in banners()[b0:]] == ["收到：我先去忙了", "第二条"],
+       f"回话刚进信箱、她瞥了一眼（不到半秒）又锁上：那一眼没把信取走（信箱里还有 {kept} 封），横幅照样到了（他说了两句，{knocked} 条）")
     pa.evaluate("window.__away(false)")      # 这回是真回来了
     got = wait_js(pa, shown("收到：我先去忙了"), 12000)
     pa.wait_for_timeout(1200)
@@ -684,14 +684,14 @@ def peek2(browser):
     for r in st["held"]:
         try: r.continue_()                   # 这时候才看回来
         except Exception: pass
-    end = time.time() + GRACE + 6
-    while time.time() < end and len(banners()) == b0:
+    end = time.time() + GRACE + 9
+    while time.time() < end and len(banners()) < b0 + 2:
         pa.wait_for_timeout(150)
-    pa.wait_for_timeout(800)
+    pa.wait_for_timeout(1500)                # 他回了两句，敲两条；再等一等，看有没有多敲
     kept = len(box()["rows"])
     knocked = len(banners()) - b0
-    ok(asked >= 1 and knocked == 1 and kept == 1 and count_text(pa, "收到：我先去忙了") == 0,
-       f"去看信箱的那一下悬在半路、看回来的时候她已经又锁上了：一封都不动（信箱里还有 {kept} 封），横幅照样到了（{knocked} 条）")
+    ok(asked >= 1 and knocked == 2 and kept == 1 and count_text(pa, "收到：我先去忙了") == 0,
+       f"去看信箱的那一下悬在半路、看回来的时候她已经又锁上了：一封都不动（信箱里还有 {kept} 封），横幅照样到了（他说了两句，{knocked} 条）")
     pa.evaluate("window.__away(false)")
     got = wait_js(pa, shown("收到：我先去忙了"), 12000)
     pa.wait_for_timeout(1200)
@@ -1057,8 +1057,8 @@ def store(browser):
     ready = wait_mock(working, 8)
     pa.close()                               # 开封府被收掉
     mock("/__debug/mail-setup?failpatch=2")  # 库房出岔子：往后两回往信箱里放都不成
-    knocked = wait_mock(lambda: len(banners()) == b0 + 1, GRACE + 14)
-    body = banners()[-1]["json"]["notification"]["body"] if knocked else ""
+    knocked = wait_mock(lambda: len(banners()) >= b0 + 1, GRACE + 14)
+    body = banners()[b0]["json"]["notification"]["body"] if knocked else ""
     rows = [(r["state"], bool(r["sealed"])) for r in box()["rows"]]
     tries = len([x for x in box()["log"][l0:] if x["method"] == "PATCH" and "sealed" in x.get("sets", [])])
     ok(ready and knocked and "收到：第二句" in body and "没送到" not in body and rows == [("done", True)] and tries == 3,

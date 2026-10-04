@@ -122,6 +122,8 @@ with sync_playwright() as p:
     mine = pa.evaluate("""() => { const all = [...document.querySelectorAll('.kfs-chat-rows .flex-row-reverse .whitespace-pre-wrap')]; const b = all[all.length - 1];
       return b ? [...b.children].map((e) => [e.tagName.toLowerCase(), e.textContent, Number(getComputedStyle(e).fontWeight), parseFloat(getComputedStyle(e).fontSize)]) : null; }""")
     ok(mine == [["div", "我的标题", 600, 20], ["strong", "我也会加粗", 600, 15.5]], f"她自己发的话里的标题、加粗：一样认（{mine}）")
+    row = [c for c in json.loads(pa.evaluate(KV, "kfs2:index") or "[]") if c["id"] == last_chat(pa)][0]
+    ok(row.get("preview") == "我的标题\n我也会加粗", f"最后一句是她的话的时候，历史对话里那一行预览也照气泡里摆出来的字（{json.dumps(row.get('preview'), ensure_ascii=False)}）")
     wait_js(pa, "[...document.querySelectorAll('.items-end span')].filter((e) => e.children.length === 0 && e.textContent === '第二条').length === " + str(n2 + 1), 25000)   # 等他回完这一句
     pa.wait_for_timeout(1500)
 
@@ -132,6 +134,15 @@ with sync_playwright() as p:
     cid = last_chat(pa)
     row = [c for c in index if c["id"] == cid][0]
     ok(got and row.get("preview") == "预览里的标题\n粗的 和 斜的，#标签", f"历史对话里那一行预览：标题的井号、星号都去掉，不是标题的井号留着（{json.dumps(row.get('preview'), ensure_ascii=False)}）")
+
+    # ---- 对话的名字：照她头一句摆出来的字起，不带井号、星号 ----
+    pa.locator("button[aria-label='新对话']").tap(); pa.wait_for_timeout(500)
+    n2 = count_text(pa, "第二条")
+    say(pa, "# 新对话的名字 **粗**")
+    wait_js(pa, "[...document.querySelectorAll('.items-end span')].filter((e) => e.children.length === 0 && e.textContent === '第二条').length === " + str(n2 + 1), 25000)
+    pa.wait_for_timeout(1200)
+    row = [c for c in json.loads(pa.evaluate(KV, "kfs2:index") or "[]") if c["id"] == last_chat(pa)][0]
+    ok(row.get("title") == "新对话的名字 粗", f"她头一句带着井号、星号：对话的名字照摆出来的字起（{json.dumps(row.get('title'), ensure_ascii=False)}）")
 
     browser.close()
 

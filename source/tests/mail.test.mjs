@@ -7,7 +7,8 @@ import { mock } from "node:test";
 import { loadPushFunction, loadBundle, pushEnv, createFakePush, createFakeSupabase, createFakeAnthropic, FAKE_SUPABASE, makeVapidKeys, b64u, unb64u } from "./push-harness.mjs";
 
 let pass = 0, failN = 0;
-const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); } };
+// KFS_FAILFAST：故意改坏了看拦不拦得住的时候，头一条没过就收工
+const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); if (process.env.KFS_FAILFAST) process.exit(1); } };
 
 // ---------- 时间 ----------
 // 函数里的“等六秒再敲”“隔八秒摸一下”、手机这头的“隔两秒看一眼”，都靠假的钟一步一步拨，不真等。
@@ -43,6 +44,8 @@ const replyjs = await loadBundle("src/reply.js");
 const vaultjs = await loadBundle("src/vault.js");
 const docsjs = await loadBundle("src/docs.js");
 const namesjs = await loadBundle("src/names.js");
+const richjs = await loadBundle("src/rich.js");
+const notifyjs = await loadBundle("src/notify.js");
 
 const vapid = makeVapidKeys();
 const USER = { id: "11111111-1111-1111-1111-111111111111", email: "qing@example.com" };
@@ -55,7 +58,8 @@ const PAGE = ORIGIN + "/kaifengfu/";
 const baseEnv = { SUPABASE_URL: FAKE_SUPABASE, SUPABASE_ANON_KEY: "sb_publishable_test", ALLOWED_EMAIL: USER.email, ALLOWED_ORIGIN: ORIGIN, ANTHROPIC_API_KEY: "sk-ant-test", VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_KEY: vapid.privateKey, VAPID_SUBJECT: "mailto:qing@example.com" };
 Object.assign(pushEnv, baseEnv);
 
-const GRACE = 6000, BEAT = 8000;
+const GRACE = 6000, BEAT = 8000, GAP = 1000, LIFE = 150000, LAST_CALL = 20000;
+const MERGE_AT = (LIFE - LAST_CALL) / 1000; // 这份代码活过这么多秒，剩下的横幅就并成一条
 
 async function call(body, { token = "tok", origin = ORIGIN } = {}) {
   const res = await fn.handler(
@@ -106,10 +110,40 @@ function addDevice(mode = "ok", page = PAGE, updated = "2026-10-01T10:00:00.000Z
   supa.table.rows.set(USER.id + "|" + dev.endpoint, { user_id: USER.id, endpoint: dev.endpoint, p256dh: dev.p256dh, auth: dev.auth, page, created_at: updated, updated_at: updated, last_at: null, last_status: null, last_note: null });
   return dev;
 }
+// 等一件事，最多等 ms 毫秒（真的钟）；等不到回 null。掐线那几条用：改坏了的话那一问永远不回，不能让整份测试跟着悬住
+const within = (work, ms = 3000) => Promise.race([work, new Promise((r) => realTimeout(() => r(null), ms))]);
+// 推送服务一共被敲过 n 下、每一下的结果也都记进登记簿了为止（假的钟不动，只等加密、假的网络这些真的异步活儿做完）。
+// 用之前先 push.reset()、supa.seen.length = 0，两边才是从零数起
+const ledgerWrites = () => supa.seen.filter((x) => x.method !== "GET" && x.path.startsWith("/rest/v1/push_subs")).length;
+const knocked = async (n) => {
+  const done = await until(() => push.log.length >= n && ledgerWrites() >= n);
+  await breathe();
+  return done;
+};
+// 后台的活做完为止，一步一步拨钟（一步 step 毫秒，最多 rounds 步）：横幅隔一秒敲一条，不拨钟它就一直歇着。
+// 每拨一步，等这一步里敲的那一下做完（推送服务收了、登记簿记了）再拨下一步：这样“隔一秒一条”在假的钟上分毫不差。
+// 这一步里什么都没敲的话白等四分之一秒（真的钟）。回做没做完
+const drain = async (step = GAP, rounds = 60) => {
+  let done = false;
+  Promise.all(background).then(() => { done = true; });
+  await breathe();
+  for (let i = 0; i < rounds && !done; i++) {
+    const n = push.log.length;
+    await clock.tick(step);
+    await until(() => done || (push.log.length > n && ledgerWrites() >= push.log.length), 250);
+    await breathe();
+  }
+  return done;
+};
+// 送到的横幅上的字，照敲的先后（给了设备就只看那一台）
+const bodies = (dev) => push.delivered.filter((d) => !dev || d.endpoint === dev.endpoint).map((d) => d.json.notification.body);
 function resetWorld() {
+  // 这份代码当它是刚被叫起来的（见 push_function.ts 的 worker）
+  fn.worker.born = Date.now();
+  fn.worker.closing = false;
   supa.mail.rows.clear();
   supa.mail.log.length = 0;
-  Object.assign(supa.mail.state, { missing: false, down: false, failPatch: 0 });
+  Object.assign(supa.mail.state, { missing: false, down: false, failPatch: 0, cutPatch: 0, lostPatch: 0, failGet: 0 });
   supa.table.rows.clear();
   Object.assign(supa.table.state, { missing: false, failGet: 0 });
   supa.seen.length = 0;
@@ -213,6 +247,7 @@ function resetWorld() {
   // 登记簿里还有一行：别人（偷到登录密码、没有暗号的人）添进去的设备。网页没点它的名
   const spy = addDevice("ok", PAGE, "2026-10-03T10:00:00.000Z");
   KNOCK = [a.endpoint, b.endpoint, "https://web.push.apple.com/not-in-the-ledger"];
+  supa.seen.length = 0;
   clock.on();
   const o = order({ title: "  小狐\n狸  " });
   claude.script.push(said("<thinking>她肯定睡了</thinking>\n在呢\n[SPLIT]\n*摸摸头* 早点睡\n[MEME:fox_reading_book.jpg]\n[NAME:小狐狸]"));
@@ -220,16 +255,37 @@ function resetWorld() {
   await clock.tick(GRACE - 100);
   const early = push.log.length;
   await clock.tick(200);
-  await Promise.all(background);
+  // 他这一回是三个气泡（两句话、一张表情包）：敲三条。头一条先到
+  await knocked(2);
+  const first = push.delivered.slice();
+  const n0 = first[0] && first[0].json && first[0].json.notification;
+  ok(r.status === 200 && early === 0 && first.length === 2 && first.map((d) => d.endpoint).sort().join() === [a.endpoint, b.endpoint].sort().join(), "她不在：等够那几秒、信还在信箱里，才敲；网页点了名的两台设备都敲到");
+  ok(!!n0 && first[0].json.web_push === 8030 && first.every((d) => d.json.notification.title === "小狐 狸" && d.json.notification.body === "在呢"),
+    `她不在：头一条横幅上是他的名字和他的头一句话，心里话不写（${JSON.stringify(n0 && n0.body)}）`);
+  // 隔一秒敲下一条：差两百毫秒的时候还没敲
+  await clock.tick(GAP - 200);
+  await breathe();
+  const beforeSecond = push.delivered.length;
+  await clock.tick(200);
+  await knocked(4);
+  const afterSecond = push.delivered.length;
+  await clock.tick(GAP - 200);
+  await breathe();
+  const beforeThird = push.delivered.length;
+  await clock.tick(200);
+  await knocked(6);
+  const finished = await drain(50, 4);
   const got = push.delivered;
-  const n0 = got[0] && got[0].json && got[0].json.notification;
-  ok(r.status === 200 && early === 0 && got.length === 2 && got.map((d) => d.endpoint).sort().join() === [a.endpoint, b.endpoint].sort().join(), "她不在：等够那几秒、信还在信箱里，才敲；网页点了名的两台设备都敲到");
-  ok(spy.hits === 0 && push.log.every((x) => x.endpoint !== spy.endpoint) && push.log.length === 2 && supa.table.rows.get(USER.id + "|" + spy.endpoint).last_at === null,
+  ok(beforeSecond === 2 && afterSecond === 4 && beforeThird === 4 && got.length === 6 && finished, `一个气泡一条：隔一秒敲下一条，不早不晚；三个气泡敲完三条就收工（${[beforeSecond, afterSecond, beforeThird, got.length].join("、")}）`);
+  ok(bodies(a).join("|") === "在呢|摸摸头 早点睡|[表情包]" && bodies(b).join("|") === bodies(a).join("|") && got.every((d) => d.json.notification.title === "小狐 狸"),
+    `一个气泡一条：两台设备各收到三条，照他说的先后；星号去掉，表情包单独一条写成 [表情包]，改名字的记号不写（${JSON.stringify(bodies(a))}）`);
+  const marks = got.filter((d) => d.endpoint === a.endpoint).map((d) => notifyjs.parseBannerTag(d.json.notification.tag));
+  ok(marks.every((m, i) => !!m && m.chat === o.tag && m.job === o.job && m.nth === i) && new Set(got.filter((d) => d.endpoint === a.endpoint).map((d) => d.json.notification.tag)).size === 3 && got.filter((d) => d.endpoint === a.endpoint)[1].json.notification.tag === `r.${o.tag}.${o.job}.1`,
+    "一个气泡一条：每条横幅自己带一个记号（哪段对话、哪一回、第几条），条条不一样（一样的话后一条会把前一条顶掉）；网页那头读得出来");
+  ok(spy.hits === 0 && push.log.every((x) => x.endpoint !== spy.endpoint) && push.log.length === 6 && supa.table.rows.get(USER.id + "|" + spy.endpoint).last_at === null,
     "她不在：登记簿里没被点名的那一行不敲（往登记簿里添一行，收不到他说的话）；点了名、登记簿里却没有的门牌号也不去敲");
-  ok(!!n0 && got[0].json.web_push === 8030 && n0.title === "小狐 狸" && n0.body === "在呢\n摸摸头 早点睡\n[表情包]",
-    `她不在：横幅上是他的名字和他回的话：心里话不写，分条的一条一行，星号去掉，表情包写成 [表情包]，改名字的记号不写（${JSON.stringify(n0 && n0.body)}）`);
-  const navs = got.map((d) => d.json.notification.navigate).sort();
-  ok(navs[0] === `${PAGE}#n=r.${o.tag}.${o.job}` && navs[1] === `${PAGE}dingxiang/#n=r.${o.tag}.${o.job}`, "她不在：点了回到各自的入口，网址带着“哪段对话”的记号");
+  const navs = Array.from(new Set(got.map((d) => d.json.notification.navigate))).sort();
+  ok(navs.length === 2 && navs[0] === `${PAGE}#n=r.${o.tag}.${o.job}` && navs[1] === `${PAGE}dingxiang/#n=r.${o.tag}.${o.job}`, "她不在：哪一条点了都回到各自的入口，网址带着“哪段对话”的记号");
   ok(got.every((d) => d.ttl === String(12 * 3600) && d.urgency === "high"), "她不在：手机不在线的话，推送服务替我们留十二个小时");
   const rows = supa.table.all().filter((x) => x.endpoint !== spy.endpoint);
   ok(rows.length === 2 && rows.every((x) => x.last_status === 201 && x.last_at), "她不在：发得怎么样记在登记簿里（面板的“看细节”查得到）");
@@ -293,6 +349,413 @@ function resetWorld() {
   ok(!!n6 && n6.json.notification.navigate === `https://valerie9391120.github.io/kaifengfu/dingxiang/#n=r.${o6.tag}.${o6.job}`, "密钥柜里没写 ALLOWED_ORIGIN：登记的是开封府现在住的那个地址，照敲，点了回到那个入口");
   Object.assign(pushEnv, baseEnv);
   clock.off();
+}
+
+// ================= 小后端：横幅一个气泡敲一条 =================
+{
+  resetWorld();
+  const five = "一\n[SPLIT]\n二\n[SPLIT]\n三\n[SPLIT]\n四\n[SPLIT]\n五";
+  // 每一段从头来：推送服务、登记簿、点名都清空，这份代码当它是刚被叫起来的
+  const fresh = () => {
+    push.reset();
+    supa.seen.length = 0;
+    supa.table.rows.clear();
+    KNOCK = [];
+    background.length = 0;
+    claude.script.length = 0;
+    fn.worker.born = Date.now();
+    fn.worker.closing = false;
+  };
+  // 一回传话：他照 text 回，等到头一条横幅敲完。回这一包
+  const away = async (text, extra = {}) => {
+    claude.script.push(said(text));
+    const o = order(extra);
+    await call(o);
+    await clock.tick(GRACE);
+    await knocked(KNOCK.length);
+    return o;
+  };
+  clock.on();
+
+  // 她回来了（网页把信取走了）：剩下的不敲
+  fresh();
+  const dev = addDevice();
+  const o = await away(five);
+  await clock.tick(GAP);
+  await knocked(2);
+  supa.mail.rows.delete(USER.id + "|" + o.job);
+  await clock.tick(GAP);
+  const done1 = await drain(50, 4);
+  ok(bodies().join("|") === "一|二" && push.log.length === 2 && done1, `她回来了：敲到第二条的时候信被取走了，剩下三条不敲，这一回收工（${bodies().join("、")}）`);
+  // 头一条刚敲完她就回来了：只有那一条
+  fresh();
+  addDevice();
+  const o1 = await away(five);
+  supa.mail.rows.delete(USER.id + "|" + o1.job);
+  await clock.tick(GAP);
+  const done2 = await drain(50, 4);
+  ok(bodies().join("|") === "一" && done2, "她回来了：每敲下一条之前都看一眼信还在不在（头一条刚敲完信就被取走：只有那一条）");
+  // 敲下一条之前问不到信还在不在（库房一时没应）：照敲（宁可多敲一下，不能因为问不到就不敲）
+  fresh();
+  addDevice();
+  await away(five);
+  supa.mail.state.down = true;
+  const done3 = await drain();
+  supa.mail.state.down = false;
+  ok(bodies().join("|") === "一|二|三|四|五" && done3, "敲下一条之前问不到信还在不在（库房一时没应）：照敲，五条都到");
+
+  // 敲的时候有一台的门牌号作废了：划掉，后面几条不再敲它；别的照敲
+  fresh();
+  const gone = addDevice("gone");
+  const fine = addDevice("ok");
+  await away("一\n[SPLIT]\n二\n[SPLIT]\n三");
+  const done4 = await drain();
+  ok(gone.hits === 1 && bodies(fine).join("|") === "一|二|三" && !supa.table.rows.has(USER.id + "|" + gone.endpoint) && done4, "有一台设备的门牌号作废了：敲头一条的时候划掉，后面两条不再敲它；另一台三条照到");
+  // 头一条没敲成（推送服务一时出岔子，歇一下再敲也没成），门牌号可没作废：后面几条照敲它
+  fresh();
+  const shy = addDevice("down");
+  claude.script.push(said("一\n[SPLIT]\n二\n[SPLIT]\n三"));
+  await call(order());
+  await clock.tick(GRACE);
+  await until(() => shy.hits === 1);
+  await breathe();
+  await clock.tick(900);
+  await until(() => shy.hits === 2 && ledgerWrites() === 1);
+  await breathe();
+  shy.mode = "ok";
+  const doneS = await drain();
+  ok(doneS && bodies(shy).join("|") === "二|三" && shy.hits === 4 && supa.table.rows.get(USER.id + "|" + shy.endpoint).last_status === 201, `头一条没敲成（推送服务一时出岔子）、门牌号没作废：后面两条照敲这台设备（到了的：${bodies(shy).join("、")}）`);
+  // 点名的设备都作废了：没有可敲的了，当场收工，不空等
+  fresh();
+  const dead = addDevice("gone");
+  await away(five);
+  const done5 = await drain(50, 3);
+  ok(dead.hits === 1 && done5 && push.log.length === 1, "点了名的设备门牌号都作废了：敲完头一条就收工，不对着空门牌号接着等、接着敲");
+
+  // 不设上限：他一口气说了四十句，就敲四十条，一秒一条
+  fresh();
+  addDevice();
+  const many = Array.from({ length: 40 }, (_, i) => "第" + (i + 1) + "句");
+  const t0 = Date.now();
+  await away(many.join("\n[SPLIT]\n"));
+  const done6 = await drain();
+  const ats = push.delivered.map((d) => d.at - t0);
+  ok(bodies().join("|") === many.join("|") && done6 && ats[0] === GRACE && ats.every((t, i) => t === GRACE + i * GAP), `不设上限：四十个气泡敲四十条，照先后，一秒一条（头一条在交出去 ${ats[0]} 毫秒以后，最后一条在 ${ats[ats.length - 1]} 毫秒）`);
+
+  // 一条横幅最多三百个字：一个气泡再长也只截它自己，不占别的气泡的地方
+  fresh();
+  addDevice();
+  await away("长".repeat(800) + "\n[SPLIT]\n短的");
+  await drain();
+  const [long0, short1] = bodies();
+  ok(bodies().length === 2 && Array.from(long0).length === 300 && long0.endsWith("…") && short1 === "短的", "一条横幅最多三百个字：长的那个气泡截到三百、结尾加省略号，下一个气泡照旧另敲一条");
+
+  // 横幅上摆的是气泡里摆出来的字：标题行的井号、围着字的星号不带，没当记号的照留
+  fresh();
+  addDevice();
+  await away("# 今日安排\n\n**先**吃饭，*再*散步\n[SPLIT]\n## 小标题 ##\n正文 * 零散的星号、#标签");
+  await drain();
+  ok(bodies().join("|") === "今日安排\n先吃饭，再散步|小标题\n正文 * 零散的星号、#标签", `横幅上是平常的字：标题行开头的井号、围着字的星号不带，紧挨着标题的空行不要；零散的星号、#标签照留（${JSON.stringify(bodies())}）`);
+
+  // ---- 保险：这份代码这一趟快到点了，剩下的并成一条 ----
+  // 运行环境打了招呼（快要把这一趟收掉了）：下一条起，剩下的并成一条敲出去
+  fresh();
+  addDevice();
+  const oc = await away(five);
+  await clock.tick(GAP);
+  await knocked(2);
+  fn.worker.closing = true;
+  await clock.tick(GAP);
+  await knocked(3);
+  const done7 = await drain(50, 4);
+  const tags7 = push.delivered.map((d) => d.json.notification.tag);
+  ok(bodies().join("|") === "一|二|三\n四\n五" && done7 && tags7.join() === [0, 1, 2].map((i) => `r.${oc.tag}.${oc.job}.${i}`).join(), `保险：运行环境说快要收了，剩下三个气泡并成一条敲出去（一条一行），不丢；敲完收工（${JSON.stringify(bodies())}）`);
+  // 头一条还没敲就打了招呼：整回并成一条
+  fresh();
+  addDevice();
+  fn.worker.closing = true;
+  await away(five);
+  const done8 = await drain(50, 4);
+  ok(bodies().join("|") === "一\n二\n三\n四\n五" && done8, "保险：头一条还没敲就说要收了：整回并成一条");
+  // 并成的那一条也只写三百个字
+  fresh();
+  addDevice();
+  fn.worker.closing = true;
+  await away(Array.from({ length: 6 }, (_, i) => String(i) + "很长".repeat(40)).join("\n[SPLIT]\n"));
+  await drain(50, 4);
+  ok(bodies().length === 1 && Array.from(bodies()[0]).length === 300 && bodies()[0].endsWith("…") && bodies()[0].startsWith("0很长"), "保险：并成的那一条超过三百个字照截");
+  // 只有一个气泡：打没打招呼都一样，就是那一条
+  fresh();
+  addDevice();
+  fn.worker.closing = true;
+  await away("只有一句");
+  const done9 = await drain(50, 4);
+  ok(bodies().join("|") === "只有一句" && done9, "保险：只有一个气泡，没什么可并的，照常敲那一条");
+  // 只剩的那一条字不多、占的字节却顶着格（两百多面小旗再加几个字母，截完正好一千八百个字节）：它已经按字节截过一回，不再截第二回
+  const heavyOne = "🇮🇪".repeat(224) + "a".repeat(30);
+  const wantOne = fn.bannerOf({ status: 200, data: { content: [{ type: "text", text: heavyOne }] }, used: {} }, "光义").bodies[0];
+  fresh();
+  addDevice();
+  await away(heavyOne);
+  const plainTime = bodies()[0];
+  fresh();
+  addDevice();
+  fn.worker.closing = true;
+  await away(heavyOne);
+  await drain(50, 4);
+  ok(bodies().length === 1 && bodies()[0] === wantOne && plainTime === wantOne && fn.clip(wantOne, 300, 1800) !== wantOne, "保险：只剩一条、它占的字节又顶着格：和平常敲出来的一个字不差（不多截一回）");
+
+  // 没打招呼也一样防着：从这份代码被叫起来算，过了 LIFE - LAST_CALL（130 秒）就并。
+  // 这一回敲门的时候它已经活了 62 秒，他又回得慢（60 秒）：头一条横幅在 128 秒敲，130 秒那一条还单敲，131 秒起并
+  const held = async (age, hold, text = five) => {
+    fresh();
+    addDevice();
+    fn.worker.born = Date.now() - age;
+    let release;
+    const gate = new Promise((r) => (release = r));
+    claude.script.push({ wait: gate, ...said(text) });
+    const before = claude.calls.length;
+    const pending = call(order());
+    await until(() => claude.calls.length === before + 1);
+    await clock.tick(hold);
+    release();
+    await pending;
+    await clock.tick(GRACE);
+    await knocked(1);
+    return await drain(GAP, 20);
+  };
+  const doneA = await held((MERGE_AT - 68) * 1000, 60000);
+  ok(doneA && bodies().join("|") === "一|二|三|四\n五", `保险：敲门的时候这份代码已经活了 ${MERGE_AT - 68} 秒、他回了 60 秒：${MERGE_AT - 2}、${MERGE_AT - 1}、${MERGE_AT} 秒那三条单敲，过了 ${MERGE_AT} 秒剩下的并成一条（${JSON.stringify(bodies())}）`);
+  // 敲门的时候它已经活过了半辈子（75 秒）：照免费档的寿数，这时候不该还接新的敲门，可见不是那一档。改从这一回敲门算
+  const doneB = await held(LIFE / 2, 60000);
+  const fromKnock = bodies().join("|");
+  const doneC = await held(LIFE / 2 - 1, 60000);
+  const fromBirth = bodies().join("|");
+  ok(doneB && doneC && fromKnock === "一|二|三|四|五" && fromBirth === "一\n二\n三\n四\n五", `保险：差一毫秒到半辈子的，从被叫起来那一刻算（头一条在 141 秒，整回并成一条）；正好半辈子的，从这一回敲门算（66 秒起敲，五条单敲）（${JSON.stringify([fromBirth, fromKnock])}）`);
+  // 差一毫秒到半辈子、他回得快：头一条在 81 秒，离并还早，五条照常单敲（从被叫起来算，也不是一上来就并）
+  const doneC2 = await held(LIFE / 2 - 1, 0);
+  ok(doneC2 && bodies().join("|") === "一|二|三|四|五", "保险：从被叫起来那一刻算的，没到点也照常一条一条敲");
+  const doneD = await held(135000, 0);
+  ok(doneD && bodies().join("|") === "一|二|三|四|五", "保险：敲门的时候它已经活了 135 秒（不是免费档的寿数）：从这一回敲门算，五条照常单敲，不会一上来就并");
+  // 从敲门算的那种，也是过了 130 秒就并。他回了 116 秒，十二个气泡：122 秒到 130 秒那九条单敲，剩下三条并成一条
+  const twelve = Array.from({ length: 12 }, (_, i) => "句" + (i + 1));
+  const doneE = await held(LIFE / 2, LIFE - LAST_CALL - GRACE - 8 * GAP, twelve.join("\n[SPLIT]\n"));
+  ok(doneE && bodies().join("|") === twelve.slice(0, 9).join("|") + "|" + twelve.slice(9).join("\n"), `保险：从这一回敲门算的，也是过了 ${MERGE_AT} 秒剩下的并成一条（${JSON.stringify(bodies())}）`);
+  clock.off();
+  void dev;
+}
+
+// ================= 小后端：她按了停，把跟 Anthropic 的线掐掉 =================
+{
+  resetWorld();
+  addDevice();
+  clock.on();
+  // 带缓存记号、带工具的一整段：没问成的话本来还有两种写法可换、还能原样再问一回
+  const rich = {
+    model: "claude-sonnet-4-6",
+    max_tokens: 2048,
+    system: [{ type: "text", text: "名帖", cache_control: { type: "ephemeral", ttl: "1h" } }],
+    messages: [{ role: "user", content: [{ type: "text", text: "在吗" }] }],
+    mcp_servers: [{ type: "url", url: "https://mcp.example/sse", name: "s0_notes", authorization_token: "tok" }],
+    tools: [{ type: "mcp_toolset", mcp_server_name: "s0_notes" }],
+  };
+  const sealedPatches = () => supa.mail.log.filter((x) => x.method === "PATCH" && x.sets.includes("sealed")).length;
+  const beatPatches = () => supa.mail.log.filter((x) => x.method === "PATCH" && !x.sets.includes("sealed"));
+
+  // 还在等的工夫里，信箱里那一格没了（她按了停，网页把它收了）：下一回摸的时候发现，掐线
+  claude.script.push({ hang: true }, said("不该问到这一回"), said("不该问到这一回"), said("不该问到这一回"));
+  const o = order({ request: rich, beta: "mcp-client-2025-11-20" });
+  const pending = call(o);
+  await until(() => claude.calls.length === 1);
+  await clock.tick(BEAT);
+  await breathe();
+  const stillAsking = !claude.calls[0].cut && mailRow(o.job).state === "working";
+  supa.mail.rows.delete(USER.id + "|" + o.job);
+  await clock.tick(BEAT - 100);
+  await breathe();
+  const notYet = !claude.calls[0].cut;
+  await clock.tick(100);
+  const r = await within(pending);
+  ok(stillAsking && notYet && !!r && claude.calls[0].cut === true, "按了停：那一格还在的时候照常等；它没了，下一回摸（最多八秒以后）就发现，把跟 Anthropic 的线掐掉");
+  ok(!!r && r.status === 200 && r.data.result.status === 499 && mailjs.resultOk(r.data.result) === false && mailjs.explainResult(r.data.result) === "这一回停掉了，没有回话" && claude.calls.length === 1,
+    "按了停：这一回到此为止。不原样再问、不换写法再问（Anthropic 只问了那一回）；万一还有网页等着，交给它的是一句“停掉了”，不是回话");
+  const beatsAtStop = beatPatches().length;
+  await clock.tick(GRACE + BEAT * 3);
+  const done = await within(Promise.all(background));
+  ok(!!done && sealedPatches() === 0 && !mailRow(o.job) && push.log.length === 0 && beatPatches().length === beatsAtStop, "按了停：不往信箱里放东西、不敲手机，也不再去摸那一格");
+  ok(beatPatches().length === 2 && beatPatches().every((x) => /return=representation/.test(x.prefer) && x.query.includes("select=job") && x.query.includes("state=eq.working")),
+    "摸一下的时候顺带问“改到了哪几行”（Prefer: return=representation）：一行都没改到，就是那一格没了");
+  claude.script.length = 0;
+
+  // 摸的那一下库房没应（问不成）：不算“没了”，不掐；接着等，回话照常到
+  let release;
+  const gate = new Promise((res) => (release = res));
+  claude.script.push({ wait: gate, ...said("等到了") });
+  const before2 = claude.calls.length;
+  const o2 = order();
+  const pending2 = call(o2);
+  await until(() => claude.calls.length === before2 + 1);
+  supa.mail.state.failPatch = 1;
+  await clock.tick(BEAT);
+  await breathe();
+  const blind = !claude.calls[before2].cut;
+  release();
+  const r2 = await within(pending2);
+  ok(blind && !!r2 && r2.data.result.status === 200 && r2.data.result.data.content[0].text === "等到了" && mailRow(o2.job).state === "done", "摸的那一下库房没应（不知道那一格还在不在）：不掐线，回话照常到、照常放进信箱");
+  // 摸的那一下根本没连上库房：一样，不掐
+  let release2b;
+  const gate2b = new Promise((res) => (release2b = res));
+  claude.script.push({ wait: gate2b, ...said("也等到了") });
+  const before2b = claude.calls.length;
+  const pending2b = call(order({ knock: [] }));
+  await until(() => claude.calls.length === before2b + 1);
+  supa.mail.state.cutPatch = 1;
+  await clock.tick(BEAT);
+  await breathe();
+  const deaf = !claude.calls[before2b].cut && supa.mail.state.cutPatch === 0;
+  release2b();
+  const r2b = await within(pending2b);
+  ok(deaf && !!r2b && r2b.data.result.status === 200 && r2b.data.result.data.content[0].text === "也等到了", "摸的那一下根本没连上库房：也不掐线，回话照常到");
+  await clock.tick(GRACE);
+  await knocked(1);
+  await drain(50, 4);
+
+  // Anthropic 一时太挤、正歇着要原样再问的那一秒半里发现她停了：不再问
+  push.reset();
+  supa.seen.length = 0;
+  const sealed3 = sealedPatches();
+  let release3;
+  const gate3 = new Promise((res) => (release3 = res));
+  claude.script.push({ wait: gate3, ...upstreamError(529, "overloaded_error", "Overloaded") }, said("不该问到这一回"));
+  const before3 = claude.calls.length;
+  const o3 = order();
+  const pending3 = call(o3);
+  await until(() => claude.calls.length === before3 + 1);
+  supa.mail.rows.delete(USER.id + "|" + o3.job);
+  await clock.tick(BEAT - 100);
+  release3();
+  await breathe();
+  await clock.tick(100); // 摸：那一格没了。这时候没有哪一问正连着，线是拉给“歇完别再问”看的
+  await breathe();
+  await clock.tick(1500);
+  const r3 = await within(pending3);
+  ok(!!r3 && r3.data.result.status === 499 && claude.calls.length === before3 + 1, "按了停：正歇着要原样再问的工夫里发现她停了，歇完不再问");
+  await clock.tick(GRACE + 100);
+  await within(Promise.all(background));
+  ok(push.log.length === 0 && sealedPatches() === sealed3, "按了停（歇着的时候发现的）：一样不放信、不敲手机");
+
+  // 问之前那根线就已经拉了的（眼下的走法里碰不上，这个零件自己得站得住）：当场不问，照“停了”交回去
+  {
+    const dead = new AbortController();
+    dead.abort();
+    claude.script.length = 0;
+    claude.script.push({ hang: true });
+    const before5 = claude.calls.length;
+    const r5 = await within(fn.askOnce(rich, "", "sk-ant-test", 60000, dead.signal), 1500);
+    const r6 = await within(fn.askUpstream(rich, "mcp-client-2025-11-20", "sk-ant-test", Date.now() + 60000, dead.signal), 1500);
+    ok(!!r5 && r5.status === 499 && !!r6 && r6.status === 499 && claude.calls.length === before5, "问之前那根线就已经拉了：当场照“停了”交回去，门都不敲（有三种写法可换的也一种都不问）");
+    claude.script.length = 0;
+  }
+
+  // ---- 她按了停、他回得快（没等到下一回摸信箱）：放信的时候发现那一格没了 ----
+  const three = "一\n[SPLIT]\n二\n[SPLIT]\n三";
+  const quickStop = async (after) => {
+    push.reset();
+    supa.seen.length = 0;
+    background.length = 0;
+    let release4;
+    const gate4 = new Promise((res) => (release4 = res));
+    claude.script.length = 0;
+    claude.script.push({ wait: gate4, ...said(three) });
+    const before = claude.calls.length;
+    const o = order();
+    const pending = call(o);
+    await until(() => claude.calls.length === before + 1);
+    await clock.tick(3000);
+    supa.mail.rows.delete(USER.id + "|" + o.job); // 她按了停，网页把那一格收了
+    await clock.tick(2000);
+    after();
+    release4();
+    const r = await within(pending);
+    return { o, r };
+  };
+  // 库房好好的：不放信、不敲，当场收工（不等那六秒）
+  const q1 = await quickStop(() => {});
+  const doneQ1 = await drain(50, 3);
+  ok(!!q1.r && q1.r.data.result.status === 200 && doneQ1 && push.log.length === 0 && !mailRow(q1.o.job), "按了停、他五秒就回完了：放信的时候发现那一格没了，不敲手机，当场收工");
+  // 放完以后库房一直看不成（问不到信还在不在）：也不敲。原来是“问不到就当还在”，会敲出一串她不要的横幅
+  const q2 = await quickStop(() => {});
+  supa.mail.state.down = true;
+  await clock.tick(GRACE + 5 * GAP);
+  const doneQ2 = await within(Promise.all(background));
+  supa.mail.state.down = false;
+  ok(!!q2.r && !!doneQ2 && push.log.length === 0, "按了停、他回得快、过后库房一直看不成：照样一条都不敲（放信的时候就知道那一格没了，不靠过后那一眼）");
+  // 放信的时候“看一眼还在不在”的那一下没看成：不当它还在，再放一回，这回看清了那一格没了。过后库房又一直看不成：照样不敲
+  const q3 = await quickStop(() => { supa.mail.state.failGet = 1; });
+  supa.mail.state.down = true;
+  await clock.tick(GRACE + 5 * GAP);
+  const doneQ3 = await within(Promise.all(background));
+  supa.mail.state.down = false;
+  ok(!!q3.r && !!doneQ3 && push.log.length === 0 && supa.mail.state.failGet === 0, "按了停、他回得快、放信时看的那一眼没看成：不当它还在，再放一回看清了；一条都不敲");
+
+  // 反过来：信其实放进去了，只是这头没听见回音。再放一回改不到它（它已经写着“放好了”）：看一眼它在，算放进去了，横幅照常写他的话
+  push.reset();
+  supa.seen.length = 0;
+  supa.table.rows.clear();
+  KNOCK = [];
+  addDevice();
+  background.length = 0;
+  claude.script.length = 0;
+  claude.script.push(said(three));
+  supa.mail.state.lostPatch = 1;
+  const o7 = order();
+  const r7 = await call(o7);
+  const kept7 = mailRow(o7.job);
+  await clock.tick(GRACE);
+  await knocked(1);
+  const done7 = await drain();
+  ok(r7.data.result.status === 200 && !!kept7 && kept7.state === "done" && done7 && bodies().join("|") === "一|二|三" && sealedPatches() - sealed3 >= 2,
+    `信放进去了、这头没听见回音：再放一回发现改不到，看一眼它在，就算放进去了；横幅照常一句一条写他的话，不说“没送到”（${JSON.stringify(bodies())}）`);
+  // 同上，可“看一眼”的那一下也没看成：不当那一格没了（信其实在里头，当它没了她就收不到横幅）。算没放成，隔半秒再放一回，这回看清了
+  push.reset();
+  supa.seen.length = 0;
+  supa.table.rows.clear();
+  KNOCK = [];
+  addDevice();
+  background.length = 0;
+  claude.script.length = 0;
+  claude.script.push(said(three));
+  supa.mail.state.lostPatch = 1;
+  supa.mail.state.failGet = 1;
+  const o8 = order();
+  const r8 = await call(o8);
+  await clock.tick(500);
+  await breathe();
+  await clock.tick(GRACE);
+  await knocked(1);
+  const done8 = await drain();
+  ok(r8.data.result.status === 200 && mailRow(o8.job).state === "done" && done8 && bodies().join("|") === "一|二|三" && supa.mail.state.failGet === 0,
+    `信放进去了、没听见回音、看的那一眼也没看成：不当那一格没了，隔半秒再放一回看清了；横幅照常写他的话（${JSON.stringify(bodies())}）`);
+  clock.off();
+}
+
+// 运行环境打招呼的那一下接上了没有：重新装一份函数，装的时候给它一个假的“听招呼”的口子
+{
+  const heard = {};
+  globalThis.addEventListener = (type, listener) => { heard[type] = listener; };
+  const fn2 = await loadPushFunction();
+  delete globalThis.addEventListener;
+  const say = (detail) => {
+    fn2.worker.closing = false;
+    if (heard.beforeunload) heard.beforeunload(detail === undefined ? {} : { detail });
+    return fn2.worker.closing;
+  };
+  const before = fn2.worker.closing;
+  const real = ["wall_clock", "cpu", "memory", "termination"].map((why) => say({ reason: why }));
+  ok(typeof heard.beforeunload === "function" && before === false && real.every((x) => x === true) && fn.worker.closing === false && Math.abs(fn2.worker.born - Date.now()) < 5000,
+    "保险：运行环境说“快要收了”（寿数、算力、内存快用完，要撤下去）的时候记一笔；这份代码被叫起来的那一刻也记着");
+  ok(say({ reason: "early_drop" }) === false && say("early_drop") === false && say("wall_clock") === true && say(undefined) === true && say({ reason: "没见过的缘故" }) === true && say({}) === true,
+    "保险：活都做完了才来收的那种招呼（early_drop）不算；缘故直接写在招呼上的也认；没带缘故、带着不认识的缘故的，当它是快要收了");
 }
 
 // ================= 小后端：没回成 =================
@@ -533,7 +996,8 @@ function resetWorld() {
   await Promise.all(background);
   ok(r.data.result.status === 200 && mailRow(o.job).state === "done" && supa.mail.log.filter((x) => x.method === "PATCH").length === patches, "还在等：回话到了就不再摸");
   const beats = supa.mail.log.filter((x) => x.method === "PATCH");
-  ok(beats.length === 3 && beats.every((x) => x.query.includes("state=eq.working")), "还在等：摸的、放信的那几下都只认还写着“在等”的那一格（放好了的不再动它）");
+  ok(beats.length === 3 && beats.every((x) => x.query.includes("state=eq.working") && x.query.includes("select=job") && /return=representation/.test(x.prefer)),
+    "还在等：摸的、放信的那几下都只认还写着“在等”的那一格（放好了的不再动它），都只问改到了哪一格（不把整封信再要回来）");
   const db = supa.seen.filter((x) => x.path.startsWith("/rest/v1/"));
   ok(db.length >= 5 && db.every((x) => x.timed) && ["POST", "PATCH", "GET"].every((m) => db.some((x) => x.method === m && x.path.startsWith("/rest/v1/mailbox"))),
     "读写库房（开一格、摸一下、放信、看信还在不在）每一下都带着限时的信号：库房悬着不应，不会把回话压在手里");
@@ -708,20 +1172,25 @@ function resetWorld() {
 // ================= 横幅上写什么：和对话里看得见的是同一套 =================
 {
   const { parseReply } = replyjs;
-  // 网页那头拆完以后，横幅该写的样子：一条一行；表情包、文档各写一句；星号去掉
+  // 网页那头拆完以后，横幅该是什么样：对话里一个气泡，这里一条。
+  // 字的气泡：气泡里摆出来的那些字（src/rich.js 的 plainOf：当了记号的井号、星号不带）；表情包、文档各写一句；
+  // 摆出来一个字都没有的气泡不敲；什么都没剩下的，换了头像就说换了头像，不然写省略号
   const expect = (text) => {
     const lines = [];
     let avatar = false;
     for (const it of parseReply(text).items) {
       if (it.type === "text") {
-        const t = it.text.replace(/\*/g, "").trim();
+        const t = richjs.plainOf(it.text).trim();
         if (t) lines.push(t);
       } else if (it.type === "meme") lines.push("[表情包]");
       else if (it.type === "doc") lines.push(`[文档] ${it.name}`);
       else if (it.type === "avatar") avatar = true;
     }
-    return lines.length ? lines.join("\n") : avatar ? "[换了新头像]" : "……";
+    return lines.length ? lines : [avatar ? "[换了新头像]" : "……"];
   };
+  // 两边拆出来的是不是一模一样（一条对一条）
+  const same = (text) => JSON.stringify(fn.bubblesOf(text)) === JSON.stringify(expect(text));
+  const flat = (text) => fn.bubblesOf(text).join("\n");
   const corpus = [
     "<thinking>嗯</thinking>\n在呢",
     "在\n[SPLIT]\n第二条\n[SPLIT]\n第三条",
@@ -788,10 +1257,37 @@ function resetWorld() {
     "[DOC:清单.md' ']\n正文\n[/DOC]",
     "[NAME:新名字」 」]",
     "[NAME:「 「新名字]",
+    // 标题行、加粗、动作：横幅上是气泡里摆出来的字
+    "# 标题\n\n正文",
+    "## 二级 ##\n**粗**的和*斜*的\n### 三级",
+    "####### 七个井号不算\n#标签也不算\n   # 前头三个空格算\n    # 四个不算",
+    "#\u3000全角空格也算\n#\u00a0不断行的空格也算\n#\t制表符也算",
+    "正文\n\n# 标题\n\n\n正文二\n\n空行在别处照留",
+    "```\n# 代码里的注释\n```\n# 外头的标题",
+    "代码：```sh\n# 注释\n```这样\n## 标题",
+    "**加粗***动作***又粗又斜***",
+    "*推了推眼镜***听话**",
+    "* **苹果**：好吃\n* **梨**：也行",
+    "5 * 2 = 10，**记住**",
+    "*跨了两行的\n动作*",
+    "**\n分隔线下面\n**",
+    "***",
+    "** **",
+    "*",
+    "# **标题里的粗体** 和 *动作* #",
+    "# 只有标题",
+    "#",
+    "# ",
+    "[MEME:a.jpg]\n# 表情包后面的标题\n[SPLIT]\n**整条都粗**",
+    "# 一\n[SPLIT]\n\n## 二\n\n[SPLIT]\n### 三 ###",
   ];
-  const diff = corpus.filter((t) => fn.previewOf(t) !== expect(t));
-  ok(diff.length === 0, `横幅：${corpus.length} 条各式各样的回话，小后端拆出来的和网页拆出来的一模一样${diff.length ? "（对不上的：" + JSON.stringify(diff.map((t) => [t, fn.previewOf(t), expect(t)])) + "）" : ""}`);
-  ok(fn.previewOf("<thinking>想她</thinking>\n在呢") === "在呢" && fn.previewOf("<thinking>没关上") === "……" && !fn.previewOf("<thinking>秘密</thinking>\n话").includes("秘密"), "横幅：心里话一个字都不上横幅");
+  const diff = corpus.filter((t) => !same(t));
+  ok(diff.length === 0, `横幅：${corpus.length} 条各式各样的回话，小后端拆出来的和网页拆出来的一模一样，一个气泡对一条${diff.length ? "（对不上的：" + JSON.stringify(diff.map((t) => [t, fn.bubblesOf(t), expect(t)])) + "）" : ""}`);
+  ok(flat("<thinking>想她</thinking>\n在呢") === "在呢" && flat("<thinking>没关上") === "……" && !flat("<thinking>秘密</thinking>\n话").includes("秘密"), "横幅：心里话一个字都不上横幅");
+  ok(JSON.stringify(fn.bubblesOf("在\n[SPLIT]\n第二条\n两行\n[MEME:a.jpg]\n[DOC:清单.md]\n正文\n[/DOC]\n尾")) === JSON.stringify(["在", "第二条\n两行", "[表情包]", "[文档] 清单.md", "尾"]) && JSON.stringify(fn.bubblesOf("[AVATAR:fox.jpg]")) === JSON.stringify(["[换了新头像]"]) && JSON.stringify(fn.bubblesOf("")) === JSON.stringify(["……"]),
+    "横幅：一个气泡一条（气泡里的换行照留）；表情包、文档各占一条；只换了头像的说一句换了头像；空的写省略号");
+  ok(JSON.stringify(fn.bubblesOf("# 标题\n\n**粗**的 *斜*的\n[SPLIT]\n5 * 2，#标签")) === JSON.stringify(["标题\n粗的 斜的", "5 * 2，#标签"]) && fn.plainOf("## 二级 ##") === "二级" && fn.plainOf("```\n# 注释\n```") === "```\n# 注释\n```",
+    "横幅：标题行开头的井号、围着字的星号不带，紧挨着标题的空行不要；零散的星号、#标签、代码里的注释照留");
   // 再随机拼四千条对一遍（种子是定的，每回跑的是同一批）
   let seed = 20261002;
   const rnd = () => {
@@ -801,18 +1297,30 @@ function resetWorld() {
   const bits = ["在呢", "*笑*", "好", " ", "\n", "\n\n", "[SPLIT]", "\n[SPLIT]\n", " [SPLIT] ", "[MEME:a.jpg]", "[AVATAR:b.jpg]", "[NAME:小狐]", "\n[NAME:小狐]\n", "[NAME:新名字]", "\n[NAME:新名字]\n", "\n [NAME:「新名字」] \n",
     "<thinking>", "</thinking>", "[DOC:x.md]\n", "\n[DOC:x.md]\n", "\n[/DOC]\n", "[/DOC]", "\n[DOC:文件名.md]\n", "\r\n", "\t", "：", "$&", "*", "[", "]", "一家人 👨\u200d👩\u200d👧\u200d👦",
     "\u00a0", "\u3000", "\ufeff", "\u000b", "\u2028", "[DOC: x .md ]\n", "[MEME: a.jpg ]",
-    "「", "」", "'", "\"", "》", "《", "[DOC:「x」.md]\n", "[DOC:'x'", "]\n", "[NAME:「新名字」」]", "\n[NAME:『新名字』]\n", "[NAME:新名字", "」]\n"];
+    "「", "」", "'", "\"", "》", "《", "[DOC:「x」.md]\n", "[DOC:'x'", "]\n", "[NAME:「新名字」」]", "\n[NAME:『新名字』]\n", "[NAME:新名字", "」]\n",
+    "# ", "## ", "\n# ", "\n### ", "#", " #", " ##\n", "**", "***", "**粗**", "*斜*", "```", "\n```\n", "   ", "    "];
   const off = [];
   const splitOff = [];
   for (let i = 0; i < 20000; i++) {
     let t = "";
     for (let k = 1 + Math.floor(rnd() * 12); k > 0; k--) t += bits[Math.floor(rnd() * bits.length)];
-    if (fn.previewOf(t) !== expect(t)) off.push(t);
+    if (!same(t)) off.push(t);
     // 网页那头按 [SPLIT] 切的新写法，和原来那条正则切出来的一样
     if (JSON.stringify(replyjs.splitTurns(t)) !== JSON.stringify(t.split(/\s*\[SPLIT\]\s*/))) splitOff.push(t);
   }
   ok(splitOff.length === 0, `分条：按 [SPLIT] 切的写法（不用正则在空白上来回试），切出来的和原来那条正则一模一样${splitOff.length ? "（对不上：" + JSON.stringify(splitOff[0]) + "）" : ""}`);
-  ok(off.length === 0, `横幅：随机拼的两万条回话，两边拆出来的也一模一样${off.length ? "（对不上 " + off.length + " 条，头一条：" + JSON.stringify([off[0], fn.previewOf(off[0]), expect(off[0])]) + "）" : ""}`);
+  ok(off.length === 0, `横幅：随机拼的两万条回话，两边拆出来的也一模一样${off.length ? "（对不上 " + off.length + " 条，头一条：" + JSON.stringify([off[0], fn.bubblesOf(off[0]), expect(off[0])]) + "）" : ""}`);
+  // 气泡里摆出来的字（小后端的 plainOf 对网页的 plainOf）：只拿星号、井号、空白、反引号这几样密密地拼，再对四万条
+  {
+    const marks = ["*", "**", "***", "#", "# ", "## ", " ", "\n", "\n\n", "字", "a", "```", "\u3000", "\t", " #", "*字*", "**字**"];
+    const wrong = [];
+    for (let i = 0; i < 40000; i++) {
+      let t = "";
+      for (let k = 1 + Math.floor(rnd() * 10); k > 0; k--) t += marks[Math.floor(rnd() * marks.length)];
+      if (fn.plainOf(t) !== richjs.plainOf(t)) wrong.push(t);
+    }
+    ok(wrong.length === 0, `气泡里摆出来的字：拿星号、井号、空白、反引号密密地拼四万条，小后端认出来的和网页认出来的一模一样${wrong.length ? "（对不上 " + wrong.length + " 条，头一条：" + JSON.stringify([wrong[0], fn.plainOf(wrong[0]), richjs.plainOf(wrong[0])]) + "）" : ""}`);
+  }
 
   // ---- 反过来写回去（reply.js 的 rawOf）：她按停把他的回话掐断以后，剩下的那几样要写回他的写法 ----
   {
@@ -876,9 +1384,9 @@ function resetWorld() {
   ];
   for (const [what, text, want] of slow) {
     const t0 = performance.now();
-    const quick = fn.previewOf(text);
+    const quick = flat(text);
     const mid = performance.now();
-    const here = expect(text);
+    const here = expect(text).join("\n");
     const t1 = performance.now();
     ok(quick === here && (want === null || quick === want) && mid - t0 < 300 && t1 - mid < 300, `不拖：${what}：小后端 ${Math.round(mid - t0)} 毫秒、网页 ${Math.round(t1 - mid)} 毫秒就拆完，两边拆的一样`);
   }
@@ -891,11 +1399,30 @@ function resetWorld() {
   ];
   for (const [what, text, want] of slowHere) {
     const t0 = performance.now();
-    const quick = fn.previewOf(text);
+    const quick = flat(text);
     const took = performance.now() - t0;
     ok(quick === want && took < 300, `不拖：${what}：小后端 ${Math.round(took)} 毫秒就拆完`);
   }
-  ok(fn.previewOf("好".repeat(100000) + "[SPLIT]尾巴") === "好".repeat(60000), "横幅：回话太长只看前六万个字（横幅上本来也只写三百个）");
+  // 认标题、认加粗的那几条规矩碰上最难缠的写法（几万个连着的空格、星号、井号，凑不成对的星号一长串）：也是一眨眼。
+  // 小后端只看回话的前六万个字，这里就照六万个字的量来
+  const slowRich = [
+    ["标题后面五万多个空格", "# 标题" + " ".repeat(29000) + "尾巴" + " ".repeat(29000) + "## "],
+    ["三万个星号、一个字、三万个空格、一个星号", "*".repeat(29990) + "字" + " ".repeat(29990) + "*"],
+    ["六万个井号", "#".repeat(60000)],
+    ["一万五千回“*a**”", "*a**".repeat(15000)],
+    ["两个星号后面三万回“a*”", "**" + "a*".repeat(29000)],
+    ["加粗里头夹着一万九千个动作", "**" + "*a*".repeat(19000) + "**"],
+    ["五千行星号打头的列表", ("* **项**：字\n").repeat(5000)],
+    ["两万个连着的反引号围栏", "```".repeat(20000)],
+    ["两万行“**”", ("**\n").repeat(19000) + "字"],
+  ];
+  for (const [what, text] of slowRich) {
+    const t0 = performance.now();
+    const quick = fn.bubblesOf(text);
+    const took = performance.now() - t0;
+    ok(JSON.stringify(quick) === JSON.stringify(expect(text)) && took < 300, `不拖：${what}：小后端 ${Math.round(took)} 毫秒就认完，和网页认的一样`);
+  }
+  ok(flat("好".repeat(100000) + "[SPLIT]尾巴") === "好".repeat(60000), "横幅：回话太长只看前六万个字（横幅上本来也只写三百个）");
 
   // 太长的截掉
   const long = "很长".repeat(400);
@@ -905,12 +1432,18 @@ function resetWorld() {
   const cutF = fn.clip(family, 300, 1800);
   ok(new TextEncoder().encode(cutF).length <= 1800 && cutF.endsWith("…") && cutF.slice(0, -1).length % "👨\u200d👩\u200d👧\u200d👦".length === 0, "横幅：字少但占的字节多（一长串拼起来的表情），按字节再截，不把一个表情劈开");
   const b = fn.bannerOf({ status: 200, data: { content: [{ type: "text", text: "<thinking>x</thinking>\n" + long }, { type: "mcp_tool_use", name: "t" }, { type: "text", text: "尾巴" }] }, used: {} }, "光义");
-  ok(b.title === "光义" && Array.from(b.body).length === 300 && fn.bannerOf(null, "光义").title === "开封府" && fn.bannerOf({ status: 200, data: { content: [] }, used: {} }, "").title === "开封府" && fn.bannerOf({ status: 200, data: { content: [] }, used: {} }, "x").body === "……",
-    "横幅：名字用网页给的（没给就写开封府）；回话是空的写省略号；没回成的不写他的话");
+  ok(b.title === "光义" && b.bodies.length === 1 && Array.from(b.bodies[0]).length === 300 && b.bodies[0].endsWith("…") && fn.bannerOf(null, "光义").title === "开封府" && fn.bannerOf({ status: 200, data: { content: [] }, used: {} }, "").title === "开封府" && fn.bannerOf({ status: 200, data: { content: [] }, used: {} }, "x").bodies.join() === "……",
+    "横幅：名字用网页给的（没给就写开封府）；每一条最多三百个字；回话是空的写省略号");
+  const failed = fn.bannerOf(null, "光义");
+  const failed2 = fn.bannerOf({ status: 529, data: { type: "error", error: { type: "overloaded_error", message: "Overloaded" } }, used: {} }, "光义");
+  ok(failed.bodies.length === 1 && failed.bodies[0] === "这条消息没送到。回开封府点一下重发。" && failed2.title === "开封府" && failed2.bodies.join() === failed.bodies.join(), "横幅：没回成的就一条，照实说没送到，不写他的话");
   ok(fn.bannerOf({ status: 200, data: { content: [{ type: "text", text: "好" }] }, used: {} }, "名字".repeat(50)).title.length <= 40, "横幅：名字太长也截");
   const heavy = fn.bannerOf({ status: 200, data: { content: [{ type: "text", text: family }] }, used: {} }, "光义");
-  const heavyNotice = JSON.stringify({ web_push: 8030, notification: { title: heavy.title, body: heavy.body, navigate: PAGE + "dingxiang/#n=r." + "T".repeat(32) + "." + "J".repeat(20), lang: "zh-CN", dir: "ltr" } });
-  ok(new TextEncoder().encode(heavy.body).length <= 1800 && new TextEncoder().encode(heavyNotice).length <= 3000, `横幅：一长串拼起来的表情，写上横幅以后整条通知还在推送服务肯收的大小以内（${new TextEncoder().encode(heavyNotice).length} 个字节）`);
+  // 整条通知就是小后端真寄的那个样子：名字、字、回程的网址、通知自己的记号都按最长的算（对话的记号、编号各六十四个字，第几条是四位数）
+  const heavyNotice = JSON.stringify(fn.replyNotice(PAGE + "dingxiang/" + "p".repeat(240), { title: fn.clip("名".repeat(100), 40, 160), body: heavy.bodies[0] }, "J".repeat(64), "T".repeat(64), 9999));
+  const heavyTag = JSON.parse(heavyNotice).notification.tag;
+  ok(heavy.bodies.length === 1 && new TextEncoder().encode(heavy.bodies[0]).length <= 1800 && new TextEncoder().encode(heavyNotice).length <= 3000 && !!notifyjs.parseBannerTag(heavyTag) && notifyjs.parseBannerTag(heavyTag).nth === 9999,
+    `横幅：一长串拼起来的表情，写上横幅以后整条通知还在推送服务肯收的大小以内（名字、网址、记号都按最长的算：${new TextEncoder().encode(heavyNotice).length} 个字节）`);
 }
 
 // ================= 手机这一头：对话上的手艺（src/thread.js） =================
