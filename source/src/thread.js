@@ -7,6 +7,7 @@
 // 重新回答、改她说过的话，都会在那一条上开分支：alts 里存着每一支（node 是那一条，after 是它后面的对话），
 // altIdx 是眼下摆在外面的是第几支。
 // =====================================================
+import { rawOf } from "./reply.js";
 
 // 在第 i 条开一个新分支：旧的这条连同它后面的对话存进 alts，新的接上，后面清空
 export function forkAt(msgs, i, newNode) {
@@ -36,6 +37,57 @@ export function needsReply(msgs) {
     return msgs[i].role === "her";
   }
   return false;
+}
+
+// ---------- 她按了停 ----------
+// 回话还没到的时候按的：那一回作废，她那句话留着，上面记一笔 stopped，底下摆一行“停了，点这里让我回”。
+// 回话正在一条一条蹦的时候按的：掐断，蹦出来的留着，没蹦出来的不要了。
+
+// 在最后一句（不算换头像提示）她的话上记一笔“停了”。最后一句不是她的、已经记过了：原样交回（同一个数组）
+export function markStopped(msgs) {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === "event") continue;
+    if (msgs[i].role !== "her" || msgs[i].stopped) return msgs;
+    return msgs.slice(0, i).concat([{ ...msgs[i], stopped: true }], msgs.slice(i + 1));
+  }
+  return msgs;
+}
+
+// 她点了那行小字、自己要回话了：那一笔擦掉，这一句往后和平常的话一样（没送成会补发、会排队）。没有那一笔：原样交回
+export function unmarkStopped(msgs) {
+  const at = stoppedAt(msgs);
+  if (!at) return msgs;
+  return msgs.map((m) => {
+    if (m.id !== at) return m;
+    const { stopped, ...rest } = m;
+    return rest;
+  });
+}
+
+// 底下该不该摆那行“停了”：最后一句（不算换头像提示）是她的话、上面记着停了，回那一句的 id；不然回 ""。
+// 那一句后面有了回话、她又说了别的，这一笔就不作数了（不用特意擦掉）；她点了小字，这一笔当场擦掉（见 unmarkStopped）
+export function stoppedAt(msgs) {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === "event") continue;
+    return msgs[i].stopped ? msgs[i].id : ""; // 这一笔只往她的话上记（见 markStopped）
+  }
+  return "";
+}
+
+// 掐断他的那一条：只留头 count 样（至少留一样），后面的不要了。按整样算，不从一条话中间切。
+// 那一条的 raw 照剩下的重写（见 reply.js 的 rawOf）：往后那边的我只当自己就说了这么多。
+// 心里话、用了哪些工具、改没改名字都照旧留着（名字在回话到的那一刻就已经改了）。
+// 回 { msgs, dropped }：dropped 是不要了的那几样（里面要是有换头像，外头得把头像换回去）。
+// 没有这一条、没什么可掐的（都蹦完了；她的话上本来就没有这几样）：回 null
+export function cutReply(msgs, id, count) {
+  const i = msgs.findIndex((m) => m.id === id);
+  if (i < 0) return null;
+  const items = msgs[i].items || [];
+  const keep = Math.max(1, count || 0);
+  if (keep >= items.length) return null;
+  const kept = items.slice(0, keep);
+  const m = { ...msgs[i], items: kept, raw: rawOf(kept, msgs[i].rename || ""), cut: true };
+  return { msgs: msgs.slice(0, i).concat([m], msgs.slice(i + 1)), dropped: items.slice(keep) };
 }
 
 // 回复插在这次请求的最后一条后面，回复途中她又发的排在回复后面

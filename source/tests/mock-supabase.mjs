@@ -177,11 +177,12 @@ function send(res, status, body) {
   res.writeHead(status, { ...cors, "Content-Type": "application/json" });
   res.end(body === undefined ? "" : JSON.stringify(body));
 }
+// 一块一块收齐了再转成字：一块一块转的话，一个汉字正好被劈在两块之间就成了乱码（长对话里碰上过）
 const readBody = (req) =>
   new Promise((resolve) => {
-    let d = "";
-    req.on("data", (c) => (d += c));
-    req.on("end", () => resolve(d));
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
   });
 
 http

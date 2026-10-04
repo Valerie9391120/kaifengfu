@@ -45,8 +45,11 @@ export const remote = {
   },
 };
 
-// 传话：拿着登录凭证去敲 claude 函数的门
-export async function callClaude(body, beta) {
+// 传话：拿着登录凭证去敲 claude 函数的门。
+// signal：她一按停就 abort（AbortSignal，聊天那一处才递；写日记、测试连接不递）。按了：这头的连接掐掉；
+// 外头那时候已经当“停了”收场（见 App.jsx 的 unlessStopped），这里后来抛什么错都没人看。
+// 只有一样要守住：按了停以后不能再把回话交出去，交了会被拿去整理（换头像、改名字、记用量）
+export async function callClaude(body, beta, signal) {
   const { data } = await supabase.auth.getSession();
   const token = data && data.session && data.session.access_token;
   if (!token) throw new Error("登录过期了，重新登录一下");
@@ -61,6 +64,7 @@ export async function callClaude(body, beta) {
         ...(beta ? { "x-kfs-beta": beta } : {}),
       },
       body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
   } catch (e) {
     throw new Error("连不上开封府的后端，看看网络");
@@ -71,6 +75,8 @@ export async function callClaude(body, beta) {
   } catch (e) {
     throw new Error(`后端没回话（${res.status}）`);
   }
+  // 回话正好读完的那一下她按了停：不交出去
+  if (signal && signal.aborted) throw Object.assign(new Error("停了"), { code: "stopped" });
   if (d && d.error) throw new Error(explainError(res.status, d.error));
   if (!res.ok) throw new Error((d && (d.message || d.msg)) || `出错了（${res.status}）`);
   return d;
