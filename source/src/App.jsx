@@ -1072,7 +1072,7 @@ function makePreview(msgs) {
 }
 
 // 气泡里的字：标题行加大加粗、**加粗**、*动作* 淡斜体（怎么拆见 rich.js）
-const RICH_H = [0, 20, 18, 16.5, 15.5, 15.5, 15.5]; // 一到六个井号的标题各多大（气泡里平常的字是 15.5）
+const RICH_H = [0, 20, 18, 16.5, 16.5, 16.5, 16.5]; // 一到六个井号的标题各多大（气泡里平常的字是 15.5；三级往下一样大，再小就和正文分不出来了）
 function renderRich(text) {
   const blocks = richBlocks(text);
   const inline = (parts, n) =>
@@ -1092,7 +1092,7 @@ function renderRich(text) {
   return blocks.map((b, n) =>
     b.t === "h" ? (
       // 标题自己占一行；上面要是还有字，留一点空
-      <div key={n} className="kfs-h" style={{ fontSize: RICH_H[b.level], fontWeight: 600, lineHeight: 1.4, marginTop: n ? 8 : 0, marginBottom: n < blocks.length - 1 ? 3 : 0 }}>
+      <div key={n} className="kfs-head" role="heading" aria-level={b.level} style={{ fontSize: RICH_H[b.level], fontWeight: 600, lineHeight: 1.4, marginTop: n ? 8 : 0, marginBottom: n < blocks.length - 1 ? 3 : 0 }}>
         {inline(b.parts, n)}
       </div>
     ) : (

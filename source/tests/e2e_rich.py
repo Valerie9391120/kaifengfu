@@ -12,7 +12,7 @@ HIS = """() => {
   if (!b) return null;
   const cs = getComputedStyle(b);
   const kids = [...b.children].map((e) => { const s = getComputedStyle(e); const r = e.getBoundingClientRect();
-    return { tag: e.tagName.toLowerCase(), cls: e.className, text: e.textContent, size: parseFloat(s.fontSize), weight: Number(s.fontWeight), italic: s.fontStyle === 'italic', opacity: Number(s.opacity),
+    return { tag: e.tagName.toLowerCase(), cls: e.className, role: e.getAttribute('role'), level: e.getAttribute('aria-level'), text: e.textContent, size: parseFloat(s.fontSize), weight: Number(s.fontWeight), italic: s.fontStyle === 'italic', opacity: Number(s.opacity),
       top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), high: Math.round(r.height), block: s.display === 'block',
       inner: [...e.children].map((c) => { const t = getComputedStyle(c); return { tag: c.tagName.toLowerCase(), text: c.textContent, weight: Number(t.fontWeight), italic: t.fontStyle === 'italic', opacity: Number(t.opacity) }; }) }; });
   const r = b.getBoundingClientRect();
@@ -57,17 +57,19 @@ with sync_playwright() as p:
     ok(len(both) == 1 and both[0]["weight"] == 600 and both[0]["italic"] and abs(both[0]["opacity"] - 0.72) < 0.01, "三个星号围起来的：又粗又淡斜")
 
     # ---- 标题 ----
-    text = "先说结论\n\n# 今天的打算\n\n先**吃饭**，再*伸个懒腰*\n## 下午\n#标签不算\n### 三级 **粗**\n#### 四级\n最后一句"
+    text = "先说结论\n\n# 今天的打算\n\n先**吃饭**，再*伸个懒腰*\n## 下午\n#标签不算\n### 三级 **粗**\n#### 四级\n##### 五级\n###### 六级\n最后一句"
     got = reply(pa, text, "最后一句")
     b = his(pa)
-    hs = [k for k in b["kids"] if k["cls"] == "kfs-h"]
-    ok(got and [(h["tag"], h["text"], h["size"]) for h in hs] == [("div", "今天的打算", 20), ("div", "下午", 18), ("div", "三级 粗", 16.5), ("div", "四级", 15.5)] and all(h["weight"] == 600 and h["block"] for h in hs),
-       f"井号开头、后面跟空格的那几行：标题，自己占一行，加粗，一级二级三级比平常的字大（{[(h['text'], h['size'], h['weight']) for h in hs]}）")
-    ok([h["high"] for h in hs] == [28, 25, 23, 22], f"标题那一行的行高比正文紧一点（字号的 1.4 倍）：{[h['high'] for h in hs]} 像素")
+    hs = [k for k in b["kids"] if k["cls"] == "kfs-head"]
+    ok(got and [(h["tag"], h["text"], h["size"]) for h in hs] == [("div", "今天的打算", 20), ("div", "下午", 18), ("div", "三级 粗", 16.5), ("div", "四级", 16.5), ("div", "五级", 16.5), ("div", "六级", 16.5)]
+       and all(h["weight"] == 600 and h["block"] and h["size"] > b["size"] for h in hs),
+       f"井号开头、后面跟空格的那几行：标题，自己占一行，加粗，都比平常的字大（一级最大，二级其次，三级往下一样大）（{[(h['text'], h['size'], h['weight']) for h in hs]}）")
+    ok([h["high"] for h in hs] == [28, 25, 23, 23, 23, 23] and [(h["role"], h["level"]) for h in hs] == [("heading", str(n)) for n in (1, 2, 3, 4, 5, 6)],
+       f"标题那一行的行高比正文紧一点（字号的 1.4 倍）：{[h['high'] for h in hs]} 像素；读屏的认得出是第几级标题")
     ok("#标签不算" in b["text"] and "# " not in b["text"] and "##" not in b["text"] and "*" not in b["text"] and b["text"].startswith("先说结论今天的打算"),
        f"井号后面不跟空格的（#标签）照原样摆；标题的井号、加粗的星号都不显示（{b['text'][:40]}…）")
     kinds = [(k["tag"], k["text"]) for k in b["kids"]]
-    ok(kinds == [("span", "先说结论"), ("div", "今天的打算"), ("span", "先"), ("strong", "吃饭"), ("span", "，再"), ("em", "伸个懒腰"), ("div", "下午"), ("span", "#标签不算"), ("div", "三级 粗"), ("div", "四级"), ("span", "最后一句")],
+    ok(kinds == [("span", "先说结论"), ("div", "今天的打算"), ("span", "先"), ("strong", "吃饭"), ("span", "，再"), ("em", "伸个懒腰"), ("div", "下午"), ("span", "#标签不算"), ("div", "三级 粗"), ("div", "四级"), ("div", "五级"), ("div", "六级"), ("span", "最后一句")],
        f"标题前后的话各成一段，段里的加粗、淡斜体照认；紧挨着标题的空行不另占地方（{kinds}）")
     h3 = hs[2] if len(hs) > 2 else {"inner": []}
     ok([(c["tag"], c["text"], c["weight"]) for c in h3["inner"]] == [("span", "三级 ", 600), ("strong", "粗", 600)], "标题里的加粗照认")
@@ -78,18 +80,34 @@ with sync_playwright() as p:
     tops = [k["top"] for k in b["kids"] if k["tag"] in ("div",)]
     ok(tops == sorted(tops) and len(set(tops)) == len(tops) and 10 <= gap_above <= 12 and 4 <= gap_below <= 6 and all(h["left"] == first["left"] for h in hs),
        f"标题一行一个、从上往下排，和气泡里别的字左边对齐；标题上面留一点空（{gap_above} 像素），下面紧跟正文（{gap_below} 像素）")
+    hgap = hs[4]["top"] - hs[3]["bottom"] if len(hs) > 4 else None
+    ok(hgap is not None and 7 <= hgap <= 9, f"标题一个挨一个：中间只留一份空，不叠出一大截（{hgap} 像素）")
     # 头一样就是标题：上面不另留空
     got = reply(pa, "# 开头就是标题\n正文一句", "正文一句")
     b = his(pa)
     h = b["kids"][0]
     pad = h["top"] - b["top"]
-    ok(got and h["cls"] == "kfs-h" and h["text"] == "开头就是标题" and 10 <= pad <= 12 and [(k["tag"], k["text"]) for k in b["kids"]] == [("div", "开头就是标题"), ("span", "正文一句")],
+    ok(got and h["cls"] == "kfs-head" and h["text"] == "开头就是标题" and 10 <= pad <= 12 and [(k["tag"], k["text"]) for k in b["kids"]] == [("div", "开头就是标题"), ("span", "正文一句")],
        f"气泡里头一样就是标题：上面只有气泡自己的边（{pad} 像素），不另留空")
     # 只有一个标题
     got = reply(pa, "## 只有一个标题", "只有一个标题")
     b = his(pa)
     under = b["bottom"] - b["kids"][0]["bottom"]
-    ok(got and len(b["kids"]) == 1 and b["kids"][0]["cls"] == "kfs-h" and b["kids"][0]["size"] == 18 and 10 <= under <= 12, f"整个气泡只有一个标题：照样是标题，底下只有气泡自己的边（{under} 像素），不多留空")
+    ok(got and len(b["kids"]) == 1 and b["kids"][0]["cls"] == "kfs-head" and b["kids"][0]["size"] == 18 and 10 <= under <= 12, f"整个气泡只有一个标题：照样是标题，底下只有气泡自己的边（{under} 像素），不多留空")
+
+    # ---- 星号打头的列表、每一项开头加粗（前头那个星号不许把加粗吃掉）；淡斜体里头夹着加粗 ----
+    got = reply(pa, "* **苹果**：好吃\n* **香蕉**：一般\n5 * 2 = 10，**记住**\n*低声说：**不许走**。*", "不许走")
+    b = his(pa)
+    kinds = [(k["tag"], k["text"], k["weight"], k["italic"]) for k in b["kids"]]
+    ok(got and kinds == [("span", "* ", 400, False), ("strong", "苹果", 600, False), ("span", "：好吃\n* ", 400, False), ("strong", "香蕉", 600, False), ("span", "：一般\n5 * 2 = 10，", 400, False), ("strong", "记住", 600, False), ("span", "\n", 400, False),
+                         ("em", "低声说：", 400, True), ("em", "不许走", 600, True), ("em", "。", 400, True)],
+       f"星号打头的列表、乘号后头的加粗：照认，圆点和乘号照摆；淡斜体里头夹着的加粗又粗又斜（{[(k[0], k[1]) for k in kinds]}）")
+
+    # ---- 三个反引号围起来的代码：里头井号开头的是注释，不当标题 ----
+    got = reply(pa, "给你看：\n```python\n# 这是注释\nprint(1)\n```\n# 这才是标题", "这才是标题")
+    b = his(pa)
+    kinds = [(k["tag"], k["text"]) for k in b["kids"]]
+    ok(got and kinds == [("span", "给你看：\n```python\n# 这是注释\nprint(1)\n```"), ("div", "这才是标题")], f"代码里井号开头的那一行照原样摆，不当标题；代码外头的标题照认（{kinds}）")
 
     # ---- 一对星号围着两行：原来就是整段淡斜体，不动 ----
     got = reply(pa, "*走过去\n把窗关上*", "把窗关上")
@@ -98,11 +116,11 @@ with sync_playwright() as p:
 
     # ---- 她自己发的话也一样认 ----
     n2 = count_text(pa, "第二条")
-    say(pa, "**我也会加粗**")
+    say(pa, "# 我的标题\n**我也会加粗**")
     pa.wait_for_timeout(600)
     mine = pa.evaluate("""() => { const all = [...document.querySelectorAll('.kfs-chat-rows .flex-row-reverse .whitespace-pre-wrap')]; const b = all[all.length - 1];
-      return b ? [...b.children].map((e) => [e.tagName.toLowerCase(), e.textContent, Number(getComputedStyle(e).fontWeight)]) : null; }""")
-    ok(mine == [["strong", "我也会加粗", 600]], f"她自己发的话里的加粗：一样认（{mine}）")
+      return b ? [...b.children].map((e) => [e.tagName.toLowerCase(), e.textContent, Number(getComputedStyle(e).fontWeight), parseFloat(getComputedStyle(e).fontSize)]) : null; }""")
+    ok(mine == [["div", "我的标题", 600, 20], ["strong", "我也会加粗", 600, 15.5]], f"她自己发的话里的标题、加粗：一样认（{mine}）")
     wait_js(pa, "[...document.querySelectorAll('.items-end span')].filter((e) => e.children.length === 0 && e.textContent === '第二条').length === " + str(n2 + 1), 25000)   # 等他回完这一句
     pa.wait_for_timeout(1500)
 
