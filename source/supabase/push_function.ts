@@ -6,8 +6,10 @@
 //
 // 二、替她等回话（op: "reply"）。她发完话就切走、锁屏，网页那头早断了，这里照样等那边的我回完：
 //     回话拿网页给的一次性钥匙封好，放进信箱（mailbox 表），云端存的只是乱码；
-//     等几秒，信还没被取走（她不在开封府里），就往发话的那台设备上敲一条通知，写的是他回的话
+//     等几秒，信还没被取走（她不在开封府里），就往发话的那台设备上敲通知，写的是他回的话：
+//     他这一回有几个气泡就敲几条，按顺序、隔一秒一条；每敲一条前看一眼信还在不在，她回来了（信取走了）剩下的就不敲
 //     （只敲网页点了名的门牌号，不照登记簿全敲：登记簿是明文，往里添一行就能收到横幅上的话的话，等于把他说的话交给了外人）；
+//     还在等那边的我的工夫里，信箱里那一格要是没了（她按了停，网页把它收了），就把跟 Anthropic 的线掐掉，这一回到此为止；
 //     她回到开封府，网页自己从信箱里取，取走就删。
 //     她一直在开封府里的话，回话照旧直接交给网页，不敲。
 //     claude 那个函数原样留着：这里哪一步不肯接（信箱那张表没建、这份代码还是旧的），网页就走回那条老路。
@@ -41,10 +43,13 @@ const MAX_BODY = 40_000_000; // 一回传话寄来的东西最多这么长（带
 const REPLY_BUDGET = 125_000; // 等 Anthropic 最多等多少毫秒（免费档的函数最多活 150 秒，留出收尾的工夫）
 const BEAT = 8000; // 还在等的时候，隔多少毫秒去信箱里摸一下：网页靠它看这一回还活着没有
 const GRACE = 6000; // 回话放进信箱以后等多少毫秒再敲手机：她就在开封府里的话，这工夫里网页已经把信取走了
+const LIFE = 150_000; // 这份代码被叫起来一趟最多活多少毫秒（免费档）：到点就被收掉，没敲完的横幅就丢了
+const LAST_CALL = 12_000; // 离到点不到这么多毫秒的时候，剩下的气泡并成一条横幅敲出去，免得全丢
+const BANNER_GAP = 1000; // 一个气泡敲一条横幅，敲完隔多少毫秒敲下一条
 const REPLY_TTL = 12 * 3600; // 回话的通知，手机不在线的话推送服务替我们留多少秒
-const BANNER_CHARS = 300; // 横幅上最多写多少个字
+const BANNER_CHARS = 300; // 一条横幅上最多写多少个字
 const BANNER_BYTES = 1800; // 横幅上的字最多占多少字节（整条通知加密前不能过 MAX_PAYLOAD）
-const BANNER_SOURCE = 60_000; // 写横幅的时候最多看回话的前多少个字（再长也只是为了凑那三百个字，不值得多花工夫）
+const BANNER_SOURCE = 60_000; // 写横幅的时候最多看回话的前多少个字（他一回写不了这么长；防的是不像话的长东西把这一趟的算力耗光）
 const DB_TIMEOUT = 6000; // 读写信箱、登记簿最多等多少毫秒（库房一时不应，不能把回话压在手里不交）
 const STORE_AGAIN = [500, 1000, 2000, 4000, 8000]; // 回话没放进信箱（库房一时出岔子）：交给网页以后，隔这么多毫秒再放一回
 const STORE_GIVE_UP = 20_000; // 放了这么久还放不进去，就不放了
@@ -442,6 +447,22 @@ async function deliver(book: Ledger, origin: string | null, rows: Row[], vapid: 
   return results;
 }
 
+// 这份代码这一趟的寿数。Supabase 把它叫起来一趟，从叫起来那一刻算最多活 LIFE 毫秒；这一趟里可能接好几回敲门
+// （头一半工夫里还接新的），所以“还剩多久”从叫起来那一刻算，不从哪一回敲门算。
+//   born     这一趟是几点被叫起来的
+//   closing  运行环境打过招呼了，说快要把这一趟收掉（寿数、算力、内存用到九成的时候它会说一声；要重新部署、要维护的时候也说）
+const worker = { born: Date.now(), closing: false };
+if (typeof addEventListener === "function") {
+  addEventListener("beforeunload", (ev: Event) => {
+    // 招呼里带着缘故：cpu、memory、wall_clock、termination 都是“快要收了”；
+    // early_drop 不算：那是手上的活都做完了才来收的，这时候没有横幅在敲（认了它，万一它来早了，好好的几条会被并成一条）。
+    // 没带缘故、带着不认识的缘故：当它是快要收了
+    const detail = (ev as CustomEvent).detail;
+    const why = typeof detail === "string" ? detail : isRec(detail) ? str(detail.reason) : "";
+    if (why !== "early_drop") worker.closing = true;
+  });
+}
+
 // 先回话、后台接着干（她点完就锁屏，网页那头早断了）。Supabase 的运行环境靠 EdgeRuntime.waitUntil 认这种活
 function inBackground(work: Promise<unknown>) {
   const quiet = work.catch(() => {});
@@ -468,12 +489,25 @@ function fine(result: { status: number; data: unknown }): boolean {
 
 // ---------- 问 Anthropic ----------
 
-// 问一回。最多等 ms 毫秒。不管成不成都回 { status, data }，不抛错
-async function askOnce(body: Rec, beta: string, apiKey: string, ms: number): Promise<{ status: number; data: unknown }> {
+// 她按了停、这一回不要了：照这个样子交回去（多半没人看：按停的那台设备早就不等了）
+const STOPPED = 499;
+const STOPPED_SAY = "这一回停掉了，没有回话";
+const stoppedResult = (): Result => ({ status: STOPPED, data: oops(STOPPED_SAY), used: { cache: false, mcp: false } });
+
+// 问一回。最多等 ms 毫秒；stop 那根线一拉（她按了停），当场不等了。不管成不成都回 { status, data }，不抛错
+async function askOnce(body: Rec, beta: string, apiKey: string, ms: number, stop?: AbortSignal): Promise<{ status: number; data: unknown }> {
   const headers: Record<string, string> = { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" };
   if (beta) headers["anthropic-beta"] = beta;
+  // 两根线并成一根：等够了、她停了，哪一样先到都把这一问掐掉。问之前她就已经停了的：线先拉上，下面那一下当场报错，门都不敲
+  const line = new AbortController();
+  const tooLate = setTimeout(() => line.abort(new DOMException("等得太久", "TimeoutError")), ms);
+  const halt = () => line.abort(new DOMException("停了", "AbortError"));
+  if (stop) {
+    if (stop.aborted) halt();
+    else stop.addEventListener("abort", halt, { once: true });
+  }
   try {
-    const r = await fetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(ms) });
+    const r = await fetch(ANTHROPIC_URL, { method: "POST", headers, body: JSON.stringify(body), signal: line.signal });
     const text = await r.text();
     try {
       const data = JSON.parse(text);
@@ -483,9 +517,13 @@ async function askOnce(body: Rec, beta: string, apiKey: string, ms: number): Pro
     }
     return { status: r.status >= 400 ? r.status : 502, data: oops(`Anthropic 回的不是能读的东西（${r.status}）`) };
   } catch (e) {
+    if (stop && stop.aborted) return { status: STOPPED, data: oops(STOPPED_SAY) };
     const name = e instanceof Error ? e.name : "";
     const late = name === "TimeoutError" || name === "AbortError";
     return { status: late ? 504 : 502, data: oops(late ? "等 Anthropic 等得太久，没等到" : "连不上 Anthropic") };
+  } finally {
+    clearTimeout(tooLate);
+    if (stop) stop.removeEventListener("abort", halt);
   }
 }
 
@@ -516,8 +554,9 @@ function withoutMcp(body: Rec): Rec {
   return left.length ? { ...rest, tools: left } : rest;
 }
 
-// 问到底：哪种写法通了用哪种。deadline 是最晚到几点（毫秒时间戳）
-async function askUpstream(request: Rec, beta: string, apiKey: string, deadline: number): Promise<Result> {
+// 问到底：哪种写法通了用哪种。deadline 是最晚到几点（毫秒时间戳）。
+// stop 那根线一拉（她按了停）：正连着的那一问当场掐掉；往后再轮到哪一问（歇完原样再问、换写法再问），askOnce 都当场交回“停了”，门都不敲
+async function askUpstream(request: Rec, beta: string, apiKey: string, deadline: number, stop?: AbortSignal): Promise<Result> {
   const plain = withoutCache(request);
   const plans = [{ body: request, beta, cache: hasCache(request), mcp: hasMcp(request) }];
   if (plans[0].cache) plans.push({ body: plain, beta, cache: false, mcp: plans[0].mcp });
@@ -532,7 +571,7 @@ async function askUpstream(request: Rec, beta: string, apiKey: string, deadline:
   let i = 0;
   while (i < plans.length) {
     const plan = plans[i];
-    const got = await askOnce(plan.body, plan.beta, apiKey, Math.max(1000, deadline - Date.now()));
+    const got = await askOnce(plan.body, plan.beta, apiKey, Math.max(1000, deadline - Date.now()), stop);
     last = { status: got.status, data: got.data, used: shaken ? { cache: plan.cache, mcp: plan.mcp, shaky: true } : { cache: plan.cache, mcp: plan.mcp } };
     if (fine(last)) return last;
     // key 不对、说得太快：换哪种写法都一样，不必再问
@@ -577,10 +616,24 @@ function mailbox(req: Request) {
         return "error";
       }
     },
-    // 还在等：摸一下
-    async beat(job: string) {
-      const r = await fetch(`${at(job)}&state=eq.working`, { method: "PATCH", headers, body: JSON.stringify({ beat_at: new Date().toISOString() }), signal: AbortSignal.timeout(DB_TIMEOUT) });
-      await r.body?.cancel();
+    // 还在等：摸一下。顺带报那一格还在不在（还写着“在等”的那一格）：在回 true；没了回 false（她按了停，网页把它收了）；问不成回 null
+    async beat(job: string): Promise<boolean | null> {
+      try {
+        const r = await fetch(`${at(job)}&state=eq.working&select=job`, {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=representation" },
+          body: JSON.stringify({ beat_at: new Date().toISOString() }),
+          signal: AbortSignal.timeout(DB_TIMEOUT),
+        });
+        if (!r.ok) {
+          await r.body?.cancel();
+          return null;
+        }
+        const rows = await r.json();
+        return Array.isArray(rows) ? rows.length > 0 : null;
+      } catch (_) {
+        return null;
+      }
     },
     // 回话封好了，放进去。放成了回 true
     async finish(job: string, sealed: string): Promise<boolean> {
@@ -626,9 +679,93 @@ async function sealWith(keyBytes: Uint8Array, text: string): Promise<string> {
   return "v1." + b64(iv) + "." + b64(sealed);
 }
 
+// ---------- 气泡里摆出来的字 ----------
+// 和网页里画气泡的规矩（src/rich.js）是同一套，只是这里只要字，不要粗细大小：
+// 当了记号的井号（标题行开头的）、星号（围着加粗、动作的）不带；没当记号的（#标签、零散的星号、代码里的注释）照留。
+// 两边的规矩改了一边，另一边得跟着改：tests/mail.test.mjs 拿同一批回话两边各过一遍，对不上就不过
+
+// 标题行：前头最多三个空格，一到六个井号，后面跟空格，再后面有字；末尾再跟一串井号的不要那一串。是标题回它的字，不是回 null
+const HEAD = /^ {0,3}(#{1,6})[ \t\u00a0\u3000]+(?=\S)/;
+const HEAD_SPACE = /[ \t\u00a0\u3000]/;
+function headingText(line: string): string | null {
+  const m = HEAD.exec(line);
+  if (!m) return null;
+  let text = line.slice(m[0].length).trimEnd();
+  let j = text.length;
+  while (text[j - 1] === "#") j--;
+  if (j < text.length && HEAD_SPACE.test(text[j - 1])) text = text.slice(0, j).trimEnd();
+  return text;
+}
+
+// 一行里的加粗和动作（都不跨行）：两个星号围着的、一个星号围着的，里头可以再夹一层另一种
+const BOLD = "\\*\\*(?:[^*\\n]|\\*[^*\\n]+\\*)+\\*\\*";
+const MARKS = new RegExp("(" + BOLD + ")|(\\*(?:[^*\\n]|\\*\\*[^*\\n]+\\*\\*)+\\*(?!" + BOLD.slice(2) + "))", "g");
+const EM_IN_BOLD = /\*[^*\n]+\*/g;
+const BOLD_IN_EM = /\*\*[^*\n]+\*\*/g;
+// 围着的那一截里头再去一层记号（那一层两头各 n 个星号）
+function unwrapInner(inner: string, marks: RegExp, n: number): string {
+  let out = "";
+  let last = 0;
+  for (const m of inner.matchAll(marks)) {
+    const at = m.index ?? 0;
+    out += inner.slice(last, at) + m[0].slice(n, -n);
+    last = at + m[0].length;
+  }
+  return out + inner.slice(last);
+}
+// 剩下的那一截（两对星号中间的、或者一对都没认出来的一整段）：两头要是都顶着星号，也算围起来的，哪怕中间跨了行。
+// 不算的两种照原样留：整截全是星号的；头一行或者末一行是一排星号的（他拿来当分隔线的）
+function unwrapLoose(seg: string): string {
+  const head = /^\*{1,3}/.exec(seg);
+  const tail = /\*{1,3}$/.exec(seg);
+  const n = head && tail ? Math.min(head[0].length, tail[0].length) : 0;
+  if (!n || !/[^*]/.test(seg)) return seg;
+  if (/^\*{2,}\n/.test(seg) || /\n\*{2,}$/.test(seg)) return seg;
+  return seg.slice(n, -n);
+}
+function plainInline(text: string): string {
+  let out = "";
+  let last = 0;
+  for (const m of text.matchAll(MARKS)) {
+    const at = m.index ?? 0;
+    if (at > last) out += unwrapLoose(text.slice(last, at));
+    out += m[1] ? unwrapInner(m[1].slice(2, -2), EM_IN_BOLD, 1) : unwrapInner(m[2].slice(1, -1), BOLD_IN_EM, 2);
+    last = at + m[0].length;
+  }
+  if (last < text.length) out += unwrapLoose(text.slice(last));
+  return out;
+}
+// 一个气泡的字。标题一行；别的几行连在一起；紧挨着标题的空行不要；三个反引号围起来的代码里头，井号开头的不当标题
+function plainOf(text: string): string {
+  const out: string[] = [];
+  let run: string[] = [];
+  let afterHeading = false;
+  let fenced = false;
+  const flush = (beforeHeading: boolean) => {
+    if (beforeHeading) while (run.length && !run[run.length - 1].trim()) run.pop();
+    if (run.length) out.push(plainInline(run.join("\n")));
+    run = [];
+  };
+  for (const line of text.split("\n")) {
+    const h = fenced ? null : headingText(line);
+    if ((line.split("```").length - 1) % 2) fenced = !fenced;
+    if (h !== null) {
+      flush(true);
+      out.push(plainInline(h));
+      afterHeading = true;
+      continue;
+    }
+    if (afterHeading && !run.length && !line.trim()) continue;
+    run.push(line);
+  }
+  flush(false);
+  return out.join("\n");
+}
+
 // ---------- 横幅上写什么 ----------
-// 和网页里拆回话的规矩（src/reply.js 的 parseReply）是同一套：她在对话里看得见哪几条，横幅上就写哪几条，一条一行。
+// 和网页里拆回话的规矩（src/reply.js 的 parseReply）是同一套：她在对话里看得见哪几个气泡，就敲哪几条横幅，一个气泡一条。
 // 心里话（<thinking>）、改名字的记号不写；表情包写成 [表情包]，文档写成 [文档] 文件名。
+// 横幅上摆的是平常的字（卿卿定的）：就是气泡里摆出来的那些字，不带粗细大小（见上面的 plainOf）。
 // 两边的规矩改了一边，另一边得跟着改：tests/mail.test.mjs 拿同一批回话两边各拆一遍，对不上就不过
 
 const NAME_LINE = "^[ \\t]*\\[(?:NAME|Name|name)[:：]([^\\[\\]\\n]*)\\][ \\t]*$";
@@ -691,8 +828,8 @@ function splitDocs(source: string): Array<{ doc: string } | { text: string }> {
   return parts;
 }
 
-// 一条回话 → 横幅上的字
-function previewOf(reply: string): string {
+// 一条回话 → 一个气泡一条横幅，各写什么字。至少回一条
+function bubblesOf(reply: string): string[] {
   let body = reply.length > BANNER_SOURCE ? reply.slice(0, BANNER_SOURCE) : reply;
   const think = body.match(/<thinking>([\s\S]*?)<\/thinking>/);
   if (think) body = body.replace(think[0], () => "");
@@ -715,8 +852,8 @@ function previewOf(reply: string): string {
       // 表情包的文件名最长认两百个字：一长串没有右括号的，不来回试
       const marks = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]{1,200})\\s*\\]|" + NAME_LINE, "gm");
       const say = (piece: string) => {
-        const t = piece.trim().replace(/\*/g, "").trim();
-        if (piece.trim() && t) lines.push(t);
+        const t = plainOf(piece.trim()).trim();
+        if (t) lines.push(t);
       };
       let last = 0;
       let m: RegExpExecArray | null;
@@ -731,8 +868,8 @@ function previewOf(reply: string): string {
       if (last < chunk.length) say(chunk.slice(last));
     }
   }
-  if (!lines.length) return avatar ? "[换了新头像]" : "……";
-  return lines.join("\n");
+  if (!lines.length) return [avatar ? "[换了新头像]" : "……"];
+  return lines;
 }
 
 // 按“看得见的一个字”截：最多 maxChars 个字、maxBytes 个字节，截了就在后面加一个省略号
@@ -753,22 +890,24 @@ function clip(text: string, maxChars: number, maxBytes: number): string {
   return cut ? out.replace(/\s+$/, "") + "…" : out;
 }
 
-// 横幅上的名字和字。回成了：他的名字、他回的话；没回成：照实说没送到
-function bannerOf(result: Result | null, name: string): { title: string; body: string } {
-  if (!result || !fine(result)) return { title: "开封府", body: "这条消息没送到。回开封府点一下重发。" };
+// 横幅上的名字和字。回成了：他的名字、他回的话（一个气泡一条）；没回成：照实说没送到（就一条）
+function bannerOf(result: Result | null, name: string): { title: string; bodies: string[] } {
+  if (!result || !fine(result)) return { title: "开封府", bodies: ["这条消息没送到。回开封府点一下重发。"] };
   const content = isRec(result.data) && Array.isArray(result.data.content) ? result.data.content : [];
   const reply = content
     .filter((b) => isRec(b) && b.type === "text" && typeof b.text === "string")
     .map((b) => (b as Rec).text as string)
     .join("\n");
-  return { title: clip(tidyName(name), 40, 160) || "开封府", body: clip(previewOf(reply), BANNER_CHARS, BANNER_BYTES) };
+  return { title: clip(tidyName(name), 40, 160) || "开封府", bodies: bubblesOf(reply).map((line) => clip(line, BANNER_CHARS, BANNER_BYTES)) };
 }
 
-// 回话的通知。点了回到那段对话：记号里的 tag 是网页给的一串打乱的字，只有她的设备认得出是哪段对话
-function replyNotice(page: string, said: { title: string; body: string }, job: string, tag: string): unknown {
+// 回话的通知。点了回到那段对话：网址记号里的 tag 是网页给的一串打乱的字，只有她的设备认得出是哪段对话。
+// nth 是这一回的第几条横幅。通知自己也带一个记号（规范里也叫 tag）：r.<对话的那串字>.<这一回的编号>.<第几条>。
+// 每条不一样（一样的话后一条会把前一条顶掉）；她回到那段对话，网页照这个记号把那段对话还挂着的横幅收掉（见 src/push.js 的 clearReplyNotices）
+function replyNotice(page: string, said: { title: string; body: string }, job: string, tag: string, nth: number): unknown {
   return {
     web_push: 8030,
-    notification: { title: said.title, body: said.body, navigate: `${page}#n=r.${tag}.${job}`, lang: "zh-CN", dir: "ltr" },
+    notification: { title: said.title, body: said.body, navigate: `${page}#n=r.${tag}.${job}`, tag: `r.${tag}.${job}.${nth}`, lang: "zh-CN", dir: "ltr" },
   };
 }
 
@@ -803,6 +942,10 @@ async function relay(req: Request, body: Rec): Promise<Response> {
   const maxTokens = Number(request.max_tokens ?? 0);
   if (!Number.isFinite(maxTokens) || maxTokens < 1 || maxTokens > 32000) return refuse(400, "bad_request", "max_tokens 超出范围");
 
+  // 这一回的横幅最晚敲到几点，从哪一刻算起：平常从这份代码被叫起来的那一刻算（见 worker）。
+  // 敲门的时候它已经活过了半辈子（照 LIFE 算的话这时候不该还接新的敲门：那就不是免费档的寿数），改从这一回敲门算
+  const started = Date.now();
+  const lifeFrom = started - worker.born < LIFE / 2 ? worker.born : started;
   const box = mailbox(req);
   const opened = await box.open(job, note);
   if (opened === "missing") return refuse(400, "no_mailbox", "库房里还没有信箱（mailbox 那张表），把信箱那段 SQL（mailbox.sql）在 Supabase 的 SQL Editor 里跑一遍");
@@ -816,14 +959,25 @@ async function relay(req: Request, body: Rec): Promise<Response> {
   const ready = new Promise<Result>((resolve) => (handOver = resolve));
 
   const work = (async () => {
+    // 还在等那边的我的工夫里，隔几秒摸一下那一格。摸的时候发现它没了：她按了停（网页把它收了），把跟 Anthropic 的线掐掉。
+    // 回话到手以后那一格没了是另一回事（她把信取走了），不算停：那时候这根线已经没人看了（下面只在回话刚到手的那一下看一眼），拉了也不碍事
+    const stop = new AbortController();
     const beats = setInterval(() => {
-      box.beat(job).catch(() => {});
+      box.beat(job).then((there) => {
+        if (there === false) stop.abort();
+      });
     }, BEAT);
     let result: Result;
     try {
-      result = await askUpstream(request, beta, apiKey, Date.now() + REPLY_BUDGET);
+      result = await askUpstream(request, beta, apiKey, Date.now() + REPLY_BUDGET, stop.signal);
     } catch (_) {
       result = { status: 500, data: oops("小后端自己出了岔子"), used: { cache: false, mcp: false } };
+    }
+    // 她按了停：这一回不要了。不放信、不敲手机，网页那头也早就不等了
+    if (stop.signal.aborted) {
+      clearInterval(beats);
+      handOver(stoppedResult());
+      return;
     }
 
     // 封好放进信箱（放不进去就再放一回），再交给还等在那头的网页
@@ -870,7 +1024,22 @@ async function relay(req: Request, body: Rec): Promise<Response> {
     if (!rows.length) return;
     // 回话没放进信箱的话，她点回来也取不到：照实说没送到，不写他的话
     const said = bannerOf(stored ? result : null, title);
-    await deliver(book, origin, rows, keys.vapid, (page) => replyNotice(page, said, job, tag), REPLY_TTL);
+    // 一个气泡敲一条，按顺序、隔一秒。每敲下一条之前看一眼：信被取走了（她回来了），剩下的不敲。
+    // 不设上限；只留一道保险：这份代码这一趟快到点了（或者运行环境说要收了），剩下的并成一条敲出去，免得全丢
+    let doors = rows.slice(0, MAX_DEVICES);
+    for (let i = 0; i < said.bodies.length && doors.length; i++) {
+      if (i > 0) {
+        await sleep(BANNER_GAP);
+        if ((await box.waiting(job)) === false) return;
+      }
+      const rest = said.bodies.slice(i);
+      const last = rest.length > 1 && (worker.closing || Date.now() - lifeFrom > LIFE - LAST_CALL);
+      const body = last ? clip(rest.join("\n"), BANNER_CHARS, BANNER_BYTES) : rest[0];
+      const sent = await deliver(book, origin, doors, keys.vapid, (page) => replyNotice(page, { title: said.title, body }, job, tag, i), REPLY_TTL);
+      // 门牌号作废了的那几台（已经从登记簿里划掉了）：后面几条不再敲它
+      doors = doors.filter((_, k) => !(sent[k] && sent[k].removed));
+      if (last) return;
+    }
   })();
   inBackground(work);
 
@@ -907,9 +1076,10 @@ Deno.serve(async (req: Request) => {
   const state = await loadVapid();
 
   // 问：钥匙放好了没有。放好了就把公钥给网页（订阅要用，公钥本来就是公开的）。
-  // can 是这份代码会做的事：网页看到 "reply"，就知道回话可以交给这里等
+  // can 是这份代码会做的事：网页看到 "reply"，就知道回话可以交给这里等；
+  // "bubbles" 是横幅一个气泡敲一条，"halt" 是她按了停就把跟 Anthropic 的线掐掉（面板的“看细节”里照着说）
   if (body.op === "key") {
-    const can = ["reply"];
+    const can = ["reply", "bubbles", "halt"];
     return json(200, state.ok ? { configured: true, publicKey: state.vapid.publicKey, can } : { configured: false, missing: state.missing, message: state.message, can });
   }
 

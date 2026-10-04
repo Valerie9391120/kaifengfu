@@ -105,7 +105,9 @@ export function richBlocks(text) {
 }
 
 // 只要字的地方（历史对话里那一行预览、对话的名字）：就是气泡里摆出来的那些字，一块一行。
-// 当了记号的井号、星号不带；没当记号的（#标签、零散的星号、代码里的注释）照留
+// 当了记号的井号、星号不带；没当记号的（#标签、零散的星号、代码里的注释）照留。
+// 横幅上的字也是这一套：小后端（supabase/push_function.ts 的 plainOf）里照着另写了一份（它引不了这个文件）。
+// 这里的规矩改了，那边得跟着改：tests/mail.test.mjs 拿几万条字两边各认一遍，对不上就不过
 export function plainOf(text) {
   return richBlocks(text)
     .map((b) => b.parts.map((p) => p.s).join(""))

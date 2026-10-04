@@ -7,7 +7,8 @@ import { loadPushFunction, pushEnv, createFakePush, createLedgerTable, createMai
 const PORT = Number(process.env.MOCK_PORT || 8787);
 const USERS = { "qing@example.com": { id: "11111111-1111-1111-1111-111111111111", password: "correct-horse" } };
 const rows = new Map(); // user_id|key → row
-const claudeLog = []; // 每一回问“Anthropic”：{ body, beta, via }。via 是从哪条路来的：claude 函数（老路），还是 push 函数（新路）
+const claudeLog = []; // 每一回问“Anthropic”：{ body, beta, via }。via 是从哪条路来的：claude 函数（老路），还是 push 函数（新路）；
+// 压着没答的工夫里问的那头把线掐了（她按了停，push 函数不等了）的那一回：{ body, beta, via, cut: true }，没有回话
 let claudeFail = null; // 测试用：下一次问 Anthropic 照它的样子报错（workspace：key 没绑工作区；overloaded：太挤）；
 // 这两种一直管用、直到改回来：broken：回回都报 key 没绑工作区；mcp：带着工具的一律不行
 let claudeFailTimes = 0; // overloaded 连着挤几回（不写就是一回）
@@ -61,18 +62,33 @@ function fakeAnthropic(body, beta, via) {
     },
   };
 }
-async function heldAnthropic(body, beta, via) {
+// signal：问的那头带来的“不等了”的线（push 函数带着；claude 函数那条老路不带）。压着的工夫里线被掐了：这一回到此为止，不答
+async function heldAnthropic(body, beta, via, signal) {
   if (claudeHold) {
     const ms = claudeHold;
     claudeHold = 0;
+    let cut = false;
     await new Promise((r) => {
       const t = setTimeout(r, ms);
-      claudeRelease = () => {
+      const release = () => {
         clearTimeout(t);
         r();
       };
+      claudeRelease = release;
+      if (signal) {
+        const stop = () => {
+          cut = true;
+          release();
+        };
+        if (signal.aborted) stop();
+        else signal.addEventListener("abort", stop, { once: true });
+      }
     });
     claudeRelease = null;
+    if (cut) {
+      claudeLog.push({ body, beta, via, cut: true });
+      throw signal.reason instanceof Error ? signal.reason : new DOMException("aborted", "AbortError");
+    }
   }
   return fakeAnthropic(body, beta, via);
 }
@@ -85,16 +101,20 @@ const fakePush = createFakePush();
 // push 函数替她等回话的时候去问的 Anthropic：接到上面那个假的
 fakePush.install(null, {
   async receive(url, init = {}) {
+    // 敲门之前那根“不等了”的线就已经拉了：和真的 fetch 一样，当场报错，门都不敲（不算问过一回）
+    if (init.signal && init.signal.aborted) throw init.signal.reason instanceof Error ? init.signal.reason : new DOMException("The operation was aborted.", "AbortError");
     const headers = Object.fromEntries(Object.entries(init.headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
-    const out = await heldAnthropic(JSON.parse(init.body), headers["anthropic-beta"] || "", "push");
+    const out = await heldAnthropic(JSON.parse(init.body), headers["anthropic-beta"] || "", "push", init.signal);
     return new Response(JSON.stringify(out.json), { status: out.status, headers: { "content-type": "application/json" } });
   },
 });
 const pushFn = await loadPushFunction();
 let pushHold = 0; // 下一次敲 push 函数的门：答案照常算好，压这么多毫秒再回（测“先问的后到”）
 let pushFnState = "ok"; // ok 部署了；missing 还没建这个函数（照 Supabase 网关那样回 404，不带跨域的头）；missing-cors 同上但带着头；
-// old 部署的还是第一步那份代码（不认识“替她等回话”）；template 建了函数、里面还是 Supabase 给的样板
+// old 部署的还是第一步那份代码（不认识“替她等回话”）；template 建了函数、里面还是 Supabase 给的样板；
+// prev 部署的是上一版（会替她等回话；还不会一个气泡敲一条、不会她按了停就不等。这里只管它答“会什么”的那一句，办事的还是眼下这份）
 let replyDrop = 0; // 往后这么多回“替她等回话”：小后端照常办完，回话却没送回网页（连接断了）
+let pushAge = 0; // 下一回“替她等回话”敲门的时候，这份代码已经活了这么多毫秒（测“这一趟快到点了，剩下的横幅并成一条”）
 const pushOps = []; // 每一回敲 push 函数的门，是来做什么的（key、test、reply）
 let pushNotFound = 0; // 函数还没建的时候，有人来敲过几回门（浏览器先来打招呼的那一下也算）
 function pushSecrets(text) {
@@ -116,6 +136,8 @@ function pushReset() {
   pushFnState = "ok";
   pushHold = 0;
   replyDrop = 0;
+  pushAge = 0;
+  pushFn.worker.closing = false;
   pushOps.length = 0;
   pushNotFound = 0;
   claudeHold = 0;
@@ -239,7 +261,7 @@ http
     if (url.pathname === "/__debug/push") {
       return send(res, 200, {
         rows: ledger.all(),
-        delivered: fakePush.delivered.map((d) => ({ endpoint: d.endpoint, json: d.json, text: d.text, claims: d.claims, ttl: d.ttl, urgency: d.urgency })),
+        delivered: fakePush.delivered.map((d) => ({ endpoint: d.endpoint, json: d.json, text: d.text, claims: d.claims, ttl: d.ttl, urgency: d.urgency, at: d.at })),
         log: fakePush.log.map((x) => ({ endpoint: x.endpoint, status: x.status, reason: x.reason, size: x.size })),
         secrets: ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"].filter((k) => pushEnv[k]),
         publicKey: pushEnv.VAPID_PUBLIC_KEY || "",
@@ -257,11 +279,14 @@ http
       if (dev) dev.mode = url.searchParams.get("mode") || "ok";
       return send(res, 200, { ok: !!dev });
     }
-    // 她在 Supabase 做到哪一步了：table=missing 还没建表；fn=missing 还没建函数；都不写就是恢复
+    // 她在 Supabase 做到哪一步了：table=missing 还没建表；fn=missing 还没建函数；都不写就是恢复。
+    // age=N 下一回“替她等回话”敲门的时候，这份代码已经活了 N 毫秒；closing=1 运行环境已经说过“快要把这一趟收掉了”
     if (url.pathname === "/__debug/push-setup") {
       ledger.state.missing = url.searchParams.get("table") === "missing";
       pushFnState = url.searchParams.get("fn") || "ok";
       pushHold = Number(url.searchParams.get("hold") || 0);
+      pushAge = Number(url.searchParams.get("age") || 0);
+      pushFn.worker.closing = url.searchParams.get("closing") === "1";
       return send(res, 200, { ok: true });
     }
     // 往密钥柜里贴（正文是那几行“名字=值”）；make=1 是现生成一对贴进去
@@ -345,7 +370,7 @@ http
     // ---- 信箱 ----
     if (url.pathname === "/rest/v1/mailbox") {
       const u = userFromAuth(req);
-      const r = mail.handle(req.method, url.searchParams, u && u.id, await readBody(req));
+      const r = mail.handle(req.method, url.searchParams, u && u.id, await readBody(req), req.headers.prefer || "");
       return send(res, r.status, r.status === 204 ? undefined : r.body);
     }
 
@@ -367,6 +392,12 @@ http
         } catch (e) {}
         if (op === "reply") return send(res, 400, { type: "error", error: { type: "kaifengfu", message: "不认识这个动作" } });
       }
+      // 真的那头，这份代码每被叫起来一趟最多活两分半；这里一直开着不关。每来一回“替她等回话”就当它是刚被叫起来的
+      // （测试要它“已经活了多久”就用 push-setup 的 age 说）
+      if (opOf && opOf[1] === "reply") {
+        pushFn.worker.born = Date.now() - pushAge;
+        pushAge = 0;
+      }
       const drop = !!opOf && opOf[1] === "reply" && replyDrop > 0;
       if (drop) replyDrop--;
       // 连接断了：这头照常办（函数不知道网页那头没了），回话却送不回去
@@ -386,6 +417,12 @@ http
       if (pushFnState === "old" && opOf && opOf[1] === "key") {
         const d = JSON.parse(text);
         delete d.can;
+        text = JSON.stringify(d);
+      }
+      // 上一版答的是：只会替她等回话
+      if (pushFnState === "prev" && opOf && opOf[1] === "key") {
+        const d = JSON.parse(text);
+        d.can = ["reply"];
         text = JSON.stringify(d);
       }
       return res.end(text);

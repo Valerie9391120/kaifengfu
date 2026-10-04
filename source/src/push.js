@@ -6,7 +6,7 @@
 // 把门牌号记进登记簿（push_subs 表），小后端照着登记簿发。
 // =====================================================
 import { callPush, pushLedger, mailbox } from "./cloud.js";
-import { PUSH_FLAG, PUSH_KEY, PUSH_AT, b64uToBytes, sameKey, pushSupport, isStandalone, subscriptionKey, subscriptionRow, entrancePage, pushHostOf, readNoticeMark, noticeMarkOfUrl } from "./notify.js";
+import { PUSH_FLAG, PUSH_KEY, PUSH_AT, b64uToBytes, sameKey, pushSupport, isStandalone, subscriptionKey, subscriptionRow, entrancePage, pushHostOf, readNoticeMark, noticeMarkOfUrl, parseBannerTag } from "./notify.js";
 
 const local = {
   get(key) {
@@ -162,8 +162,9 @@ export async function checkPush() {
     standalone: isStandalone(window),
     permission: support.ok ? Notification.permission : "",
     // 她在 Supabase 要做的三样，各自好了没有：ok 好了；别的是没好的缘故。
-    // 后两样是“他的回话也敲她”要的：relay 是 push 函数会不会替她等回话（ok 会；old 还是旧的那份代码），mail 是信箱那张表
-    setup: { table: "", fn: "", keys: "", say: "", relay: "", mail: "" },
+    // 后两样是“他的回话也敲她”要的：relay 是 push 函数会不会替她等回话（ok 会；old 还是旧的那份代码），mail 是信箱那张表。
+    // bubbles、halt 是 push 函数后来学会的两样（ok 会；old 这份代码还不会）：横幅一个气泡敲一条、她按了停它就不等了
+    setup: { table: "", fn: "", keys: "", say: "", relay: "", mail: "", bubbles: "", halt: "" },
     ready: false, // 三样都好了
     replyReady: false, // 他的回话也能敲她了（push 函数是新的、信箱建好了）
     away: false, // 开过通知的设备，这会儿连不上后端
@@ -194,7 +195,10 @@ export async function checkPush() {
       state.setup.say = String((k && (k.message || k.msg)) || "").slice(0, 120);
     } else {
       state.setup.fn = "ok";
-      state.setup.relay = Array.isArray(k.can) && k.can.includes("reply") ? "ok" : "old";
+      const can = Array.isArray(k.can) ? k.can : [];
+      state.setup.relay = can.includes("reply") ? "ok" : "old";
+      state.setup.bubbles = can.includes("bubbles") ? "ok" : "old";
+      state.setup.halt = can.includes("halt") ? "ok" : "old";
       if (k.configured) {
         state.setup.keys = "ok";
         state.serverKey = k.publicKey;
@@ -369,6 +373,34 @@ async function askPushCanReply() {
     // 算没问成，下回再问；为这一下把新路关上三分钟不值当
     if (e.status === 401 || e.status === 429 || (e.status >= 500 && !e.own)) return null;
     return false;
+  }
+}
+
+// ---------- 他的回话的横幅：她已经在看那段对话了，还挂着的收掉 ----------
+
+// 小后端一个气泡敲一条横幅。她点了其中一条回来（或者自己打开了开封府），那段对话已经在眼前，剩下几条不用她一条一条划。
+// tag：那段对话的那串打乱的字（mail.js 的 chatTag）。只收带着这串字的回话横幅，别的对话的、测试通知，都不动。回收掉了几条。
+// 系统不给看、不给收（iPhone 上给不给要看系统版本）、这台设备没装过服务线程：什么都不做，回 0。横幅照旧挂着，不碍事
+export async function clearReplyNotices(tag) {
+  if (!tag) return 0;
+  try {
+    const sw = navigator.serviceWorker;
+    if (!sw || typeof sw.getRegistration !== "function") return 0;
+    // 只找现成的服务线程，不现装一个：没开过通知的设备上本来就不会有横幅
+    const reg = await sw.getRegistration(workerScope());
+    if (!reg || typeof reg.getNotifications !== "function") return 0;
+    let n = 0;
+    for (const note of (await reg.getNotifications()) || []) {
+      const mark = parseBannerTag(note.tag);
+      if (!mark || mark.chat !== tag) continue;
+      try {
+        note.close();
+        n++;
+      } catch (e) {}
+    }
+    return n;
+  } catch (e) {
+    return 0;
   }
 }
 

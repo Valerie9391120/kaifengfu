@@ -1,7 +1,7 @@
 // =====================================================
 // 拆他的回话：心里话、一条一条的话、表情包、换头像、改名字、文档块。
 // 不碰页面，测试在 Node 里跑。
-// 通知的小后端（supabase/push_function.ts 的 previewOf）照同一套规矩决定横幅上写什么：
+// 通知的小后端（supabase/push_function.ts 的 bubblesOf）照同一套规矩决定敲几条横幅、各写什么（一个气泡一条）：
 // 这里改了规矩，那边得跟着改。tests/mail.test.mjs 拿同一批回话两边各拆一遍，对不上就不过。
 // =====================================================
 import { NAME_MARK, NAME_PLACEHOLDER, cleanMarkName } from "./names.js";

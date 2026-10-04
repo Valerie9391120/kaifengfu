@@ -139,6 +139,10 @@ def box():
     return mock("/__debug/mail")
 def banners():
     return mock("/__debug/push")["delivered"]
+# 一回回话敲的那几条横幅。小后端一个气泡敲一条、隔一秒一条：等到从第 since 条起又到了 n 条为止，回这几条通知
+def knocks(since, n, timeout=GRACE + 14):
+    wait_mock(lambda: len(banners()) >= since + n, timeout=timeout)
+    return [b["json"]["notification"] for b in banners()[since:]]
 # 对话里有几个气泡写着这句（侧栏里那行预览不算）
 def count_text(page, text):
     return page.evaluate("(t) => [...document.querySelectorAll('.items-end span')].filter((e) => e.children.length === 0 && e.textContent === t).length", text)
@@ -228,11 +232,17 @@ with sync_playwright() as p:
     ok(row["sealed"].startswith("v1.") and "我先去忙了" not in json.dumps(row, ensure_ascii=False) and "收到" not in json.dumps(row, ensure_ascii=False) and row["note"].startswith("v1."),
        "信箱里只有乱码：没有她的话、没有他的话")
     ok(wait_mock(lambda: len(banners()) == b0 + 1, timeout=GRACE + 6), "她不在：过几秒信还在信箱里，敲她的手机")
-    note = banners()[-1]["json"]["notification"]
+    got = knocks(b0, 2)
+    note = got[0]
     mark = note["navigate"].split("#n=")[1] if "#n=" in note["navigate"] else ""
-    ok(banners()[-1]["endpoint"] == device and note["title"] == "光义" and note["body"] == "收到：我先去忙了\n第二条" and note["navigate"].startswith(BASE + "#n=r.") and re.fullmatch(r"r\.[A-Za-z0-9_-]{32}\.[A-Za-z0-9]{20}", mark),
-       f"横幅：名字是他，写的是他回的话（一条一行，没有心里话），点了回到这台设备的入口、带着哪段对话的记号（{note['body']!r}）")
-    ok(cid not in note["navigate"] and mark.split(".")[2] == row["job"], "横幅网址里的对话记号是打乱的，看不出是哪段对话")
+    ok(len(got) == 2 and banners()[b0]["endpoint"] == device and all(n["title"] == "光义" for n in got) and [n["body"] for n in got] == ["收到：我先去忙了", "第二条"],
+       f"横幅：他这一回说了两句，敲两条，一个气泡一条，照他说的先后；名字是他，没有心里话（{[n['body'] for n in got]!r}）")
+    gap = banners()[b0 + 1]["at"] - banners()[b0]["at"] if len(got) == 2 else 0
+    ok(950 <= gap < 3000, f"横幅：两条隔了一秒（{gap} 毫秒）")
+    ok(note["navigate"].startswith(BASE + "#n=r.") and re.fullmatch(r"r\.[A-Za-z0-9_-]{32}\.[A-Za-z0-9]{20}", mark) and all(n["navigate"] == note["navigate"] for n in got),
+       "横幅：哪一条点了都回到这台设备的入口、带着哪段对话的记号")
+    ok([n.get("tag") for n in got] == [mark + ".0", mark + ".1"], "横幅：每条自己带一个记号（哪段对话、哪一回、第几条），条条不一样")
+    ok(cid not in json.dumps(got) and mark.split(".")[2] == row["job"], "横幅网址里的对话记号是打乱的，看不出是哪段对话")
     # 她回来：回话已经在对话里（切走以后页面还醒着的那几秒里到的），不放第二遍；信取走
     pa.evaluate("window.__away(false)")
     pa.get_by_text("收到：我先去忙了").last.wait_for(timeout=10000)
@@ -243,11 +253,13 @@ with sync_playwright() as p:
     # ================= 切走以后连接断了（手机被挂起）：回来从信箱里取 =================
     mock("/__debug/claude-hold?ms=1500")
     mock("/__debug/mail-setup?drop=1")
+    b_cut = len(banners())
     say(pa, "断了也没事吧")
     time.sleep(0.3)
     pa.evaluate("window.__away(true)")
-    ok(wait_mock(lambda: len(banners()) == b0 + 2, timeout=GRACE + 12), "连接断了：小后端不知道，照样等完、放信箱、敲手机")
-    ok(banners()[-1]["json"]["notification"]["body"] == "收到：断了也没事吧\n第二条", "连接断了：横幅上照样是他回的话")
+    got = knocks(b_cut, 2)
+    ok(len(got) == 2, "连接断了：小后端不知道，照样等完、放信箱、敲手机")
+    ok([n["body"] for n in got] == ["收到：断了也没事吧", "第二条"], "连接断了：横幅上照样是他回的话，一句一条")
     pa.evaluate("window.__away(false)")
     pa.get_by_text("收到：断了也没事吧").last.wait_for(timeout=15000)
     ok(wait_mock(lambda: box()["rows"] == []) and len(calls()) == n0 + 3, "连接断了：她回来，回话从信箱里取出来放进对话，信取走；没有重发、没有多问一回")
@@ -268,13 +280,14 @@ with sync_playwright() as p:
     pa.locator("button", has_text="老公在吗").first.click(); time.sleep(0.8)
     mock("/__debug/claude-hold?ms=3000")
     n2 = len(calls())
+    b_kill = len(banners())
     say(pa, "我关掉了哦")
     ok(wait_mock(lambda: any(r["state"] == "working" for r in box()["rows"]), timeout=8), "发出去：信箱里先开了一格，写着在等")
     # 她先翻到另一段对话看了一眼（上次停在哪段，下回就从哪段开门），然后开封府被收掉
     pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.5)
     pa.locator("button", has_text="另一段对话").first.click(); time.sleep(0.6)
     pa.close()
-    ok(wait_mock(lambda: len(banners()) == b0 + 3, timeout=GRACE + 12), "开封府被收掉了：回话照样到信箱，手机照样被敲")
+    ok(len(knocks(b_kill, 2)) == 2, "开封府被收掉了：回话照样到信箱，手机照样被敲（两句，两条）")
     tap = banners()[-1]["json"]["notification"]["navigate"]
     ok(len(box()["rows"]) == 1 and box()["rows"][0]["state"] == "done", "开封府被收掉了：信在信箱里等着")
     # 不点横幅、从图标进来：开门是上次停的那段对话；信已经放进它该在的那段，侧栏里看得到
@@ -301,12 +314,13 @@ with sync_playwright() as p:
     pc.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
     pc.locator("button", has_text="老公在吗").first.click(); time.sleep(0.8)
     mock("/__debug/claude-hold?ms=3000")
+    b_tap = len(banners())
     say(pc, "这回点横幅")
     ok(wait_mock(lambda: any(r["state"] == "working" for r in box()["rows"]), timeout=8), "又发一句")
     pc.get_by_role("button", name="打开侧栏").click(); time.sleep(0.5)
     pc.locator("button", has_text="另一段对话").first.click(); time.sleep(0.6)
     pc.close()
-    ok(wait_mock(lambda: len(banners()) == b0 + 4, timeout=GRACE + 12), "又被收掉了：横幅到")
+    ok(len(knocks(b_tap, 2)) == 2, "又被收掉了：横幅到")
     tap = banners()[-1]["json"]["notification"]["navigate"]
     n3 = len(calls())
     pd = A.new_page()
@@ -419,8 +433,9 @@ with sync_playwright() as p:
     pe = A.new_page()                      # 系统在后台把开封府叫了起来：页面活着，可她没在看
     pe.on("pageerror", lambda e: errors.append("E4: " + str(e)))
     pe.goto(BASE); kite(pe)
-    ok(wait_mock(lambda: len(banners()) == b2 + 1, timeout=GRACE + 12) and banners()[-1]["json"]["notification"]["body"].startswith("收到：后台醒着的时候"),
-       "开封府醒着、可不在眼前：信箱里的信不去取（取了小后端就以为她看到了），横幅照样敲")
+    got = knocks(b2, 2)
+    ok(len(got) == 2 and got[0]["body"].startswith("收到：后台醒着的时候") and got[1]["body"] == "第二条",
+       "开封府醒着、可不在眼前：信箱里的信不去取（取了小后端就以为她看到了），横幅照样敲，两句都敲")
     ok(len(box()["rows"]) == 1 and count_text(pe, "收到：后台醒着的时候") == 0, "不在眼前的时候：信还在信箱里，对话里还没放")
     pe.evaluate("localStorage.removeItem('__start_hidden'); window.__away(false)")
     pe.get_by_text("收到：后台醒着的时候").last.wait_for(timeout=15000)
@@ -578,7 +593,7 @@ with sync_playwright() as p:
     ok([m["id"] for m in mid[:len(after)]] == [m["id"] for m in after] and len(mid[len(after) - 1]["alts"]) == 2 and mid[-1].get("text") == "等的工夫里说的",
        "重新回答的工夫里她发了一句：存档里旧回答和它的两个版本都还在（画面上先收起来的不算丢），她那一句接在最后")
     pe.close()
-    ok(wait_mock(lambda: len(banners()) == b3 + 1, timeout=GRACE + 12), "开封府被收掉：新回答照样进信箱、照样敲她")
+    ok(len(knocks(b3, 2)) == 2, "开封府被收掉：新回答照样进信箱、照样敲她")
     pe = A.new_page()
     pe.on("pageerror", lambda e: errors.append("E5: " + str(e)))
     pe.goto(BASE); kite(pe)
