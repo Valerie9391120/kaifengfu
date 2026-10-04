@@ -5,7 +5,8 @@ import crypto from "node:crypto";
 import { loadPushFunction, loadSource, pushEnv, createFakePush, createFakeSupabase, FAKE_SUPABASE, makeVapidKeys, decryptPush, checkVapidHeader, b64u, unb64u } from "./push-harness.mjs";
 
 let pass = 0, failN = 0;
-const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); } };
+// KFS_FAILFAST：故意改坏了看拦不拦得住的时候，头一条没过就收工
+const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); if (process.env.KFS_FAILFAST) process.exit(1); } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const fn = await loadPushFunction();
@@ -236,7 +237,7 @@ const rowOf = (dev) => supa.table.all().find((r) => r.endpoint === dev.endpoint)
   const ready = await call({ op: "key" });
   ok(ready.status === 200 && ready.data.configured === true && ready.data.publicKey === keys.publicKey && Object.keys(ready.data).sort().join() === "can,configured,publicKey" && !JSON.stringify(ready.data).includes(keys.privateKey),
     "问钥匙：贴进密钥柜就认（两头带着引号、空白、换行也不碍事），只把公钥交出来，私钥一个字不带");
-  ok(ready.data.can.join() === "reply" && empty.data.can.join() === "reply", "问钥匙：顺带说这份代码会替她等回话（网页靠这个认新旧）");
+  ok(ready.data.can.join() === "reply,bubbles,halt" && empty.data.can.join() === "reply,bubbles,halt", "问钥匙：顺带说这份代码会什么（网页靠这个认新旧）：替她等回话、横幅一个气泡敲一条、她按了停就不等了");
   pushEnv.VAPID_PRIVATE_KEY = other.privateKey;
   const broken = await call({ op: "key" });
   ok(broken.data.configured === false && broken.data.message.includes("不是一对"), "问钥匙：私钥换成了另一把，马上说不是一对");
@@ -446,6 +447,13 @@ const N = await loadSource("src/notify.js");
   ok(["", "#", "#n=", "#n=a b", "#n=<script>", "#x=1", "#n=" + "a".repeat(81), "n=abc", "#n=a#b", null, undefined].every((h) => N.readNoticeMark(h) === "") && N.noticeMarkOfUrl("不是网址") === "" && N.noticeMarkOfUrl("https://valerie.example/") === "",
     "通知的记号：空的、带怪字符的、太长的、不是这种写法的，一律当没有");
 
+  // 回话的横幅自己带的记号
+  const TAGS = "TAGtagTAG_-123456";
+  const mark = N.parseBannerTag(`r.${TAGS}.job0001abcdef.7`);
+  ok(!!mark && mark.chat === TAGS && mark.job === "job0001abcdef" && mark.nth === 7 && N.parseBannerTag("r." + "T".repeat(64) + "." + "J".repeat(64) + ".123456").nth === 123456, "横幅的记号：读得出是哪段对话、哪一回、第几条");
+  ok(["", null, undefined, "test-abc", `r.${TAGS}.job0001abcdef`, `r.${TAGS}.job0001abcdef.`, `r.${TAGS}.job0001abcdef.x`, `r.${TAGS}.job0001abcdef.1.2`, `r.short.job0001abcdef.1`, `r.${TAGS}.short.1`, `x.${TAGS}.job0001abcdef.1`, `r.${TAGS}.job0001abcdef.1 `, ` r.${TAGS}.job0001abcdef.1`, `r.${TAGS}.job 001abcdef.1`, "r." + "T".repeat(65) + ".job0001abcdef.1", `r.${TAGS}.job0001abcdef.1234567`, `r.${TAGS}.job0001abcdef.-1`].every((t) => N.parseBannerTag(t) === null),
+    "横幅的记号：测试通知的、缺一截的、多一截的、带怪字的、太长的，一律不认（收横幅的时候不会收错）");
+
   // 给我看的细节
   const state = { standalone: true, support: { ok: true, why: "" }, permission: "granted", setup: { table: "ok", fn: "ok", keys: "ok", say: "" }, worker: "ok", host: "web.push.apple.com", endpoint: dev.endpoint, flag: true, devices: 2, last: { at: Date.parse("2026-10-02T12:00:00Z"), status: 403, note: "BadJwtToken" } };
   const lines = N.describePush(state).join("\n");
@@ -454,6 +462,11 @@ const N = await loadSource("src/notify.js");
   const stuck = N.describePush({ ...state, permission: "default", setup: { table: "missing", fn: "unreachable", keys: "", say: "连不上通知的小后端" }, worker: "", host: "", flag: false, devices: 0, last: null }).join("\n");
   ok(["还没问过", "登记簿：还没建", "小后端：连不上", "钥匙：还看不到", "它说：连不上通知的小后端", "服务线程：还没起", "门牌号：还没有"].every((x) => stuck.includes(x)), "看细节：没接好的时候，哪一环没好写得出来");
   ok(N.describePush({ standalone: false, support: { ok: false, why: "homescreen" } }).join("\n") === "从主屏幕的图标打开：否\n浏览器能开通知：不能（homescreen）", "看细节：开不了的设备只说为什么开不了");
+  // 小后端后来学会的两样：是哪一份代码，看细节里写着
+  const withSetup = (extra) => N.describePush({ ...state, setup: { ...state.setup, mail: "ok", ...extra } }).join("\n");
+  ok(withSetup({ relay: "ok", bubbles: "ok", halt: "ok" }).includes("横幅一个气泡敲一条：会；你按停它就不等了：会") && withSetup({ relay: "ok", bubbles: "old", halt: "old" }).includes("横幅一个气泡敲一条：这份代码还不会；你按停它就不等了：这份代码还不会") && withSetup({ relay: "ok", bubbles: "ok", halt: "old" }).includes("横幅一个气泡敲一条：会；你按停它就不等了：这份代码还不会"),
+    "看细节：小后端会不会一个气泡敲一条、会不会按停就不等，各写各的");
+  ok(!withSetup({ relay: "old", bubbles: "old", halt: "old" }).includes("横幅一个气泡") && withSetup({ relay: "old" }).includes("替你等回话：这份代码还不会"), "看细节：小后端连替她等回话都还不会的，只说那一样，不拿后两样添乱");
 }
 
 // ================= 服务工作线程（src/sw.js）：在假的环境里跑真的那份代码 =================

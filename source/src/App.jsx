@@ -14,7 +14,7 @@ import { richBlocks, plainOf } from "./rich.js";
 import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, markStopped, unmarkStopped, stoppedAt, cutReply } from "./thread.js";
 import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY, HALTED_KEY } from "./mail.js";
 import { generateVapidKeys, secretsBlock, explainOutcome, describePush, describeMail } from "./notify.js";
-import { checkPush, enablePush, disablePush, renewPush, sendTestPush, lastOutcome, resyncPush, watchNotices, probeReply, knockList } from "./push.js";
+import { checkPush, enablePush, disablePush, renewPush, sendTestPush, lastOutcome, resyncPush, watchNotices, probeReply, knockList, clearReplyNotices } from "./push.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -1050,7 +1050,8 @@ function makeTitle(msgs, memeLookup) {
     const v = (first.text || "").trim();
     return v ? (v.length > 18 ? v.slice(0, 18) + "…" : v) : "[语音]";
   }
-  const t = (first.text || "").replace(/\s+/g, " ").trim();
+  // 名字照气泡里摆出来的字起：她头一句要是带着井号、星号的记号，名字里不带
+  const t = plainOf(first.text || "").replace(/\s+/g, " ").trim();
   return t.length > 18 ? t.slice(0, 18) + "…" : t || "新对话";
 }
 
@@ -1063,7 +1064,7 @@ function makePreview(msgs) {
     if (last.kind === "photo") return "[照片]";
     if (last.kind === "doc") return `[文档] ${last.name || ""}`.trim();
     if (last.kind === "voice") return `[语音] ${last.text || ""}`;
-    return last.text || "";
+    return plainOf(last.text || "");
   }
   const t = (last.items || []).find((it) => it.type === "text");
   if (t) return plainOf(t.text);
@@ -3384,7 +3385,13 @@ function PushPanel({ email, onCopy, back, mailStatus, onReplyReady }) {
           这台设备开着通知。
           {st.replyReady && (
             <div className="kfs-push-reply" data-ready="yes" style={small}>
-              他回话的时候你不在开封府，会敲你，横幅上写着他说的话。发完话就可以切走、锁屏。
+              {setup.bubbles === "ok" ? "他回话的时候你不在开封府，会敲你：他说几句就敲几条，横幅上写着他说的话。发完话就可以切走、锁屏。" : "他回话的时候你不在开封府，会敲你，横幅上写着他说的话。发完话就可以切走、锁屏。"}
+            </div>
+          )}
+          {/* 小后端里还是早一些的那份代码：照旧能用，只是他说几句都并成一条敲。想要一句一条，换成新的那份 */}
+          {st.replyReady && setup.bubbles !== "ok" && (
+            <div className="kfs-push-bubbles" style={small}>
+              小后端还是上一版的：他说几句都并成一条敲。想要一句一条，打开 push 函数的 Code，把里面的字全删掉，换成新的那份，再点 Deploy。
             </div>
           )}
         </div>
@@ -3641,6 +3648,7 @@ export default function App({ account = {} }) {
   const mailGate = useRef(null); // 头一遍看信箱之前要等的那一下（见 checkMail）
   const backResend = useRef(new Set()); // 她不在眼前的时候没送成的那几句是哪几段对话的：等她回来再发（见 askGuangyi、resendSoon）
   const orphansRef = useRef(new Set()); // 上回打开时没送到、这回已经替她补发过的那几回（一回只补一次，见 checkMail）
+  const bannerTimers = useRef([]); // 收横幅：过一会儿再收的那两遍（见 tidyBanners）
   const latest = useRef({}); // 最新一遍画面里的那几个函数（给一开机就挂上的监听用，免得它们拿着旧的）
   const [noticeBack, setNoticeBack] = useState(0); // 这次打开以来，上一回点着测试通知回来是什么时候（通知面板里要说）
   const [copySheet, setCopySheet] = useState("");
@@ -5054,6 +5062,10 @@ export default function App({ account = {} }) {
           }
         }
       }
+      // 信箱看成了（到了的回话都进对话了）：眼前这段对话的横幅用不着了，收掉。
+      // 没看成的时候不收：回话还没进对话，横幅上那几行字她还用得着。
+      // 她不在眼前的时候根本没去看（上面那个空单子）：也不算看成，连“过一会儿再收”的弦都不上
+      if (list !== null && document.visibilityState === "visible") tidyBanners();
     } catch (e) {}
     mailBusy.current = false;
     const soon = mailAgain.current;
@@ -5066,6 +5078,32 @@ export default function App({ account = {} }) {
       clearTimeout(mailTimer.current);
       mailTimer.current = setTimeout(() => latest.current.checkMail(retry + 1), 2000 * 2 ** retry);
     }
+  };
+
+  // 眼前这段对话的回话横幅还挂着的，收掉：她已经在看这段对话了。
+  // （小后端一个气泡敲一条；她点了其中一条回来，剩下几条不用她一条一条划。iPhone 上给不给收要看系统：不给就照旧挂着。）
+  // 收的那一下，路上可能还有一条没到（小后端看信还在才敲，它敲的和她取信的可能前后脚）：过两秒半、过七秒各再收一遍
+  const tidyBanners = () => {
+    const run = async () => {
+      const id = chatIdRef.current;
+      if (!id) return;
+      try {
+        if (!tagsRef.current[id]) tagsRef.current[id] = await chatTag((name) => store.nameFor(name), id);
+        // 她不在眼前（开封府在后台自己动了一下；算那串字的工夫里才切走的也算）、或者已经翻到别的对话了：不收
+        if (chatIdRef.current !== id || document.visibilityState !== "visible") return;
+        await clearReplyNotices(tagsRef.current[id]);
+      } catch (e) {}
+    };
+    run();
+    // 过一会儿再收的那两遍，只在“这一趟一直在眼前”的时候作数：她一切走就撤掉（见 leaving）。
+    // 到点的时候晚了一大截的也不收（定时器中间被系统停过：她切走又回来了）。回来以后看信箱的那一遍看成了，自会重新来过
+    bannerTimers.current.forEach(clearTimeout);
+    const armed = Date.now();
+    bannerTimers.current = [2500, 7000].map((ms) =>
+      setTimeout(() => {
+        if (Date.now() - armed < ms + 1500) run();
+      }, ms)
+    );
   };
 
   // 通知网址里的那串字是哪段对话
@@ -5113,6 +5151,9 @@ export default function App({ account = {} }) {
   // 只在新路走通过的设备上这么干：走老路的话，话一交出去她就走了，等着的这头断掉，那一回白问，
   // 回来看到的是“消息没送到”；不如照旧等她回来再送
   const leaving = () => {
+    // 收横幅的那两遍“过一会儿再收”撤掉：它们是替“她还在眼前”上的弦。留着的话，她回来的那一下信箱没看成，它们照样到点把横幅收了
+    bannerTimers.current.forEach(clearTimeout);
+    bannerTimers.current = [];
     // 先把话交出去：切走以后页面只剩两三秒，这一包最要紧
     if (timerRef.current && getRelay().trusted()) {
       disarm();
@@ -5201,6 +5242,7 @@ export default function App({ account = {} }) {
       window.removeEventListener("online", onOnline);
       clearTimeout(warmTimer);
       clearTimeout(mailTimer.current);
+      bannerTimers.current.forEach(clearTimeout);
     };
   }, [booted]);
 

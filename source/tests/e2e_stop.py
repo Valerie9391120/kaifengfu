@@ -168,6 +168,37 @@ def double(browser):
     A.close()
 
 
+# 等着回话的时候按停、他还要想很久：小后端下一回摸信箱里那一格（八秒摸一回）发现它没了，把跟 Anthropic 的线掐掉，不等他想完
+def cutoff(browser):
+    A = phone(browser, notify=True)
+    pa = page_of(A, "cutoff")
+    first_time(pa); enable_notifications(pa)
+    chat(pa, "老公在吗")
+    b0 = len(banners()); c0 = len(calls())
+    sealed = lambda: len([x for x in box()["log"] if x["method"] == "PATCH" and "sealed" in x.get("sets", [])])
+    s0 = sealed()
+    mock("/__debug/claude-hold?ms=40000")
+    say(pa, "这句停掉")
+    ok(wait_mock(working, 8) and wait_js(pa, TYPING, 3000), "掐线·准备：话交给小后端了（信箱里开了一格），他要想四十秒")
+    t0 = time.time()
+    pa.wait_for_timeout(int(SETTLE * 1000))
+    click_stop(pa)
+    stopped = wait_key(pa, "发语音", 3000)
+    asked = wait_mock(lambda: len(calls()) == c0 + 1, 14)
+    took = time.time() - t0
+    last = calls()[-1] if asked else {}
+    ok(stopped and asked and last.get("cut") is True and last.get("via") == "push" and took < 12,
+       f"按了停、他还要想很久：小后端摸信箱的时候发现那一格没了，把跟 Anthropic 的线掐掉，不等他想完（交出去以后 {took:.1f} 秒掐的，他本来要想四十秒）")
+    time.sleep(GRACE + 2.5)
+    ok(len(banners()) == b0 and box()["rows"] == [] and sealed() == s0 and count_text(pa, "收到：这句停掉") == 0 and notes(pa) == 1 and not typing(pa) and len(calls()) == c0 + 1,
+       "掐了以后：不往信箱里放东西、不敲手机、对话里不出回话，也没有换个写法再问；她那句底下那行小字还在")
+    pa.get_by_text(NOTE, exact=True).tap()                     # 点小字：让他回这一句（新的一回），照常回上
+    got = wait_js(pa, shown("收到：这句停掉"), 20000)
+    pa.get_by_text("第二条").last.wait_for(timeout=10000); pa.wait_for_timeout(1500)
+    ok(got and len(calls()) == c0 + 2 and not calls()[-1].get("cut") and notes(pa) == 0, "掐过以后点小字：照常回上（新的一回，问到底）")
+    A.close()
+
+
 # 正等着回话的时候按停（新路）：这一回作废。不出回话、不敲手机；她那句留着，点小字再让他回
 def waiting(browser):
     A = phone(browser, notify=True)
@@ -189,7 +220,8 @@ def waiting(browser):
     ok(stopped and took < 1.0 and not typing(pa) and notes(pa) == 1 and note_count(pa) == 0,
        f"等着的时候按停：马上停下（{took:.2f} 秒），“正在输入”收了，不报错；她那句底下一行小字")
     ok(emptied and jobs(pa) == [] and halted(pa) == [job] and cut == ["push"], f"等着的时候按停：等着小后端的那头连接掐掉了，信箱里那一格当场收掉，这一回不再记着，编号记进“按了停的”（断掉的连接：{cut}）")
-    # 小后端那头照旧办完（现在的小后端不知道她停了）：回话没处放，六秒后看那一格不在，不敲手机
+    # 他五秒就想完了，小后端还没轮到摸那一格（八秒摸一回），不知道她停了，照旧办完：回话没处放，六秒后看那一格不在，不敲手机。
+    # （他要想得久的，小后端摸的时候发现那一格没了，就把线掐了：见下面的 cutoff）
     asked = wait_mock(lambda: len(calls()) == c0 + 1, 10)
     time.sleep(GRACE + 2.5)
     sweeps = len([x for x in box()["log"] if x["method"] == "DELETE" and job in x["query"]])
@@ -1195,11 +1227,11 @@ def orphan(browser):
         state = (started, away, k, pressed, jia[-1].get("text"), jia[-1].get("stopped"), yi[-1].get("text"), yi[-1].get("stopped"), notes(pa), key(pa), typing(pa))
         ok(state == (True, (2, ["working"] if reach else []), "停", True, "甲二", True, "乙二", True, 1, "发语音", False), f"乙二{tag}、等着轮到，甲二正补发着：按停，两句上都记了“停了”（{state}）")
         ok(jobs(pa) == [] and emptied, f"乙二{tag}：按停以后，记着的那两回都不再记着（原来记着 {away[0]} 回，现在 {len(jobs(pa))} 回），信箱里的格子都收掉了")
-        done = wait_turning(pa, lambda: len(calls()) == c0 + (2 if reach else 1), 40)     # 那边照旧办完
+        done = wait_turning(pa, lambda: len(calls()) == c0 + (2 if reach else 1), 40)     # 那边到此为止（他还没想完的，小后端摸信箱的时候发现那一格没了，掐了；正好想完了的，回话没处放）
         pa.wait_for_timeout(5000)
         yi = chat_by(pa, cid); jia = chat_by(pa, others[0])
         after = (done, jia[-1]["role"], yi[-1]["role"], len(box()["rows"]), typing(pa), notes(pa), sorted(asked_since(c0)))
-        ok(after == (True, "her", "her", 0, False, 1, ["乙二", "甲二"] if reach else ["甲二"]), f"乙二{tag}：那边回完了，两段对话里都没有回话冒出来（{after}）")
+        ok(after == (True, "her", "her", 0, False, 1, ["乙二", "甲二"] if reach else ["甲二"]), f"乙二{tag}：那边到此为止（掐了，或者正好想完了），两段对话里都没有回话冒出来（{after}）")
         c1 = len(calls())
         pa.close()                                             # 她把开封府关了（眼前是乙段，小字在乙二底下）
         pb = page_of(A, "orphan2")
@@ -1234,11 +1266,11 @@ def back_stop(browser):
     emptied = wait_turning(pa, lambda: box()["rows"] == [], 3)
     ok(away == (0, 1, ["working"]) and (k, pressed) == ("停", True) and soon == ("发语音", 1, False) and jobs(pa) == [] and emptied,
        f"回来半秒多按停（补发{'已经发出去了' if busy else '还排着队'}）：马上停下，小字出来；记着的那一回不再记着，信箱里那一格收掉（她不在的时候 {away}，按完 {soon}）")
-    done = wait_turning(pa, lambda: len(calls()) == c0 + 1, 20)                           # 那边照旧办完
+    done = wait_turning(pa, lambda: len(calls()) == c0 + 1, 20)                           # 那边到此为止（掐了，或者正好想完了）
     pa.wait_for_timeout(5000)
     cid, msgs = chat_of(pa)
     ok(done and msgs[-1]["role"] == "her" and msgs[-1].get("stopped") is True and count_text(pa, "收到：到了却没听见回音") == 0 and notes(pa) == 1 and not typing(pa) and box()["rows"] == [],
-       "那边回完了：没有回话冒出来，小字还在")
+       "那边到此为止（掐了，或者正好想完了）：没有回话冒出来，小字还在")
     pa.close()
     pb = page_of(A, "back_stop2")
     pb.goto(BASE); kite(pb)
@@ -1280,12 +1312,12 @@ def lost_more(browser):
     emptied = wait_turning(pa, lambda: box()["rows"] == [], 3)
     ok(rec0 == 1 and at == ("停", False) and pressed and soon == ("发语音", 1, False) and jobs(pa) == [] and emptied,
        f"头一句那一回还记着、她又说了一句（还排着队）就按停：记着的那一回不再记着，信箱里那一格收掉（按的时候 {at}，按完 {soon}，还记着 {len(jobs(pa))} 回）")
-    done = wait_turning(pa, lambda: len(calls()) == c0 + 1, 25)                           # 那边照旧办完头一句那一回
+    done = wait_turning(pa, lambda: len(calls()) == c0 + 1, 25)                           # 头一句那一回到此为止（掐了，或者正好想完了）
     pa.wait_for_timeout(5000)
     cid, msgs = chat_of(pa)
     ok(done and [m.get("text") for m in msgs[-2:]] == ["头一句", "又说一句"] and [m["role"] for m in msgs[-2:]] == ["her", "her"] and msgs[-1].get("stopped") is True and count_text(pa, "收到：头一句") == 0
        and notes(pa) == 1 and not typing(pa) and box()["rows"] == [],
-       "那边回完了头一句那一回：没有回话冒出来（它接的虽然不是最后一句，也一并作废了）；小字在最后一句底下")
+       "头一句那一回到此为止：没有回话冒出来（它接的虽然不是最后一句，也一并作废了）；小字在最后一句底下")
     pa.get_by_text(NOTE, exact=True).tap()
     got = wait_js(pa, shown("收到：头一句 / 又说一句"), 20000)
     pa.get_by_text("第二条").last.wait_for(timeout=10000); pa.wait_for_timeout(1500)
@@ -1500,9 +1532,9 @@ def resume(browser):
     first_time(pa); enable_notifications(pa)
     chat(pa, "老公在吗")
     b0 = len(banners()); c0 = len(calls())
-    mock("/__debug/claude-hold?ms=10000")
+    mock("/__debug/claude-hold?ms=30000")
     say(pa, "我先去忙了")
-    ok(wait_mock(working, 8), "守着的时候按停·准备：发一句（他要想十秒）、开封府被收掉")
+    ok(wait_mock(working, 8), "守着的时候按停·准备：发一句（他要想三十秒）、开封府被收掉")
     pa.close()
     pb = page_of(A, "resume2")
     pb.goto(BASE); kite(pb)
@@ -1512,10 +1544,11 @@ def resume(browser):
     click_stop(pb)
     stopped = wait_key(pb, "发语音", 2000)
     emptied = wait_mock(lambda: box()["rows"] == [], 3)
-    wait_mock(lambda: len(calls()) == c0 + 1, 14)
+    cut = wait_mock(lambda: len(calls()) == c0 + 1, 22) and calls()[-1].get("cut") is True
     time.sleep(GRACE + 2.5)
     ok(stopped and emptied and notes(pb) == 1 and note_count(pb) == 0 and count_text(pb, "收到：我先去忙了") == 0 and len(banners()) == b0 and halted(pb) == [job] and jobs(pb) == [] and box()["rows"] == [],
-       "守着上次发出去的那一回的时候按停：一样作废，那一格收掉；那边回完了也不出回话、不弹横幅")
+       "守着上次发出去的那一回的时候按停：一样作废，那一格收掉；不出回话、不弹横幅")
+    ok(cut, "守着的那一回（话是上次打开时发的）按了停：小后端一样把跟 Anthropic 的线掐掉，不等他想完那三十秒")
     A.close()
 
 
@@ -1575,7 +1608,7 @@ def edit(browser):
     A.close()
 
 
-SCENES = [("keys", keys), ("queued", queued), ("double", double), ("waiting", waiting), ("oldpath", oldpath), ("reveal", reveal), ("avatar", avatar), ("regen", regen), ("reopen", reopen), ("pending", pending), ("other", other),
+SCENES = [("keys", keys), ("queued", queued), ("double", double), ("waiting", waiting), ("cutoff", cutoff), ("oldpath", oldpath), ("reveal", reveal), ("avatar", avatar), ("regen", regen), ("reopen", reopen), ("pending", pending), ("other", other),
           ("hung", hung), ("landed", landed), ("resume", resume), ("failed", failed), ("edit", edit),
           ("meme", meme), ("fresh", fresh), ("guard", guard), ("regen_old", regen_old), ("reveal_more", reveal_more), ("unstuck", unstuck),
           ("elsewhere", elsewhere), ("flushed", flushed), ("both", both), ("regen_save", regen_save), ("regen_more", regen_more), ("regen_away", regen_away),

@@ -658,7 +658,7 @@ def notice(browser):
     pa.get_by_role("button", name="打开侧栏").tap(); pa.wait_for_timeout(700)      # 还把侧栏拉开了
     was_away = was_away and pa.evaluate(REACHABLE)
     pa.evaluate("window.__away(true)")       # 切走了
-    knocked = wait_mock(lambda: len(banners()) == b0 + 1, GRACE + 14)
+    knocked = wait_mock(lambda: len(banners()) >= b0 + 1, GRACE + 14)
     pa.wait_for_timeout(600)
     stayed = pa.evaluate(TOP)
     ok(sent and was_away and knocked and stayed == held, f"翻着旧消息、开着侧栏的时候切走，他回了、横幅到了：她不在的时候画面没被挪（{held} → {stayed}）")
