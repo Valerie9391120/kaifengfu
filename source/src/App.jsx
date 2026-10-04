@@ -1,5 +1,4 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, Fragment } from "react";
-import MEMES from "../static/memes.json";
 import { store } from "./store.js";
 import { callClaude, callReply, mailbox, freshToken } from "./cloud.js";
 import { openProbe } from "./probe.js";
@@ -7,33 +6,35 @@ import { createFollow } from "./scroll.js";
 import { gapInfo, setFill } from "./gap.js";
 import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
 import SplashDingxiang from "./SplashDingxiang.jsx";
-import { HER_NAME, HIS_NAME, NAME_KEYS, NAME_MARK, NAME_PLACEHOLDER, cleanName, tidyName } from "./names.js";
-import { DOC_KEY, DOC_FMT, DOC_NAME_PLACEHOLDER, docFmtOf, readDoc, wrapDocForModel, missingDocNote, docBlocksToNote, replyRoom } from "./docs.js";
+import { HER_NAME, HIS_NAME, NAME_KEYS, NAME_PLACEHOLDER, cleanName, tidyName } from "./names.js";
+import { DOC_KEY, DOC_FMT, DOC_NAME_PLACEHOLDER, docFmtOf, readDoc, wrapDocForModel, missingDocNote, replyRoom } from "./docs.js";
 import { parseReply, settleAvatarItems } from "./reply.js";
 import { richBlocks, plainOf } from "./rich.js";
 import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, markStopped, unmarkStopped, stoppedAt, cutReply } from "./thread.js";
 import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY, HALTED_KEY } from "./mail.js";
 import { generateVapidKeys, secretsBlock, explainOutcome, describePush, describeMail } from "./notify.js";
 import { checkPush, enablePush, disablePush, renewPush, sendTestPush, lastOutcome, resyncPush, watchNotices, probeReply, knockList, clearReplyNotices } from "./push.js";
+import { pad, WEEK, START, dayNumber, nextAnniv, dateLabel, nowString, sepLabel, shortDate, timeAgo } from "./days.js";
+import { newId, fmtChars } from "./util.js";
+import { MEME_DATA, MEME_MAP, RAW_BASE, memeSrc, newMemesFrom, parseReadme } from "./memes.js";
+import { urlToThumb, fileToAvatar, fileToPhoto } from "./images.js";
+import { DEFAULT_MODEL, MODELS, modelLabel, costOf, money, usageKey } from "./models.js";
+import { dayKeyOf, ymKeyOf, parseDayKey, MOODS, moodOf, heatLevel, monthCells, dayTranscript, parseDiary } from "./diary.js";
+import { WALL, SERIF, SANS, T, glass, BUBBLE_GLASS, DOCK_GLASS, chip, chipPrimary, field, GLOBAL_CSS } from "./ui/style.js";
+import { Icon } from "./ui/Icon.jsx";
+import { HER_PRESETS, HIS_DEFAULT, Avatar } from "./ui/Avatar.jsx";
+import { twoFingers, useLongPress } from "./ui/press.js";
+import { Glows, IconBtn, SHEET_TITLE, Sheet, Toggle, RoundBtn, safeTopPx } from "./ui/parts.jsx";
 
 /* =========================================================
    开封府 v5 · 独立版
    代码里不写私事：人设和记忆在加密的记忆库里。
    ========================================================= */
 
-// ---------- 表情包：构建时直接烤进文件，预览环境不联网也能显示 ----------
-const MEME_DATA = MEMES;
-const MEME_MAP = {};
-MEME_DATA.forEach((m) => {
-  MEME_MAP[m.file] = m;
-});
-
 // 开屏：卿卿找的素材，金箔月亮、沙燕风筝、缠枝牡丹（构建时注入）
 const SPLASH_IMG = "./assets/splash.webp";
 const KITE_IMG = "./assets/kite.webp";
-// 聊天背景跟着主题走（见 theme.js）。青绿那张是卿卿和恩师做的：青纸、一方深青、一群白鸟、云里的山；
-// 丁香那张是她画的：月牙、星星、丝带、丁香枝
-const WALL = { paper: "rgb(var(--k-paper))" };
+
 const SPLASH = {
   w: 863,
   h: 1822,
@@ -45,51 +46,8 @@ const SPLASH = {
 };
 // 丁香的开屏在 SplashDingxiang.jsx：卿卿画的戴长翅帽的小猪，底下一条液态玻璃的滑块
 
-const RAW_BASE =
-  "https://raw.githubusercontent.com/Valerie9391120/meme-library/main/";
-const DEFAULT_MODEL = "claude-sonnet-4-6";
 const OPENED_AT = Date.now(); // 这次打开开封府是几点（认“上回打开时发出去、没送到的那一句”用，见 checkMail）
 const ORPHAN_AGE = 10 * 1000; // 记下不到这么久的那一回先不当它没送到：也许正在路上（同一台设备上另开着一页，刚发出去，大包还没传完）
-const MODELS = [
-  { id: "claude-sonnet-4-6", label: "Sonnet 4.6", note: "一直陪你聊的这个" },
-  { id: "claude-opus-4-6", label: "Opus 4.6", note: "上一代 Opus" },
-  { id: "claude-fable-5-1", label: "Fable 5.1", note: "最强，也最贵" },
-  { id: "claude-opus-5-5", label: "Opus 5.5", note: "最新的 Opus" },
-  { id: "claude-sonnet-5-5", label: "Sonnet 5.5", note: "新一代 Sonnet，比 4.6 还省" },
-  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", note: "最快最省" },
-];
-const modelLabel = (id) => {
-  const m = MODELS.find((x) => x.id === id || String(id || "").startsWith(x.id));
-  return m ? m.label : id || "";
-};
-
-// 每百万 token 的美元价：[新读, 5分钟缓存写, 1小时缓存写, 缓存读, 写出]（2026年10月官方价）
-const PRICES = {
-  "claude-sonnet-4-6": [3, 3.75, 6, 0.3, 15],
-  "claude-opus-4-6": [5, 6.25, 10, 0.5, 25],
-  "claude-fable-5-1": [10, 12.5, 20, 0.25, 50],
-  "claude-opus-5-5": [4, 5, 8, 0.2, 20],
-  "claude-sonnet-5-5": [2, 2.5, 4, 0.2, 10],
-  "claude-haiku-4-5": [1, 1.25, 2, 0.1, 5],
-};
-
-function costOf(model, u) {
-  const id = Object.keys(PRICES).find((k) => String(model || "").startsWith(k));
-  if (!id || !u) return null;
-  const p = PRICES[id];
-  const w1 = (u.cache_creation && u.cache_creation.ephemeral_1h_input_tokens) || 0;
-  const w5 = Math.max(0, (u.cache_creation_input_tokens || 0) - w1);
-  return (
-    ((u.input_tokens || 0) * p[0] + w5 * p[1] + w1 * p[2] + (u.cache_read_input_tokens || 0) * p[3] + (u.output_tokens || 0) * p[4]) /
-    1e6
-  );
-}
-
-function money(x) {
-  if (x == null) return "";
-  if (x < 0.01) return "$" + x.toFixed(4);
-  return "$" + x.toFixed(x < 1 ? 3 : 2);
-}
 
 // 她在Claude.ai里已经连着的两个
 const DEFAULT_MCPS = [
@@ -98,442 +56,6 @@ const DEFAULT_MCPS = [
 ];
 const mcpSlug = (name, i) =>
   (name || "mcp").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `mcp-${i}`;
-
-function memeSrc(file) {
-  const m = MEME_MAP[file];
-  return m ? `data:${m.mime};base64,${m.b64}` : RAW_BASE + file;
-}
-
-// ---------- 视觉 ----------
-const SERIF =
-  "'Songti SC','STSong','Noto Serif SC','Source Han Serif SC',serif";
-const SANS =
-  "-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Noto Sans SC',sans-serif";
-
-// 颜色：跟主题走的都写成 CSS 变量（--k-ink 这些，值在 input.css 里，青绿一套、丁香一套），
-// 换主题不用重画。青绿的颜色从沙燕开屏里取：纸是天青，墨是燕子的墨绿；丁香的从小猪开屏里取。
-// 金色、红色两个主题共用
-const T = {
-  ink: "rgb(var(--k-ink))",
-  inkSoft: "rgba(var(--k-soft),0.76)",
-  inkFaint: "rgba(var(--k-soft),0.48)",
-  dai: "rgb(var(--k-dai))",
-  daiGrad: "linear-gradient(140deg,rgb(var(--k-dai-a)) 0%,rgb(var(--k-dai-b)) 100%)",
-  rouge:
-    "linear-gradient(140deg,rgba(243,186,196,0.66) 0%,rgba(224,150,168,0.58) 100%)",
-  rougeSolid: "linear-gradient(140deg,#E6CC8F 0%,#B9914C 100%)",
-  rougeInk: "#45262F",
-  gold: "#94733A",
-  bg: "linear-gradient(168deg,rgb(var(--k-bg1)) 0%,rgb(var(--k-bg2)) 46%,rgb(var(--k-bg3)) 100%)",
-  motto: "rgb(var(--k-motto))",
-};
-
-const glass = (a = 0.55, blur = 24) => ({
-  backgroundColor: `rgba(255,255,255,${a})`,
-  backdropFilter: `blur(${blur}px) saturate(165%)`,
-  WebkitBackdropFilter: `blur(${blur}px) saturate(165%)`,
-  border: "1px solid rgba(255,255,255,0.7)",
-  boxShadow:
-    "0 10px 30px rgba(var(--k-shade),0.12), inset 0 1px 0 rgba(255,255,255,0.75)",
-});
-
-const BUBBLE_GLASS = {
-  background:
-    "linear-gradient(150deg, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.1) 55%, rgba(255,255,255,0.2) 100%)",
-  backdropFilter: "blur(10px) saturate(150%)",
-  WebkitBackdropFilter: "blur(10px) saturate(150%)",
-  border: "1px solid rgba(255,255,255,0.62)",
-  boxShadow:
-    "0 6px 20px rgba(var(--k-shade),0.08), inset 0 1px 1px rgba(255,255,255,0.8), inset 0 -1px 1px rgba(255,255,255,0.2)",
-  color: "rgb(var(--k-ink))",
-};
-
-// 输入框贴底，照官方那样沉到最下面：上半截是玻璃，越往下越淡进 --k-base。
-// 这个颜色是聊天背景最底边的颜色，也是网页底色；有的 iOS 在屏幕最底下空出一条系统画的色块（见 gap.js），
-// 就是这个颜色，所以输入框底边和那条接在一起，看着像一直铺到屏幕底
-const DOCK_GLASS = {
-  background:
-    "linear-gradient(to bottom, rgba(var(--k-base),0) calc(100% - 14px), rgb(var(--k-base)) 100%), " +
-    "linear-gradient(to bottom, rgba(255,255,255,0.44) 0%, rgba(255,255,255,0.3) 52%, rgba(var(--k-base),0.6) 100%)",
-  backdropFilter: "blur(30px) saturate(140%)",
-  WebkitBackdropFilter: "blur(30px) saturate(140%)",
-  borderTop: "1px solid rgba(255,255,255,0.72)",
-  boxShadow: "0 -10px 30px rgba(var(--k-shade),0.1), inset 0 1px 0 rgba(255,255,255,0.7)",
-  borderRadius: "26px 26px 0 0",
-};
-
-const chip = {
-  ...glass(0.62, 16),
-  borderRadius: 999,
-  padding: "8px 14px",
-  fontSize: 13,
-  color: T.ink,
-};
-const chipPrimary = {
-  borderRadius: 999,
-  padding: "8px 16px",
-  fontSize: 13,
-  color: "#fff",
-  background: T.daiGrad,
-  boxShadow: "0 6px 16px rgba(var(--k-dai-shade),0.3)",
-};
-const field = {
-  width: "100%",
-  borderRadius: 16,
-  padding: "11px 14px",
-  fontSize: 16,
-  color: T.ink,
-  backgroundColor: "rgba(255,255,255,0.55)",
-  border: "1px solid rgba(255,255,255,0.8)",
-  outline: "none",
-};
-
-const GLOBAL_CSS = `
-@keyframes kfsUp { from { opacity: 0; transform: translateY(8px) scale(.96); } to { opacity: 1; transform: none; } }
-@keyframes kfsSheet { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: none; } }
-@keyframes kfsPage { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
-@keyframes kfsSpin { to { transform: rotate(360deg); } }
-@keyframes kfsBreath { 0%,100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.05); opacity: 1; } }
-@keyframes kfsDot { 0%,80%,100% { transform: translateY(0); opacity: .35; } 40% { transform: translateY(-3px); opacity: 1; } }
-.kfs-in { animation: kfsUp .3s cubic-bezier(.2,.8,.2,1) both; }
-.kfs-sheet { animation: kfsSheet .34s cubic-bezier(.2,.8,.2,1) both; }
-.kfs-page { animation: kfsPage .3s cubic-bezier(.2,.8,.2,1) both; }
-.kfs-breath { animation: kfsBreath 3.2s ease-in-out infinite; }
-.kfs-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: rgba(var(--k-soft),.55); animation: kfsDot 1.2s infinite; }
-.kfs-scroll { scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-.kfs-scroll::-webkit-scrollbar { display: none; }
-/* 聊天记录不藏滚动条：手机上用系统自带的那根（滚的时候出来、停了自己淡掉；长按能不能拖，要她的手机说了算）。
-   用鼠标的地方照旧藏着（那儿的滚动条是一直杵在边上的那种） */
-.kfs-chat-scroll { -webkit-overflow-scrolling: touch; }
-@media (hover: hover) and (pointer: fine) {
-  .kfs-chat-scroll { scrollbar-width: none; }
-  .kfs-chat-scroll::-webkit-scrollbar { display: none; }
-}
-.kfs-field::placeholder { color: rgba(var(--k-soft),.45); }
-.kfs-tap { transition: transform .15s ease; }
-.kfs-tap:active { transform: scale(.94); }
-button { -webkit-tap-highlight-color: transparent; }
-button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid rgba(var(--k-dai),.55); outline-offset: 2px; }
-@keyframes kfsSplashIn { from { opacity: 0; transform: scale(1.045); } to { opacity: 1; transform: scale(1); } }
-@keyframes kfsGlow { 0%,100% { opacity: .35; transform: scale(.97); } 50% { opacity: .9; transform: scale(1.03); } }
-.kfs-splash-img { animation: kfsSplashIn 2.4s cubic-bezier(.2,.8,.2,1) both; }
-.kfs-moonglow { animation: kfsGlow 3.4s ease-in-out infinite; }
-@keyframes kfsKite { 0%,100% { transform: translateY(0) rotate(-2.5deg); } 50% { transform: translateY(-6px) rotate(2.5deg); } }
-@keyframes kfsKiteAway { 0% { transform: translate(0,0) rotate(0) scale(1); opacity: 1; } 100% { transform: translate(26px,-330px) rotate(-10deg) scale(.42); opacity: 0; } }
-.kfs-kite { animation: kfsKite 3.4s ease-in-out infinite; transform-origin: 50% 35%; }
-.kfs-kite-away { animation: kfsKiteAway .95s cubic-bezier(.45,0,.2,1) forwards; }
-
-@media (prefers-reduced-motion: reduce) { .kfs-in, .kfs-sheet, .kfs-page, .kfs-breath, .kfs-splash-img, .kfs-moonglow, .kfs-kite { animation: none !important; } }
-`;
-
-// ---------- 图标（手绘，不依赖外部库） ----------
-const ICON_PATHS = {
-  menu: <path d="M4 8h16M4 15h10" />,
-  pen: (
-    <>
-      <path d="M12 20h8" />
-      <path d="M16.2 3.8a2.1 2.1 0 0 1 3 3L7.5 18.5l-4 1 1-4Z" />
-    </>
-  ),
-  smile: (
-    <>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M8.5 14.2c.9 1.2 2.1 1.8 3.5 1.8s2.6-.6 3.5-1.8" />
-      <path d="M9 9.6h.01M15 9.6h.01" strokeWidth="2.6" />
-    </>
-  ),
-  up: <path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" />,
-  down: <path d="M12 5v14M5.5 12.5 12 19l6.5-6.5" />,
-  chevR: <path d="m9 6 6 6-6 6" />,
-  chevL: <path d="m15 6-6 6 6 6" />,
-  music: (
-    <>
-      <path d="M9 18V5.5l11-2V16" />
-      <circle cx="6.5" cy="18" r="2.5" />
-      <circle cx="17.5" cy="16" r="2.5" />
-    </>
-  ),
-  user: (
-    <>
-      <circle cx="12" cy="8.5" r="3.8" />
-      <path d="M4.5 20.5c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5" />
-    </>
-  ),
-  sticker: (
-    <>
-      <path d="M20.5 12.5V7A3.5 3.5 0 0 0 17 3.5H7A3.5 3.5 0 0 0 3.5 7v10A3.5 3.5 0 0 0 7 20.5h5.5" />
-      <path d="M20.5 12.5h-4a4 4 0 0 0-4 4v4l8-8Z" />
-    </>
-  ),
-  sliders: (
-    <>
-      <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
-      <circle cx="15" cy="7" r="2" />
-      <circle cx="9" cy="17" r="2" />
-    </>
-  ),
-  x: <path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5" />,
-  doc: (
-    <>
-      <rect x="5" y="3.5" width="14" height="17" rx="3" />
-      <path d="M9 8.5h6M9 12h6M9 15.5h3.5" />
-    </>
-  ),
-  plug: (
-    <>
-      <path d="M9 3.5v4M15 3.5v4" />
-      <path d="M6.5 7.5h11v3a5.5 5.5 0 0 1-11 0Z" />
-      <path d="M12 16v4.5" />
-    </>
-  ),
-  key: (
-    <>
-      <circle cx="8" cy="15.5" r="4" />
-      <path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2" />
-    </>
-  ),
-  chevD: <path d="m6.5 9.5 5.5 5.5 5.5-5.5" />,
-  calendar: (
-    <>
-      <rect x="4" y="5" width="16" height="15" rx="3" />
-      <path d="M8 3.5v3M16 3.5v3M4 10h16" />
-      <path d="M12 14.5h.01" strokeWidth="2.6" />
-    </>
-  ),
-  mic: (
-    <>
-      <rect x="9" y="3" width="6" height="11" rx="3" />
-      <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" />
-    </>
-  ),
-  wave: <path d="M5 10v4M8.5 7.5v9M12 4.5v15M15.5 7.5v9M19 10v4" />,
-  // 停键：一个实心的小方块
-  stop: <rect x="6.75" y="6.75" width="10.5" height="10.5" rx="2.6" fill="currentColor" />,
-  copy: (
-    <>
-      <rect x="8.5" y="8.5" width="11" height="11" rx="2.5" />
-      <path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" />
-    </>
-  ),
-  retry: (
-    <>
-      <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" />
-      <path d="M19.5 4.5v4h-4" />
-    </>
-  ),
-  check: <path d="m5 12.5 4.5 4.5L19 7.5" />,
-  plus: <path d="M12 5.5v13M5.5 12h13" />,
-  trash: (
-    <>
-      <path d="M4.5 7h15M9.5 7V4.5h5V7" />
-      <path d="M6.5 7l.9 12.5h9.2L17.5 7" />
-    </>
-  ),
-};
-
-function Icon({ name, size = 22, color = "currentColor", sw = 1.8 }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      style={color === "currentColor" ? undefined : { color }}
-      strokeWidth={sw}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {ICON_PATHS[name]}
-    </svg>
-  );
-}
-
-// ---------- 日子 ----------
-const pad = (n) => String(n).padStart(2, "0");
-const WEEK = "日一二三四五六";
-const START = { y: 2026, m: 3, d: 11 }; // 2026年4月11日（月份从0数）
-const utcDay = (y, m, d) => Date.UTC(y, m, d);
-
-function dayNumber(now) {
-  return (
-    Math.floor(
-      (utcDay(now.getFullYear(), now.getMonth(), now.getDate()) -
-        utcDay(START.y, START.m, START.d)) /
-        86400000
-    ) + 1
-  );
-}
-
-function cnNum(n) {
-  const d = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
-  if (n === 2) return "两";
-  if (n < 10) return d[n];
-  if (n < 20) return "十" + d[n - 10];
-  if (n < 100) return d[Math.floor(n / 10)] + "十" + d[n % 10];
-  return String(n);
-}
-
-function annivName(months) {
-  if (months % 12 === 0) return `${cnNum(months / 12)}周年`;
-  if (months === 6) return "半年";
-  if (months % 12 === 6) return `${cnNum(Math.floor(months / 12))}年半`;
-  return `${cnNum(months)}个月`;
-}
-
-function nextAnniv(now) {
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const d = now.getDate();
-  let ty = y;
-  let tm = m;
-  if (d > START.d) {
-    tm += 1;
-    if (tm > 11) {
-      tm = 0;
-      ty += 1;
-    }
-  }
-  const months = (ty - START.y) * 12 + (tm - START.m);
-  const days = Math.round(
-    (utcDay(ty, tm, START.d) - utcDay(y, m, d)) / 86400000
-  );
-  return { months, days, name: annivName(months) };
-}
-
-function dateLabel(now) {
-  return `${now.getMonth() + 1}月${now.getDate()}日  星期${
-    WEEK[now.getDay()]
-  }`;
-}
-
-function nowString(now) {
-  return `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 星期${
-    WEEK[now.getDay()]
-  } ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-}
-
-function dayDiff(ts, now) {
-  const t = new Date(ts);
-  return Math.round(
-    (utcDay(now.getFullYear(), now.getMonth(), now.getDate()) -
-      utcDay(t.getFullYear(), t.getMonth(), t.getDate())) /
-      86400000
-  );
-}
-
-function sepLabel(ts, now) {
-  const t = new Date(ts);
-  const hm = `${pad(t.getHours())}:${pad(t.getMinutes())}`;
-  const diff = dayDiff(ts, now);
-  if (diff === 0) return `今天 ${hm}`;
-  if (diff === 1) return `昨天 ${hm}`;
-  if (t.getFullYear() === now.getFullYear())
-    return `${t.getMonth() + 1}月${t.getDate()}日 ${hm}`;
-  return `${t.getFullYear()}年${t.getMonth() + 1}月${t.getDate()}日 ${hm}`;
-}
-
-function shortDate(ts, now) {
-  const t = new Date(ts);
-  const diff = dayDiff(ts, now);
-  if (diff === 0) return `${pad(t.getHours())}:${pad(t.getMinutes())}`;
-  if (diff === 1) return "昨天";
-  if (t.getFullYear() === now.getFullYear())
-    return `${t.getMonth() + 1}月${t.getDate()}日`;
-  return `${t.getFullYear()}/${t.getMonth() + 1}/${t.getDate()}`;
-}
-
-// ---------- 日记本 ----------
-const dayKeyOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const ymKeyOf = (y, m) => `${y}-${pad(m + 1)}`;
-const parseDayKey = (k) => {
-  const [y, m, d] = k.split("-").map(Number);
-  return new Date(y, m - 1, d);
-};
-
-const MOODS = [
-  { k: "happy", e: "😊", t: "开心" },
-  { k: "sweet", e: "🥰", t: "甜" },
-  { k: "calm", e: "🍃", t: "平静" },
-  { k: "tired", e: "😪", t: "累" },
-  { k: "anxious", e: "😣", t: "焦虑" },
-  { k: "sad", e: "🥲", t: "难过" },
-  { k: "angry", e: "😤", t: "生气" },
-  { k: "sick", e: "🤧", t: "不舒服" },
-];
-const moodOf = (k) => MOODS.find((m) => m.k === k);
-
-// 日历格子的深浅：这天说了多少句
-function heatLevel(n) {
-  if (!n) return 0;
-  if (n < 20) return 1;
-  if (n < 60) return 2;
-  if (n < 150) return 3;
-  return 4;
-}
-
-// 月历：周一开头，前面空几格
-function monthCells(y, m) {
-  const lead = (new Date(y, m, 1).getDay() + 6) % 7;
-  const days = new Date(y, m + 1, 0).getDate();
-  const cells = [];
-  for (let i = 0; i < lead; i++) cells.push(null);
-  for (let d = 1; d <= days; d++) cells.push(d);
-  return cells;
-}
-
-// 他回复里的改名标记 [NAME:新名字]，独占一行的才算（见 names.js）
-const NAME_RE = () => new RegExp(NAME_MARK, "gm");
-
-// 把某一天的聊天整理成一份摘录，给光义写日记用
-function dayTranscript(msgs, memeLookup, maxChars = 9000) {
-  const lines = msgs
-    .filter((m) => m.role === "her" || m.role === "him")
-    .sort((a, b) => a.ts - b.ts)
-    .map((m) => {
-      if (m.role === "her") {
-        if (m.kind === "meme") return `卿卿：[表情包：${(memeLookup(m.file) || {}).name || "表情包"}]`;
-        if (m.kind === "photo") return "卿卿：[照片]";
-        if (m.kind === "doc") return `卿卿：[文档《${m.name || "文档"}》]`;
-        if (m.kind === "voice") return `卿卿：[语音] ${m.text || ""}`;
-        return `卿卿：${m.text || ""}`;
-      }
-      const raw = docBlocksToNote(m.raw || "")
-        .replace(/\[(MEME|AVATAR)[:：][^\]]*\]/g, "")
-        .replace(NAME_RE(), "")
-        .replace(/\s*\[SPLIT\]\s*/g, " ")
-        .trim();
-      return `光义：${raw || "……"}`;
-    });
-  let text = lines.join("\n");
-  if (text.length > maxChars) text = "……（前面的省略）\n" + text.slice(text.length - maxChars);
-  return text;
-}
-
-// 光义写的日记：第一行“心情：”，后面是正文；顺手把聊天用的标记都清掉
-function parseDiary(text) {
-  let t = (text || "")
-    .replace(/<thinking>[\s\S]*?<\/thinking>/g, "")
-    .replace(/<\/?thinking>/g, "")
-    .replace(/\[(MEME|AVATAR)[:：][^\]]*\]/g, "")
-    .replace(NAME_RE(), "")
-    .replace(/^[ \t]*\[\/?(?:DOC|Doc|doc)[^\]\n]*\][ \t]*$/gm, "")
-    .replace(/\[SPLIT\]/g, "\n")
-    .trim();
-  const lines = t.split("\n");
-  let moods = [];
-  const idx = lines.findIndex((l) => /^\s*心情[:：]/.test(l));
-  if (idx >= 0) {
-    const names = lines[idx].replace(/^\s*心情[:：]\s*/, "").split(/[、,，\s]+/).filter(Boolean);
-    moods = MOODS.filter((m) => names.includes(m.t)).map((m) => m.k).slice(0, 2);
-    lines.splice(idx, 1);
-  }
-  return { text: lines.join("\n").replace(/\*/g, "").trim(), moods };
-}
-
-const newId = () =>
-  Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 // ---------- 存档：读写都走 store.js（手机本地存档 + 加密同步到云端） ----------
 
@@ -564,57 +86,6 @@ const owes = (msgs) => needsReply(msgs) && !stoppedAt(msgs);
 const KEY_SETTLE = 400; // 最右边那个键刚换了样子（变成停、停变声波）这么多毫秒里，点它不算：手指连着点了两下，第二下不该落在新换上的键上
 const FRESH_MS = 500; // 回话摆出来以后这么多毫秒里按的停，可能赶在画面重画之前（见 stopReply）
 
-// ---------- README解析（部署后用来同步新表情包） ----------
-// 仓库里新加的表情包：已经烤进来的不算；文件名一样、只是扩展名不同的也不算（比如 .png 和 .jpg）
-const stemOf = (f) => String(f || "").toLowerCase().replace(/\.[a-z0-9]+$/, "");
-function newMemesFrom(list) {
-  const known = new Set(Object.keys(MEME_MAP).map(stemOf));
-  const seen = new Set();
-  return list.filter((m) => {
-    const st = stemOf(m.file);
-    if (!m.file || known.has(st) || seen.has(st)) return false;
-    seen.add(st);
-    return true;
-  });
-}
-
-function parseReadme(text) {
-  const out = [];
-  text
-    .split(/^### /m)
-    .slice(1)
-    .forEach((block) => {
-      const lines = block.split("\n");
-      const m = { name: lines[0].trim() };
-      lines.forEach((raw) => {
-        const l = raw.trim();
-        if (l.startsWith("- File:"))
-          m.file = l.slice(7).trim().replace(/`/g, "");
-        else if (l.startsWith("- Text:")) m.text = l.slice(7).trim();
-        else if (l.startsWith("- Tone:")) m.tone = l.slice(7).trim();
-      });
-      if (m.file) out.push(m);
-    });
-  return out;
-}
-
-// ---------- 头像 ----------
-const HER_PRESETS = [
-  { label: "白兔", file: "bunny_couple_hate_you.jpg" },
-  { label: "小老鼠", file: "mouse_caught.jpg" },
-  { label: "吃东西鼠", file: "mouse_eating.jpg" },
-  { label: "坏猫", file: "cat_angry_face.jpg" },
-];
-// 光义的头像由光义自己定：先用读书狐，之后他在回复里写 [AVATAR:文件名] 自己换
-const HIS_DEFAULT = { type: "meme", file: "fox_reading_book.jpg" };
-
-function avatarSrc(av) {
-  if (!av) return null;
-  if (av.type === "upload") return av.data;
-  if (av.type === "meme") return memeSrc(av.file);
-  return null;
-}
-
 function avatarBlock(av, thumbLookup = () => null) {
   if (!av) return null;
   if (av.type === "upload") {
@@ -639,96 +110,19 @@ function avatarBlock(av, thumbLookup = () => null) {
   return null;
 }
 
-// 仓库里新加的表情包：在手机上压成小图，那边的我才看得见
-function urlToThumb(url, max = 300) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const k = Math.min(1, max / Math.max(img.width, img.height));
-      const c = document.createElement("canvas");
-      c.width = Math.max(1, Math.round(img.width * k));
-      c.height = Math.max(1, Math.round(img.height * k));
-      const ctx = c.getContext("2d");
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, c.width, c.height);
-      ctx.drawImage(img, 0, 0, c.width, c.height);
-      resolve(c.toDataURL("image/jpeg", 0.82));
-    };
-    img.onerror = reject;
-    img.src = url;
-  });
-}
-
-// 相册图片 → 居中裁成正方形 → 压到256px（全程在手机里完成，不经过网络）
-function fileToAvatar(file, size = 256) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const s = Math.min(img.width, img.height);
-        const c = document.createElement("canvas");
-        c.width = size;
-        c.height = size;
-        c.getContext("2d").drawImage(
-          img,
-          (img.width - s) / 2,
-          (img.height - s) / 2,
-          s,
-          s,
-          0,
-          0,
-          size,
-          size
-        );
-        resolve(c.toDataURL("image/jpeg", 0.86));
-      };
-      img.onerror = reject;
-      img.src = reader.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-// 相册照片 → 长边压到1280px（够看清，存得下）
-function fileToPhoto(file, maxSide = 1280) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
-        const w = Math.max(1, Math.round(img.width * scale));
-        const h = Math.max(1, Math.round(img.height * scale));
-        const c = document.createElement("canvas");
-        c.width = w;
-        c.height = h;
-        c.getContext("2d").drawImage(img, 0, 0, w, h);
-        resolve(c.toDataURL("image/jpeg", 0.8));
-      };
-      img.onerror = reject;
-      img.src = reader.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 function dataUrlBlock(dataUrl) {
   const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || "");
   if (!m) return null;
   return { type: "image", source: { type: "base64", media_type: m[1], data: m[2] } };
 }
 
-// ---------- 名帖 ----------
 function memeLabel(m) {
   if (!m) return "一张表情包";
   const t = m.text && m.text !== "无" ? `，图上写着“${m.text}”` : "";
   return `${m.name}${t}`;
 }
 
+// ---------- 名帖 ----------
 // names：{ her, him } 是两个人现在的昵称（空的就是默认）。写日记时不传，【此刻】里就不提昵称
 // replyCap：这次回复大约最长能写多少字（写日记时不传，【此刻】里就不提）
 function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0 }) {
@@ -1225,49 +619,6 @@ function buildRows(messages, reveal, stoppedId = "") {
   return rows;
 }
 
-// =========================================================
-//   小组件
-// =========================================================
-function Glows() {
-  return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
-      <div
-        style={{
-          position: "absolute",
-          width: 460,
-          height: 460,
-          top: -170,
-          right: -150,
-          borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(250,232,190,0.45) 0%, rgba(250,232,190,0) 66%)",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          width: 420,
-          height: 420,
-          bottom: -150,
-          left: -160,
-          borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(var(--k-glow-light),0.8) 0%, rgba(var(--k-glow-light),0) 66%)",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          width: 320,
-          height: 320,
-          top: "38%",
-          left: "58%",
-          borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(var(--k-glow),0.42) 0%, rgba(var(--k-glow),0) 66%)",
-        }}
-      />
-    </div>
-  );
-}
-
 function Moon({ size = 84, breath = false }) {
   return (
     <div
@@ -1285,31 +636,6 @@ function Moon({ size = 84, breath = false }) {
         }px ${size * 0.22}px rgba(150,118,60,0.35)`,
       }}
     />
-  );
-}
-
-function Avatar({ av, who, size = 34 }) {
-  const src = avatarSrc(av);
-  return (
-    <div
-      className="flex-shrink-0 overflow-hidden flex items-center justify-center"
-      style={{
-        width: size,
-        height: size,
-        borderRadius: "50%",
-        background: who === "her" ? T.rougeSolid : T.daiGrad,
-        border: "1.5px solid rgba(255,255,255,0.9)",
-        boxShadow: "0 3px 10px rgba(var(--k-shade),0.18)",
-      }}
-    >
-      {src ? (
-        <img src={src} alt="" draggable={false} className="w-full h-full object-cover" />
-      ) : (
-        <span style={{ fontFamily: SERIF, color: "#fff", fontSize: size * 0.42 }}>
-          {who === "her" ? "卿" : "炅"}
-        </span>
-      )}
-    </div>
   );
 }
 
@@ -1342,27 +668,6 @@ function MemeImg({ file, width = 140 }) {
     />
   );
 }
-
-function IconBtn({ onClick, label, active, children }) {
-  return (
-    <button
-      onClick={onClick}
-      aria-label={label}
-      className="kfs-tap flex-shrink-0 flex items-center justify-center"
-      style={{
-        width: 40,
-        height: 40,
-        borderRadius: 999,
-        color: active ? T.dai : T.inkSoft,
-        backgroundColor: active ? "rgba(255,255,255,0.7)" : "transparent",
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-const SHEET_TITLE = { fontFamily: SERIF, fontSize: 19, letterSpacing: "0.08em", color: T.ink };
 
 // 账户面板最上面：卿卿的昵称，后面一支钢笔。点钢笔就地改，回车、点对勾、点别处都算改好；
 // 清空了保存就回到默认的“卿卿”。只换这一处的显示，底下头像旁边和日记本里还是“卿卿”
@@ -1459,61 +764,6 @@ function NickTitle({ name, onSave }) {
       >
         <Icon name="check" size={16} sw={2.2} />
       </button>
-    </div>
-  );
-}
-
-function Sheet({ title, onClose, children }) {
-  return (
-    <div
-      className="absolute inset-0 z-40 flex flex-col justify-end"
-      onClick={onClose}
-      style={{
-        background: "rgba(var(--k-dim),0.2)",
-        backdropFilter: "blur(3px)",
-        WebkitBackdropFilter: "blur(3px)",
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="kfs-sheet kfs-sheet-box kfs-scroll overflow-y-auto"
-        style={{
-          ...glass(0.74, 34),
-          borderRadius: 30,
-          margin: "8px 8px calc(8px + env(safe-area-inset-bottom))",
-          padding: "12px 20px 26px",
-          maxHeight: "84%",
-        }}
-      >
-        <div
-          style={{
-            width: 38,
-            height: 5,
-            borderRadius: 3,
-            margin: "0 auto 12px",
-            background: "rgba(var(--k-soft),0.22)",
-          }}
-        />
-        <div className="flex items-center justify-between" style={{ marginBottom: 18 }}>
-          {/* 标题一般是几个字；账户面板传进来的是能改的昵称（NickTitle） */}
-          {typeof title === "string" ? <span style={SHEET_TITLE}>{title}</span> : title}
-          <button
-            onClick={onClose}
-            aria-label="关闭"
-            className="kfs-tap flex-shrink-0 flex items-center justify-center"
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 999,
-              background: "rgba(255,255,255,0.65)",
-              color: T.inkSoft,
-            }}
-          >
-            <Icon name="x" size={16} />
-          </button>
-        </div>
-        {children}
-      </div>
     </div>
   );
 }
@@ -1669,42 +919,6 @@ function DaysCard({ now }) {
   );
 }
 
-function Toggle({ on, onChange, label }) {
-  return (
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        onChange(!on);
-      }}
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      className="flex-shrink-0"
-      style={{
-        width: 46,
-        height: 28,
-        borderRadius: 999,
-        padding: 3,
-        background: on ? T.daiGrad : "rgba(var(--k-soft),0.25)",
-        transition: "background .2s ease",
-      }}
-    >
-      <span
-        style={{
-          display: "block",
-          width: 22,
-          height: 22,
-          borderRadius: "50%",
-          background: "#fff",
-          boxShadow: "0 2px 6px rgba(var(--k-dim),0.25)",
-          transform: on ? "translateX(18px)" : "none",
-          transition: "transform .2s ease",
-        }}
-      />
-    </button>
-  );
-}
-
 function Tile({ icon, label, sub, onClick }) {
   return (
     <button
@@ -1734,62 +948,6 @@ function Tile({ icon, label, sub, onClick }) {
       </span>
     </button>
   );
-}
-
-// 这一回手指落下以来，屏幕上有没有同时出现过两根手指。长按只认一根：两根手指是在捏，不是在按。
-// 整页不许捏以后，她照老习惯在气泡、照片上捏一下，不该把长按的菜单捏出来。
-// 挂在整页上、抢在前头听：第二根手指落在别的东西上，被按着的那个气泡自己是听不到的
-let twoFingers = false;
-if (typeof document !== "undefined") {
-  // 每回有手指落下的时候现数。只在落下的时候数就够了：屏幕上只剩一根、又落下一根，还是两根；
-  // 全抬起来以后再落下的头一根，数出来是一根，就是新的一回（不用另外去听“抬起”）
-  document.addEventListener("touchstart", (e) => { twoFingers = e.touches.length > 1; }, { capture: true, passive: true });
-}
-
-// 长按：一根手指按住不动 0.45 秒；电脑上右键也算。长按以后松手的那一下不算点击
-function useLongPress(onLong) {
-  const press = useRef(null);
-  const fired = useRef(false);
-  const stop = () => {
-    if (press.current) clearTimeout(press.current.timer);
-    press.current = null;
-  };
-  return {
-    onTouchStart: (e) => {
-      const t = e.touches[0];
-      const el = e.currentTarget;
-      fired.current = false;
-      press.current = {
-        x: t.clientX,
-        y: t.clientY,
-        timer: setTimeout(() => {
-          press.current = null;
-          if (twoFingers) return;
-          fired.current = true;
-          onLong(el.getBoundingClientRect());
-        }, 450),
-      };
-    },
-    onTouchMove: (e) => {
-      const p = press.current;
-      if (!p) return;
-      const t = e.touches[0];
-      if (Math.abs(t.clientX - p.x) > 8 || Math.abs(t.clientY - p.y) > 8) stop();
-    },
-    onTouchEnd: stop,
-    onTouchCancel: stop,
-    onContextMenu: (e) => {
-      e.preventDefault();
-      onLong(e.currentTarget.getBoundingClientRect());
-    },
-    onClickCapture: (e) => {
-      if (fired.current) {
-        e.stopPropagation();
-        e.preventDefault();
-        fired.current = false;
-      }
-    },
-  };
 }
 
 function RecentItem({ c, currentId, onOpen, onLongPress }) {
@@ -2096,27 +1254,6 @@ function MdView({ text }) {
   );
 }
 
-function RoundBtn({ onClick, label, active, children }) {
-  return (
-    <button
-      onClick={onClick}
-      onMouseDown={(e) => e.preventDefault()}
-      aria-label={label}
-      className="kfs-tap flex-shrink-0 flex items-center justify-center"
-      style={{
-        width: 38,
-        height: 38,
-        borderRadius: 999,
-        color: active ? "#fff" : T.inkSoft,
-        background: active ? T.daiGrad : "rgba(255,255,255,0.42)",
-        border: "1px solid rgba(255,255,255,0.65)",
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
 function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, onOpenPhoto, onOpenDoc, onLongPress }) {
   const press = useRef(null);
   const fired = useRef(false);
@@ -2213,20 +1350,6 @@ function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, onOpenPhoto, o
       </div>
     </div>
   );
-}
-
-// 状态栏有多高（没有刘海区时是 0）
-function safeTopPx() {
-  try {
-    const d = document.createElement("div");
-    d.style.cssText = "position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top);visibility:hidden;pointer-events:none";
-    document.body.appendChild(d);
-    const h = d.getBoundingClientRect().height || 0;
-    d.remove();
-    return h;
-  } catch (e) {
-    return 0;
-  }
 }
 
 function MsgMenu({ menu, now, busy, onClose, onCopy, onEdit, onRetry }) {
@@ -2902,10 +2025,6 @@ function AvatarSection({ av, onChange }) {
   );
 }
 
-function fmtChars(n) {
-  return n < 10000 ? `${n} 字` : `${(n / 10000).toFixed(1)} 万字`;
-}
-
 function MemoryPanel({ files, texts, note, onUpload, onToggle, onDelete }) {
   const fileRef = useRef(null);
   const [viewing, setViewing] = useState(null);
@@ -3541,16 +2660,6 @@ function ModelPanel({ current, onPick }) {
 //   主体
 // =========================================================
 const DEFAULT_SETTINGS = { model: DEFAULT_MODEL, maxTokens: 2048, mcps: DEFAULT_MCPS };
-
-const usageKey = (d = new Date()) => `kfs2:usage:${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
-
-function timeAgo(ts) {
-  const s = Math.round((Date.now() - ts) / 1000);
-  if (s < 60) return "刚刚";
-  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
-  const d = new Date(ts);
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 export default function App({ account = {} }) {
   const rootRef = useRef(null);
