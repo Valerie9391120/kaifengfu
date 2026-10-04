@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, Fragment } from "react";
 import MEMES from "../static/memes.json";
 import { store } from "./store.js";
 import { callClaude, callReply, mailbox, freshToken } from "./cloud.js";
@@ -10,6 +10,7 @@ import SplashDingxiang from "./SplashDingxiang.jsx";
 import { HER_NAME, HIS_NAME, NAME_KEYS, NAME_MARK, NAME_PLACEHOLDER, cleanName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, DOC_NAME_PLACEHOLDER, docFmtOf, readDoc, wrapDocForModel, missingDocNote, docBlocksToNote, replyRoom } from "./docs.js";
 import { parseReply, settleAvatarItems } from "./reply.js";
+import { richBlocks, plainOf } from "./rich.js";
 import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, markStopped, unmarkStopped, stoppedAt, cutReply } from "./thread.js";
 import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY, HALTED_KEY } from "./mail.js";
 import { generateVapidKeys, secretsBlock, explainOutcome, describePush, describeMail } from "./notify.js";
@@ -1065,19 +1066,37 @@ function makePreview(msgs) {
     return last.text || "";
   }
   const t = (last.items || []).find((it) => it.type === "text");
-  if (t) return t.text.replace(/\*/g, "");
+  if (t) return plainOf(t.text);
   const d = (last.items || []).find((it) => it.type === "doc");
   return d ? `[文档] ${d.name}` : "[表情包]";
 }
 
+// 气泡里的字：标题行加大加粗、**加粗**、*动作* 淡斜体（怎么拆见 rich.js）
+const RICH_H = [0, 20, 18, 16.5, 15.5, 15.5, 15.5]; // 一到六个井号的标题各多大（气泡里平常的字是 15.5）
 function renderRich(text) {
-  return text.split(/(\*[^*\n]+\*)/g).map((p, i) =>
-    p.length > 2 && p.startsWith("*") && p.endsWith("*") ? (
-      <em key={i} style={{ fontStyle: "italic", opacity: 0.72 }}>
-        {p.slice(1, -1)}
-      </em>
+  const blocks = richBlocks(text);
+  const inline = (parts, n) =>
+    parts.map((p, i) =>
+      p.i ? (
+        <em key={n + "-" + i} style={{ fontStyle: "italic", opacity: 0.72, ...(p.b ? { fontWeight: 600 } : {}) }}>
+          {p.s}
+        </em>
+      ) : p.b ? (
+        <strong key={n + "-" + i} style={{ fontWeight: 600 }}>
+          {p.s}
+        </strong>
+      ) : (
+        <span key={n + "-" + i}>{p.s}</span>
+      )
+    );
+  return blocks.map((b, n) =>
+    b.t === "h" ? (
+      // 标题自己占一行；上面要是还有字，留一点空
+      <div key={n} className="kfs-h" style={{ fontSize: RICH_H[b.level], fontWeight: 600, lineHeight: 1.4, marginTop: n ? 8 : 0, marginBottom: n < blocks.length - 1 ? 3 : 0 }}>
+        {inline(b.parts, n)}
+      </div>
     ) : (
-      <span key={i}>{p}</span>
+      <Fragment key={n}>{inline(b.parts, n)}</Fragment>
     )
   );
 }
