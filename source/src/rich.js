@@ -6,8 +6,19 @@
 //   别的 Markdown（列表、引用、代码、链接）在气泡里不认，照原样摆：那是聊天，不是文档（文档那一页另有一套，见 MdView）。
 
 // 标题行：前头最多让三个空格（再多就是他特意缩进去的，不算）；井号后面至少一个空格；
-// 后面得有字（光一个“# ”不算）；末尾再跟一串井号的（“## 标题 ##”）不要那一串
-const HEADING = /^ {0,3}(#{1,6})[ \t]+(\S.*?)(?:[ \t]+#+)?[ \t]*$/;
+// 后面得有字（光一个“# ”不算）；末尾再跟一串井号的（“## 标题 ##”）不要那一串。
+// 是标题就回 { level: 几个井号, text: 标题的字 }，不是回 null。
+// 不写成一条正则从头配到尾：一行里要是有几千个连着的空格，那种写法要来回试上千万次，气泡每画一遍都卡一下
+const HEAD = /^ {0,3}(#{1,6})[ \t]+(?=\S)/;
+function heading(line) {
+  const m = HEAD.exec(line);
+  if (!m) return null;
+  let text = line.slice(m[0].length).trimEnd();
+  let j = text.length;
+  while (j > 0 && text[j - 1] === "#") j--;
+  if (j < text.length && j > 0 && (text[j - 1] === " " || text[j - 1] === "\t")) text = text.slice(0, j).trimEnd();
+  return { level: m[1].length, text };
+}
 
 // 一行（或者连着的几行）里的加粗和淡斜体。回 [{ s: 字, b: 加不加粗, i: 是不是淡斜体 }]，照原来的次序。
 // 星号里面不能再有星号、不能跨行；三个的先认，再认两个的，最后认一个的
@@ -26,7 +37,7 @@ export function richInline(text) {
   const out = [];
   let last = 0;
   let m;
-  MARKS.lastIndex = 0;
+  // MARKS 带着位置走：每一回都认到头（认不到了它自己把位置归零），下一回从头来
   while ((m = MARKS.exec(src)) !== null) {
     if (m.index > last) out.push(rest(src.slice(last, m.index)));
     const tok = m[0];
@@ -44,23 +55,22 @@ export function richBlocks(text) {
   const out = [];
   if (!text) return out;
   let run = [];
-  let afterHeading = false;
+  let afterHeading = false; // 前面出过标题了：这以后一段话开头的空行（就是紧挨着标题的那几行）不要
   const flush = (beforeHeading) => {
     if (beforeHeading) while (run.length && !run[run.length - 1].trim()) run.pop();
     if (run.length) out.push({ t: "p", parts: richInline(run.join("\n")) });
     run = [];
   };
   for (const line of String(text || "").split("\n")) {
-    const m = HEADING.exec(line);
-    if (m) {
+    const h = heading(line);
+    if (h) {
       flush(true);
-      out.push({ t: "h", level: m[1].length, parts: richInline(m[2]) });
+      out.push({ t: "h", level: h.level, parts: richInline(h.text) });
       afterHeading = true;
       continue;
     }
     if (afterHeading && !run.length && !line.trim()) continue;
     run.push(line);
-    afterHeading = false;
   }
   flush(false);
   return out;
@@ -71,8 +81,8 @@ export function plainOf(text) {
   return String(text || "")
     .split("\n")
     .map((line) => {
-      const m = HEADING.exec(line);
-      return m ? m[2] : line;
+      const h = heading(line);
+      return h ? h.text : line;
     })
     .join("\n")
     .replace(/\*/g, "");

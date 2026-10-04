@@ -86,6 +86,17 @@ ok(same(richBlocks(" # 一个空格"), [H(1, T("一个空格"))]) && same(richBl
 ok(same(richBlocks("#\t制表符隔开"), [H(1, T("制表符隔开"))]) && same(richBlocks("#    好几个空格"), [H(1, T("好几个空格"))]) && same(richBlocks("# 末尾有空格   "), [H(1, T("末尾有空格"))]), "井号和字中间隔着制表符、好几个空格：都算；标题两头的空白不要");
 ok(same(richBlocks("## 标题 ##"), [H(2, T("标题"))]) && same(richBlocks("# 标题 #####  "), [H(1, T("标题"))]) && same(richBlocks("# 学 C#"), [H(1, T("学 C#"))]) && same(richBlocks("# C# 入门"), [H(1, T("C# 入门"))]) && same(richBlocks("# a#b"), [H(1, T("a#b"))]),
   "标题末尾另跟一串井号的（## 标题 ##）：那一串不要；字里头自己带的井号（C#）留着");
+ok(same(richBlocks("# ###"), [H(1, T("###"))]) && same(richBlocks("# a ## b ##"), [H(1, T("a ## b"))]) && same(richBlocks("# 标题\t##"), [H(1, T("标题"))]) && same(richBlocks("# 标题##"), [H(1, T("标题##"))]),
+  "标题末尾那一串井号：前头隔着空格才算收尾的；整个标题就是一串井号的，照字摆");
+{
+  // 一行里几万个连着的空格：也是一眨眼的事（气泡每画一遍都要认一回）
+  const long = "# 标题" + " ".repeat(60000) + "尾巴" + " ".repeat(60000) + "## ";
+  const t0 = Date.now();
+  const got = richBlocks(long + "\n" + "*".repeat(30000) + "字" + " ".repeat(30000) + "*\n" + "#".repeat(40000));
+  const plain = plainOf(long);
+  const took = Date.now() - t0;
+  ok(got.length === 2 && got[0].t === "h" && got[0].parts[0].s === "标题" + " ".repeat(60000) + "尾巴" && plain === "标题" + " ".repeat(60000) + "尾巴" && took < 300, `一行里夹着几万个连着的空格、星号、井号：照认，不卡（${took} 毫秒）`);
+}
 ok(same(richBlocks("这不是 # 标题"), [P(T("这不是 # 标题"))]) && same(richBlocks("1. # 也不是"), [P(T("1. # 也不是"))]), "井号不在一行开头：不算标题");
 ok(same(richBlocks("# **要紧的** 和 *小动作*"), [H(1, B("要紧的"), T(" 和 "), I("小动作"))]), "标题里的加粗、淡斜体照认");
 ok(same(richBlocks("开头一句\n# 标题\n正文\n再一行"), [P(T("开头一句")), H(1, T("标题")), P(T("正文\n再一行"))]), "标题夹在话中间：前后的话各成一段，段里的换行照留");
