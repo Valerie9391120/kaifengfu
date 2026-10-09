@@ -106,6 +106,24 @@ export function NoticeRow({ row, animate }) {
   );
 }
 
+// 前情提要的那一行：这以前的原话不再每次寄给那边的我，换成了他自己抄的提要（见 recap.js）。点了看他抄了什么。
+// 样子照“思考过程”那粒小钮（淡淡一层玻璃、十二号淡墨字）：它压在聊天背景上，背景深的地方光有字看不清。
+// 摆在正中：它说的是整段对话的事，不归哪一边
+export function RecapRow({ onOpen }) {
+  return (
+    <div className="kfs-recap flex justify-center" style={{ margin: "16px 0 6px" }}>
+      <button
+        onClick={onOpen}
+        className="kfs-tap flex items-center"
+        style={{ ...glass(0.38, 14), gap: 3, borderRadius: 999, padding: "4px 10px 4px 12px", fontSize: 12, color: T.inkSoft }}
+      >
+        <span>这以前的，他抄成了提要</span>
+        <Icon name="chevR" size={13} />
+      </button>
+    </div>
+  );
+}
+
 export function TypingRow({ avatars }) {
   return (
     <div className="flex items-end kfs-in" style={{ gap: 8, marginTop: 12 }}>

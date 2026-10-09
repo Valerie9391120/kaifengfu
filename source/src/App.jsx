@@ -15,7 +15,8 @@ import { WEEK, sepLabel, timeAgo } from "./days.js";
 import { newId, fmtChars } from "./util.js";
 import { MEME_DATA, MEME_MAP, RAW_BASE, memeSrc, newMemesFrom, parseReadme } from "./memes.js";
 import { urlToThumb, fileToPhoto } from "./images.js";
-import { DEFAULT_MODEL, modelLabel, costOf, money, usageKey } from "./models.js";
+import { DEFAULT_MODEL, modelLabel, costOf, money, usageKey, windowOf, thinksFirst } from "./models.js";
+import { RECAP_KEY, RECAP_BAD_KEY, normRecaps, pickRecap, tierOf, roomFor, dueRecap, splitForMerge, nextRecap, cleanRecap, addRecap, mayRetry, afterFail, afterAway, loadBad } from "./recap.js";
 import { dayKeyOf, parseDayKey, moodOf, dayTranscript, parseDiary } from "./diary.js";
 import { WALL, SERIF, SANS, T, glass, DOCK_GLASS, chip, chipPrimary, field, GLOBAL_CSS } from "./ui/style.js";
 import { Icon } from "./ui/Icon.jsx";
@@ -23,12 +24,13 @@ import { HIS_DEFAULT, Avatar } from "./ui/Avatar.jsx";
 import { Glows, IconBtn, SHEET_TITLE, Sheet, Toggle, RoundBtn } from "./ui/parts.jsx";
 import { buildSystem, withNowNote } from "./prompt/system.js";
 import { sameAv, buildMessages } from "./prompt/messages.js";
+import { buildRecapAsk, buildMergeAsk } from "./prompt/recap.js";
 import { DaysCard, Tile, HistoryCard } from "./side/Cards.jsx";
 import { ChatMenu } from "./side/ChatMenu.jsx";
 import { buildRows } from "./chat/rows.js";
 import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/overview.js";
 import { BubbleRow } from "./chat/Bubble.jsx";
-import { CtrlRow, ThinkingRow, NoticeRow, TypingRow } from "./chat/Lines.jsx";
+import { CtrlRow, ThinkingRow, NoticeRow, TypingRow, RecapRow } from "./chat/Lines.jsx";
 import { MsgMenu } from "./chat/MsgMenu.jsx";
 import { SplashByTheme } from "./Splash.jsx";
 import { NickTitle } from "./panels/NickTitle.jsx";
@@ -86,6 +88,22 @@ function unlessStopped(work, signal) {
 const owes = (msgs) => needsReply(msgs) && !stoppedAt(msgs);
 const KEY_SETTLE = 400; // 最右边那个键刚换了样子（变成停、停变声波）这么多毫秒里，点它不算：手指连着点了两下，第二下不该落在新换上的键上
 const FRESH_MS = 500; // 回话摆出来以后这么多毫秒里按的停，可能赶在画面重画之前（见 stopReply）
+// ---------- 抄前情提要（见 recap.js、主体里的 runRecaps） ----------
+const RECAP_WAIT = 1500; // 他回完一句以后等这么久再去看该不该抄（回话还在一条一条蹦，别抢在这一下）
+const RECAP_BACK = 2000; // 她回到眼前以后等这么久再接着抄（iOS 上一回来就发的请求会悬很久）
+const RECAP_CHAIN = 4; // 他回完一句，最多接连抄这么多趟（一趟一段）；还没抄到头的，等他下回回完话接着抄
+const RECAP_ROOM = 4000; // 抄的那一回最多让他写这么多 token：一段最长九百字、并出来的最长一千二，写超一点也放得下；再长就是写飞了，不要
+// 自己会先想一阵再写的模型（models.js 的 thinksFirst）：想的那些字也算在这个数里，所以放宽一倍，免得想的把写的挤掉。
+// 只放宽上限，别的不动：想多想少（effort）一改，名帖那一大段就接不上聊天时写下的缓存了
+const RECAP_ROOM_THINK = 8000;
+const RECAP_PATIENCE = 140 * 1000; // 抄的那一回最多等这么久（网关自己等到 150 秒也就不等了）
+const SWEEP_WAIT = 20 * 1000; // 开机以后过这么久，去收一遍删掉的对话留下的提要（见 sweepRecaps）
+const SWEEP_AGE = 60 * 60 * 1000; // 只收抄了一个钟头以上的：刚抄的那份，它的对话可能只是还没同步过来
+// ---------- 这一趟先不带缓存记号 ----------
+// 带缓存的那种写法没通、不带的通了：接下来这么久里发话都不带缓存记号，省得回回先碰一次壁。
+// 原来是记到开封府重开为止。那时候寄的对话只有最后二三十条，不带缓存也贵不到哪儿去；
+// 现在寄的是提要加好几万字的原话，一直不带缓存的话每句话都按原价算，所以过十分钟再带上试一回
+const NO_CACHE_MS = 10 * 60 * 1000;
 
 // =========================================================
 //   主体
@@ -139,7 +157,7 @@ export default function App({ account = {} }) {
   const reqRef = useRef(null);
   const keyWas = useRef({ now: "", from: "", at: -Infinity }); // 最右边那个键眼下是哪一样、从哪一样变来的、什么时候变的（见 KEY_SETTLE）
   const freshRef = useRef(null); // 刚摆出来、开始蹦的那一条回话：{ id, at }（见 stopReply）
-  const flagsRef = useRef({ noCache: false });
+  const flagsRef = useRef({ noCacheAt: -Infinity }); // 上一回记下“先不带缓存记号”是什么时候（见 NO_CACHE_MS）
   const [reveal, setReveal] = useState(null);
   const [errorNote, setErrorNote] = useState("");
   const [storageOk, setStorageOk] = useState(true);
@@ -158,6 +176,24 @@ export default function App({ account = {} }) {
   const [docs, setDocs] = useState({});
   const docsRef = useRef({});
   const [docView, setDocView] = useState(null); // 点开看的那一份
+  // 前情提要（见 recap.js）：眼前这段对话抄过的那几份（聊天记录里那行小字照它画）、点开看的那一份
+  const [recaps, setRecaps] = useState([]);
+  const [recapView, setRecapView] = useState(null);
+  const [recapArmed, setRecapArmed] = useState(false); // “丢掉重抄”点了头一下
+  const [recapUsage, setRecapUsage] = useState(null); // 上一回抄提要花了多少（API 面板里写）
+  // 抄提要的活：want 是他回过话、该去看一眼要不要抄的那几段对话；busy 是正抄着的；
+  // failed 记没抄成的（{ at, times, away }，见 recap.js 的 mayRetry）：这本账也记在这台设备上，重开了接着认
+  const recapJob = useRef(null);
+  if (recapJob.current === null) {
+    let failed = {};
+    try {
+      failed = loadBad(localStorage.getItem(RECAP_BAD_KEY), Date.now());
+      // 收拾过的那一份当场写回去：读的时候不认的（太老的、钟点不对的）不留在设备上，免得哪天又被认回来
+      if (Object.keys(failed).length) localStorage.setItem(RECAP_BAD_KEY, JSON.stringify(failed));
+      else localStorage.removeItem(RECAP_BAD_KEY);
+    } catch (e) {}
+    recapJob.current = { want: new Set(), busy: new Set(), failed, timer: null };
+  }
   const [viewer, setViewer] = useState(null);
   const photoInputRef = useRef(null);
   const [voiceNote, setVoiceNote] = useState("");
@@ -343,6 +379,7 @@ export default function App({ account = {} }) {
         setChatId(lastId);
         setMessages(msgs);
         loadImagesFor(msgs);
+        showRecaps(lastId);
       }
 
       // 部署之后才能联网同步新表情包，预览环境里这一步会安静地失败
@@ -395,6 +432,7 @@ export default function App({ account = {} }) {
         setAvatars(av);
       }
       if (has("kfs2:name:")) await loadNames();
+      if (has(RECAP_KEY)) showRecaps(chatIdRef.current);
       if (has("kfs2:memindex") || has("kfs2:mem:")) {
         const mi = safeParse(await store.get("kfs2:memindex"), []) || [];
         const texts = {};
@@ -458,6 +496,21 @@ export default function App({ account = {} }) {
     };
   }, []);
 
+  // ---- 前情提要（规矩见 recap.js） ----
+  // 一段对话抄过的那几份（另存一条，不在对话里）
+  const readRecaps = async (id) => normRecaps(safeParse(await store.get(RECAP_KEY + id), []));
+  // 眼前这段对话的提要有变（翻到这段对话、新抄了一份、别的设备抄的同步下来了）：聊天记录里那行小字跟着换
+  const showRecaps = async (id) => {
+    const list = await readRecaps(id);
+    if (chatIdRef.current === id) setRecaps(list);
+  };
+  // “他记多长”那一档眼下的几个数。staticText 是名帖那一大段：它越长，屋子里留给对话的越少，屋子小的模型跟着缩
+  const recallTier = (staticText) => {
+    const st = settingsRef.current;
+    const room = (sure) => roomFor(windowOf(st.model || DEFAULT_MODEL), (staticText || "").length, st.maxTokens || 2048, sure);
+    return tierOf(st.recall, room(false), room(true));
+  };
+
   // ---- 对话存取 ----
   const saveChat = async (id, msgs) => {
     // 正在重新回答的那段对话：画面上先把旧回答收起来了（msgs 里没有它），存档不能跟着丢。
@@ -502,6 +555,8 @@ export default function App({ account = {} }) {
     flushPending();
     setEditing(null);
     setMenu(null);
+    setRecapView(null);
+    setRecapArmed(false);
     chatIdRef.current = id;
     listMount.current = Date.now();
     setChatId(id);
@@ -515,6 +570,7 @@ export default function App({ account = {} }) {
       messagesRef.current = msgs;
       setMessages(msgs);
       loadImagesFor(msgs);
+      showRecaps(id);
     }
     store.set("kfs2:lastChat", id);
     // 信箱里要是有这段对话的东西（他还没回完的那一回、没回成的那一封），现在轮到它了
@@ -563,6 +619,7 @@ export default function App({ account = {} }) {
     messagesRef.current = [];
     setChatId(id);
     setMessages([]);
+    setRecaps([]);
     setReveal(null);
     setErrorNote("");
     setMemePanel(false);
@@ -581,6 +638,12 @@ export default function App({ account = {} }) {
     setIndex(next);
     store.set("kfs2:index", JSON.stringify(next));
     store.del("kfs2:chat:" + id);
+    // 这段对话抄过提要的：跟着删（没抄过的不用留一条“删了”的记录）
+    if ((await store.get(RECAP_KEY + id)) != null) store.del(RECAP_KEY + id);
+    if (recapJob.current.failed[id]) {
+      delete recapJob.current.failed[id];
+      saveBad();
+    }
     if (id === chatIdRef.current) newChat();
   };
 
@@ -610,11 +673,13 @@ export default function App({ account = {} }) {
     } catch (e) {}
   };
 
-  const recordUsage = (data) => {
+  // recap：这一回是抄前情提要的。钱照样记进本月；API 面板里“上一条”那几行不让它顶掉（那是她看上一句话寄了多厚用的），另记一行
+  const recordUsage = (data, recap = false) => {
     const u = data && data.usage;
     if (!u) return;
     const cost = costOf(data.model, u);
-    setUsage({ model: data.model, ...u, cost });
+    if (recap) setRecapUsage({ model: data.model, cost });
+    else setUsage({ model: data.model, ...u, cost });
     if (cost == null) return;
     const key = usageKey();
     setMonthUsage((prev) => {
@@ -784,12 +849,16 @@ export default function App({ account = {} }) {
       names: namesRef.current,
       replyCap: replyRoom(st.maxTokens || 2048),
     });
-    const apiMessages = buildMessages(msgs, avatarsRef.current, memeLookup, imgLookup, thumbLookup, docLookup);
+    // 这段对话抄过提要的：前面的不寄原话，换成提要（见 recap.js）
+    const recapList = opts.chat ? await readRecaps(opts.chat) : [];
+    const { messages: apiMessages, tail } = buildMessages(msgs, avatarsRef.current, memeLookup, imgLookup, thumbLookup, docLookup, { recaps: recapList, tier: recallTier(staticText) });
 
     // 依次尝试：带缓存 → 不带缓存 → 不带MCP，哪种通了用哪种
     const withMcp = mcps.length > 0;
     const attempts = [];
-    if (!flagsRef.current.noCache) attempts.push({ cache: true, mcp: withMcp });
+    // （手机的钟被往回拨过、记的钟点比现在还晚：不认那个钟点，照常带）
+    const sinceNoCache = Date.now() - flagsRef.current.noCacheAt;
+    if (sinceNoCache >= NO_CACHE_MS || sinceNoCache < 0) attempts.push({ cache: true, mcp: withMcp });
     attempts.push({ cache: false, mcp: withMcp });
     if (withMcp) attempts.push({ cache: false, mcp: false });
     const bodyFor = (at) => {
@@ -797,7 +866,7 @@ export default function App({ account = {} }) {
         model,
         max_tokens: st.maxTokens || 2048,
         system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
-        messages: withNowNote(apiMessages, nowNote, at.cache),
+        messages: withNowNote(apiMessages, nowNote, at.cache, tail),
       };
       if (at.mcp) {
         body.mcp_servers = mcps.map((m, i) => {
@@ -836,7 +905,7 @@ export default function App({ account = {} }) {
         // 和老路上的记性一样：只有“不带缓存、别的照旧”才通的那种，才记下回别带缓存记号。
         // 是工具连不上、摘了工具才通的，不算缓存的毛病；是 Anthropic 一时出岔子、小后端才换的写法（shaky），也不算：
         // 记了的话，它挤上两三秒，她这一趟后面的每句话都不带缓存、按全价算
-        if (first.cache && !got.used.cache && !got.used.shaky && !!got.used.mcp === !!first.mcp) flagsRef.current.noCache = true;
+        if (first.cache && !got.used.cache && !got.used.shaky && !!got.used.mcp === !!first.mcp) flagsRef.current.noCacheAt = Date.now();
         // 从信箱里取的：算小后端放进去那会儿到的（切走半天才回来取，不该显示成刚到）
         return { him: digestReply(got.data, got.used, ctx, got.job, got.at ? Math.min(Date.now(), got.at) : 0), settle: got.settle };
       } catch (e) {
@@ -864,7 +933,7 @@ export default function App({ account = {} }) {
     }
 
     if (!data) throw new Error(lastErr || "没有回应");
-    if (attempts[0].cache && used === attempts[1]) flagsRef.current.noCache = true;
+    if (attempts[0].cache && used === attempts[1]) flagsRef.current.noCacheAt = Date.now();
     if (opts.chat) getRelay().tookOld(oldWhy);
     return { him: digestReply(data, used, ctx, ""), settle: null };
   };
@@ -910,6 +979,7 @@ export default function App({ account = {} }) {
         }
       }
       if (settle) settle();
+      recapSoon(id);
     } catch (e) {
       if (e && e.code === "stopped") {
         // 她按了停，回话还没到：这一回作废（信箱那头 mail.js 已经收拾了），不报错、不重发、过后也不去信箱里找。
@@ -1012,6 +1082,7 @@ export default function App({ account = {} }) {
       }
       await saveChat(id, next);
       if (settle) settle();
+      recapSoon(id);
       // 这工夫里她新说的：等这一回完了接着回。存的那一下工夫里她按了停的话就不接了
       // （那几句在按停的那一下已经记上“停了”：它们那时候不是还排着队，就是已经在等这一回完，见 stopReply）
       if (extra.length && !req.stopped) pendingRef.current.add(id);
@@ -1529,6 +1600,7 @@ export default function App({ account = {} }) {
       setMessages(next);
       setErrorNote("");
     }
+    recapSoon(id);
     return "applied";
   };
 
@@ -1716,7 +1788,195 @@ export default function App({ account = {} }) {
     }, 700);
   };
 
-  latest.current = { checkMail, openFromNotice, leaving, resendSoon };
+  // ---- 抄前情提要 ----
+  // 他回完一句、回话存好以后叫一声（recapSoon）：过一会儿去看这段对话够不够厚，够了就叫他把前面的抄成提要。
+  // 在后台办：不挡她说话，不占停键，顶上不显示“正在输入”。抄的工夫里她照常聊，寄的还是原来那一整段；
+  // 抄完一趟存好，下一句话起前面的才换成提要。一趟只抄一段（见 recap.js），没抄到头就接着抄下一趟，最多连抄 RECAP_CHAIN 趟。
+  // 走的是写日记那条路（网页自己等着，不经信箱）：她切走了这一回多半就断了。断了不要紧，照旧寄原话，下回他回完话再抄。
+  // 一回话只张罗一次：没抄成的不自己再试，等他下回回完话；而且越不成隔得越久（见 recap.js 的 mayRetry）。
+  // 她切走才断的，头一回不算没抄成（不是那边的毛病）；连着两回都这样断，照没抄成记（见 recap.js 的 afterAway）
+  const saveBad = () => {
+    try {
+      const failed = recapJob.current.failed;
+      if (Object.keys(failed).length) localStorage.setItem(RECAP_BAD_KEY, JSON.stringify(failed));
+      else localStorage.removeItem(RECAP_BAD_KEY);
+    } catch (e) {}
+  };
+  const recapSoon = (id) => {
+    const job = recapJob.current;
+    job.want.add(id);
+    clearTimeout(job.timer);
+    job.timer = setTimeout(() => latest.current.runRecaps(), RECAP_WAIT);
+  };
+
+  const runRecaps = async () => {
+    const job = recapJob.current;
+    for (const id of Array.from(job.want)) {
+      if (job.busy.has(id)) continue;
+      // 她不在眼前：先不抄（这头随时会断，白花一回钱）。还留在单子上，她回到眼前的时候再来（见下面开机以后挂的那几样）
+      if (document.visibilityState !== "visible") return;
+      // 这一圈转到它之前，另一圈已经把它办了（单子是这一圈开头抄下来的，中间等过别的对话）：不办第二遍
+      if (!job.want.delete(id)) continue;
+      if (!mayRetry(job.failed[id], Date.now())) continue;
+      job.busy.add(id);
+      try {
+        for (let pass = 0; pass < RECAP_CHAIN; pass++) {
+          const out = await writeRecap(id);
+          if (out !== "done") break;
+          if (job.failed[id]) {
+            delete job.failed[id];
+            saveBad();
+          }
+          // 抄完这一趟她已经走了：剩下的等她回来接着抄（这一趟是成了的，不算重试）
+          if (document.visibilityState !== "visible") {
+            job.want.add(id);
+            break;
+          }
+        }
+      } catch (e) {
+        job.failed[id] = e && e.code === "away" ? afterAway(job.failed[id], Date.now()) : afterFail(job.failed[id], Date.now());
+        saveBad();
+      }
+      job.busy.delete(id);
+    }
+  };
+
+  // 问他要一段提要。最多等 RECAP_PATIENCE；等的工夫里她切走过、这一回又没成的，抛 code 是 away 的错
+  const askRecap = async (body) => {
+    const ctl = new AbortController();
+    let left = false;
+    const onHide = () => {
+      if (document.visibilityState !== "visible") left = true;
+    };
+    document.addEventListener("visibilitychange", onHide);
+    let late = null;
+    const give = setTimeout(() => ctl.abort(), RECAP_PATIENCE);
+    try {
+      // 两道：到点把线掐了；连换登录凭证都悬着、掐不着的时候，过三秒照样不等了
+      return await Promise.race([
+        callClaude(body, "", ctl.signal),
+        new Promise((_, no) => {
+          late = setTimeout(() => no(new Error("等太久")), RECAP_PATIENCE + 3000);
+        }),
+      ]);
+    } catch (e) {
+      if (left) throw Object.assign(new Error("她切走了"), { code: "away" });
+      throw e;
+    } finally {
+      clearTimeout(give);
+      clearTimeout(late);
+      document.removeEventListener("visibilitychange", onHide);
+    }
+  };
+
+  // 看一段对话该不该抄，该抄就抄一趟存好。回 "done" 抄了一趟（也许还有下一趟）；"none" 用不着抄；
+  // "later" 这会儿不方便，回头再看；"gone" 那段对话没了。没抄成抛错
+  const writeRecap = async (id) => {
+    // 正在重新回答的那段对话：画面上旧回答先收起来了，这会儿看到的不是整段。等它完了（那一头回完也会叫一声）
+    if (forkRef.current && forkRef.current.chat === id) return "later";
+    const here = () => chatIdRef.current === id;
+    const alive = () => indexRef.current.some((c) => c.id === id);
+    const msgs = here() ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + id), null);
+    if (!Array.isArray(msgs) || !alive()) return "gone";
+    const st = settingsRef.current;
+    const model = st.model || DEFAULT_MODEL;
+    const memDocs = memFilesRef.current.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
+    // 名帖那一大段和聊天时寄的一个字不差（缓存接得上）；【此刻】这回用不着
+    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [] });
+    // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
+    const photos = {};
+    for (const m of msgs) {
+      if (m.role !== "her" || m.kind !== "photo" || !m.imgId) continue;
+      const have = imgsRef.current[m.imgId];
+      photos[m.imgId] = (have === undefined ? await store.get("kfs2:img:" + m.imgId) : have) || "";
+    }
+    const due = dueRecap(msgs, await readRecaps(id), recallTier(staticText), (m) => (photos[m.imgId] || "").length);
+    if (!due) return "none";
+    let ask = null;
+    if (due.kind === "merge") ask = buildMergeAsk({ parts: splitForMerge(due.prev, due.count).old });
+    else {
+      const piece = msgs.slice(due.from, due.to + 1);
+      const docTexts = {};
+      for (const m of piece) {
+        if (m.role !== "her" || m.kind !== "doc" || !m.docId) continue;
+        const have = docsRef.current[m.docId];
+        docTexts[m.docId] = (have === undefined ? await store.get(DOC_KEY + m.docId) : have) || "";
+      }
+      ask = buildRecapAsk({ msgs: piece, prev: due.prev, thick: due.thick, memeLookup, imgLookup: (k) => photos[k] || null, docLookup: (k) => docTexts[k] || null });
+    }
+    const data = await askRecap({
+      model,
+      max_tokens: thinksFirst(model) ? RECAP_ROOM_THINK : RECAP_ROOM,
+      system: [
+        { type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } },
+        { type: "text", text: ask.rule },
+      ],
+      messages: [{ role: "user", content: ask.content }],
+    });
+    recordUsage(data, true);
+    // 没写完的不要（写到上限被截断、屋子满了、那边不肯写）：断掉的正是最后那几样（还没聊完的话头）
+    if (data.stop_reason && data.stop_reason !== "end_turn" && data.stop_reason !== "stop_sequence") throw new Error("没写完");
+    const text = cleanRecap((data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n"));
+    if (!text) throw new Error("没写出字");
+    // 抄的工夫里这段对话被删了：不存
+    if (!alive()) return "gone";
+    // 单子现取现存：这工夫里别的设备也可能抄了一份
+    const listNow = await readRecaps(id);
+    // 抄的工夫里她把上一份丢掉了（面板里的“丢掉重抄”）：这一趟是接着那一份抄的，存了的话丢掉的那几段又跟着回来了。
+    // 不存，等他下回回完话从头来
+    if (due.prev && !listNow.some((r) => r.id === due.prev.id)) return "later";
+    const rec = nextRecap(due, text, msgs, { id: newId(), at: Date.now(), model: data.model || model });
+    // 抄的工夫里对话照常在变（她又说了话、改了前面的、翻了版本）：这一份认的是 upto 那一条，那一条还摆在外面它就作数，
+    // 不在了就先搁着（翻回来又作数），所以不用再对一遍
+    const next = addRecap(listNow, rec);
+    const ok = await store.set(RECAP_KEY + id, JSON.stringify(next));
+    if (!ok) markStorageFail();
+    if (here()) setRecaps(normRecaps(next));
+    return "done";
+  };
+
+  // 她点开一份提要、觉得抄得不对：把最近抄的这一份丢掉。单子里更早的那份（没有这一趟的）接着作数；
+  // 他下回回完话，这一趟会重抄。原话一条不动。
+  // 丢了以后没有别的作数的了（头一趟；或者连着丢了好几回、前面留的几份都丢完了），丢的就是整份，下回从头抄
+  const dropRecap = async (rec) => {
+    const id = chatIdRef.current;
+    const next = (await readRecaps(id)).filter((r) => r.id !== rec.id).map(({ text, ...r }) => r);
+    if (next.length) {
+      const ok = await store.set(RECAP_KEY + id, JSON.stringify(next));
+      if (!ok) markStorageFail();
+    } else store.del(RECAP_KEY + id);
+    if (chatIdRef.current === id) setRecaps(normRecaps(next));
+    setRecapView(null);
+    setToast(pickRecap(messagesRef.current, next).recap ? "丢掉了，他下回回完话会重抄" : "整份丢掉了，他下回回完话从头抄");
+  };
+
+  // 删掉的对话留下的提要：收掉。平常删对话的时候就一起删了（deleteChat）；这里收的是漏网的：
+  // 还是旧包的那台设备删的对话（它不认得提要）；这台设备正抄着的时候，那段对话在另一台设备上被删了。
+  // 只收“目录里没有、对话也没有、抄了一个钟头以上”的。手上有这样的才动：先同步一遍，
+  // 同步成了、手上没有没传上去的，再看一遍还是这样，才删（它的对话可能只是还没同步过来）
+  const sweepRecaps = async () => {
+    if (document.visibilityState !== "visible") return;
+    const orphans = async () => {
+      const out = [];
+      for (const key of store.keys(RECAP_KEY)) {
+        const id = key.slice(RECAP_KEY.length);
+        if (recapJob.current.busy.has(id) || indexRef.current.some((c) => c.id === id) || (await store.get("kfs2:chat:" + id)) != null) continue;
+        const newest = normRecaps(safeParse(await store.get(key), [])).reduce((t, r) => Math.max(t, r.at || 0), 0);
+        if (Date.now() - newest >= SWEEP_AGE) out.push(key);
+      }
+      return out;
+    };
+    if (!(await orphans()).length) return;
+    await store.syncNow();
+    let state = null;
+    store.onStatus((st) => {
+      state = st;
+    })();
+    if (!state || state.offline || state.syncing || state.pending) return;
+    for (const key of await orphans()) store.del(key);
+  };
+
+  latest.current = { checkMail, openFromNotice, leaving, resendSoon, runRecaps, sweepRecaps };
 
   // ---- 通知 ----
   // 开过通知的设备，每次打开都悄悄重新登记一遍（见 push.js）；她点通知回来的，记下是哪一条
@@ -1748,6 +2008,7 @@ export default function App({ account = {} }) {
     // 先轻轻问好新路通不通：她头一句话发完就切走，也敢交出去
     getRelay().warm();
     latest.current.checkMail();
+    const sweepTimer = setTimeout(() => latest.current.sweepRecaps().catch(() => {}), SWEEP_WAIT);
     // 新路通不通还不知道的时候（开机那一下没网、没问成）再问一声；已经知道了就什么都不做。
     // 回到眼前的那一下晚一点问：iOS 上一回来就发的请求会悬很久
     let warmTimer = null;
@@ -1766,6 +2027,11 @@ export default function App({ account = {} }) {
           backResend.current.clear();
           again.forEach((id) => latest.current.resendSoon(id));
         }
+        // 她不在的时候该抄还没动手的前情提要：歇一下再抄
+        if (recapJob.current.want.size) {
+          clearTimeout(recapJob.current.timer);
+          recapJob.current.timer = setTimeout(() => latest.current.runRecaps(), RECAP_BACK);
+        }
       } else latest.current.leaving();
     };
     const onHide = () => latest.current.leaving();
@@ -1782,6 +2048,8 @@ export default function App({ account = {} }) {
       window.removeEventListener("online", onOnline);
       clearTimeout(warmTimer);
       clearTimeout(mailTimer.current);
+      clearTimeout(recapJob.current.timer);
+      clearTimeout(sweepTimer);
       bannerTimers.current.forEach(clearTimeout);
     };
   }, [booted]);
@@ -2200,6 +2468,7 @@ export default function App({ account = {} }) {
       localStorage.removeItem(JOBS_KEY);
       localStorage.removeItem(RELAY_KEY);
       localStorage.removeItem(HALTED_KEY);
+      localStorage.removeItem(RECAP_BAD_KEY);
     } catch (e) {}
     if (account.signOut) account.signOut();
   };
@@ -2208,7 +2477,7 @@ export default function App({ account = {} }) {
   // 只认一根手指。落下了第二根，这一回就不算划侧栏了（拖到一半的弹回去），等手指全抬起来再从头认：
   // 整页不许捏以后，两根手指往里一捏，头一根正好是往右走的，原来会被当成右划、把侧栏带出来
   const onTouchStart = (e) => {
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView) return;
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView || recapView) return;
     if (e.touches.length > 1) {
       touch.current = null;
       setDragX(null);
@@ -2221,7 +2490,7 @@ export default function App({ account = {} }) {
     const s = touch.current;
     if (!s) return;
     // 手指还按着的工夫里冒出了菜单、面板（长按气泡就是）：底下的侧栏不跟着这根手指走，这一回也不算了
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView) {
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView || recapView) {
       touch.current = null;
       setDragX(null);
       return;
@@ -2253,7 +2522,18 @@ export default function App({ account = {} }) {
   const replying = queued || typing;
   // 那行“停了，点这里让我回”摆在她哪一句底下：他没在回的时候才摆
   const stoppedId = !replying ? stoppedAt(messages) : "";
-  const rows = useMemo(() => buildRows(messages, reveal, stoppedId), [messages, reveal, stoppedId]);
+  // 聊天记录里那行“抄成了提要”的小字：只摆眼下作数的那一份（单子里更早的几份不摆，它们已经被这一份接过去了）
+  const liveRecap = useMemo(() => pickRecap(messages, recaps).recap, [messages, recaps]);
+  const rows = useMemo(() => buildRows(messages, reveal, stoppedId, liveRecap), [messages, reveal, stoppedId, liveRecap]);
+  // 面板里那一份丢掉以后，还有没有更早的一份接着作数（没有的话，丢的就是整份：面板里的字照实写）
+  const recapFallback = useMemo(() => !!recapView && !!pickRecap(messages, recaps.filter((r) => r.id !== recapView.id)).recap, [messages, recaps, recapView]);
+  // 提要的面板开着的工夫里又抄了一趟（或者另一台设备抄的同步过来了）：面板跟着换成眼下作数的那一份。
+  // 她看到的、点“丢掉重抄”丢的，都是这一份；作数的那份没了（另一台设备丢掉了）就把面板收起来
+  useEffect(() => {
+    if (!recapView || (liveRecap && liveRecap.id === recapView.id)) return;
+    setRecapView(liveRecap || null);
+    setRecapArmed(false);
+  }, [liveRecap]);
   // 输入框最右边那个键眼下是哪一样：有字（有要发的照片、文档，正在改一句话）是发送；没字、他在回是停；没字、没在回是声波
   const keyKind = editing || input.trim() || attach.length ? "send" : replying ? "stop" : "wave";
   useLayoutEffect(() => {
@@ -2266,7 +2546,7 @@ export default function App({ account = {} }) {
   const activeModel = settings.model || DEFAULT_MODEL;
 
   // 对话页（或侧栏）在最上面时，底边自己接得上那条色块，告诉 main.jsx 别再盖淡出
-  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming && !docView;
+  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming && !docView && !recapView;
   useEffect(() => {
     const r = document.documentElement;
     if (chatOnTop) r.setAttribute("data-kfs-chat", "");
@@ -2435,6 +2715,8 @@ export default function App({ account = {} }) {
             testing={testing}
             usage={usage}
             monthUsage={monthUsage}
+            recapUsage={recapUsage}
+            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [] }).staticText)}
           />
         </Sheet>
       );
@@ -2682,6 +2964,9 @@ export default function App({ account = {} }) {
                   </button>
                 </div>
               );
+            }
+            if (row.type === "recap") {
+              return <RecapRow key={row.key} onOpen={() => setRecapView(row.recap)} />;
             }
             if (row.type === "thinking") {
               return (
@@ -3122,6 +3407,52 @@ export default function App({ account = {} }) {
               复制全文
             </button>
           </div>
+        </Sheet>
+      )}
+
+      {/* 点开看的那份前情提要：他抄了什么，她看得见。只看、能复制、不能改；抄得不对可以把最近抄的这一趟丢掉，让他重抄 */}
+      {recapView && (
+        <Sheet
+          title="前情提要"
+          onClose={() => {
+            setRecapView(null);
+            setRecapArmed(false);
+          }}
+        >
+          <p className="kfs-recap-about" style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.65, marginTop: -8, marginBottom: 12 }}>
+            这段对话聊长了。这一行以前的{recapView.n ? ` ${recapView.n} 条` : ""}原话不再每次寄给他，换成他自己抄的这一份；这一行以后的照旧寄原话。原话都还在你这儿，往上翻就是。
+          </p>
+          <div className="kfs-recap-meta" style={{ fontSize: 12, color: T.inkSoft, marginBottom: 10 }}>
+            {[recapView.ts ? `抄到 ${sepLabel(recapView.ts, now)} 为止` : "", `${recapView.parts.length} 段`, fmtChars(recapView.text.length), recapView.more ? "还没抄完，他回完话接着抄" : ""].filter(Boolean).join("，")}
+          </div>
+          <div
+            className="kfs-recap-body whitespace-pre-wrap break-words"
+            style={{ ...glass(0.42, 12), borderRadius: 18, padding: "14px 14px", fontSize: 14, lineHeight: 1.75, color: T.ink, userSelect: "text", WebkitUserSelect: "text" }}
+          >
+            {recapView.text}
+          </div>
+          <div className="flex flex-wrap" style={{ gap: 8, marginTop: 14 }}>
+            <button onClick={() => copyText(recapView.text)} className="kfs-tap" style={chip}>
+              复制
+            </button>
+            <button
+              onClick={() => {
+                if (!recapArmed) {
+                  setRecapArmed(true);
+                  return;
+                }
+                setRecapArmed(false);
+                dropRecap(recapView);
+              }}
+              className="kfs-tap"
+              style={{ ...chip, color: "#A8473D" }}
+            >
+              {!recapArmed ? "抄得不对，丢掉重抄" : recapFallback ? "再点一次，丢掉最近抄的这一趟" : "再点一次，整份丢掉从头抄"}
+            </button>
+          </div>
+          <p className="kfs-recap-drop-note" style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 8, lineHeight: 1.6 }}>
+            {recapFallback ? "丢掉的只是最近抄的那一趟，他下回回完话会重抄。原话一条不动。" : "前面没有留着更早的一份了：丢的是整份提要，他下回回完话从头抄。原话一条不动。"}
+          </p>
         </Sheet>
       )}
 

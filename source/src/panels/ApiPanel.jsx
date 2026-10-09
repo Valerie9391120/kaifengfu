@@ -1,13 +1,51 @@
 import { modelLabel, money, usageKey } from "../models.js";
+import { RECALL, DEFAULT_RECALL } from "../recap.js";
+import { fmtChars } from "../util.js";
 import { T, glass, chip } from "../ui/style.js";
 
-export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage, monthUsage }) {
+// 三选一的那种滑块（“回复最长多少”“他记多长”都是它）
+function Pick({ options, value, onPick, label }) {
+  return (
+    <div className="flex" role="group" aria-label={label} style={{ ...glass(0.4, 12), borderRadius: 999, padding: 4 }}>
+      {options.map((o) => (
+        <button
+          key={o.v}
+          onClick={() => onPick(o.v)}
+          aria-pressed={value === o.v}
+          style={{
+            flex: 1,
+            padding: "8px 0",
+            borderRadius: 999,
+            fontSize: 13.5,
+            color: value === o.v ? "#fff" : T.inkSoft,
+            background: value === o.v ? T.daiGrad : "transparent",
+            transition: "background .2s ease",
+          }}
+        >
+          {o.t}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// fit：“他记多长”那一档照眼下这个模型算出来的数（屋子小的模型会比那一档写的小，见 recap.js 的 tierOf）
+export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage, monthUsage, recapUsage, fit }) {
   const lengths = [
     { v: 1024, t: "短" },
     { v: 2048, t: "适中" },
     { v: 4096, t: "长" },
   ];
   const cur = settings.maxTokens || 2048;
+  // 他记多长（见 recap.js）：没选过就是适中
+  const recall = RECALL[settings.recall] ? settings.recall : DEFAULT_RECALL;
+  const recalls = Object.keys(RECALL).map((k) => ({ v: k, t: RECALL[k].label }));
+  const eff = fit || RECALL[recall];
+  const shrunk = eff.trigger < RECALL[recall].trigger;
+  // 缩过的数不是整的：不到一万字的凑成整百再写
+  const about = (n) => fmtChars(n < 10000 ? Math.round(n / 100) * 100 : n);
+  // 上一条寄得不薄、却一点没走缓存：全按原价算的。偶尔一回不要紧（十分钟后会再带上缓存记号试），回回这样就不对了
+  const noCache = !!usage && (usage.input_tokens || 0) > 20000 && !(usage.cache_read_input_tokens || 0) && !(usage.cache_creation_input_tokens || 0);
   const row = (k, v) => (
     <div key={k} className="flex items-center justify-between" style={{ fontSize: 13, color: T.ink, padding: "5px 0", gap: 12 }}>
       <span style={{ color: T.inkSoft, flexShrink: 0 }}>{k}</span>
@@ -28,26 +66,17 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
       </div>
 
       <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>回复最长多少</div>
-      <div className="flex" style={{ ...glass(0.4, 12), borderRadius: 999, padding: 4 }}>
-        {lengths.map((l) => (
-          <button
-            key={l.v}
-            onClick={() => onChange({ maxTokens: l.v })}
-            style={{
-              flex: 1,
-              padding: "8px 0",
-              borderRadius: 999,
-              fontSize: 13.5,
-              color: cur === l.v ? "#fff" : T.inkSoft,
-              background: cur === l.v ? T.daiGrad : "transparent",
-              transition: "background .2s ease",
-            }}
-          >
-            {l.t}
-          </button>
-        ))}
-      </div>
+      <Pick options={lengths} value={cur} onPick={(v) => onChange({ maxTokens: v })} label="回复最长多少" />
       <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>只是上限，平时聊天用不满。写长信、讲故事时可以调长。</p>
+
+      <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>他记多长</div>
+      <div className="kfs-recall" data-recall={recall}>
+        <Pick options={recalls} value={recall} onPick={(v) => onChange({ recall: v })} label="他记多长" />
+      </div>
+      <p className="kfs-recall-note" style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>
+        一段对话里的原话攒到大约 {about(eff.trigger)}，他把前面的抄成提要，最近 {about(eff.keep)}上下留原话；一张照片算一千五百字。最后二三十条不管多长都留原话。记得越长，每句话越贵。
+        {shrunk ? `眼下用的 ${modelLabel(settings.model)} 屋子小，这一档到不了 ${fmtChars(RECALL[recall].trigger)}，照上面的数来。` : ""}
+      </p>
 
       <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>用量</div>
       <div style={{ ...glass(0.45, 14), borderRadius: 18, padding: "10px 14px" }}>
@@ -61,7 +90,13 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
               row("写出", (usage.output_tokens || 0).toLocaleString()),
             ]
           : row("上一条", "这次打开还没说话")}
+        {recapUsage && row("上一回抄提要", `约 ${money(recapUsage.cost)}，${modelLabel(recapUsage.model)}`)}
       </div>
+      {noCache && (
+        <p className="kfs-no-cache" style={{ fontSize: 11.5, color: "#A8473D", marginTop: 6, lineHeight: 1.6 }}>
+          上一条没走缓存，是按原价算的。偶尔一回不要紧；回回都这样的话，截个图给我。
+        </p>
+      )}
       <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>
         单位是 token，钱是照官方价格估的，以 Anthropic 后台的账单为准。从缓存读的部分只收原价的一成甚至更少，所以聊得越连贯越省。
       </p>

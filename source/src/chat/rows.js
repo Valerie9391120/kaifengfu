@@ -1,7 +1,8 @@
 import { HIS_NAME } from "../names.js";
 
 // stoppedId：底下要摆那行“停了，点这里让我回”的是她的哪一句（没有就是空的，见 thread.js 的 stoppedAt）
-export function buildRows(messages, reveal, stoppedId = "") {
+// recap：眼下作数的那一份前情提要（见 recap.js 的 pickRecap；没有就是 null）。在它抄到的那一条后面添一行小字
+export function buildRows(messages, reveal, stoppedId = "", recap = null) {
   const rows = [];
   let prevTs = null;
   let lastHimId = null;
@@ -87,6 +88,7 @@ export function buildRows(messages, reveal, stoppedId = "") {
         rows.push({ type: "ctrl", key: "ct-" + m.id, msg: m, role: "him", latest });
       }
     }
+    if (recap && recap.upto === m.id) rows.push({ type: "recap", key: "rc-" + m.id, msg: m, recap });
   });
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];

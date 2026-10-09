@@ -144,8 +144,8 @@ with sync_playwright() as p:
     static = sysblocks[0]["text"]
     ok("《名帖-测试.md》" in static and "测试用的光义" in static, "名帖从加密的记忆库里取出来，整份带给那边的我")
     last = body["messages"][-1]["content"]
-    ok(last[-1]["type"] == "text" and last[-1]["text"].startswith("【此刻】") and last[-2].get("cache_control") == {"type": "ephemeral"},
-       "最后一句话后面放缓存记号，【此刻】的时间附在最后，不打乱缓存")
+    ok(last[-1]["type"] == "text" and last[-1]["text"].startswith("【此刻】") and last[-2].get("cache_control") == {"type": "ephemeral", "ttl": "1h"},
+       "最后一句话后面放缓存记号（和名帖一样留一小时），【此刻】的时间附在最后，不打乱缓存")
     ok(body["messages"][0]["content"][0]["text"].startswith("【开封府附注】"), "头像附注还在第一条")
     ok(body["model"] == "claude-sonnet-4-6" and body["max_tokens"] == 2048, "默认 Sonnet 4.6，回复上限 2048")
 

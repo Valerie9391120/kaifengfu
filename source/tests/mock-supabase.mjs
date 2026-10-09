@@ -10,10 +10,14 @@ const rows = new Map(); // user_id|key → row
 const claudeLog = []; // 每一回问“Anthropic”：{ body, beta, via }。via 是从哪条路来的：claude 函数（老路），还是 push 函数（新路）；
 // 压着没答的工夫里问的那头把线掐了（她按了停，push 函数不等了）的那一回：{ body, beta, via, cut: true }，没有回话
 let claudeFail = null; // 测试用：下一次问 Anthropic 照它的样子报错（workspace：key 没绑工作区；overloaded：太挤）；
-// 这两种一直管用、直到改回来：broken：回回都报 key 没绑工作区；mcp：带着工具的一律不行
+// 这三种一直管用、直到改回来：broken：回回都报 key 没绑工作区；mcp：带着工具的一律不行；
+// recap：叫他抄前情提要的那一种一律报太挤（平常的话照回）；recap-cut：抄提要的那一种写到上限被截断
 let claudeFailTimes = 0; // overloaded 连着挤几回（不写就是一回）
 let claudeHold = 0; // 测试用：下一次问 Anthropic，压这么多毫秒再答（等的工夫里她切走、关掉）
+let claudeHoldKind = ""; // 只压哪一种：recap 是只压叫他抄前情提要的那一种（平常的话照常答）；不写就是下一回不管哪一种
 let claudeRelease = null; // 正压着的那一回：叫它现在就答
+// 是不是叫他抄前情提要的那两种（抄一段、并几段，见 src/prompt/recap.js）：跟在名帖后面的那段规矩是这两个标题开头的
+const recapRuleOf = (body) => (Array.isArray(body.system) ? body.system.map((x) => x.text || "").find((t) => t.startsWith("【抄提要】") || t.startsWith("【并提要】")) : "") || "";
 
 // 假的那边的我：照寄来的话编一条回复。两条路问的都是它
 function fakeAnthropic(body, beta, via) {
@@ -31,6 +35,27 @@ function fakeAnthropic(body, beta, via) {
   }
   if (body.ping) {
     return { status: 200, json: { model: "claude-haiku-4-5-20251001", content: [{ type: "text", text: "在" }], usage: { input_tokens: 12, output_tokens: 1 } } };
+  }
+  // 叫他抄前情提要的那两种：照寄来的东西编一段，写明抄了几条、前面有没有提要、带了几张图
+  const recapRule = recapRuleOf(body);
+  if (recapRule) {
+    if (claudeFail === "recap") return { status: 529, json: { type: "error", error: { type: "overloaded_error", message: "Overloaded" } } };
+    const blocks = (body.messages[0] && body.messages[0].content) || [];
+    const all = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+    let text;
+    if (recapRule.startsWith("【并提要】")) {
+      const k = (/把最早的 (\d+) 段并成一段/.exec(recapRule) || [])[1] || "?";
+      text = `（测试并提要）把最早的 ${k} 段并成了一段。她说要试试新门，我说好，后来聊到周末的打算，说定周末去看灯，这件事还没了结。别的话头都收了尾，没有落下的。`;
+    } else {
+      const rows = (/〔要抄的原话，一共 (\d+) 条/.exec(all) || [])[1] || "?";
+      text = `<thinking>顺手写的心里话</thinking>\n（测试提要）这一段一共抄了 ${rows} 条。${all.includes("〔前面已经抄好的提要") ? "前面已经有提要了。" : "这是头一段。"}带着 ${blocks.filter((b) => b.type === "image").length} 张图。她说要试试新门，我说好，后来聊到周末的打算。她还问灯会几点开始，我说七点。\n[SPLIT]\n说定的事：周末去看灯。`;
+    }
+    // 自己会先想一阵的模型（5 字头的那几个）：和真的一样，正文前面先来一块“想的”，里头的字不给看（空的），只带一个签名
+    const thought = /^claude-(fable|opus|sonnet)-5/.test(String(body.model)) ? [{ type: "thinking", thinking: "", signature: "测试用的签名" }] : [];
+    return {
+      status: 200,
+      json: { model: body.model, stop_reason: claudeFail === "recap-cut" ? "max_tokens" : "end_turn", content: thought.concat([{ type: "text", text }]), usage: { input_tokens: 5000, cache_creation_input_tokens: 0, cache_read_input_tokens: 8000, output_tokens: 400 } },
+    };
   }
   const last = (body.messages || []).filter((m) => m.role === "user").pop();
   let blocks = last ? last.content : [];
@@ -64,9 +89,10 @@ function fakeAnthropic(body, beta, via) {
 }
 // signal：问的那头带来的“不等了”的线（push 函数带着；claude 函数那条老路不带）。压着的工夫里线被掐了：这一回到此为止，不答
 async function heldAnthropic(body, beta, via, signal) {
-  if (claudeHold) {
+  if (claudeHold && (claudeHoldKind !== "recap" || recapRuleOf(body))) {
     const ms = claudeHold;
     claudeHold = 0;
+    claudeHoldKind = "";
     let cut = false;
     await new Promise((r) => {
       const t = setTimeout(r, ms);
@@ -141,6 +167,7 @@ function pushReset() {
   pushOps.length = 0;
   pushNotFound = 0;
   claudeHold = 0;
+  claudeHoldKind = "";
   for (const k of Object.keys(pushEnv)) delete pushEnv[k];
   Object.assign(pushEnv, { SUPABASE_URL: `http://127.0.0.1:${PORT}`, SUPABASE_ANON_KEY: "sb_publishable_test", ALLOWED_EMAIL: "qing@example.com", ANTHROPIC_API_KEY: "sk-ant-test" });
 }
@@ -227,10 +254,14 @@ http
       return send(res, 200, { ok: true });
     }
     // 下一次问 Anthropic 压多少毫秒再答
+    // 带 kind=recap：只压下一回叫他抄前情提要的（这之前平常的话照常答）
     if (url.pathname === "/__debug/claude-hold") {
       claudeHold = Number(url.searchParams.get("ms") || 0);
+      claudeHoldKind = url.searchParams.get("kind") || "";
       return send(res, 200, { ok: true });
     }
+    // 眼下有没有正压着的一回
+    if (url.pathname === "/__debug/claude-held") return send(res, 200, { held: !!claudeRelease });
     // 正压着的那一回，现在就答
     if (url.pathname === "/__debug/claude-release") {
       const held = !!claudeRelease;
