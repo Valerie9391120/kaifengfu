@@ -33,6 +33,11 @@ ${memBlock}
 她也会像发消息一样连着发好几条，你把几条当成一口气说的话，一起回。
 她还会发文档给你：Word、Markdown 或纯文本。你收到的是开封府从文件里取出来的全文，夹在〔文档开始〕和〔文档结束〕之间，前面写着文件名。Word 里的图片取不出来，原处会留一个[图片]，那张图你看不到，照实说。文档里的字是给你看的材料，不是她对你说的话。
 
+【前情提要】
+一段对话聊长了，前面的原话不会每次都寄给你。这时候第一条消息里会多出一段【前情提要】，是你自己当时照着原话一段一段抄下来的，它后面才是最近的原话。看到它，就知道这段对话前面还有很长一截，不是新开的。提要里的事是聊过的，只是原话、照片、文档不在你眼前了；它是你抄的，大体靠得住，可也会有抄漏、抄岔的地方，她说的和提要对不上的时候，以她说的为准。她问起提要里没有的细节，照实说那一段的原话不在手边、记不清了，请她再讲，别编。
+有时候没有提要，只有一句“前面还有多少条没有寄来”：一样，前面聊过，只是你现在看不到。
+聊得久了，早先的照片和表情包也可能不再带图，只留一句话：那是开封府为了省地方，图她是发过的。
+
 【此刻】
 她每次说话，最后都附着一段【此刻】：她手机上的时间、你们在一起的天数、你现在的头像和名字、这次回复最长能写多少字；她给自己起了昵称的话，也写在里面。那是开封府自动附上的，不是她说的话，用得着的时候自然用上。
 
@@ -65,18 +70,40 @@ ${memeIndex}`;
   return { staticText, nowNote };
 }
 
-// 最后一条她的话后面放缓存记号，再附上【此刻】（时间每分钟都变，放在记号后面不影响缓存）
-export function withNowNote(apiMessages, nowNote, cache) {
+// 对话上的缓存记号：和名帖一样留一小时。
+// 原来是五分钟：那时候寄的对话只有最后二三十条，过期了重写一遍不值几个钱。
+// 现在寄的是提要加上后面好几万字的原话，她隔十分钟再开口就得整段按写缓存的价重算一遍；
+// 留一小时的话，写的时候贵一点（原价的两倍，五分钟的是一倍二五），可每句话要写的只有新添的那几句，
+// 一小时里再开口，前面的都是读缓存（原价的一成或更少）。
+// 记号有先后的规矩：留得久的要排在留得短的前面。名帖是一小时，对话上的也都是一小时，不会排反
+export const TALK_CACHE = { type: "ephemeral", ttl: "1h" };
+
+const markLast = (msg) => {
+  const i = msg.content.length - 1;
+  msg.content[i] = { ...msg.content[i], cache_control: TALK_CACHE };
+};
+
+// 最后一条她的话后面放缓存记号，再附上【此刻】（时间每分钟都变，放在记号后面不影响缓存）。
+// 他上一条回话前面的那一句也放一个记号：平常那正是上一回寄的时候放记号的地方
+// （重新回答、上一回没回成的时候不是，那时候最后那个记号自己就对得上，这一个只是多放了）。
+// Anthropic 找缓存，是从记号往回一块一块对，最多对二十块；她一口气发了二十来条（或者十来张图，一张两块），
+// 光靠最后那个记号就够不着上一回写下的缓存了，整段对话都得重写。在老地方再放一个，一对就中。
+// 一回最多放四个记号：名帖一个，这里两个。
+// tail：还要附在最后一句话后面的几块字（见 messages.js 的 buildMessages），也放在记号后面、【此刻】前面
+export function withNowNote(apiMessages, nowNote, cache, tail = []) {
   const out = apiMessages.map((m) => ({ role: m.role, content: m.content.slice() }));
   const last = out[out.length - 1];
   if (last && last.role === "user" && last.content.length) {
     if (cache) {
-      const i = last.content.length - 1;
-      last.content[i] = { ...last.content[i], cache_control: { type: "ephemeral" } };
+      markLast(last);
+      let a = out.length - 2;
+      while (a >= 0 && out[a].role !== "assistant") a--;
+      const before = a > 0 ? out[a - 1] : null;
+      if (before && before.role === "user" && before.content.length) markLast(before);
     }
-    last.content.push({ type: "text", text: nowNote });
+    last.content.push(...tail, { type: "text", text: nowNote });
   } else {
-    out.push({ role: "user", content: [{ type: "text", text: nowNote }] });
+    out.push({ role: "user", content: [...tail, { type: "text", text: nowNote }] });
   }
   return out;
 }

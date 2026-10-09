@@ -1,5 +1,6 @@
 import { wrapDocForModel, missingDocNote } from "../docs.js";
 import { MEME_MAP } from "../memes.js";
+import { tierOf, planWindow, staleImages, stamp } from "../recap.js";
 
 function avatarBlock(av, thumbLookup = () => null) {
   if (!av) return null;
@@ -25,22 +26,43 @@ function avatarBlock(av, thumbLookup = () => null) {
   return null;
 }
 
-function dataUrlBlock(dataUrl) {
+export function dataUrlBlock(dataUrl) {
   const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || "");
   if (!m) return null;
   return { type: "image", source: { type: "base64", media_type: m[1], data: m[2] } };
 }
 
-function memeLabel(m) {
+export function memeLabel(m) {
   if (!m) return "一张表情包";
   const t = m.text && m.text !== "无" ? `，图上写着“${m.text}”` : "";
   return `${m.name}${t}`;
 }
 
 // ---------- 打包送信 ----------
-// 对话窗口二十条一跳：跳之前这段前缀一直不变，名帖和历史都能命中缓存
-function windowStart(n) {
-  return n <= 40 ? 0 : Math.floor((n - 20) / 20) * 20;
+// 寄哪些：前面抄过提要的不再寄原话，提要放在第一条里；提要之后的原话照寄（见 ../recap.js 的 planWindow）。
+// 没有提要、对话又不厚，就是从头全寄。两回抄提要之间，前面这一段一个字不变，名帖和历史都能命中缓存。
+// 原来是只寄最后二三十条、二十条一跳，前面的不寄也不说：聊长了他会把这段对话当成新开的。
+
+// 前面有没寄原话的：在开头的附注里写明。回要添进附注的那几块字（没有就是空的）。
+// 写的都是定下来的数（第几条、几点），两回抄提要之间不变
+function beforeNote(plan) {
+  const out = [];
+  const r = plan.recap;
+  if (r) {
+    const when = r.ts ? `，抄到 ${stamp(r.ts)} 为止` : "";
+    out.push({
+      type: "text",
+      text: `【前情提要】这段对话聊得很长了，头 ${plan.at + 1} 条的原话没有再寄，换成了你自己一段一段抄的提要${when}：\n${r.text}\n【提要结束】`,
+    });
+    if (plan.gap) out.push({ type: "text", text: `【开封府附注】提要之后还有 ${plan.gap} 条这一回没有寄来，提要也还没抄到那儿，那一段说了什么你现在看不到。` });
+    if (plan.over) out.push({ type: "text", text: `【开封府附注】下面的原话，开头 ${plan.over} 条是提要里已经抄过的，和提要的末尾重着。` });
+  } else if (plan.gap) {
+    out.push({
+      type: "text",
+      text: `【开封府附注】这段对话前面还有 ${plan.gap} 条，太长了这一回没有寄来，下面是最近的。这不是新开的对话。前面说过什么你现在看不到；她提起时照实说那一段没寄到，请她再讲一遍，别编。`,
+    });
+  }
+  return out;
 }
 
 // ---------- 头像的来龙去脉 ----------
@@ -104,10 +126,20 @@ function avatarNote(av, lead, defaultText, unknownText, memeLookup, thumbLookup)
   return [{ type: "text", text: name ? `${lead}「${name}」，这张图暂时附不上。` : `${lead}（这张图暂时附不上）` }];
 }
 
-export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null, thumbLookup = () => null, docLookup = () => null) {
-  const win = msgs.slice(windowStart(msgs.length));
+// ctx：{ recaps, tier }。recaps 是这段对话抄过的提要（没有就不带）；tier 是“他记多长”那一档眼下的几个数（见 ../recap.js 的 tierOf）
+// 回 { messages, tail }：messages 是寄的那一整段；tail 是要附在最后一句话后面的几块字（在别的对话里又换过头像的那句提示），
+// 多半是空的。它不直接接在 messages 里：得放在缓存记号后面（见 system.js 的 withNowNote），
+// 不然这一回记号落在它上头，下一回它又挪到新的最后一句后面去了，上一回写下的缓存就再也对不上
+export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null, thumbLookup = () => null, docLookup = () => null, ctx = {}) {
+  const plan = planWindow(msgs, ctx.recaps || [], ctx.tier || tierOf());
+  const from = plan.from;
+  // 她发的图太多的时候，老的那几张不带图，只留那一句话（见 ../recap.js 的 staleImages）
+  const memeData = (file) => (MEME_MAP[file] ? MEME_MAP[file].b64 : thumbLookup(file) || "");
+  const stale = staleImages(msgs, from, (m) => ((m.kind === "photo" ? imgLookup(m.imgId) : memeData(m.file)) || "").length);
   const arr = [];
-  win.forEach((m) => {
+  msgs.forEach((m, at) => {
+    if (at < from) return;
+    const noImg = stale.has(at);
     // 她在聊天中途换了头像：变成对话里真实发生的一件事，图跟着这一行寄过去
     if (m.role === "event") {
       const img = avatarBlock(m.av, thumbLookup);
@@ -125,11 +157,12 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
     }
     if (m.role === "her") {
       if (m.kind === "photo") {
-        const data = imgLookup(m.imgId);
+        const data = noImg ? null : imgLookup(m.imgId);
         const blk = data ? dataUrlBlock(data) : null;
         const blocks = [];
         if (blk) blocks.push(blk);
-        blocks.push({ type: "text", text: blk ? "[她发了一张照片]" : "[她之前发过一张照片]" });
+        // 图没带上的两种：存档里取不到（别的设备还没同步来），和老的图这一回不带了（noImg）。后一种写明，免得他当成她没发过
+        blocks.push({ type: "text", text: blk ? "[她发了一张照片]" : noImg ? "[她之前发过一张照片，图这一回没带上]" : "[她之前发过一张照片]" });
         arr.push({ role: "user", content: blocks });
         return;
       }
@@ -157,7 +190,9 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
       if (m.kind === "meme") {
         const meme = memeLookup(m.file);
         const blocks = [];
-        if (MEME_MAP[m.file]) {
+        if (noImg) {
+          // 图不带了，下面那一句照写
+        } else if (MEME_MAP[m.file]) {
           blocks.push({
             type: "image",
             source: { type: "base64", media_type: MEME_MAP[m.file].mime, data: MEME_MAP[m.file].b64 },
@@ -201,7 +236,9 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
     }
   });
 
-  while (arr.length && arr[0].role === "assistant") arr.shift();
+  // 寄的头一条要是他的话（硬切正好切在他那一条上）：留着，开头的附注自己单占一条排在它前面。
+  // 原来是把它扔掉；现在切口上写着前面还有几条，那个数得对得上
+  const lead = arr.length && arr[0].role === "assistant";
 
   const merged = [];
   arr.forEach((x) => {
@@ -211,7 +248,6 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
   });
 
   if (merged.length) {
-    const from = windowStart(msgs.length);
     const ht = herTrail(msgs, from, avatars.her);
     const mt = hisTrail(msgs, from, avatars.him);
     // 开头写的是这段对话开头时的头像（没换过就是现在这张）。说法不带“现在”，
@@ -235,8 +271,10 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
       ),
       { type: "text", text: "对话中途换了头像的话，换的地方会有开封府提示，以最新的一次为准。" },
     ];
+    note.push(...beforeNote(plan));
     note.push({ type: "text", text: "【附注结束，以下是对话】" });
-    merged[0].content = note.concat(merged[0].content);
+    if (lead) merged.unshift({ role: "user", content: note });
+    else merged[0].content = note.concat(merged[0].content);
 
     // 在别的对话里又换过：这段对话里最后换上的不是现在这张，末尾补一句
     const tail = [];
@@ -264,8 +302,7 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
         )
       );
     }
-    const lastMsg = merged[merged.length - 1];
-    if (tail.length && lastMsg.role === "user") lastMsg.content = lastMsg.content.concat(tail);
+    return { messages: merged, tail };
   }
-  return merged;
+  return { messages: merged, tail: [] };
 }
