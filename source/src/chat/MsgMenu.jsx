@@ -3,11 +3,15 @@ import { T, glass } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { safeTopPx } from "../ui/parts.jsx";
 
-export function MsgMenu({ menu, now, busy, onClose, onCopy, onEdit, onRetry }) {
+// heard：长按的是他的语音条的话，它眼下转没转文字（菜单里那一项写“转文字”还是“取消转文字”）；
+// hearable：给不给“转文字”（念不成、没人念的那种，气泡上已经把字摆出来了，不给）
+export function MsgMenu({ menu, now, busy, heard = false, hearable = true, onClose, onCopy, onEdit, onRetry, onHeard }) {
   const { row, rect } = menu;
   const her = row.role === "her";
   const it = row.item;
   const acts = [];
+  // 他的语音条：头一项是转文字（照微信），转了以后变成“取消转文字”
+  if (!her && it.type === "voice" && hearable) acts.push({ k: "heard", label: heard ? "取消转文字" : "转文字", icon: heard ? "unheard" : "heard" });
   if (it.type === "text" || it.type === "voice") acts.push({ k: "copy", label: "复制", icon: "copy" });
   if (it.type === "doc") acts.push({ k: "copy", label: "复制全文", icon: "copy" });
   if (her && it.type === "text") acts.push({ k: "edit", label: "编辑", icon: "pen" });
@@ -30,12 +34,12 @@ export function MsgMenu({ menu, now, busy, onClose, onCopy, onEdit, onRetry }) {
       >
         <div style={{ padding: "10px 18px 6px", fontSize: 12, color: T.inkSoft }}>{sepLabel(row.msg.ts, now)}</div>
         {acts.map((a) => {
-          const off = busy && a.k !== "copy";
+          const off = busy && a.k !== "copy" && a.k !== "heard";
           return (
             <button
               key={a.k}
               disabled={off}
-              onClick={() => (a.k === "copy" ? onCopy(row) : a.k === "edit" ? onEdit(row) : onRetry(row))}
+              onClick={() => (a.k === "copy" ? onCopy(row) : a.k === "edit" ? onEdit(row) : a.k === "heard" ? onHeard(row) : onRetry(row))}
               className="w-full flex items-center text-left"
               style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: T.ink, opacity: off ? 0.4 : 1 }}
             >

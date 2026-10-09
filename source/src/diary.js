@@ -1,6 +1,7 @@
 import { NAME_MARK } from "./names.js";
 import { docBlocksToNote } from "./docs.js";
 import { pad } from "./days.js";
+import { unvoice } from "./voice.js";
 
 // ---------- 日记本 ----------
 export const dayKeyOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -57,7 +58,7 @@ export function dayTranscript(msgs, memeLookup, maxChars = 9000) {
         if (m.kind === "voice") return `卿卿：[语音] ${m.text || ""}`;
         return `卿卿：${m.text || ""}`;
       }
-      const raw = docBlocksToNote(m.raw || "")
+      const raw = unvoice(docBlocksToNote(m.raw || ""))
         .replace(/\[(MEME|AVATAR)[:：][^\]]*\]/g, "")
         .replace(NAME_RE(), "")
         .replace(/\s*\[SPLIT\]\s*/g, " ")
@@ -77,6 +78,7 @@ export function parseDiary(text) {
     .replace(/\[(MEME|AVATAR)[:：][^\]]*\]/g, "")
     .replace(NAME_RE(), "")
     .replace(/^[ \t]*\[\/?(?:DOC|Doc|doc)[^\]\n]*\][ \t]*$/gm, "")
+    .replace(/^[ \t]*\[(?:VOICE|Voice|voice)\][ \t]*$/gm, "")
     .replace(/\[SPLIT\]/g, "\n")
     .trim();
   const lines = t.split("\n");

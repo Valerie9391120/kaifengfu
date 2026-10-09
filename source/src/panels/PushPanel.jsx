@@ -27,7 +27,8 @@ function PushStep({ done, title, children }) {
   );
 }
 
-export function PushPanel({ email, onCopy, back, mailStatus, onReplyReady }) {
+// voiceOn：她开了“他能发语音”（小后端还认不得语音条的话，提醒她换）
+export function PushPanel({ email, onCopy, back, mailStatus, onReplyReady, voiceOn = false }) {
   const [st, setSt] = useState(null); // 现在是什么情形（push.js 的 checkPush）
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState(null); // 刚做的那一步怎么样：{ ok, say }
@@ -234,6 +235,12 @@ export function PushPanel({ email, onCopy, back, mailStatus, onReplyReady }) {
           {st.replyReady && setup.bubbles !== "ok" && (
             <div className="kfs-push-bubbles" style={small}>
               小后端还是上一版的：他说几句都并成一条敲。想要一句一条，打开 push 函数的 Code，把里面的字全删掉，换成新的那份，再点 Deploy。
+            </div>
+          )}
+          {/* 他能发语音了，小后端却还是认不得 [VOICE] 的那一份：语音那一条的横幅上会露出那一串记号 */}
+          {st.replyReady && setup.bubbles === "ok" && voiceOn && setup.voice !== "ok" && (
+            <div className="kfs-push-voice" style={small}>
+              小后端还是上一版的：他发语音的时候，横幅上会露出 [VOICE] 那一串。打开 push 函数的 Code，把里面的字全删掉，换成新的那份，再点 Deploy。
             </div>
           )}
         </div>

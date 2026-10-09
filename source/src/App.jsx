@@ -1,6 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { store } from "./store.js";
-import { callClaude, callReply, mailbox, freshToken } from "./cloud.js";
+import { callClaude, callReply, callVoice, mailbox, freshToken } from "./cloud.js";
+import { VOICE_KEY, HOLD_MS, WANT_KEY, HEARD_KEY, HEARD_MAX, VOICE_SAMPLE, voiceKeyOf, voicesIn, heardOf, shownOf, stabOf, secondsOf, readHeard, readVoice, collectHisIds, voiceWhere, silentMp3 } from "./voice.js";
+import { createSpeaker } from "./speaker.js";
 import { openProbe } from "./probe.js";
 import { createFollow } from "./scroll.js";
 import { gapInfo, setFill } from "./gap.js";
@@ -202,6 +204,27 @@ export default function App({ account = {} }) {
   const recordingRef = useRef(null);
   const recRef = useRef(null);
   const dictBaseRef = useRef("");
+  // 他的语音条（见 voice.js、speaker.js）：每一条眼下的样子（念着、念好了、念不成…）、正在放的是哪一条、转过文字的那几条
+  const [voices, setVoices] = useState({});
+  const voicesRef = useRef({});
+  const speakerRef = useRef(null);
+  const rowListRef = useRef([]); // 眼下摆着的那几行（放完一条语音，看下一条是不是也是他的语音）
+  const [playing, setPlaying] = useState("");
+  const playingRef = useRef("");
+  const audioRef = useRef(null);
+  const audioSrcRef = useRef(""); // 放声音的东西眼下装着的那个地址（换下一条的时候把上一个收回，不攒着占内存）
+  const hidesRef = useRef(0); // 开封府到现在一共被切走过几回（念语音的时候看她走没走开，见 speaker.js）
+  const [heard, setHeard] = useState(() => {
+    try {
+      return new Set(readHeard(localStorage.getItem(HEARD_KEY)));
+    } catch (e) {
+      return new Set();
+    }
+  });
+  const holdRef = useRef(null); // 回话蹦到语音那一条、正等它念好：{ key, at }（见“分条”那一段）
+  const [voiceCheck, setVoiceCheck] = useState(null); // API 面板里：念语音的小后端接上没有（{ state, say, model }）
+  const [voiceTestNote, setVoiceTestNote] = useState("");
+  const [voiceTesting, setVoiceTesting] = useState(false);
   const [, setTick] = useState(0);
   const [menu, setMenu] = useState(null);
   const [diaryOpen, setDiaryOpen] = useState(false);
@@ -433,6 +456,8 @@ export default function App({ account = {} }) {
       }
       if (has("kfs2:name:")) await loadNames();
       if (has(RECAP_KEY)) showRecaps(chatIdRef.current);
+      // 别的设备念好的语音同步下来了（这台设备上要念的那一条就不用再念了）
+      if (has(VOICE_KEY) && speakerRef.current) speakerRef.current.synced(keys.filter((k) => k.startsWith(VOICE_KEY)));
       if (has("kfs2:memindex") || has("kfs2:mem:")) {
         const mi = safeParse(await store.get("kfs2:memindex"), []) || [];
         const texts = {};
@@ -553,6 +578,7 @@ export default function App({ account = {} }) {
 
   const openChat = async (id) => {
     flushPending();
+    stopVoice();
     setEditing(null);
     setMenu(null);
     setRecapView(null);
@@ -611,6 +637,7 @@ export default function App({ account = {} }) {
 
   const newChat = () => {
     flushPending();
+    stopVoice();
     setEditing(null);
     setMenu(null);
     const id = newId();
@@ -633,6 +660,10 @@ export default function App({ account = {} }) {
     const old = safeParse(await store.get("kfs2:chat:" + id), []) || [];
     collectImgIds(old).forEach((imgId) => store.del("kfs2:img:" + imgId));
     collectDocIds(old).forEach((docId) => store.del(DOC_KEY + docId));
+    // 他在这段对话里（连同翻过去的那些版本）念过的语音：一起删；还没念的不念了，正念着的那一问掐掉
+    const said = collectHisIds(old).flatMap((hid) => store.keys(VOICE_KEY + hid + ".")).map((k) => k.slice(VOICE_KEY.length));
+    if (said.length) getSpeaker().drop(said);
+    getSpeaker().dropChat(id);
     const next = indexRef.current.filter((c) => c.id !== id);
     indexRef.current = next;
     setIndex(next);
@@ -774,6 +805,227 @@ export default function App({ account = {} }) {
     return relayRef.current;
   };
 
+  // 存着的声音（base64）变成能放的地址
+  const audioUrl = (audio, mime) => {
+    const bin = atob(audio);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: mime || "audio/mpeg" }));
+  };
+  // 给放声音的东西换一个地址：上一个是这里造的就收回（一条语音一两百 K，聊久了不收会越攒越多）
+  const loadAudio = (a, url) => {
+    const old = audioSrcRef.current;
+    a.src = url;
+    audioSrcRef.current = url;
+    if (old && old !== url && old.startsWith("blob:")) {
+      try {
+        URL.revokeObjectURL(old);
+      } catch (e) {}
+    }
+  };
+  // ---- 他的语音条：念的活（见 speaker.js）。用到的浏览器和云端的东西在这里递进去 ----
+  const getSpeaker = () => {
+    if (!speakerRef.current) {
+      speakerRef.current = createSpeaker({
+        call: async (text, stability, signal) => {
+          const d = await callVoice({ op: "speak", text, stability }, { signal });
+          return { audio: d.audio, mime: d.mime, dur: d.dur };
+        },
+        store: { get: (k) => store.get(k), set: (k, v) => store.set(k, v), del: (k) => store.del(k) },
+        visible: () => document.visibilityState === "visible",
+        hides: () => hidesRef.current,
+        wants: {
+          get: () => {
+            try {
+              return localStorage.getItem(WANT_KEY) || "";
+            } catch (e) {
+              return "";
+            }
+          },
+          set: (text) => {
+            try {
+              if (text) localStorage.setItem(WANT_KEY, text);
+              else localStorage.removeItem(WANT_KEY);
+            } catch (e) {}
+          },
+        },
+        stab: () => stabOf(settingsRef.current.voiceStab),
+        // 那一条回话里的这一样在哪儿（"shown" 在眼前、"kept" 在翻过去的版本里、"" 没了，见 voice.js 的 voiceWhere）：
+        // 眼前这段对话看画面上的那一份，别的看存档。正在重新回答的那段，旧回答从画面上收起来了，
+        // 还在点“重新回答”那一刻的整段里（forkRef）：算翻过去的（还没念的不念；念到一半的念完照存）
+        alive: async (w) => {
+          const cut = w.k.lastIndexOf(".");
+          const id = w.k.slice(0, cut);
+          const j = Number(w.k.slice(cut + 1));
+          const msgs = chatIdRef.current === w.c ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + w.c), null);
+          const here = voiceWhere(msgs, id, j, w.t);
+          if (here) return here;
+          const fk = forkRef.current;
+          return fk && fk.chat === w.c && voiceWhere(fk.full, id, j, w.t) ? "kept" : "";
+        },
+        now: () => Date.now(),
+        sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+        onChange: (key, st) => {
+          const next = { ...voicesRef.current };
+          if (st) next[key] = st;
+          else delete next[key]; // 不认这一条了：再冒出来的话重新看一眼
+          voicesRef.current = next;
+          setVoices(next);
+          // 正放着的那一条不在了（掐断了、删了）：停下
+          if (playingRef.current === key && (!st || st.s !== "ready")) stopVoice();
+        },
+      });
+    }
+    return speakerRef.current;
+  };
+  // ---- 放他的语音 ----
+  // 只用一个放声音的东西：iPhone 上它放过一回（她点的那一下），放完接着放下一条才不用她再点
+  const player = () => {
+    if (!audioRef.current) {
+      const a = new Audio();
+      a.preload = "auto";
+      audioRef.current = a;
+    }
+    return audioRef.current;
+  };
+  const stopVoice = () => {
+    const a = audioRef.current;
+    if (a) {
+      a.onended = null;
+      a.onerror = null;
+      a.onpause = null;
+      a.pause();
+    }
+    playingRef.current = "";
+    setPlaying("");
+  };
+  // 放完一条：紧跟着的下一个气泡也是他的语音、念好了的，接着放（照微信）
+  const nextVoiceAfter = (key) => {
+    const list = rowListRef.current;
+    const at = list.findIndex((r) => r.type === "bubble" && r.role === "him" && r.item.type === "voice" && voiceKeyOf(r.msg.id, r.idx) === key);
+    if (at < 0) return "";
+    for (let i = at + 1; i < list.length; i++) {
+      const r = list[i];
+      if (r.type !== "bubble") continue;
+      if (r.role !== "him" || r.item.type !== "voice") return "";
+      const k = voiceKeyOf(r.msg.id, r.idx);
+      const st = voicesRef.current[k];
+      return st && st.s === "ready" ? k : "";
+    }
+    return "";
+  };
+  // 点一下放，再点一下停。
+  // 声音现从存档里取、现变成能放的地址（同步的，不等：iPhone 上只有她手指点下去的那一下才许出声，等一下再放就会被拦）
+  const playVoice = (key) => {
+    if (playingRef.current === key) {
+      stopVoice();
+      return;
+    }
+    const st = voicesRef.current[key];
+    if (!st || st.s !== "ready") return;
+    const rec = readVoice(store.peek(VOICE_KEY + key));
+    let url = "";
+    try {
+      url = rec ? audioUrl(rec.audio, rec.mime) : "";
+    } catch (e) {
+      url = "";
+    }
+    if (!url) {
+      stopVoice();
+      setToast("这条语音放不出来");
+      return;
+    }
+    const a = player();
+    a.onended = null;
+    a.onerror = null;
+    a.onpause = null;
+    a.pause();
+    loadAudio(a, url);
+    a.onended = () => {
+      const next = nextVoiceAfter(key);
+      if (next) playVoice(next);
+      else stopVoice();
+    };
+    a.onerror = () => {
+      stopVoice();
+      setToast("这条语音放不出来");
+    };
+    // 不是放完了、是被停下的（来电话、锁屏上点了暂停、耳机拔了）：画面上跟着停。
+    // 放完的那一下也会先来一个“停了”（那时候已经放到头了，ended 是真的），不算；换下一条之前那一下停的，等到它来的时候已经在放下一条了，也不算
+    a.onpause = () => {
+      if (a.paused && !a.ended && playingRef.current === key) stopVoice();
+    };
+    playingRef.current = key;
+    setPlaying(key);
+    const p = a.play();
+    if (p && p.catch) {
+      p.catch(() => {
+        if (playingRef.current === key) stopVoice();
+      });
+    }
+  };
+  // 这条语音眼下是不是把字摆在气泡上（念不成、没人念）
+  const voiceAsText = (r) => {
+    const st = voicesRef.current[voiceKeyOf(r.msg.id, r.idx)];
+    return !!st && (st.s === "fail" || st.s === "none");
+  };
+  // 转文字、取消转文字：记在这台设备上
+  const toggleHeard = (key) => {
+    setMenu(null);
+    setHeard((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      try {
+        localStorage.setItem(HEARD_KEY, JSON.stringify(Array.from(next).slice(-HEARD_MAX)));
+      } catch (e) {}
+      return next;
+    });
+  };
+
+  // API 面板里：念语音的小后端接上没有（打开面板的时候看一眼，不花钱）
+  const checkVoice = async () => {
+    try {
+      const k = await callVoice({ op: "key" }, { wait: 15000 });
+      setVoiceCheck(k.configured ? { state: "ok", model: k.model || "" } : { state: "setup", say: k.message || "" });
+    } catch (e) {
+      setVoiceCheck({ state: e.code || "refused", say: String((e && e.message) || "") });
+    }
+  };
+  // 试听一句：照眼下“念得稳不稳”那一档念一句他的话，念好了就放（不存）
+  const testVoice = async () => {
+    // 她点下去的这一下先拿几帧没声音的放一下：iPhone 上只有手指点下去的那一下才许出声，等念好的回来就不是那一下了
+    stopVoice();
+    const a = player();
+    try {
+      loadAudio(a, URL.createObjectURL(new Blob([silentMp3(3)], { type: "audio/mpeg" })));
+      const warm = a.play();
+      if (warm && warm.catch) warm.catch(() => {});
+    } catch (e) {}
+    setVoiceTesting(true);
+    setVoiceTestNote("");
+    try {
+      const d = await callVoice({ op: "speak", text: VOICE_SAMPLE, stability: stabOf(settingsRef.current.voiceStab) });
+      stopVoice(); // 等的工夫里她点开了哪条语音：停下，放试听的这一句
+      loadAudio(a, audioUrl(d.audio, d.mime));
+      const p = a.play();
+      if (p && p.catch) p.catch(() => setVoiceTestNote("念好了，可这台设备没让放出声来。点一下下面聊天里的语音条试试"));
+      const how = [d.via === "dialogue" ? "走的是对话那个接口" : "", d.loose ? "“念得稳不稳”那一档它不认，照这个声音自己存着的设置念的" : ""].filter(Boolean).join("；");
+      setVoiceTestNote(`念好了，${secondsOf(d.dur)} 秒${how ? `（${how}）` : ""}。没听到声音的话，看看手机的音量`);
+      setVoiceCheck({ state: "ok", model: d.model || "" });
+    } catch (e) {
+      setVoiceTestNote(`没念成：${String((e && e.message) || e).slice(0, 160)}`);
+    }
+    setVoiceTesting(false);
+  };
+
+  // 回话放进了 id 那段对话：里头的语音条记下来要念（她开了“他能发语音”才念；没开的时候他发的，气泡上有“点这里念出来”）
+  const wantVoices = (id, him) => {
+    if (!settingsRef.current.voice || !him) return;
+    const list = voicesIn(him);
+    if (list.length) getSpeaker().want(id, list);
+  };
+
   // 把那边回来的一整段整理成对话里的一条。
   // used：最后用的哪种写法（带没带缓存、带没带工具）；ctx：发的时候记下的（接没接工具、工具的名字）；
   // job：走新路的那一回的编号（走老路的没有）；ts：这条算几点到的
@@ -848,6 +1100,7 @@ export default function App({ account = {} }) {
       mcpNames: mcps.map((m) => m.name),
       names: namesRef.current,
       replyCap: replyRoom(st.maxTokens || 2048),
+      voice: !!st.voice,
     });
     // 这段对话抄过提要的：前面的不寄原话，换成提要（见 recap.js）
     const recapList = opts.chat ? await readRecaps(opts.chat) : [];
@@ -966,6 +1219,7 @@ export default function App({ account = {} }) {
         const next = insertReply(base, anchor, him);
         if (isCurrent) messagesRef.current = next;
         await saveChat(id, next);
+        wantVoices(id, him); // 里头有语音条的：记下来要念（存好以后再记：念之前要在存档里认得出这一条）
         if (chatIdRef.current === id) {
           // 摆的是眼下的那一份（messagesRef），不是存之前的 next：存的那一下工夫里对话可能又变了
           // （她按了停、把上一条正在蹦的掐断了；她又发了一句），拿存之前的去摆会把这些盖掉
@@ -1075,12 +1329,17 @@ export default function App({ account = {} }) {
       const extra = await added();
       const next = forkAt(full, j, him).concat(extra);
       forkRef.current = null;
-      if (chatIdRef.current === id) {
+      const here = chatIdRef.current === id;
+      if (here) {
         messagesRef.current = next;
         setMessages(next);
+        // 里头的语音条先记下要念，再从头蹦：蹦到语音那一条认得出它在等着念（顶上“正在录音…”等它一会儿），
+        // 不先摆成“还没念”。也不能等存完再记：存的那一下工夫里她按停掐断了的，记的时候还当它在
+        wantVoices(id, him);
         startReveal(him.id);
       }
       await saveChat(id, next);
+      if (!here) wantVoices(id, him); // 她翻到别的对话去了：存好以后再记（念之前要在存档里认得出这一条）
       if (settle) settle();
       recapSoon(id);
       // 这工夫里她新说的：等这一回完了接着回。存的那一下工夫里她按了停的话就不接了
@@ -1288,10 +1547,13 @@ export default function App({ account = {} }) {
     waiting.forEach(markStoppedIn);
   };
 
-  // 回话摆出来了：从头一条开始一条一条蹦（见下面“分条”那一段）
+  // 回话摆出来了：从头一条开始一条一条蹦（见下面“分条”那一段）。
+  // 头一条就是语音条的：先一条都不摆，等它念好了再冒出来（和后面的语音条一样）
   const startReveal = (id) => {
     freshRef.current = { id, at: performance.now() };
-    setReveal({ id, count: 1 });
+    const m = messagesRef.current.find((x) => x.id === id);
+    const first = m && m.items && m.items[0];
+    setReveal({ id, count: first && first.type === "voice" ? 0 : 1 });
   };
 
   // 在那段对话最后一句她的话上记一笔“停了”（见 thread.js 的 markStopped）。
@@ -1329,6 +1591,10 @@ export default function App({ account = {} }) {
     messagesRef.current = out.msgs;
     setMessages(out.msgs);
     saveChat(chatIdRef.current, out.msgs);
+    // 没蹦到的那几样里的语音条：不念了（正念着的那一问掐掉，念好存着的删掉）
+    const kept = Math.max(1, count || 0);
+    const gone = out.dropped.map((it, i) => (it.type === "voice" ? voiceKeyOf(msgId, kept + i) : "")).filter(Boolean);
+    if (gone.length) getSpeaker().drop(gone);
     const av = out.dropped.find((it) => it.type === "avatar");
     if (av && sameAv(avatarsRef.current.him || null, { type: "meme", file: av.file })) changeHisAvatar(av.prev || null);
   };
@@ -1592,9 +1858,11 @@ export default function App({ account = {} }) {
     // 这条算几点到的：小后端放进信箱的时候（不比她那一句早，不比现在晚）
     const anchor = msgs.find((m) => m.id === info.last);
     const stamp = Math.max(((anchor && anchor.ts) || 0) + 1, Math.min(Date.now(), Date.parse(row.done_at) || Date.now()));
-    const next = mailPut(msgs, info, digestReply(result.data, result.used, info.extra || null, job, stamp));
+    const him = digestReply(result.data, result.used, info.extra || null, job, stamp);
+    const next = mailPut(msgs, info, him);
     if (here()) messagesRef.current = next;
     await saveChat(id, next);
+    wantVoices(id, him);
     // 存的那一下工夫里对话又变了（她发了一句、点了重新回答）：画面已经是更新的那份，不拿这一份旧的去盖
     if (here() && messagesRef.current === next) {
       setMessages(next);
@@ -1882,7 +2150,7 @@ export default function App({ account = {} }) {
     const model = st.model || DEFAULT_MODEL;
     const memDocs = memFilesRef.current.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
     // 名帖那一大段和聊天时寄的一个字不差（缓存接得上）；【此刻】这回用不着
-    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [] });
+    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice });
     // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
     const photos = {};
     for (const m of msgs) {
@@ -1976,7 +2244,7 @@ export default function App({ account = {} }) {
     for (const key of await orphans()) store.del(key);
   };
 
-  latest.current = { checkMail, openFromNotice, leaving, resendSoon, runRecaps, sweepRecaps };
+  latest.current = { checkMail, openFromNotice, leaving, resendSoon, runRecaps, sweepRecaps, stopVoice };
 
   // ---- 通知 ----
   // 开过通知的设备，每次打开都悄悄重新登记一遍（见 push.js）；她点通知回来的，记下是哪一条
@@ -2016,11 +2284,22 @@ export default function App({ account = {} }) {
       clearTimeout(warmTimer);
       warmTimer = setTimeout(() => getRelay().warm(), ms);
     };
+    // 上回没念完的语音条（开封府被系统收掉了）：接着念；她不在眼前的时候停下的，回来接着念。
+    // 回到眼前的那一下晚一点念：iOS 上一回来就发的请求会悬很久。
+    // “他能发语音”关着的（上回记下的是开着的时候的）：不念了
+    const resumeVoices = () => {
+      const sp = getSpeaker();
+      if (settingsRef.current.voice) sp.resume();
+      else if (sp.wanting().length) sp.halt();
+    };
+    let voiceTimer = setTimeout(resumeVoices, 1200);
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         backAtRef.current = Date.now();
         latest.current.checkMail();
         warmSoon(700);
+        clearTimeout(voiceTimer);
+        voiceTimer = setTimeout(resumeVoices, 700);
         // 她不在的时候有一句话没连上、没送成：现在补发（晚一点发，躲开刚回来那一下）
         if (backResend.current.size) {
           const again = Array.from(backResend.current);
@@ -2032,7 +2311,11 @@ export default function App({ account = {} }) {
           clearTimeout(recapJob.current.timer);
           recapJob.current.timer = setTimeout(() => latest.current.runRecaps(), RECAP_BACK);
         }
-      } else latest.current.leaving();
+      } else {
+        hidesRef.current++;
+        latest.current.leaving();
+        latest.current.stopVoice(); // 切走了：正放着的语音停下（iPhone 自己也会停，画面上跟着停）
+      }
     };
     const onHide = () => latest.current.leaving();
     const onOnline = () => {
@@ -2047,6 +2330,7 @@ export default function App({ account = {} }) {
       window.removeEventListener("pagehide", onHide);
       window.removeEventListener("online", onOnline);
       clearTimeout(warmTimer);
+      clearTimeout(voiceTimer);
       clearTimeout(mailTimer.current);
       clearTimeout(recapJob.current.timer);
       clearTimeout(sweepTimer);
@@ -2075,27 +2359,52 @@ export default function App({ account = {} }) {
   };
 
   // ---- 分条：一条一条冒出来 ----
+  // 下一条要冒出来的是语音条：它眼下什么样子（还不知道是 "?"；不是语音条是 ""）
+  const nextVoice = useMemo(() => {
+    if (!reveal) return "";
+    const msg = messages.find((m) => m.id === reveal.id);
+    const it = msg && msg.items && msg.items[reveal.count];
+    if (!it || it.type !== "voice") return "";
+    const st = voices[voiceKeyOf(msg.id, reveal.count)];
+    return st ? st.s : "?";
+  }, [reveal, messages, voices]);
+  // 轮到语音条、它还没念好：等着（最多 HOLD_MS），顶上写“正在录音…”
+  const voiceHolding = nextVoice === "?" || nextVoice === "load" || nextVoice === "wait" || nextVoice === "busy";
   useEffect(() => {
     if (!reveal) return;
     const msg = messages.find((m) => m.id === reveal.id);
     if (!msg || reveal.count >= msg.items.length) {
+      holdRef.current = null;
       setReveal(null);
       return;
     }
     const nextItem = msg.items[reveal.count];
-    const delay =
-      nextItem.type === "meme"
-        ? 750
-        : nextItem.type === "doc"
-        ? 900
-        : nextItem.type === "avatar"
-        ? 650
-        : Math.min(1900, 550 + (nextItem.text ? nextItem.text.length : 0) * 28);
-    const t = setTimeout(() => {
-      setReveal((r) => (r && r.id === msg.id ? { id: r.id, count: r.count + 1 } : r));
-    }, delay);
+    const step = () => setReveal((r) => (r && r.id === msg.id && r.count === reveal.count ? { id: r.id, count: r.count + 1 } : r));
+    let delay;
+    if (nextItem.type === "voice") {
+      const key = voiceKeyOf(msg.id, reveal.count);
+      if (nextVoice === "?") getSpeaker().look(key); // 还不知道它什么样子（存档里有没有、要不要念）：看一眼
+      if (nextVoice === "wait") getSpeaker().hurry(key); // 前头还排着别的（上一条回话里的）：先念画面正等着的这一条
+      if (voiceHolding) {
+        if (!holdRef.current || holdRef.current.key !== key) holdRef.current = { key, at: Date.now() };
+        const t = setTimeout(step, Math.max(0, HOLD_MS - (Date.now() - holdRef.current.at)));
+        return () => clearTimeout(t);
+      }
+      // 念好了（或者念不成）：歇一下就冒出来
+      delay = holdRef.current && holdRef.current.key === key ? 300 : 700;
+    } else {
+      delay =
+        nextItem.type === "meme"
+          ? 750
+          : nextItem.type === "doc"
+          ? 900
+          : nextItem.type === "avatar"
+          ? 650
+          : Math.min(1900, 550 + (nextItem.text ? nextItem.text.length : 0) * 28);
+    }
+    const t = setTimeout(step, delay);
     return () => clearTimeout(t);
-  }, [reveal, messages]);
+  }, [reveal, messages, nextVoice]);
 
   // ---- 键盘弹出来：外壳变矮了，聊天记录滚到最新那条（她在翻旧消息也一样：点开键盘就是要说话了） ----
   // 只认输入框的键盘：在弹出面板里打字（改昵称、填 key）的时候，后面的聊天记录不跟着动
@@ -2342,6 +2651,7 @@ export default function App({ account = {} }) {
       hisAvatarName: avatarName(avatarsRef.current.him),
       memDocs: docs,
       mcpNames: [],
+      voice: !!st.voice,
     });
     const msgs = dayMsgsRef.current[key] || [];
     const transcript = msgs.length ? dayTranscript(msgs, memeLookup) : "（这天你们没在开封府说话）";
@@ -2354,7 +2664,7 @@ export default function App({ account = {} }) {
 这次不是聊天。这是开封府日记本里属于你的那一页，日期是${label}。
 根据下面这天你们的聊天${herPart ? "和她这天的日记" : ""}，用你自己的口吻写一篇日记：第一人称，写这天发生了什么、你在想什么、你对她的感受。像真的日记，是写给自己的，不是写给她看的信，也不用讨好谁。一百到两百五十字。
 格式：第一行写「心情：」，从 开心、甜、平静、累、焦虑、难过、生气、不舒服 里挑一到两个，用顿号隔开。第二行开始写正文。
-不要写<thinking>，不要[SPLIT]、[MEME]、[AVATAR]、[NAME]、[DOC]，不要动作描写的星号，不用破折号。`;
+不要写<thinking>，不要[SPLIT]、[MEME]、[AVATAR]、[NAME]、[DOC]、[VOICE]，不要动作描写的星号，不用破折号。`;
     const data = await callClaude({
       model: st.model || DEFAULT_MODEL,
       max_tokens: Math.max(1024, st.maxTokens || 2048),
@@ -2469,7 +2779,10 @@ export default function App({ account = {} }) {
       localStorage.removeItem(RELAY_KEY);
       localStorage.removeItem(HALTED_KEY);
       localStorage.removeItem(RECAP_BAD_KEY);
+      localStorage.removeItem(WANT_KEY); // 要念还没念的语音条（换了人登录，不替上一位念）
+      localStorage.removeItem(HEARD_KEY);
     } catch (e) {}
+    stopVoice();
     if (account.signOut) account.signOut();
   };
 
@@ -2525,6 +2838,23 @@ export default function App({ account = {} }) {
   // 聊天记录里那行“抄成了提要”的小字：只摆眼下作数的那一份（单子里更早的几份不摆，它们已经被这一份接过去了）
   const liveRecap = useMemo(() => pickRecap(messages, recaps).recap, [messages, recaps]);
   const rows = useMemo(() => buildRows(messages, reveal, stoppedId, liveRecap), [messages, reveal, stoppedId, liveRecap]);
+  rowListRef.current = rows;
+  // 打开 API 面板：看一眼念语音的小后端接上没有
+  useEffect(() => {
+    if (sheet === "api") checkVoice();
+  }, [sheet]);
+  // 冒出来的语音条：还不知道它什么样子的（存档里有没有念好的），看一眼
+  useEffect(() => {
+    for (const r of rows) {
+      if (r.type !== "bubble" || r.role !== "him" || r.item.type !== "voice") continue;
+      const k = voiceKeyOf(r.msg.id, r.idx);
+      if (!voicesRef.current[k]) getSpeaker().look(k);
+    }
+  }, [rows]);
+  // 她关了“他能发语音”（这台设备上关的，或者别的设备上关了同步过来）：还没念的不念了，正念着的掐掉。念好的留着照样能放
+  useEffect(() => {
+    if (!settings.voice && speakerRef.current) speakerRef.current.halt();
+  }, [settings.voice]);
   // 面板里那一份丢掉以后，还有没有更早的一份接着作数（没有的话，丢的就是整份：面板里的字照实写）
   const recapFallback = useMemo(() => !!recapView && !!pickRecap(messages, recaps.filter((r) => r.id !== recapView.id)).recap, [messages, recaps, recapView]);
   // 提要的面板开着的工夫里又抄了一趟（或者另一台设备抄的同步过来了）：面板跟着换成眼下作数的那一份。
@@ -2629,7 +2959,7 @@ export default function App({ account = {} }) {
           <input ref={importRef} type="file" accept="application/json,.json" onChange={importBackup} style={{ display: "none" }} />
 
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8, marginTop: 22 }}>通知</div>
-          <PushPanel email={account.email} onCopy={copyText} back={noticeBack} mailStatus={() => getRelay().status()} onReplyReady={() => getRelay().learn(true)} />
+          <PushPanel email={account.email} onCopy={copyText} back={noticeBack} voiceOn={!!settings.voice} mailStatus={() => getRelay().status()} onReplyReady={() => getRelay().learn(true)} />
 
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8, marginTop: 22 }}>屏幕</div>
           {gapInfo().canFill && (
@@ -2703,20 +3033,24 @@ export default function App({ account = {} }) {
     }
     if (sheet === "api") {
       return (
-        <Sheet title="API" onClose={() => { setSheet(null); setTestNote(""); }}>
+        <Sheet title="API" onClose={() => { setSheet(null); setTestNote(""); setVoiceTestNote(""); }}>
           <ApiPanel
             settings={settings}
             onChange={(patch) => {
               updateSettings(patch);
               setTestNote("");
             }}
+            voiceCheck={voiceCheck}
+            onVoiceTest={testVoice}
+            voiceTestNote={voiceTestNote}
+            voiceTesting={voiceTesting}
             onTest={testApi}
             testNote={testNote}
             testing={testing}
             usage={usage}
             monthUsage={monthUsage}
             recapUsage={recapUsage}
-            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [] }).staticText)}
+            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice }).staticText)}
           />
         </Sheet>
       );
@@ -2869,7 +3203,8 @@ export default function App({ account = {} }) {
                 className="kfs-typing kfs-in"
                 style={{ position: "absolute", left: 0, right: 0, bottom: 0, textAlign: "center", fontSize: 12.5, color: T.inkSoft, pointerEvents: "none", whiteSpace: "nowrap" }}
               >
-                正在输入…
+                {/* 回话蹦到语音条、正等它念好：写“正在录音…” */}
+                {voiceHolding ? "正在录音…" : "正在输入…"}
               </div>
             )}
           </div>
@@ -2989,6 +3324,11 @@ export default function App({ account = {} }) {
                 animate={row.msg.ts >= listMount.current}
                 imgs={imgs}
                 docs={docs}
+                voices={voices}
+                heard={heard}
+                playing={playing}
+                onVoice={playVoice}
+                onVoiceAgain={(r) => getSpeaker().again(chatIdRef.current, voiceKeyOf(r.msg.id, r.idx), r.item.text)}
                 onOpenPhoto={setViewer}
                 onOpenDoc={setDocView}
                 onLongPress={(r, rect) => setMenu({ row: r, rect })}
@@ -3308,8 +3648,23 @@ export default function App({ account = {} }) {
           menu={menu}
           now={now}
           busy={loading}
+          heard={menu.row.role === "him" && menu.row.item.type === "voice" && heard.has(voiceKeyOf(menu.row.msg.id, menu.row.idx))}
+          // 念不成、没人念的那种气泡上已经把字摆出来了：不给“转文字”
+          hearable={!(menu.row.role === "him" && menu.row.item.type === "voice" && voiceAsText(menu.row))}
           onClose={() => setMenu(null)}
-          onCopy={(r) => copyText(r.item.type === "doc" ? r.item.text || docsRef.current[r.item.docId] || "" : r.item.text || "")}
+          onHeard={(r) => toggleHeard(voiceKeyOf(r.msg.id, r.idx))}
+          // 他的语音条复制的是转出来的字（语气标签不带）；字摆在气泡上的那种，复制摆着的那些
+          onCopy={(r) =>
+            copyText(
+              r.item.type === "doc"
+                ? r.item.text || docsRef.current[r.item.docId] || ""
+                : r.role === "him" && r.item.type === "voice"
+                ? voiceAsText(r)
+                  ? shownOf(r.item.text)
+                  : heardOf(r.item.text)
+                : r.item.text || ""
+            )
+          }
           onEdit={startEdit}
           onRetry={(r) => {
             setMenu(null);

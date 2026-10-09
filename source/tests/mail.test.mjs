@@ -1183,6 +1183,7 @@ function resetWorld() {
         const t = richjs.plainOf(it.text).trim();
         if (t) lines.push(t);
       } else if (it.type === "meme") lines.push("[表情包]");
+      else if (it.type === "voice") lines.push("[语音]");
       else if (it.type === "doc") lines.push(`[文档] ${it.name}`);
       else if (it.type === "avatar") avatar = true;
     }
@@ -1280,6 +1281,33 @@ function resetWorld() {
     "# ",
     "[MEME:a.jpg]\n# 表情包后面的标题\n[SPLIT]\n**整条都粗**",
     "# 一\n[SPLIT]\n\n## 二\n\n[SPLIT]\n### 三 ###",
+    // 语音条：[VOICE] 那一行起是语音，横幅上写 [语音]
+    "[VOICE]\n[whispers] 卿卿，我在。",
+    "先打字\n[SPLIT]\n[VOICE]\n想你了\n[SPLIT]\n再打字",
+    "没写 SPLIT 就接着发语音\n[VOICE]\n[soft chuckle] 抓到你了",
+    "[VOICE] 同一行就开始说\n第二行",
+    "[voice]\n小写的也认",
+    "  [VOICE]  \n前头有空格的也认",
+    "[VOICE]",
+    "[VOICE]\n   \n",
+    "[VOICE]\n[MEME:a.jpg]",
+    "[VOICE]\n先说\n[MEME:a.jpg]\n再说",
+    "[VOICE]\n两条\n[VOICE]\n语音",
+    "[VOICE]\n说着说着\n[AVATAR:fox.jpg]\n换了头像",
+    "[VOICE]\n改个名\n[NAME:小狐]",
+    "[VOICE]\n讲写法\n[NAME:新名字]",
+    "[VOICE]\n*摸摸头* **乖** # 不是标题",
+    "句子中间的 [VOICE] 不算",
+    "[VOICE]\r\nWindows 换行\r\n[SPLIT]\r\n尾",
+    "[DOC:x.md]\n[VOICE]\n文档里的不算\n[/DOC]\n[VOICE]\n文档外的算",
+    "[VOICE]\n[laughs]",
+    "[VOICE]\u3000\n全角空格后面",
+    "[VOICE]\n\ufeff",
+    "[VOICE]x[VOICE]\n[VOICE]",
+    "[VOICE] [VOICE]",
+    "[VOICE]\n[VOI[MEME:a.jpg]CE]",
+    "[VOICE]\n[VOI[VOICE]CE]",
+    "[VOICE]\n[VO[VOI[VOICE]CE]ICE]尾",
   ];
   const diff = corpus.filter((t) => !same(t));
   ok(diff.length === 0, `横幅：${corpus.length} 条各式各样的回话，小后端拆出来的和网页拆出来的一模一样，一个气泡对一条${diff.length ? "（对不上的：" + JSON.stringify(diff.map((t) => [t, fn.bubblesOf(t), expect(t)])) + "）" : ""}`);
@@ -1298,7 +1326,8 @@ function resetWorld() {
     "<thinking>", "</thinking>", "[DOC:x.md]\n", "\n[DOC:x.md]\n", "\n[/DOC]\n", "[/DOC]", "\n[DOC:文件名.md]\n", "\r\n", "\t", "：", "$&", "*", "[", "]", "一家人 👨\u200d👩\u200d👧\u200d👦",
     "\u00a0", "\u3000", "\ufeff", "\u000b", "\u2028", "[DOC: x .md ]\n", "[MEME: a.jpg ]",
     "「", "」", "'", "\"", "》", "《", "[DOC:「x」.md]\n", "[DOC:'x'", "]\n", "[NAME:「新名字」」]", "\n[NAME:『新名字』]\n", "[NAME:新名字", "」]\n",
-    "# ", "## ", "\n# ", "\n### ", "#", " #", " ##\n", "**", "***", "**粗**", "*斜*", "```", "\n```\n", "   ", "    "];
+    "# ", "## ", "\n# ", "\n### ", "#", " #", " ##\n", "**", "***", "**粗**", "*斜*", "```", "\n```\n", "   ", "    ",
+    "[VOICE]", "\n[VOICE]\n", "[VOICE] ", "\n[voice]", " [VOICE]", "[whispers] ", "\n\t[VOICE]\t"];
   const off = [];
   const splitOff = [];
   for (let i = 0; i < 20000; i++) {
@@ -1343,12 +1372,14 @@ function resetWorld() {
     const nameLine = () => new RegExp(namesjs.NAME_MARK, "m");
     const docOpen = () => /^[ \t]*\[(?:DOC|Doc|doc)[:：]([^\[\]\n]*)\][ \t]*\r?$/gm;
     const docClose = () => /^[ \t]*\[\/(?:DOC|Doc|doc)\][ \t]*\r?$/m;
+    // 一句话自己就是 [VOICE] 开头的一行（表情包紧贴在它前面写，原来那一行没被认成语音）：单独写回去就成了一条语音
+    const voiceLine = () => /^[ \t]*\[(?:VOICE|Voice|voice)\]/m;
     // 学不了的三种，都是他写岔了才有的样子（见 rawOf 上面那段）：
-    //   一句话自己长得就像记号（改名的、文档开头的记号紧贴着别的东西写，原来当字显示了）；
+    //   一句话自己长得就像记号（改名的、文档开头的、语音的记号紧贴着别的东西写，原来当字显示了）；
     //   文档的正文里夹着一行结尾的记号（原来那一行后面跟着怪空白，没被认成结尾）；
     //   名字再收拾一遍会变（太长截断以后露出个引号）
     const odd = (items, rename) =>
-      items.some((it) => (it.type === "text" && (nameLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "doc" && docClose().test(it.text))) ||
+      items.some((it) => (it.type === "text" && (nameLine().test(it.text) || voiceLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "voice" && (nameLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "doc" && docClose().test(it.text))) ||
       (!!rename && namesjs.cleanMarkName(rename) !== rename);
     const flat = (items) => JSON.stringify(items.map((it) => (it.type === "doc" ? { ...it, name: docsjs.cleanDocName(it.name) } : it)));
     let tried = 0, skipped = 0;

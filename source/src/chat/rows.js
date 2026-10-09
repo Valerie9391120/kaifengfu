@@ -68,7 +68,8 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null) {
             text: "光义换了新头像",
           });
         } else {
-          rows.push({ type: "bubble", key: m.id + "-" + j, role: "him", msg: m, item: it });
+          // idx：这是那一条回话里的第几样（语音条念好的声音按它存，见 voice.js 的 voiceKeyOf）
+          rows.push({ type: "bubble", key: m.id + "-" + j, role: "him", msg: m, item: it, idx: j });
         }
       });
       const revealing = reveal && reveal.id === m.id;

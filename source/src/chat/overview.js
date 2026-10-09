@@ -28,6 +28,7 @@ export function makePreview(msgs) {
   }
   const t = (last.items || []).find((it) => it.type === "text");
   if (t) return plainOf(t.text);
+  if ((last.items || []).some((it) => it.type === "voice")) return "[语音]";
   const d = (last.items || []).find((it) => it.type === "doc");
   return d ? `[文档] ${d.name}` : "[表情包]";
 }

@@ -93,6 +93,19 @@ const ICON_PATHS = {
       <path d="M19.5 4.5v4h-4" />
     </>
   ),
+  // 语音条长按的“转文字”“取消转文字”：方框里一个 T（取消的多一道斜杠）
+  heard: (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="3.5" />
+      <path d="M8.5 9h7M12 9v7" />
+    </>
+  ),
+  unheard: (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="3.5" />
+      <path d="M8.5 9h7M12 9v7M3.5 3.5l17 17" />
+    </>
+  ),
   check: <path d="m5 12.5 4.5 4.5L19 7.5" />,
   plus: <path d="M12 5.5v13M5.5 12h13" />,
   trash: (
