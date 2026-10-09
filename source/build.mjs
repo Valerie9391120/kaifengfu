@@ -88,6 +88,8 @@ const csp = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://raw.githubusercontent.com",
+  // 他的语音条：念好的声音在手机上变成 blob: 的地址再放（见 App.jsx 的 audioUrl）。不写这一句，声音被 default-src 拦下，放不出来
+  "media-src 'self' blob:",
   `connect-src 'self' ${SUPABASE_URL} https://raw.githubusercontent.com`,
   "font-src 'self'",
   "object-src 'none'",

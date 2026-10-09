@@ -776,7 +776,7 @@ function plainOf(text: string): string {
 
 // ---------- 横幅上写什么 ----------
 // 和网页里拆回话的规矩（src/reply.js 的 parseReply）是同一套：她在对话里看得见哪几个气泡，就敲哪几条横幅，一个气泡一条。
-// 心里话（<thinking>）、改名字的记号不写；表情包写成 [表情包]，文档写成 [文档] 文件名。
+// 心里话（<thinking>）、改名字的记号不写；表情包写成 [表情包]，文档写成 [文档] 文件名，语音写成 [语音]。
 // 横幅上摆的是平常的字（卿卿定的）：就是气泡里摆出来的那些字，不带粗细大小（见上面的 plainOf）。
 // 两边的规矩改了一边，另一边得跟着改：tests/mail.test.mjs 拿同一批回话两边各拆一遍，对不上就不过
 
@@ -840,7 +840,40 @@ function splitDocs(source: string): Array<{ doc: string } | { text: string }> {
   return parts;
 }
 
-// 一条回话 → 一个气泡一条横幅，各写什么字。至少回一条
+// 一条（[SPLIT] 隔开的那一段）按 [VOICE] 那几行切开：头一个 [VOICE] 前面的是平常的字，
+// 每个 [VOICE] 起到下一个 [VOICE]（或者这一条完）是一条语音。和网页那头（src/voice.js 的 splitVoice）一样
+const VOICE_MARK = /^[ \t]*\[(?:VOICE|Voice|voice)\][ \t]*/;
+// 语音里的 [VOICE] 这几个字摘到没有为止（摘掉一个，两头拼起来可能又成了一个）：从头往后收，末尾正好是一个就扔掉，只走一趟。
+// 和网页那头 src/reply.js 的 untoken 一样
+const TOKENS = ["[VOICE]", "[Voice]", "[voice]"];
+function untoken(text: string): string {
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i++) {
+    out.push(text[i]);
+    if (text[i] === "]" && out.length >= 7 && TOKENS.includes(out.slice(-7).join(""))) out.length -= 7;
+  }
+  return out.join("");
+}
+function splitVoice(chunk: string): Array<{ voice: boolean; text: string }> {
+  const out: Array<{ voice: boolean; lines: string[] }> = [];
+  let cur = { voice: false, lines: [] as string[] };
+  for (const line of chunk.split("\n")) {
+    const m = VOICE_MARK.exec(line);
+    if (m) {
+      out.push(cur);
+      cur = { voice: true, lines: [] };
+      const rest = line.slice(m[0].length);
+      if (rest.trim()) cur.lines.push(rest);
+      continue;
+    }
+    cur.lines.push(line);
+  }
+  out.push(cur);
+  return out.filter((s, i) => s.voice || i === 0).map((s) => ({ voice: s.voice, text: s.lines.join("\n") }));
+}
+
+// 一条回话 → 一个气泡一条横幅，各写什么字。至少回一条。
+// 语音那一条写 [语音]（卿卿 10 月 9 日定的，照微信），里头夹着的表情包排在它后面，和对话里一样
 function bubblesOf(reply: string): string[] {
   let body = reply.length > BANNER_SOURCE ? reply.slice(0, BANNER_SOURCE) : reply;
   const think = body.match(/<thinking>([\s\S]*?)<\/thinking>/);
@@ -861,23 +894,39 @@ function bubblesOf(reply: string): string[] {
       let chunk = chunks[k];
       if (k > 0) chunk = chunk.trimStart();
       if (k < chunks.length - 1) chunk = chunk.trimEnd();
-      // 表情包的文件名最长认两百个字：一长串没有右括号的，不来回试
-      const marks = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]{1,200})\\s*\\]|" + NAME_LINE, "gm");
-      const say = (piece: string) => {
-        const t = plainOf(piece.trim()).trim();
-        if (t) lines.push(t);
-      };
-      let last = 0;
-      let m: RegExpExecArray | null;
-      while ((m = marks.exec(chunk)) !== null) {
-        // 照抄名帖里教的写法 [NAME:新名字]：是在讲怎么改，不是真改，留着当字
-        if (!m[1] && tidyName(dropTail(m[3].trim().replace(/^[「『“‘"'《]+/, ""), (ch) => NAME_TAIL.includes(ch))) === NAME_SAMPLE) continue;
-        if (m.index > last) say(chunk.slice(last, m.index));
-        if (m[1] === "MEME") lines.push("[表情包]");
-        else if (m[1] === "AVATAR") avatar = true;
-        last = marks.lastIndex;
+      for (const seg of splitVoice(chunk)) {
+        // 表情包的文件名最长认两百个字：一长串没有右括号的，不来回试
+        const marks = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]{1,200})\\s*\\]|" + NAME_LINE, "gm");
+        // 语音那一段：里头的字并成一条 [语音]，夹着的表情包等它写完再写
+        const after: string[] = [];
+        const out = seg.voice ? after : lines;
+        // 语音里的字：[VOICE] 这几个字不算（网页那头一样摘掉，见 src/reply.js），摘完还有字才算说了话
+        let words = "";
+        const say = (piece: string) => {
+          if (seg.voice) {
+            words += piece;
+            return;
+          }
+          const t = plainOf(piece.trim()).trim();
+          if (t) lines.push(t);
+        };
+        const text = seg.text;
+        let last = 0;
+        let m: RegExpExecArray | null;
+        while ((m = marks.exec(text)) !== null) {
+          // 照抄名帖里教的写法 [NAME:新名字]：是在讲怎么改，不是真改，留着当字
+          if (!m[1] && tidyName(dropTail(m[3].trim().replace(/^[「『“‘"'《]+/, ""), (ch) => NAME_TAIL.includes(ch))) === NAME_SAMPLE) continue;
+          if (m.index > last) say(text.slice(last, m.index));
+          if (m[1] === "MEME") out.push("[表情包]");
+          else if (m[1] === "AVATAR") avatar = true;
+          last = marks.lastIndex;
+        }
+        if (last < text.length) say(text.slice(last));
+        if (seg.voice) {
+          if (untoken(words).trim()) lines.push("[语音]");
+          for (const x of after) lines.push(x);
+        }
       }
-      if (last < chunk.length) say(chunk.slice(last));
     }
   }
   if (!lines.length) return [avatar ? "[换了新头像]" : "……"];
@@ -1095,9 +1144,10 @@ Deno.serve(async (req: Request) => {
 
   // 问：钥匙放好了没有。放好了就把公钥给网页（订阅要用，公钥本来就是公开的）。
   // can 是这份代码会做的事：网页看到 "reply"，就知道回话可以交给这里等；
-  // "bubbles" 是横幅一个气泡敲一条，"halt" 是她按了停就把跟 Anthropic 的线掐掉（面板的“看细节”里照着说）
+  // "bubbles" 是横幅一个气泡敲一条，"halt" 是她按了停就把跟 Anthropic 的线掐掉（面板的“看细节”里照着说）；
+  // "voice" 是他的语音条在横幅上写 [语音]（上一版不认 [VOICE]，横幅上会露出那一串记号）
   if (body.op === "key") {
-    const can = ["reply", "bubbles", "halt"];
+    const can = ["reply", "bubbles", "halt", "voice"];
     return json(200, state.ok ? { configured: true, publicKey: state.vapid.publicKey, can } : { configured: false, missing: state.missing, message: state.message, can });
   }
 

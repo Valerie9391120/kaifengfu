@@ -237,7 +237,7 @@ const rowOf = (dev) => supa.table.all().find((r) => r.endpoint === dev.endpoint)
   const ready = await call({ op: "key" });
   ok(ready.status === 200 && ready.data.configured === true && ready.data.publicKey === keys.publicKey && Object.keys(ready.data).sort().join() === "can,configured,publicKey" && !JSON.stringify(ready.data).includes(keys.privateKey),
     "问钥匙：贴进密钥柜就认（两头带着引号、空白、换行也不碍事），只把公钥交出来，私钥一个字不带");
-  ok(ready.data.can.join() === "reply,bubbles,halt" && empty.data.can.join() === "reply,bubbles,halt", "问钥匙：顺带说这份代码会什么（网页靠这个认新旧）：替她等回话、横幅一个气泡敲一条、她按了停就不等了");
+  ok(ready.data.can.join() === "reply,bubbles,halt,voice" && empty.data.can.join() === "reply,bubbles,halt,voice", "问钥匙：顺带说这份代码会什么（网页靠这个认新旧）：替她等回话、横幅一个气泡敲一条、她按了停就不等了、他的语音条写 [语音]");
   pushEnv.VAPID_PRIVATE_KEY = other.privateKey;
   const broken = await call({ op: "key" });
   ok(broken.data.configured === false && broken.data.message.includes("不是一对"), "问钥匙：私钥换成了另一把，马上说不是一对");
@@ -466,7 +466,8 @@ const N = await loadSource("src/notify.js");
   const withSetup = (extra) => N.describePush({ ...state, setup: { ...state.setup, mail: "ok", ...extra } }).join("\n");
   ok(withSetup({ relay: "ok", bubbles: "ok", halt: "ok" }).includes("横幅一个气泡敲一条：会；你按停它就不等了：会") && withSetup({ relay: "ok", bubbles: "old", halt: "old" }).includes("横幅一个气泡敲一条：这份代码还不会；你按停它就不等了：这份代码还不会") && withSetup({ relay: "ok", bubbles: "ok", halt: "old" }).includes("横幅一个气泡敲一条：会；你按停它就不等了：这份代码还不会"),
     "看细节：小后端会不会一个气泡敲一条、会不会按停就不等，各写各的");
-  ok(!withSetup({ relay: "old", bubbles: "old", halt: "old" }).includes("横幅一个气泡") && withSetup({ relay: "old" }).includes("替你等回话：这份代码还不会"), "看细节：小后端连替她等回话都还不会的，只说那一样，不拿后两样添乱");
+  ok(!withSetup({ relay: "old", bubbles: "old", halt: "old" }).includes("横幅一个气泡") && !withSetup({ relay: "old", voice: "old" }).includes("语音条") && withSetup({ relay: "old" }).includes("替你等回话：这份代码还不会"), "看细节：小后端连替她等回话都还不会的，只说那一样，不拿后两样添乱");
+  ok(withSetup({ relay: "ok", voice: "ok" }).includes("他的语音条在横幅上写 [语音]：会") && withSetup({ relay: "ok", voice: "old" }).includes("他的语音条在横幅上写 [语音]：这份代码还不会"), "看细节：小后端认不认得他的语音条（横幅上写 [语音]），写着");
 }
 
 // ================= 服务工作线程（src/sw.js）：在假的环境里跑真的那份代码 =================

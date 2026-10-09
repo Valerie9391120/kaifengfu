@@ -163,8 +163,9 @@ export async function checkPush() {
     permission: support.ok ? Notification.permission : "",
     // 她在 Supabase 要做的三样，各自好了没有：ok 好了；别的是没好的缘故。
     // 后两样是“他的回话也敲她”要的：relay 是 push 函数会不会替她等回话（ok 会；old 还是旧的那份代码），mail 是信箱那张表。
-    // bubbles、halt 是 push 函数后来学会的两样（ok 会；old 这份代码还不会）：横幅一个气泡敲一条、她按了停它就不等了
-    setup: { table: "", fn: "", keys: "", say: "", relay: "", mail: "", bubbles: "", halt: "" },
+    // bubbles、halt 是 push 函数后来学会的两样（ok 会；old 这份代码还不会）：横幅一个气泡敲一条、她按了停它就不等了；
+    // voice 是 10 月 9 日那一份起才会的：他的语音条在横幅上写 [语音]（上一版不认，横幅上会露出 [VOICE] 那一串）
+    setup: { table: "", fn: "", keys: "", say: "", relay: "", mail: "", bubbles: "", halt: "", voice: "" },
     ready: false, // 三样都好了
     replyReady: false, // 他的回话也能敲她了（push 函数是新的、信箱建好了）
     away: false, // 开过通知的设备，这会儿连不上后端
@@ -199,6 +200,7 @@ export async function checkPush() {
       state.setup.relay = can.includes("reply") ? "ok" : "old";
       state.setup.bubbles = can.includes("bubbles") ? "ok" : "old";
       state.setup.halt = can.includes("halt") ? "ok" : "old";
+      state.setup.voice = can.includes("voice") ? "ok" : "old";
       if (k.configured) {
         state.setup.keys = "ok";
         state.serverKey = k.publicKey;

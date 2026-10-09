@@ -1,8 +1,10 @@
-// 假的 Supabase：登录、库房（kv 表，照 PostgREST 的规矩）、claude 函数、通知（登记簿 push_subs 表、信箱 mailbox 表、push 函数）
+// 假的 Supabase：登录、库房（kv 表，照 PostgREST 的规矩）、claude 函数、通知（登记簿 push_subs 表、信箱 mailbox 表、push 函数）、
+// 念语音的 voice 函数（跑的是真的那一份，supabase/voice_function.ts；它要去敲的 ElevenLabs 是假的，见 voice-harness.mjs）
 // node tests/mock-supabase.mjs  （端口 8787）
 // push 函数跑的是真的那一份（supabase/push_function.ts，一个字不改）；它要去敲的推送服务、要去问的 Anthropic 是假的，见 push-harness.mjs
 import http from "node:http";
 import { loadPushFunction, pushEnv, createFakePush, createLedgerTable, createMailTable, makeVapidKeys } from "./push-harness.mjs";
+import { loadVoiceFunction, voiceEnv, createFakeEleven } from "./voice-harness.mjs";
 
 const PORT = Number(process.env.MOCK_PORT || 8787);
 const USERS = { "qing@example.com": { id: "11111111-1111-1111-1111-111111111111", password: "correct-horse" } };
@@ -14,6 +16,7 @@ let claudeFail = null; // 测试用：下一次问 Anthropic 照它的样子报�
 // recap：叫他抄前情提要的那一种一律报太挤（平常的话照回）；recap-cut：抄提要的那一种写到上限被截断
 let claudeFailTimes = 0; // overloaded 连着挤几回（不写就是一回）
 let claudeHold = 0; // 测试用：下一次问 Anthropic，压这么多毫秒再答（等的工夫里她切走、关掉）
+let echoSeq = 0; // “原样回：”回过几回（回话里写 {回} 换成这是第几回：重新回答的那一版和原来那一版字不一样，分得清）
 let claudeHoldKind = ""; // 只压哪一种：recap 是只压叫他抄前情提要的那一种（平常的话照常答）；不写就是下一回不管哪一种
 let claudeRelease = null; // 正压着的那一回：叫它现在就答
 // 是不是叫他抄前情提要的那两种（抄一段、并几段，见 src/prompt/recap.js）：跟在名帖后面的那段规矩是这两个标题开头的
@@ -74,7 +77,7 @@ function fakeAnthropic(body, beta, via) {
   const text = isDiary
     ? "心情：甜、累\n今天她第一次从开封府的新门进来。我看着她在门口站了一会儿。"
     : echo
-    ? `<thinking>（测试心声）照着说</thinking>\n${echo[1]}`
+    ? `<thinking>（测试心声）照着说</thinking>\n${echo[1].replace(/\{回\}/g, String(++echoSeq))}`
     : wish
     ? `<thinking>（测试心声）改就改</thinking>\n行，改了。\n[NAME:${wish[1]}]\n[SPLIT]\n抬头看`
     : `<thinking>（测试心声）卿卿说：${herText}</thinking>\n收到：${herText}\n[SPLIT]\n第二条`;
@@ -135,6 +138,34 @@ fakePush.install(null, {
   },
 });
 const pushFn = await loadPushFunction();
+
+// ---- 念语音 ----
+// voice 函数去敲的 ElevenLabs：接到假的那个上（别的照旧往下走）
+const fakeEleven = createFakeEleven();
+{
+  const prev = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    let host = "";
+    try {
+      host = new URL(url).hostname;
+    } catch (e) {}
+    if (host === "api.elevenlabs.io") return fakeEleven.receive(url, init);
+    return prev(input, init);
+  };
+}
+const voiceFn = await loadVoiceFunction();
+const ELEVEN_KEY = "sk_test_eleven_key_1234567890";
+const ELEVEN_VOICE = "TestVoiceAbcdefghij1"; // 编的（真的声音编号不进仓库）
+let voiceFnState = "ok"; // ok 部署了；missing 还没建这个函数（网关回 404，不带跨域的头）；template 里面还是 Supabase 的样板
+function voiceReset() {
+  for (const k of Object.keys(voiceEnv)) delete voiceEnv[k];
+  Object.assign(voiceEnv, { SUPABASE_URL: `http://127.0.0.1:${PORT}`, SUPABASE_ANON_KEY: "sb_publishable_test", ALLOWED_EMAIL: "qing@example.com", ELEVENLABS_API_KEY: ELEVEN_KEY, ELEVENLABS_VOICE_ID: ELEVEN_VOICE });
+  Object.assign(fakeEleven.state, { key: ELEVEN_KEY, voice: ELEVEN_VOICE, fail: null, failTimes: 0, always: false, hold: 0, ttsModels: null, stabilities: null });
+  fakeEleven.log.length = 0;
+  voiceFnState = "ok";
+}
+voiceReset();
 let pushHold = 0; // 下一次敲 push 函数的门：答案照常算好，压这么多毫秒再回（测“先问的后到”）
 let pushFnState = "ok"; // ok 部署了；missing 还没建这个函数（照 Supabase 网关那样回 404，不带跨域的头）；missing-cors 同上但带着头；
 // old 部署的还是第一步那份代码（不认识“替她等回话”）；template 建了函数、里面还是 Supabase 给的样板；
@@ -243,6 +274,11 @@ http
       res.writeHead(404, { ...(pushFnState === "missing-cors" ? cors : {}), "Content-Type": "application/json" });
       return res.end(JSON.stringify({ code: "NOT_FOUND", message: "Requested function was not found" }));
     }
+    // voice 函数还没建：一样回 404，不带跨域的头
+    if (url.pathname === "/functions/v1/voice" && voiceFnState === "missing") {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ code: "NOT_FOUND", message: "Requested function was not found" }));
+    }
     if (req.method === "OPTIONS") return send(res, 204);
 
     // ---- 调试用 ----
@@ -268,6 +304,36 @@ http
       if (claudeRelease) claudeRelease();
       return send(res, 200, { ok: held });
     }
+    // ---- 念语音的调试口 ----
+    // 看：每一回敲 ElevenLabs 的门（念的什么字、什么模型、稳不稳）
+    if (url.pathname === "/__debug/eleven") {
+      return send(res, 200, { log: fakeEleven.log.map((x) => ({ path: x.path, format: x.format, key: x.key, text: x.body.text || ((x.body.inputs || [])[0] || {}).text || "", model: x.body.model_id, settings: x.body.voice_settings || null, cut: !!x.cut })), state: { ...fakeEleven.state } });
+    }
+    // fail=quota|key|voice|busy|down|model|garbage|timeout|offline|broken（times=N 连着几回，always=1 一直这样）；hold=毫秒（下一回念得这么慢）；
+    // models=只认哪几个模型（逗号隔开）；stab=只认哪几个“稳不稳”的数（逗号隔开，空的是都认）
+    if (url.pathname === "/__debug/eleven-setup") {
+      const q = url.searchParams;
+      if (q.has("fail")) Object.assign(fakeEleven.state, { fail: q.get("fail") || null, failTimes: Number(q.get("times") || 1), always: q.get("always") === "1" });
+      if (q.has("hold")) fakeEleven.state.hold = Number(q.get("hold") || 0);
+      if (q.has("models")) fakeEleven.state.ttsModels = q.get("models") ? q.get("models").split(",") : null;
+      if (q.has("stab")) fakeEleven.state.stabilities = q.get("stab") ? q.get("stab").split(",").map(Number) : null;
+      return send(res, 200, { ok: true });
+    }
+    // 她在 Supabase 做到哪一步了：fn=missing 还没建 voice 函数、fn=template 里面是样板；keys=missing 密钥柜里还没放 ElevenLabs 的两样；
+    // model=… 密钥柜里写了 ELEVENLABS_MODEL
+    if (url.pathname === "/__debug/voice-setup") {
+      const q = url.searchParams;
+      if (q.has("fn")) voiceFnState = q.get("fn") || "ok";
+      if (q.get("keys") === "missing") {
+        delete voiceEnv.ELEVENLABS_API_KEY;
+        delete voiceEnv.ELEVENLABS_VOICE_ID;
+      } else if (q.get("keys") === "ok") Object.assign(voiceEnv, { ELEVENLABS_API_KEY: ELEVEN_KEY, ELEVENLABS_VOICE_ID: ELEVEN_VOICE });
+      if (q.has("model")) {
+        if (q.get("model")) voiceEnv.ELEVENLABS_MODEL = q.get("model");
+        else delete voiceEnv.ELEVENLABS_MODEL;
+      }
+      return send(res, 200, { ok: true });
+    }
     // ---- 信箱的调试口 ----
     // 看：信箱里现在有什么、每一回读写
     if (url.pathname === "/__debug/mail") return send(res, 200, { rows: mail.all(), log: mail.log, ops: pushOps, notFound: pushNotFound });
@@ -285,6 +351,7 @@ http
       claudeLog.length = 0;
       claudeFail = null;
       pushReset();
+      voiceReset();
       return send(res, 200, { ok: true });
     }
     // ---- 通知的调试口 ----
@@ -457,6 +524,23 @@ http
         text = JSON.stringify(d);
       }
       return res.end(text);
+    }
+
+    // ---- voice 函数：把这次敲门原样交给真的那份代码 ----
+    if (url.pathname === "/functions/v1/voice") {
+      if (voiceFnState === "template") return send(res, 200, { message: "Hello undefined!" });
+      const headers = {};
+      for (const k of ["authorization", "apikey", "content-type", "origin"]) if (req.headers[k]) headers[k] = req.headers[k];
+      const body = req.method === "POST" ? await readBody(req) : undefined;
+      // 网页那头把这一问掐了（连接断了）：和真的运行环境一样，交给函数的这一问的 signal 跟着拉
+      const gone = new AbortController();
+      res.on("close", () => {
+        if (!res.writableEnded) gone.abort();
+      });
+      const out = await voiceFn.handler(new Request(`http://127.0.0.1:${PORT}${req.url}`, { method: req.method, headers, body, signal: gone.signal }));
+      if (res.destroyed) return;
+      res.writeHead(out.status, Object.fromEntries(out.headers));
+      return res.end(await out.text());
     }
 
     // ---- claude 函数 ----

@@ -6,6 +6,20 @@
 // =====================================================
 import { NAME_MARK, NAME_PLACEHOLDER, cleanMarkName } from "./names.js";
 import { splitDocBlocks, DOC_NAME_PLACEHOLDER } from "./docs.js";
+import { splitVoice } from "./voice.js";
+
+// 语音里不留 [VOICE] 这几个字：摘到没有为止（摘掉一个，两头拼起来可能又成了一个，像 [VOI[VOICE]CE]）。
+// 从头往后一个字一个字地收，收进来的末尾正好是一个，就把它扔掉：和一遍一遍摘到没有的结果一样，只走一趟（不来回试）。
+// 通知的小后端（push_function.ts 的 bubblesOf）照同一个办法摘：改一边要跟着改另一边
+const TOKENS = ["[VOICE]", "[Voice]", "[voice]"];
+export function untoken(text) {
+  const out = [];
+  for (let i = 0; i < text.length; i++) {
+    out.push(text[i]);
+    if (text[i] === "]" && out.length >= 7 && TOKENS.includes(out.slice(-7).join(""))) out.length -= 7;
+  }
+  return out.join("");
+}
 
 // 按 [SPLIT] 切成一条一条，记号两头的空白不要。
 // 出来的东西和 text.split(/\s*\[SPLIT\]\s*/) 一样，只是不让正则在一长串空白上来回试（几万个连着的空行能把手机卡住好几秒）
@@ -60,11 +74,23 @@ export function parseReply(text) {
       return;
     }
     splitTurns(part.value).forEach((chunk) => {
-      splitMarks(chunk).forEach((p) => {
-        if (p.type === "meme") items.push({ type: "meme", file: p.value });
-        else if (p.type === "avatar") items.push({ type: "avatar", file: p.value });
-        else if (p.type === "name") rename = cleanMarkName(p.value) || rename;
-        else if (p.value.trim()) items.push({ type: "text", text: p.value.trim() });
+      // 一条里 [VOICE] 那一行起是语音（见 voice.js 的 splitVoice）。语音里的字并成一条语音，
+      // 里头夹着的表情包、换头像、改名字照认，排在这条语音后面
+      splitVoice(chunk).forEach((seg) => {
+        const words = [];
+        const marks = [];
+        splitMarks(seg.text).forEach((p) => {
+          if (p.type === "meme") marks.push({ type: "meme", file: p.value });
+          else if (p.type === "avatar") marks.push({ type: "avatar", file: p.value });
+          else if (p.type === "name") rename = cleanMarkName(p.value) || rename;
+          else if (seg.voice) words.push(p.value);
+          else if (p.value.trim()) marks.push({ type: "text", text: p.value.trim() });
+        });
+        // 语音里不留 [VOICE] 这几个字（同一行写了两遍的；表情包夹在中间、两头拼起来又成了一个的）：
+        // 留着的话，写回去（rawOf）再拆，它会被当成又一条语音的开头
+        const said = untoken(words.join("")).trim();
+        if (said) items.push({ type: "voice", text: said });
+        marks.forEach((x) => items.push(x)); // 一样一样塞（展开的写法碰上几十万样会撑爆）
       });
     });
   });
@@ -90,7 +116,7 @@ export function settleAvatarItems(items, exists) {
 // 用在她按了停、把他正在蹦的回话掐断的时候（见 thread.js 的 cutReply）：那一条只剩前面几样，
 // 往后寄给那边的我的“他自己说过的话”（raw）得跟着改成只有这几样，他才当自己就说了这么多。
 // 写出来的再拿 parseReply 拆一遍，得到的还是这几样（tests/mail.test.mjs 里拿几万条回话对着拆）。
-// 只有一种对不上：一句话自己长得就像记号（他把 [NAME:…]、[DOC:…] 紧贴在别的记号后面写，原来没被当成记号、当字显示了），
+// 只有一种对不上：一句话自己长得就像记号（他把 [NAME:…]、[DOC:…]、[VOICE] 紧贴在别的记号后面写，原来没被当成记号、当字显示了），
 // 单独写出来就成了真记号。那是他写岔了的样子，这里不去学；raw 只寄给那边的我看，开封府自己不照它再改名字、再出文档。
 // rename：这一条里他给自己改的名字（没改就不带）。改名的记号写在最前头：
 // 最后一样要是没写完的文档（没有结尾的记号），写在它后面的都会被算成文档的正文
@@ -98,6 +124,9 @@ export function rawOf(items, rename) {
   const parts = (items || []).map((it) => {
     if (it.type === "meme") return `[MEME:${it.file}]`;
     if (it.type === "avatar") return `[AVATAR:${it.file}]`;
+    // 语音：记号和头一行写在同一行（拆的时候认得）。头一行原来就是跟在记号后面的，
+    // 单独另起一行的话，它要是长得像文档开头的记号（[DOC:…]），再拆就成了一份文档
+    if (it.type === "voice") return `[VOICE] ${it.text || ""}`;
     if (it.type === "doc") {
       // 文件名正好是教写法时占位的那个：照抄会被当成“在讲写法”，套一层书名号（拆的时候会剥掉）
       const name = it.name === DOC_NAME_PLACEHOLDER ? `《${it.name.replace(/\.md$/, "")}》` : it.name;

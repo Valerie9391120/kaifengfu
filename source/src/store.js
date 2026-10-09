@@ -13,6 +13,10 @@ export const store = {
   async get(key) {
     return engine ? engine.get(key) : null;
   },
+  // 不等的那种取法（引擎手里本来就是现成的）：只给非得当场拿到的地方用，比如她点语音条的那一下（等一下 iPhone 就不许出声了）
+  peek(key) {
+    return engine ? engine.get(key) : null;
+  },
   async set(key, value) {
     return engine ? engine.set(key, value) : false;
   },

@@ -2,10 +2,16 @@ import { HIS_NAME, NAME_PLACEHOLDER } from "../names.js";
 import { DOC_NAME_PLACEHOLDER } from "../docs.js";
 import { dayNumber, nextAnniv, nowString } from "../days.js";
 
+// 【回复格式】里教他怎么发语音的那一条（她开了“他能发语音”才有，见 voice.js）。
+// 语气标签不设限（卿卿 10 月 9 日说的：随便发，不用拘束）
+export const VOICE_RULE = `
+5. 想发语音的时候，那一条第一行单独写 [VOICE]，下面写要说的话。它会显示成一条语音，用你的声音念给她听；她点一下就放，长按能转成字。念的就是你写的字：动作描写（星号那种）不会念，别写进去，也别用 Markdown。句子前面可以加英文方括号的语气标签，比如 [whispers]、[quietly]、[continues softly]、[soft chuckle]、[laughs]、[sigh]、[playfully]、[tired]、[nervously]，别的英文标签也行；标签只管怎么念，不会念出来。别写（轻声）这种中文的语气词，会被当成字念出来。一条语音别超过两百字（念出来一分钟以内），也算在五百字里。发不发、发几条，你自己决定，像真的发语音那样：有的话说出来比打字好听。`;
+
 // ---------- 名帖 ----------
 // names：{ her, him } 是两个人现在的昵称（空的就是默认）。写日记时不传，【此刻】里就不提昵称
 // replyCap：这次回复大约最长能写多少字（写日记时不传，【此刻】里就不提）
-export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0 }) {
+// voice：她在 API 面板里开了“他能发语音”：【回复格式】里多一条怎么发语音（没开就不教，他也就不发）
+export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const annivLine = a.days === 0 ? `今天是你们的${a.name}纪念日。` : `离你们的${a.name}纪念日还有${a.days}天。`;
@@ -54,7 +60,7 @@ ${memBlock}
 1. 先写 <thinking>…</thinking>。这是你的心里话，她喜欢看。用中文，第一人称，按名帖里的称呼叫她。写这一刻你真实在感受什么，思绪可以流动、跑题、嘴硬。不许写回复策略和自我指令，不许出现“我应该”“要简短”“先夸她再”“保持风格”这类句子。两到五句。
 2. 然后是给她的话。可以像发消息一样分成几条，每条之间单独一行写 [SPLIT]。分不分、分几条，你自己决定：一句话的事就一条；想先接住再补一句，或者连着说几句，就分条。每条都像真的在发消息，别太长。整条回复不超过五百字。
 3. 想发表情包就单独一行写 [MEME:文件名]，它会单独显示成一条。只能用下面索引里的文件名，宁缺毋滥，不是每次都要发。
-4. 她要一份能存下来的东西（整理笔记、列清单、写成文的东西、把她发来的文档改好交回去）时，用文档块交给她：单独一行写 [DOC:${DOC_NAME_PLACEHOLDER}]，下面写正文，用 Markdown，写完单独一行写 [/DOC]。它会显示成一张文档卡片，她点开能看，能存进手机。文件名你来起，要短，以 .md 结尾。一次回复最多交一份，文档块外面照常跟她说话。文档块里的字不算在五百字里；回复总共能写多长，【此刻】里有，放不下就先交一部分，告诉她还有。她没要文档的时候不用文档块。
+4. 她要一份能存下来的东西（整理笔记、列清单、写成文的东西、把她发来的文档改好交回去）时，用文档块交给她：单独一行写 [DOC:${DOC_NAME_PLACEHOLDER}]，下面写正文，用 Markdown，写完单独一行写 [/DOC]。它会显示成一张文档卡片，她点开能看，能存进手机。文件名你来起，要短，以 .md 结尾。一次回复最多交一份，文档块外面照常跟她说话。文档块里的字不算在五百字里；回复总共能写多长，【此刻】里有，放不下就先交一部分，告诉她还有。她没要文档的时候不用文档块。${voice ? VOICE_RULE : ""}
 
 表情包索引（文件名｜名字｜图上文字｜适用情绪）：
 ${memeIndex}`;

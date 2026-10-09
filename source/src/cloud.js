@@ -3,7 +3,7 @@
 // =====================================================
 
 import { createClient } from "@supabase/supabase-js";
-import { SUPABASE_URL, SUPABASE_KEY, FUNCTION_URL, PUSH_URL } from "./config.js";
+import { SUPABASE_URL, SUPABASE_KEY, FUNCTION_URL, PUSH_URL, VOICE_URL } from "./config.js";
 import { explainError } from "./errors.js";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -256,3 +256,74 @@ export const mailbox = {
     if (error) throw boxError(error);
   },
 };
+
+// ---------- 念语音（voice 函数，见 supabase/voice_function.ts） ----------
+// body：{ op: "key" } 问钥匙放好了没有；{ op: "speak", text, stability } 念一段。成了回小后端答的那一包。
+// 出了岔子抛带 code 的错：
+//   auth         没登录、登录过期
+//   unreachable  没连上（没网；或者根本没有 voice 这个函数：Supabase 的网关回 404 不带跨域的头，浏览器只会说没连上）；回来的读到一半断了
+//   slow         等了 wait 毫秒还没回来，不等了（小后端那头最多等 ElevenLabs 四十五秒，这边多留一截）
+//   nofn         没有 voice 这个函数，或者里面不是开封府的那份代码
+//   stopped      不要了（signal 拉了）
+//   refused      小后端说不行（message 是它的原话；reason 是它给的缘故：setup 钥匙没放好、quota 额度用完了、key、voice、busy、down、slow、long、empty……；
+//                小后端自己出了错、没按开封府的格式答的，reason 是 gateway）
+export const VOICE_WAIT = 70000;
+export async function callVoice(body, { signal, wait = VOICE_WAIT } = {}) {
+  let data = null;
+  try {
+    ({ data } = await within(supabase.auth.getSession(), TOKEN_WAIT));
+  } catch (e) {
+    throw coded("unreachable", "连不上开封府的后端，看看网络");
+  }
+  const token = data && data.session && data.session.access_token;
+  if (!token) throw coded("auth", "登录过期了，重新登录一下");
+  // 外头的 signal（不要了）和这边的钟（等太久了）谁先到都掐；掐了以后分得清是哪一种
+  const ctl = new AbortController();
+  let late = false;
+  const cut = () => ctl.abort();
+  if (signal) {
+    if (signal.aborted) throw coded("stopped", "不念了");
+    signal.addEventListener("abort", cut, { once: true });
+  }
+  const clock = setTimeout(() => {
+    late = true;
+    ctl.abort();
+  }, wait);
+  const why = () => (signal && signal.aborted ? coded("stopped", "不念了") : late ? coded("slow", "念得太久，没等到") : null);
+  try {
+    let res;
+    try {
+      res = await fetch(VOICE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, apikey: SUPABASE_KEY },
+        body: JSON.stringify(body),
+        signal: ctl.signal,
+      });
+    } catch (e) {
+      throw why() || coded("unreachable", "连不上念语音的小后端（voice 函数还没建，或者网不好）");
+    }
+    let d = null;
+    let read = true;
+    try {
+      d = await res.json();
+    } catch (e) {
+      read = false; // 读到一半断了，或者回来的不是 JSON
+    }
+    const gone = why();
+    if (gone) throw gone;
+    if (res.ok && d && (d.type === "voice" || typeof d.configured === "boolean")) return d;
+    if (d && d.type === "error" && d.error) {
+      if (res.status === 401 || res.status === 403) throw coded("auth", d.error.message || "请先登录开封府");
+      throw Object.assign(coded("refused", d.error.message || `念语音的小后端说不行（${res.status}）`), { reason: d.error.code || "", status: res.status });
+    }
+    if (res.status === 401) throw coded("auth", "登录过期了，重新登录一下");
+    if (res.status === 404) throw coded("nofn", "Supabase 里还没有 voice 这个函数");
+    if (res.ok && !read) throw coded("unreachable", "回来的声音读到一半断了");
+    if (res.ok) throw coded("nofn", "voice 函数里的代码不是开封府的那份");
+    // 小后端自己出了错（没按开封府的格式答）：不知道它出错之前念没念，不当成“一时的岔子”自己再念
+    throw Object.assign(coded("refused", `念语音的小后端出错了（${res.status}）`), { reason: "gateway", status: res.status });
+  } finally {
+    clearTimeout(clock);
+    if (signal) signal.removeEventListener("abort", cut);
+  }
+}

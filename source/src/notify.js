@@ -175,6 +175,7 @@ export function describePush(state) {
   lines.push(`替你等回话：${{ ok: "会", old: "这份代码还不会" }[setup.relay] || "还看不到"}；信箱：${{ ok: "有", missing: "还没建", error: "读不到" }[setup.mail] || "没查"}`);
   // 这两样是后来添的（10 月 4 日那一份起才会）：小后端里还是早一些的那份代码的话，照旧一回敲一条、按了停它照旧等完
   if (setup.relay === "ok") lines.push(`横幅一个气泡敲一条：${setup.bubbles === "ok" ? "会" : "这份代码还不会"}；你按停它就不等了：${setup.halt === "ok" ? "会" : "这份代码还不会"}`);
+  if (setup.relay === "ok") lines.push(`他的语音条在横幅上写 [语音]：${setup.voice === "ok" ? "会" : "这份代码还不会"}`);
   lines.push(`服务线程：${state.worker === "ok" ? "在" : state.worker || "还没起"}`);
   lines.push(`这台设备的门牌号：${state.host ? serviceName(state.host) + "给的（" + state.host + "）" : "还没有"}`);
   lines.push(`这台设备开过通知：${yes(state.flag)}；登记簿里一共 ${state.devices} 台`);

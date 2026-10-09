@@ -98,6 +98,11 @@ export const GLOBAL_CSS = `
 .kfs-page { animation: kfsPage .3s cubic-bezier(.2,.8,.2,1) both; }
 .kfs-breath { animation: kfsBreath 3.2s ease-in-out infinite; }
 .kfs-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: rgba(var(--k-soft),.55); animation: kfsDot 1.2s infinite; }
+/* 他的语音条正在放：两道弧一道一道亮起来（照微信） */
+@keyframes kfsArc1 { 0%, 32% { opacity: .22; } 33%, 100% { opacity: 1; } }
+@keyframes kfsArc2 { 0%, 65% { opacity: .22; } 66%, 100% { opacity: 1; } }
+.kfs-voice-on .kfs-arc1 { animation: kfsArc1 1.05s infinite; }
+.kfs-voice-on .kfs-arc2 { animation: kfsArc2 1.05s infinite; }
 .kfs-scroll { scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .kfs-scroll::-webkit-scrollbar { display: none; }
 /* 聊天记录不藏滚动条：手机上用系统自带的那根（滚的时候出来、停了自己淡掉；长按能不能拖，要她的手机说了算）。
