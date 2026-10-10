@@ -3,6 +3,8 @@ import { store } from "./store.js";
 import { callClaude, callReply, callVoice, mailbox, freshToken } from "./cloud.js";
 import { VOICE_KEY, HOLD_MS, WANT_KEY, HEARD_KEY, HEARD_MAX, VOICE_SAMPLE, voiceKeyOf, voicesIn, heardOf, shownOf, stabOf, secondsOf, readHeard, readVoice, collectHisIds, voiceWhere, silentMp3 } from "./voice.js";
 import { createSpeaker } from "./speaker.js";
+import { MOTTO_KEY, MOTTO_LAST, DEFAULT_MOTTO, parseMotto, pickMotto, poolAt, fillMotto, mottoLines, readMotto, packMotto, describeMotto } from "./motto.js";
+import { MottoPanel } from "./panels/MottoPanel.jsx";
 import { openProbe } from "./probe.js";
 import { createFollow } from "./scroll.js";
 import { gapInfo, setFill } from "./gap.js";
@@ -88,6 +90,8 @@ function unlessStopped(work, signal) {
 // 照理这几样轮不到停掉的那一句头上（它们各认各的对话，按停的时候也都撤了）；
 // 这一道是再把一遍门：审的人两回都是从“认错了对话”的路上把停掉的那一句回上的
 const owes = (msgs) => needsReply(msgs) && !stoppedAt(msgs);
+// 重新打开开封府：上回那段还在等他回话、等的那一回是这么久以内交出去的，先回到那段（再久的就是新的一页，那段在历史对话里，点开照样补发）
+const WAITING_MAX = 24 * 3600 * 1000;
 const KEY_SETTLE = 400; // 最右边那个键刚换了样子（变成停、停变声波）这么多毫秒里，点它不算：手指连着点了两下，第二下不该落在新换上的键上
 const FRESH_MS = 500; // 回话摆出来以后这么多毫秒里按的停，可能赶在画面重画之前（见 stopReply）
 // ---------- 抄前情提要（见 recap.js、主体里的 runRecaps） ----------
@@ -222,6 +226,15 @@ export default function App({ account = {} }) {
     }
   });
   const holdRef = useRef(null); // 回话蹦到语音那一条、正等它念好：{ key, at }（见“分条”那一段）
+  // 中间那行字（新开一段、还没说话的时候，对话正中间那一行；见 motto.js）。
+  // 素材库原文开机那一下从存档里现取（引擎手里是现成的）：不等，免得先闪一下“如月之恒”再换
+  const [mottoText, setMottoText] = useState(() => readMotto(store.peek(MOTTO_KEY)));
+  const mottoLib = useMemo(() => parseMotto(mottoText), [mottoText]);
+  const mottoLibRef = useRef(mottoLib);
+  mottoLibRef.current = mottoLib;
+  const [motto, setMotto] = useState("");
+  const mottoRef = useRef("");
+  const mottoDraftRef = useRef(null); // 素材库改了一半、没存就关掉了：留着，下回点进来接着改
   const [voiceCheck, setVoiceCheck] = useState(null); // API 面板里：念语音的小后端接上没有（{ state, say, model }）
   const [voiceTestNote, setVoiceTestNote] = useState("");
   const [voiceTesting, setVoiceTesting] = useState(false);
@@ -234,7 +247,7 @@ export default function App({ account = {} }) {
   const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState("");
   const [noticeMark, setNoticeMark] = useState(""); // 她是点了哪条通知回来的（通知网址后面的记号）
-  const [booted, setBooted] = useState(false); // 开机那一遍读完了（目录、上次那段对话都在了）
+  const [booted, setBooted] = useState(false); // 开机那一遍读完了（目录、设置、记忆库都在了）
   const relayRef = useRef(null); // 替她等回话的那条新路（见 getRelay）
   const mailBusy = useRef(false); // 正在看信箱
   const mailAgain = useRef(false); // 看的工夫里又有人要看：这一遍看完马上再看一遍
@@ -394,15 +407,32 @@ export default function App({ account = {} }) {
       setMemFiles(files);
       setMemTexts(texts);
 
+      // 重新打开开封府：是新的一页（中间那行字是这个时段的那一句），不回到上回那段对话（卿卿 10 月 10 日定的，照官方 app）。
+      // 只是切出去又切回来、开封府没被系统收掉的，什么都不变；点横幅进来的照旧打开那段对话（见 openFromNotice）。上回那段在历史对话里。
+      // 例外：上回那段还在等他回话，先回到那段。“在等”认的是这台设备上记着的、为那段对话交出去过还没着落的那几回（relay.pendingFor：
+      // 平常的话、重新回答都算；回话正在路上、在信箱里等着、没送到要补发、没回成，都还记着；回话放进对话了、她按了停，就不记了）。
+      // 其中有一回是一天之内交出去的、它的回话还没在对话里（别的设备取走放进去、同步过来了的不算在等），她最后那句也没按停。
+      // 只看存档里最后一句是不是她的不够：别的设备上说的话同步过来了、回话还没同步过来，也像在等；
+      // 反过来，等的是重新回答、或者等的工夫里她又说了一句，最后那句又不像在等。
+      // 回话正在路上、在信箱里等着、那一句没送出去要补发、没回成要摆“点这里重发”，这几样都只认眼前这段对话（信箱那条路审过三遍，不为这个动它）；
+      // 换成新的一页的话，回话会悄悄落进那段里，没送出去的那句要等她自己点开那段才补发
       const lastId = await store.get("kfs2:lastChat");
       if (lastId && list.find((c) => c.id === lastId)) {
         const msgs = safeParse(await store.get("kfs2:chat:" + lastId), []) || [];
-        chatIdRef.current = lastId;
-        messagesRef.current = msgs;
-        setChatId(lastId);
-        setMessages(msgs);
-        loadImagesFor(msgs);
-        showRecaps(lastId);
+        const now = Date.now();
+        const waiting =
+          !stoppedAt(msgs) &&
+          getRelay()
+            .pendingFor(lastId)
+            .some((r) => now - r.at < WAITING_MAX && !hasJob(msgs, r.job) && (r.fork || !answeredAfter(msgs, r.last)));
+        if (waiting && chatIdRef.current !== lastId && !messagesRef.current.length) {
+          chatIdRef.current = lastId;
+          messagesRef.current = msgs;
+          setChatId(lastId);
+          setMessages(msgs);
+          loadImagesFor(msgs);
+          showRecaps(lastId);
+        }
       }
 
       // 部署之后才能联网同步新表情包，预览环境里这一步会安静地失败
@@ -437,6 +467,7 @@ export default function App({ account = {} }) {
         indexRef.current = merged;
         setIndex(merged);
       }
+      if (keys.includes(MOTTO_KEY)) setMottoText(readMotto(await store.get(MOTTO_KEY)));
       if (keys.includes("kfs2:settings")) {
         const st = safeParse(await store.get("kfs2:settings"), null);
         if (st) {
@@ -583,21 +614,21 @@ export default function App({ account = {} }) {
     setMenu(null);
     setRecapView(null);
     setRecapArmed(false);
+    // 那段对话同步取出来（引擎手里是现成的），和 chatId 同一下换上：
+    // 不经过“换了对话、话还没取出来、屏幕上空着”的那一下（那一下会白抽一句中间那行字，还会闪一下）
+    const msgs = safeParse(store.peek("kfs2:chat:" + id), []) || [];
     chatIdRef.current = id;
+    messagesRef.current = msgs;
     listMount.current = Date.now();
     setChatId(id);
+    setMessages(msgs);
     setReveal(null);
     setErrorNote("");
     setMemePanel(false);
     setHistoryOpen(false);
     setDrawerOpen(false);
-    const msgs = safeParse(await store.get("kfs2:chat:" + id), []) || [];
-    if (chatIdRef.current === id) {
-      messagesRef.current = msgs;
-      setMessages(msgs);
-      loadImagesFor(msgs);
-      showRecaps(id);
-    }
+    loadImagesFor(msgs);
+    showRecaps(id);
     store.set("kfs2:lastChat", id);
     // 信箱里要是有这段对话的东西（他还没回完的那一回、没回成的那一封），现在轮到它了
     if (latest.current.checkMail) latest.current.checkMail();
@@ -1017,6 +1048,32 @@ export default function App({ account = {} }) {
       setVoiceTestNote(`没念成：${String((e && e.message) || e).slice(0, 160)}`);
     }
     setVoiceTesting(false);
+  };
+
+  // ---- 中间那行字：抽一句（上一回抽到的那句这台设备记着，不连着两回一样） ----
+  const pickLine = () => {
+    let last = "";
+    try {
+      last = localStorage.getItem(MOTTO_LAST) || "";
+    } catch (e) {}
+    const line = pickMotto(mottoLibRef.current, new Date(), last);
+    try {
+      if (line) localStorage.setItem(MOTTO_LAST, line);
+    } catch (e) {}
+    mottoRef.current = line;
+    setMotto(line);
+  };
+  // 回到眼前的时候：空着的那一页还摆着，可这会儿已经换了时段、换了一天（抽到的那句不在眼下这一堆里了）：重抽
+  const freshMotto = () => {
+    if (messagesRef.current.length) return;
+    const pool = poolAt(mottoLibRef.current, new Date());
+    if (!pool.lines.map((x) => fillMotto(x, pool.n)).includes(mottoRef.current)) pickLine();
+  };
+  // 她在“头像与设置”里改了素材库：存进库房（加密了跟着云端走）
+  const saveMotto = async (text) => {
+    const ok = await store.set(MOTTO_KEY, packMotto(text, Date.now()));
+    if (ok === false) markStorageFail();
+    setMottoText(readMotto(packMotto(text, 0)));
   };
 
   // 回话放进了 id 那段对话：里头的语音条记下来要念（她开了“他能发语音”才念；没开的时候他发的，气泡上有“点这里念出来”）
@@ -2244,7 +2301,7 @@ export default function App({ account = {} }) {
     for (const key of await orphans()) store.del(key);
   };
 
-  latest.current = { checkMail, openFromNotice, leaving, resendSoon, runRecaps, sweepRecaps, stopVoice };
+  latest.current = { checkMail, openFromNotice, leaving, resendSoon, runRecaps, sweepRecaps, stopVoice, freshMotto };
 
   // ---- 通知 ----
   // 开过通知的设备，每次打开都悄悄重新登记一遍（见 push.js）；她点通知回来的，记下是哪一条
@@ -2300,6 +2357,7 @@ export default function App({ account = {} }) {
         warmSoon(700);
         clearTimeout(voiceTimer);
         voiceTimer = setTimeout(resumeVoices, 700);
+        latest.current.freshMotto();
         // 她不在的时候有一句话没连上、没送成：现在补发（晚一点发，躲开刚回来那一下）
         if (backResend.current.size) {
           const again = Array.from(backResend.current);
@@ -2781,6 +2839,7 @@ export default function App({ account = {} }) {
       localStorage.removeItem(RECAP_BAD_KEY);
       localStorage.removeItem(WANT_KEY); // 要念还没念的语音条（换了人登录，不替上一位念）
       localStorage.removeItem(HEARD_KEY);
+      localStorage.removeItem(MOTTO_LAST);
     } catch (e) {}
     stopVoice();
     if (account.signOut) account.signOut();
@@ -2851,6 +2910,12 @@ export default function App({ account = {} }) {
       if (!voicesRef.current[k]) getSpeaker().look(k);
     }
   }, [rows]);
+  // 空着的那一页一冒出来（开机、新开一段、删了眼前这段）就抽一句；她看着的时候不换。素材库改了、同步过来了，也重抽一句。
+  // 开机那一遍读完了才抽（booted）：上回那段要是还在等他回话，开门就是那段，不是空着的这一页，白抽一句会占掉“上一回抽到的”
+  const blank = messages.length === 0;
+  useEffect(() => {
+    if (blank && booted) pickLine();
+  }, [chatId, blank, mottoLib, booted]);
   // 她关了“他能发语音”（这台设备上关的，或者别的设备上关了同步过来）：还没念的不念了，正念着的掐掉。念好的留着照样能放
   useEffect(() => {
     if (!settings.voice && speakerRef.current) speakerRef.current.halt();
@@ -2895,6 +2960,13 @@ export default function App({ account = {} }) {
 
   // ---- 弹层 ----
   const renderSheet = () => {
+    if (sheet === "motto") {
+      return (
+        <Sheet title="中间那行字" onClose={() => setSheet("account")}>
+          <MottoPanel text={mottoText} draftRef={mottoDraftRef} onSave={saveMotto} onDone={() => setSheet("account")} />
+        </Sheet>
+      );
+    }
     if (sheet === "account") {
       return (
         <Sheet
@@ -2933,6 +3005,20 @@ export default function App({ account = {} }) {
               </button>
             </div>
           )}
+          <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>中间那行字</div>
+          <button
+            onClick={() => setSheet("motto")}
+            className="kfs-tap kfs-motto-entry w-full text-left"
+            style={{ ...glass(0.5, 16), borderRadius: 16, padding: "12px 14px", marginBottom: 22, display: "block" }}
+          >
+            <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.5 }}>
+              {(() => {
+                const seen = describeMotto(mottoLib);
+                return seen.total ? `放了 ${seen.total} 句：${seen.slots.length} 个时段、${seen.days.length} 个日子` : `还没放素材库，中间写的是“${DEFAULT_MOTTO}”`;
+              })()}
+            </div>
+            <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 2 }}>新开一段时对话正中间那一行。点这里放素材库、改句子</div>
+          </button>
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>云端同步</div>
           <div style={{ ...glass(0.5, 16), borderRadius: 16, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6, color: sync.offline || !storageOk ? "#A8473D" : T.ink }}>
             {syncLine}
@@ -3242,8 +3328,14 @@ export default function App({ account = {} }) {
                   青绿的背景里它正压在那方深青上，原来的淡墨（inkSoft）叠上去只有 3 比 1，看不清；
                   实墨压在深青上、落到旁边的纸色上都过 4.5 比 1，屏幕高矮不同、字落在哪儿都清楚。
                   丁香的背景中间是浅的，用轻一档的紫就够 */}
-              <p className="kfs-motto" style={{ fontFamily: SERIF, fontSize: 15, letterSpacing: "0.3em", paddingLeft: "0.3em", color: T.motto }}>
-                如月之恒，官家在这
+              {/* 中间那行字：素材库里按时段、按日子抽的那一句（见 motto.js）；还没放素材库的照旧是“如月之恒，官家在这”。
+                  长的（七夕那几句诗）一句一行，居中 */}
+              <p className="kfs-motto" style={{ fontFamily: SERIF, fontSize: 15, lineHeight: 2, letterSpacing: "0.3em", paddingLeft: "0.3em", textAlign: "center", color: T.motto }}>
+                {mottoLines(motto || DEFAULT_MOTTO).map((line, i) => (
+                  <span key={i} style={{ display: "block" }}>
+                    {line}
+                  </span>
+                ))}
               </p>
               {memFiles.length === 0 && (
                 <button

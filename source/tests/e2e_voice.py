@@ -200,6 +200,7 @@ with sync_playwright() as p:
     ok(clip in (None, "卿卿，我在这里。"), f"复制：复制的是转出来的字（{clip}）")
     pa.reload()
     kite(pa)
+    back_to_last(pa)   # 重新打开是新的一页：回到那段对话
     pa.wait_for_timeout(1200)
     ok(pa.evaluate(HEARD) == ["卿卿，我在这里。"] and voices(pa)[-1]["state"] == "ready", "转了文字的，划掉开封府重开还挂着；语音条从存档里取，照样能放")
     pa.locator(".kfs-chat-rows .kfs-voice").last.click(); pa.wait_for_timeout(300)
@@ -285,6 +286,7 @@ with sync_playwright() as p:
     had = json.loads(pa.evaluate("localStorage.getItem('kfs-voice-want')") or "[]")
     pa.reload()
     kite(pa)
+    back_to_last(pa)
     ready = wait_js(pa, "(() => { const v = [...document.querySelectorAll('.kfs-chat-rows .kfs-voice')].pop(); return !!v && v.dataset.state === 'ready'; })()", 15000)
     ok(len(had) == 1 and ready and len(eleven()) - n0 == 1, "没念就被收掉了：重开以后接着念（这台设备上记着）")
 
@@ -388,6 +390,7 @@ with sync_playwright() as p:
     pb = B.new_page()
     pb.on("pageerror", lambda e: errors.append("B: " + str(e)))
     second_device(pb)
+    back_to_last(pb)   # 进门是新的一页：点开那段对话
     pb.wait_for_timeout(3000)
     vb = pb.evaluate(VOICES)
     ok(len(vb) > 0 and all(v["state"] == "ready" for v in vb) and len(eleven()) == n0, f"另一台设备：念好的语音同步过来，都能放，不再念（{len(vb)} 条）")

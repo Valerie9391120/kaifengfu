@@ -334,6 +334,7 @@ def pair(browser):
     chat(pa, "第一句"); pa.wait_for_timeout(1500)
     pb = page_of(B, "pairB")
     second_device(pb)
+    back_to_last(pb)   # 重新打开开封府是新的一页：点开那段对话
     pb.get_by_text("收到：第一句").last.wait_for(timeout=20000)
     def pump(cond, timeout):
         end = time.time() + timeout
@@ -376,6 +377,7 @@ def resend(browser):
     pb = page_of(B, "resendB")
     pb.route("**/rest/v1/kv*", lambda route: route.abort("internetdisconnected") if not gate["down"] and route.request.method == "GET" else route.continue_())
     second_device(pb)
+    back_to_last(pb)   # 重新打开开封府是新的一页：点开那段对话
     pb.get_by_text("收到：第一句").last.wait_for(timeout=20000)
     def pump(cond, timeout):
         end = time.time() + timeout
@@ -417,6 +419,7 @@ def later(browser):
     gate = {"down": True}
     pb.route("**/rest/v1/kv*", lambda route: route.abort("internetdisconnected") if not gate["down"] and route.request.method == "GET" else route.continue_())
     second_device(pb)
+    back_to_last(pb)   # 重新打开开封府是新的一页：点开那段对话
     pb.get_by_text("收到：第一句").last.wait_for(timeout=20000)
     gate["down"] = False                                                          # 另一台这会儿同步不下来
     c0 = len(calls())
@@ -461,9 +464,9 @@ def side(browser):
     mock("/__debug/claude-fail")
     c1 = len(calls())
     pb = page_of(A, "side2")
-    pb.goto(BASE); kite(pb)                  # 从图标进来：眼前是乙段
+    pb.goto(BASE); kite(pb)                  # 从图标进来：是新的一页（上回停的乙段没在等他回话）
     pb.wait_for_timeout(2500)
-    waiting = count_text(pb, "收到：乙段的话") == 1 and note_count(pb, "点这里重发") == 0 and len(box()["rows"]) == 1
+    waiting = pb.locator(".kfs-motto").is_visible() and note_count(pb, "点这里重发") == 0 and len(box()["rows"]) == 1
     pb.get_by_role("button", name="打开侧栏").click(); pb.wait_for_timeout(600)
     pb.locator("button", has_text="甲段的话").first.click()    # 她自己翻到甲段
     said = wait_js(pb, "document.body.innerText.includes('消息没送到（这把 key 没绑定工作区')", 10000)
@@ -476,6 +479,7 @@ def side(browser):
 
 
 # 重新回答没成（Anthropic 那头报错）、开封府又被收掉：回来说一声“重新回答没成功”，旧回答原样在
+# （重新打开开封府本来是新的一页；这段还记着一回重新回答没着落，算在等，先回到这段）
 def refail(browser):
     A = phone(browser)
     pa = page_of(A, "refail")
@@ -1015,6 +1019,7 @@ def both(browser):
     chat(pa, "第一句"); pa.wait_for_timeout(1500)
     pb = page_of(B, "bothB")
     second_device(pb)
+    back_to_last(pb)   # 重新打开开封府是新的一页：点开那段对话
     pb.get_by_text("收到：第一句").last.wait_for(timeout=20000)
     def pump(cond, timeout):
         end = time.time() + timeout

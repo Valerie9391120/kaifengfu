@@ -744,6 +744,14 @@ export function createRelay(d) {
       const rec = pending.find(chat, last, "");
       return rec ? { job: rec.job, at: rec.at || 0 } : null;
     },
+    // 这台设备上为这段对话交出去过、还没着落的那几回（平常的话、重新回答都算）：[{ job, last, fork, at }]，新的在前；没有就是空的。
+    // 只看不动。外头开机的时候拿它认“上回那段还在等他回话”
+    pendingFor: (chat) =>
+      pending
+        .all()
+        .filter((x) => x.chat === chat)
+        .reverse()
+        .map((x) => ({ job: x.job, last: x.last, fork: x.fork || "", at: x.at || 0 })),
     status: () => ({ off: d.now() < offUntil, why: offWhy, last: lastRun }),
   };
 }

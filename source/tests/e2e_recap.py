@@ -34,7 +34,7 @@ def old_chat(tag, turns, her_len, his_len, photos=()):
         rows.append({"id": f"{tag}{i}m", "role": "him", "ts": t, "raw": raw, "items": [{"type": "text", "text": raw}], "thinking": "（旧心声）"})
     return rows
 
-# 把一段旧对话放进存档、排在目录最前面，重开页面。extra 是顺带放进去的别的几条
+# 把一段旧对话放进存档、排在目录最前面，重开页面，从历史对话里点开它（重新打开开封府是新的一页）。extra 是顺带放进去的别的几条
 def plant(page, cid, rows, title, extra=()):
     # 先等页面把手上没传完的传完（它攒一秒多才传，传完会把自己手上的那份写回本地）：不然这里直接放进本地的目录会被它盖回去
     page.wait_for_timeout(3000)
@@ -42,6 +42,7 @@ def plant(page, cid, rows, title, extra=()):
     index = [{"id": cid, "title": title, "preview": "旧的", "updatedAt": int(time.time() * 1000)}] + [c for c in index if c["id"] != cid]
     page.evaluate(SEED, [["kfs2:chat:" + cid, json.dumps(rows, ensure_ascii=False)], ["kfs2:index", json.dumps(index, ensure_ascii=False)], ["kfs2:lastChat", cid]] + [list(x) for x in extra])
     page.reload(); kite(page); page.wait_for_timeout(800)
+    back_to_last(page)
 
 def rule_of(c):
     system = c["body"].get("system")
@@ -304,9 +305,8 @@ with sync_playwright() as p:
     pb = B.new_page()
     pb.on("pageerror", lambda e: errors.append("B: " + str(e)))
     second_device(pb)
-    if last_chat(pb) != "old-chat-1":
-        side(pb)
-        pb.get_by_text("旧的长对话").first.click(); pb.wait_for_timeout(1200)
+    side(pb)   # 进门是新的一页：从侧栏点开那段长对话
+    pb.get_by_text("旧的长对话").first.click(); pb.wait_for_timeout(1200)
     ok(wait_js(pb, "document.querySelectorAll('.kfs-recap').length === 1", 15000) and (live(recaps_of(pb, "old-chat-1"), ids) or {}).get("id") == rec2["id"], "另一台设备：提要跟着云端同步过来了，那行小字也在")
     chat(pb, "换了台设备问")
     body = chat_calls()[-1]["body"]
@@ -376,12 +376,14 @@ with sync_playwright() as p:
     ok(len(recap_calls()) == r0 + 1 and rows_on(pa) == 0, "那边好了，他又回完两句：十分钟里不再试（每试一回都要花钱）")
     # 划掉重开：那笔账记在设备上，重开了也认
     pa.reload(); kite(pa); pa.wait_for_timeout(800)
+    back_to_last(pa)   # 重新打开是新的一页：回到那段长对话
     chat(pa, "重开以后再问")
     pa.wait_for_timeout(3000)
     ok(len(recap_calls()) == r0 + 1 and rows_on(pa) == 0 and (ledger(pa).get("old-chat-2") or {}).get("times") == 1, "划掉重开以后他再回完一句：还在那十分钟里，照样不试（不是每开一回试一回）")
     # 过了十分钟：他再回完一句就再试。这一回他刚回完她就切走了：先不抄，回到眼前再接着抄
     pa.evaluate(AGE, 11 * 60000)
     pa.reload(); kite(pa); pa.wait_for_timeout(800)
+    back_to_last(pa)
     pa.evaluate(HIDE_ON, "收到：说完就切走")
     say(pa, "说完就切走")
     ok(wait_js(pa, "window.__hidAt > 0", 20000), "过了十分钟。他的回话刚到，她就切走了")
@@ -439,6 +441,7 @@ with sync_playwright() as p:
     # 过了十分钟再试。抄成头一趟的时候她已经切走了：这一趟留着，剩下的等她回来接着抄
     pa.evaluate(AGE, 11 * 60000)
     pa.reload(); kite(pa); pa.wait_for_timeout(800)
+    back_to_last(pa)
     mock("/__debug/claude-hold?ms=90000&kind=recap")
     r0 = len(recap_calls())
     chat(pa, "过了十分钟再问")
