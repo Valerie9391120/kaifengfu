@@ -27,6 +27,12 @@ def ok(cond, msg):
     else:
         failed += 1; print("FAIL:", msg)
 
+# 重新打开开封府是新的一页（不回到上回那段对话）：从侧栏的历史对话里点开最近那一段
+def back_to_last(page):
+    page.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
+    page.locator(".kfs-history button").nth(1).click()   # 头一个是“历史对话”那个标题
+    time.sleep(0.8)
+
 def mock(path):
     return json.loads(urllib.request.urlopen(MOCK + path).read() or b"null")
 
@@ -276,8 +282,12 @@ with sync_playwright() as p:
     kite.wait_for(timeout=15000)
     ok(not pa.get_by_text("进门先报上名来").is_visible() and not pa.get_by_text("对暗号").is_visible(), "刷新之后直接到开屏：不用再登录，也不用再报暗号")
     kite.click()
+    pa.get_by_placeholder("说话，我听着").wait_for(timeout=10000)
+    time.sleep(0.8)
+    ok(pa.locator(".kfs-motto").is_visible() and pa.get_by_text("收到：老公在吗").count() == 0, "刷新之后是新的一页（照官方 app）：中间那行字，刚才那段不在眼前")
+    back_to_last(pa)
     pa.get_by_text("收到：老公在吗").last.wait_for(timeout=10000)
-    ok(True, "刷新之后刚才的对话还在")
+    ok(True, "刚才的对话在侧栏的历史对话里，点开都还在")
 
     # ================= 第二台设备 =================
     B = browser.new_context(**iphone)
@@ -301,8 +311,11 @@ with sync_playwright() as p:
     kb.wait_for(timeout=30000)
     time.sleep(1.2)
     kb.click()
+    pb.get_by_placeholder("说话，我听着").wait_for(timeout=10000)
+    time.sleep(0.8)
+    back_to_last(pb)
     pb.get_by_text("收到：老公在吗").last.wait_for(timeout=15000)
-    ok(True, "第二台设备：从云端取回、解开，第一台的对话原样出现")
+    ok(True, "第二台设备：从云端取回、解开，第一台的对话原样出现（在历史对话里）")
 
     pb.get_by_role("button", name="打开侧栏").click()
     time.sleep(0.6)
@@ -489,7 +502,8 @@ with sync_playwright() as p:
     shot(pa, "15_dingxiang_splash")
     pa.mouse.up()
     knob.wait_for(state="detached", timeout=10000)
-    ok(held == ["1", "1"] and still_splash and pa.get_by_text("收到：老公在吗").last.is_visible(), "滑块拉到最右边：小猪脸红、白心里长出小紫心；松手才进门")
+    pa.wait_for_timeout(600)
+    ok(held == ["1", "1"] and still_splash and pa.locator(".kfs-motto").is_visible(), "滑块拉到最右边：小猪脸红、白心里长出小紫心；松手才进门（进来是新的一页）")
     # 万一哪台手机上玻璃算不出来（这里故意让画布坏掉）：退回不带折射的紫色滑块，照样拉得动、进得了门
     pa.add_init_script("if (sessionStorage.getItem('kfs-test-nocanvas')) { sessionStorage.removeItem('kfs-test-nocanvas'); const orig = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function () { return null; }; window.__kfsFixCanvas = () => { HTMLCanvasElement.prototype.getContext = orig; }; }")
     pa.evaluate("sessionStorage.setItem('kfs-test-nocanvas', '1')")
@@ -506,7 +520,7 @@ with sync_playwright() as p:
     shot(pa, "15b_dingxiang_plain")
     pa.mouse.up()
     knob.wait_for(state="detached", timeout=10000)
-    ok(plain[0] == "off" and plain[1] == "1" and plain[2] == "none" and "70, 50, 104" in plain[3] and abs(back["x"] - kb["x"]) < 2 and held == ["1", "1"] and pa.get_by_text("收到：老公在吗").last.is_visible(),
+    ok(plain[0] == "off" and plain[1] == "1" and plain[2] == "none" and "70, 50, 104" in plain[3] and abs(back["x"] - kb["x"]) < 2 and held == ["1", "1"] and pa.locator(".kfs-motto").is_visible(),
        f"玻璃算不出来时：退回紫色的滑块（{plain[3]}），拉一半弹回、拉到头松手照样进门")
     pa.evaluate("window.__kfsFixCanvas()")  # 画布修回来，后面的测试照常用
     # 换回青绿，后面照旧

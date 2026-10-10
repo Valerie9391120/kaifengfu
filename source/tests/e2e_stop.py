@@ -55,6 +55,10 @@ def wait_turning(page, cond, timeout=20):
 def open_history(page, nth):
     page.get_by_role("button", name="打开侧栏").click(); page.wait_for_timeout(700)
     page.locator(".kfs-history button.text-left").nth(nth).click(); page.wait_for_timeout(1000)
+# 侧栏历史对话里点开写着这几个字的那一段（重新打开开封府是新的一页：要看哪段就点开哪段）
+def open_named(page, text):
+    page.get_by_role("button", name="打开侧栏").click(); page.wait_for_timeout(700)
+    page.locator(".kfs-history button.text-left", has_text=text).first.click(); page.wait_for_timeout(1000)
 # 声波键点了有没有动静（这个浏览器里开不了麦，会说一句；开得了的会出“正在听”）
 MIC = "document.body.innerText.includes('开不了麦') || document.body.innerText.includes('正在听')"
 def quiet_mic(page):
@@ -383,6 +387,7 @@ def reopen(browser):
     ok(wait_js(pa, "document.body.innerText.includes(" + json.dumps(NOTE) + ")", 3000), "重开·准备：停了，小字出来了")
     pa.wait_for_timeout(1500)
     pa.reload(); kite(pa)
+    back_to_last(pa)   # 重新打开是新的一页：回到那段对话
     pa.wait_for_timeout(4000)
     ok(notes(pa) == 1 and key(pa) == "发语音" and not typing(pa) and len(calls()) == c0, "开封府重开以后：那行小字还在；他没有自己去回停掉的那一句")
     pa.get_by_text(NOTE, exact=True).tap()
@@ -1238,8 +1243,11 @@ def orphan(browser):
         pb.goto(BASE); kite(pb)
         pb.wait_for_timeout(10000)
         cid2, msgs = chat_of(pb)
-        again = (cid2 == cid, len(calls()) - c1, msgs[-1]["role"], msgs[-1].get("text"), notes(pb), typing(pb), len(jobs(pb)))
-        ok(again == (True, 0, "her", "乙二", 1, False, 0), f"乙二{tag}：重开以后，停掉的那一句没有被当成“上回没送到的”替她补发；小字还在（{again}）")
+        fresh = pb.locator(".kfs-motto").is_visible()          # 停掉的那一句不算在等他回话：重新打开是新的一页
+        open_named(pb, "乙在吗")
+        pb.wait_for_timeout(1500)
+        again = (cid2 == cid, fresh, len(calls()) - c1, msgs[-1]["role"], msgs[-1].get("text"), notes(pb), typing(pb), len(jobs(pb)))
+        ok(again == (True, True, 0, "her", "乙二", 1, False, 0), f"乙二{tag}：重开以后是新的一页；停掉的那一句没有被当成“上回没送到的”替她补发；点开乙段，小字还在（{again}）")
         A.close()
 
 
@@ -1275,7 +1283,10 @@ def back_stop(browser):
     pb = page_of(A, "back_stop2")
     pb.goto(BASE); kite(pb)
     pb.wait_for_timeout(10000)
-    still = len(calls()) == c0 + 1 and notes(pb) == 1 and not typing(pb)
+    fresh = pb.locator(".kfs-motto").is_visible()              # 停掉的那一句不算在等他回话：重新打开是新的一页
+    back_to_last(pb)
+    pb.wait_for_timeout(1500)
+    still = fresh and len(calls()) == c0 + 1 and notes(pb) == 1 and not typing(pb)
     pb.get_by_text(NOTE, exact=True).tap()
     got = wait_js(pb, shown("收到：到了却没听见回音"), 20000)
     pb.get_by_text("第二条").last.wait_for(timeout=10000); pb.wait_for_timeout(1500)

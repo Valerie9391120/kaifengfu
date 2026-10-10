@@ -9,6 +9,12 @@
 import json, re, time, urllib.request, urllib.parse, os
 from playwright.sync_api import sync_playwright
 
+# 重新打开开封府是新的一页（上回那段还在等他回话的除外）：从侧栏的历史对话里点开最近那一段
+def back_to_last(page):
+    page.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
+    page.locator(".kfs-history button").nth(1).click()   # 头一个是“历史对话”那个标题
+    time.sleep(0.8)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = os.environ.get("KFS_BASE", "http://127.0.0.1:8080/")
 MOCK = os.environ.get("KFS_MOCK", "http://127.0.0.1:8787")
@@ -290,7 +296,7 @@ with sync_playwright() as p:
     ok(len(knocks(b_kill, 2)) == 2, "开封府被收掉了：回话照样到信箱，手机照样被敲（两句，两条）")
     tap = banners()[-1]["json"]["notification"]["navigate"]
     ok(len(box()["rows"]) == 1 and box()["rows"][0]["state"] == "done", "开封府被收掉了：信在信箱里等着")
-    # 不点横幅、从图标进来：开门是上次停的那段对话；信已经放进它该在的那段，侧栏里看得到
+    # 不点横幅、从图标进来：是新的一页（上回停的那段没在等他回话；10 月 10 日起重新打开是新的一页）；信已经放进它该在的那段，侧栏里看得到
     t_open = time.time() * 1000
     pb = A.new_page()
     pb.on("pageerror", lambda e: errors.append("B: " + str(e)))
@@ -298,7 +304,7 @@ with sync_playwright() as p:
     kite(pb)
     ok(wait_mock(lambda: box()["rows"] == []), "从图标进来：一进门就把信箱里的信取了")
     time.sleep(0.8)
-    ok(count_text(pb, "收到：另一段对话") == 1 and count_text(pb, "收到：我关掉了哦") == 0, "从图标进来：眼前还是上次停的那段对话")
+    ok(pb.locator(".kfs-motto").is_visible() and count_text(pb, "收到：另一段对话") == 0 and count_text(pb, "收到：我关掉了哦") == 0, "从图标进来：是新的一页（上回停的那段没在等他回话）")
     msgs2 = json.loads(pb.evaluate(KV, "kfs2:chat:" + cid) or "[]")
     ok(msgs2[-1]["role"] == "him" and msgs2[-1]["items"][0]["text"] == "收到：我关掉了哦" and msgs2[-2]["text"] == "我关掉了哦" and len(calls()) == n2 + 1,
        "从图标进来：回话放进了它那段对话、接在那一句后面；Anthropic 没有多问")
@@ -310,7 +316,7 @@ with sync_playwright() as p:
     pc = A.new_page()
     pc.on("pageerror", lambda e: errors.append("C: " + str(e)))
     pc.goto(BASE); kite(pc)
-    ok(count_text(pc, "收到：另一段对话") == 1 and count_text(pc, "收到：我关掉了哦") == 0, "再开一回：开门还是她上次看的那段对话")
+    ok(pc.locator(".kfs-motto").is_visible() and count_text(pc, "收到：另一段对话") == 0 and count_text(pc, "收到：我关掉了哦") == 0, "再开一回：还是新的一页")
     pc.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
     pc.locator("button", has_text="老公在吗").first.click(); time.sleep(0.8)
     mock("/__debug/claude-hold?ms=3000")
@@ -402,14 +408,14 @@ with sync_playwright() as p:
     ok(wait_mock(lambda: len(banners()) == b1 + 2, timeout=GRACE + 10) and "没送到" in banners()[-1]["json"]["notification"]["body"], "没回成、开封府被收掉了：照样敲一下说没送到")
     fail_tap = banners()[-1]["json"]["notification"]["navigate"]
     mock("/__debug/claude-fail")
-    # 从图标回来：眼前是另一段对话。那封报错的信先留着（等她翻到那段对话再说），不偷偷重发
+    # 从图标回来：是新的一页（上回停的是另一段，它没在等）。那封报错的信先留着（等她翻到那段对话再说），不偷偷重发
     pe = A.new_page()
     pe.on("pageerror", lambda e: errors.append("E2: " + str(e)))
     n6 = len(calls())
     pe.goto(BASE); kite(pe)
     time.sleep(2.5)
-    ok(count_text(pe, "收到：另一段对话") == 1 and pe.get_by_text("点这里重发").count() == 0 and len(box()["rows"]) == 1 and len(calls()) == n6,
-       "她从图标回来、眼前是别的对话：没回成的那封信先留在信箱里，不在不相干的对话底下说“没送到”，也不偷偷重发")
+    ok(pe.locator(".kfs-motto").is_visible() and pe.get_by_text("点这里重发").count() == 0 and len(box()["rows"]) == 1 and len(calls()) == n6,
+       "她从图标回来、是新的一页：没回成的那封信先留在信箱里，不在不相干的那一页底下说“没送到”，也不偷偷重发")
     pe.close()
     # 点着那条“没送到”的横幅回来：翻到那段对话，底下有“点这里重发”可点
     pe = A.new_page()
@@ -622,6 +628,7 @@ with sync_playwright() as p:
     pb.locator("form input").first.fill(PASS)
     pb.get_by_role("button", name="开门").click()
     kite(pb)
+    back_to_last(pb)   # 进门是新的一页：点开那段对话
     pb.get_by_text("等的工夫里说的").last.wait_for(timeout=15000)
     # 这台设备上头一句话，发完就切走：开机时已经问好了新路是通的，照样敢交出去
     ok(wait_js(pb, "localStorage.getItem('kfs-relay') === 'ok'", 8000), "新设备一进门就轻轻问好了新路通不通（还一句话都没发）")

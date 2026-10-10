@@ -2446,11 +2446,18 @@ const drive = async (p, step = 500, max = 400000) => {
   await drive(wo3.relay.ask({ ...ARGS, last: "m9", fork: "oldReply" }), 100);
   ok(!!owedNow && owedNow.job === wo3.sent[0].job && owedNow.at >= sentAt && owedNow.at <= Date.now() && wo3.relay.owed("chatA", "m8") === null && wo3.relay.owed("chatB", "m7") === null && wo3.relay.owed("chatA", "m9") === null,
     "问为这句话发出去过哪一回：记着的答得出编号和几点发的；别的话、别的对话、重新回答的那一回，都答没有");
+  // 外头问“这段对话还有哪几回没着落”（开机的时候认上回那段还在不在等）：平常的话、重新回答都答，新的在前
+  const forA = wo3.relay.pendingFor("chatA");
+  ok(wo3.sent.length === 2 && forA.length === 2 && forA[0].job === wo3.sent[1].job && forA[0].last === "m9" && forA[0].fork === "oldReply" && forA[0].at >= sentAt
+    && forA[1].job === wo3.sent[0].job && forA[1].last === "m7" && forA[1].fork === "" && forA[1].at >= sentAt && forA[1].at <= forA[0].at && wo3.relay.pendingFor("chatB").length === 0,
+    "问这段对话还有哪几回没着落：平常的话、重新回答都在（编号、接的哪一句、几点发的），新的在前；别的对话的不在里面");
+  forA[0].job = "改了"; forA.length = 0;
+  ok(wo3.relay.pendingFor("chatA").length === 2 && wo3.relay.pendingFor("chatA")[0].job === wo3.sent[1].job, "问一下不动记着的：交出去的单子外头改了也不碍事");
   wo3.getFails = 0;
   await wo3.done(wo3.sent[0]);
   const gotO = await drive(wo3.relay.ask(ARGS), 200);
   await gotO.v.settle();
-  ok(wo3.relay.owed("chatA", "m7") === null, "有了着落的那一回：再问就没有了");
+  ok(wo3.relay.owed("chatA", "m7") === null && wo3.relay.pendingFor("chatA").map((r) => r.job).join() === wo3.sent[1].job, "有了着落的那一回：再问就没有了（重新回答那一回还没着落，照旧在）");
   // 直接等着的时候看出那一格早断了：也一样，只收还写着“在等”的
   const we = world();
   we.hint = true;

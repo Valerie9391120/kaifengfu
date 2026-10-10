@@ -167,6 +167,11 @@ def chat_of(page):
     return cid, chat_by(page, cid)
 def note_count(page, pattern="点这里重发|没成功"):
     return page.get_by_text(re.compile(pattern)).count()
+# 重新打开开封府是新的一页（不回到上回那段对话）：从侧栏的历史对话里点开最近那一段（就是上回说话的那段）
+def back_to_last(page):
+    page.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
+    page.locator(".kfs-history button").nth(1).click()   # 头一个是“历史对话”那个标题，后面才是一段一段的对话
+    time.sleep(0.8)
 # 长按一个气泡（手指按住不放）
 def long_press(page, locator, hold=0.7):
     b = locator.bounding_box()
