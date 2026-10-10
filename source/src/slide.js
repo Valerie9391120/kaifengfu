@@ -118,3 +118,20 @@ export function createSlide({ put, raf, caf, now, ms = SLIDE_MS, ease = SLIDE_EA
     },
   };
 }
+
+// ---------- 一整页进来的那一下（历史对话那一页） ----------
+// 原来是 CSS 的 kfsPage 动画：从右边 28 像素的地方滑到位，一边淡入，0.3 秒，走的也是上面那条曲线。
+// 历史对话那一页里每段对话是一行毛玻璃，各成一层；对话攒到几百段，这 0.3 秒就是开头说的同一个毛病
+// （进场的动画也是 transform 的系统动画，整页是那些行的长辈）。所以也改成一帧一帧写，样子不变。
+// 位置和深浅照同一个数走（v：离到位还差几个像素），和 CSS 动画里两样一起走是一回事。
+// 日记那一页还用着 CSS 的 kfs-page：它里面单独成层的只有那几张卡片
+export const ENTER_MS = 300;
+export const ENTER_X = 28;
+
+// 离到位还差 v 个像素的时候，那一页身上该写什么。到位了两样都交回空的：
+// 写在它身上的收干净，样子回到样式表说的（不留一个 translateX(0px) 在身上）
+export function enterLook(v, from = ENTER_X) {
+  if (!(v > 0)) return { transform: "", opacity: "" };
+  const x = Math.min(v, from);
+  return { transform: `translateX(${Math.round(x * 100) / 100}px)`, opacity: String(Math.round((1 - x / from) * 1000) / 1000) };
+}

@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { shortDate } from "../days.js";
 import { SERIF, T, glass } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { useLongPress } from "../ui/press.js";
 import { Glows, IconBtn } from "../ui/parts.jsx";
+import { useSlideIn } from "../ui/enter.js";
 
 function HistoryItem({ c, currentId, now, editing, onOpen, onDelete, onLongPress }) {
   const lp = useLongPress((rect) => onLongPress && onLongPress(c, rect));
@@ -42,8 +43,13 @@ function HistoryItem({ c, currentId, now, editing, onOpen, onDelete, onLongPress
 
 export function HistoryPage({ index, currentId, now, onBack, onOpen, onDelete, onLongPress }) {
   const [editing, setEditing] = useState(false);
+  // 进来的那一下自己一帧一帧写，不用 kfs-page 那条 CSS 动画（身上写了 animation: none 把它关掉；类名留着，别处认这一页用）。
+  // 这一页里每段对话是一行毛玻璃、各成一层：对话攒多了，CSS 动画那 0.3 秒 iPhone 会把每一行的画面一起备上，
+  // 和长对话里拉侧栏白屏是同一个毛病（见 slide.js）。**别把 CSS 的入场动画加回来**
+  const pageRef = useRef(null);
+  useSlideIn(pageRef);
   return (
-    <div className="absolute inset-0 z-40 flex flex-col kfs-page" style={{ background: T.bg }}>
+    <div ref={pageRef} className="absolute inset-0 z-40 flex flex-col kfs-page" style={{ background: T.bg, animation: "none" }}>
       <Glows />
       <div
         className="relative z-10 flex items-center"

@@ -1,5 +1,5 @@
 # 手上的事：整页不许捏（连带着侧栏、长按只认一根手指）；聊天记录怎么滚（不拽、回到最新的圆钮、点上面回顶）；点横幅回来到底；
-# 对话窗怎么滑（侧栏出来、收回去的那一下不交给系统动画）。
+# 对话窗怎么滑（侧栏出来、收回去的那一下不交给系统动画）；历史对话那一页进来的那一下（也不交给系统动画）。
 # 真的浏览器，用调试接口发真的触摸（不是鼠标装的）。
 # 先在 source/ 里 npm run build:test，起好两个服务（见开发说明），再：python3 tests/e2e_gesture.py
 # 每一段从头来过；只想跑其中几段就把名字写在后面：python3 tests/e2e_gesture.py photo
@@ -788,7 +788,75 @@ def slide(browser):
     A.close()
 
 
-SCENES = [("nopinch", nopinch), ("photo", photo), ("scroll", scroll), ("notice", notice), ("slide", slide)]
+# ---------- 历史对话那一页进来的那一下：也不交给系统动画 ----------
+# 那一页里每段对话是一行毛玻璃、各成一层；整页进场原来是 CSS 的 kfsPage 动画（也是 transform 的）。对话攒到几百段，
+# 那 0.3 秒就是上面“对话窗怎么滑”说的同一个毛病（卿卿 10 月 10 日夜里听说了，说“抓心挠肝”，当晚改的）。
+# 看着它进来：从那一页冒出来起，每一帧记下它在哪、多实、那一行一行的哪一层长辈身上跑着会挪位置的系统动画
+WATCH_PAGE = """(ms) => { window.__came = new Promise((done) => {
+  const shell = document.querySelector('.select-none');
+  const MOVES = /^(transform|translate|scale|rotate)$/;
+  const moves = (a) => (a.transitionProperty ? MOVES.test(a.transitionProperty) : !!a.effect && a.effect.getKeyframes().some((k) => Object.keys(k).some((p) => MOVES.test(p))));
+  const seen = [], sys = new Set(); let t0 = 0, rows = 0;
+  const begun = performance.now();
+  const tick = () => {
+    const pg = document.querySelector('.kfs-page');
+    if (pg) {
+      if (!t0) t0 = performance.now();
+      const cs = getComputedStyle(pg);
+      seen.push([Math.round(performance.now() - t0), Math.round(new DOMMatrixReadOnly(cs.transform).m41 * 100) / 100, Math.round(Number(cs.opacity) * 1000) / 1000]);
+      const chain = []; for (let el = pg.querySelector('.kfs-page-scroll > *') || pg; el; el = el.parentElement) { chain.push(el); if (el === shell) break; }
+      chain.forEach((el) => el.getAnimations().filter(moves).forEach((a) => sys.add(String(el.className).split(' ').pop() + ':' + (a.transitionProperty || a.animationName))));
+      rows = pg.querySelectorAll('.kfs-page-scroll > *').length;
+    }
+    if (performance.now() - begun < ms) requestAnimationFrame(tick);
+    else { const pg = document.querySelector('.kfs-page'); const cs = pg ? getComputedStyle(pg) : null;
+      done({ seen, sys: [...sys], rows, end: pg ? { transform: cs.transform, opacity: cs.opacity, anim: cs.animationName, inline: [pg.style.transform, pg.style.opacity] } : null }); }
+  };
+  requestAnimationFrame(tick);
+}); }"""
+
+def enter(browser):
+    A = phone(browser)
+    pa = page_of(A, "enter")
+    first_time(pa)
+    chat(pa, "头一段")
+    pa.locator('[aria-label="新对话"]').tap(); pa.wait_for_timeout(600)   # 顶栏右边那支笔
+    chat(pa, "第二段")
+    def come(ms=900):
+        if not pa.evaluate(REACHABLE):
+            pa.get_by_role("button", name="打开侧栏").tap(); pa.wait_for_timeout(700)
+        pa.evaluate(WATCH_PAGE, ms)
+        pa.get_by_role("button", name=re.compile("历史对话")).first.tap()
+        return pa.evaluate("window.__came")
+    r = come()
+    xs = [x for _, x, _ in r["seen"]]; os_ = [o for _, _, o in r["seen"]]
+    mid = len({x for x in xs if 0.5 < x < 27.5})
+    took = next((t for t, x, _ in r["seen"] if x == 0), -1)
+    ok(r["sys"] == [] and r["rows"] == 2, f"历史对话那一页进来：一行一行的对话、会滚的盒子、那一页、外壳身上，从头到尾没有会挪位置的系统动画（{r['sys']}）")
+    ok(xs[0] > 15 and os_[0] < 0.5 and xs[-1] == 0 and os_[-1] == 1 and all(b <= a for a, b in zip(xs, xs[1:])) and all(b >= a for a, b in zip(os_, os_[1:])) and mid >= 5 and 150 <= took <= 600,
+       f"它是一帧一帧滑进来的：从右边 {xs[0]} 像素、{os_[0]} 的深浅起步，一路往左、越来越实，半路上停过 {mid} 处，走了 {took} 毫秒")
+    ok(r["end"] == {"transform": "none", "opacity": "1", "anim": "none", "inline": ["", ""]}, f"到位以后身上是干净的：没有留着的位置、深浅，CSS 的入场动画是关着的（{r['end']}）")
+    # 进来以后照常用：点一段对话，翻过去，那一页收了
+    pa.locator(".kfs-page button.text-left", has_text="头一段").first.tap(); pa.wait_for_timeout(900)
+    ok(pa.locator(".kfs-page").count() == 0 and count_text(pa, "收到：头一段") == 1 and not pa.evaluate(REACHABLE), "进来以后点一段对话：翻到那一段，那一页和侧栏都收了")
+    # 系统开了“减弱动态效果”：不滑，直接在位（原来 CSS 里也是这个规矩）
+    pa.emulate_media(reduced_motion="reduce")
+    r = come(600)
+    xs = [x for _, x, _ in r["seen"]]; os_ = [o for _, _, o in r["seen"]]
+    ok(r["sys"] == [] and len(xs) > 5 and set(xs) == {0} and set(os_) == {1} and r["end"]["inline"] == ["", ""], f"开了“减弱动态效果”：那一页直接在位，一帧都不滑（看了 {len(xs)} 帧）")
+    pa.emulate_media(reduced_motion="no-preference")
+    pa.get_by_role("button", name="返回").first.tap(); pa.wait_for_timeout(400)
+    # 进进出出几回：每回都从起点滑进来，不会停在半路、不会留着上一回的样子
+    again = []
+    for _ in range(3):
+        r = come(700)
+        again.append((r["seen"][0][1] > 15, r["seen"][-1][1] == 0, r["end"]["inline"] == ["", ""], r["sys"] == []))
+        pa.get_by_role("button", name="返回").first.tap(); pa.wait_for_timeout(300)
+    ok(all(all(a) for a in again), f"连着进出三回：回回从起点滑到位、身上收干净、没有系统动画（{again}）")
+    A.close()
+
+
+SCENES = [("nopinch", nopinch), ("photo", photo), ("scroll", scroll), ("notice", notice), ("slide", slide), ("enter", enter)]
 want = [a for a in sys.argv[1:] if not a.startswith("-")]
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])
