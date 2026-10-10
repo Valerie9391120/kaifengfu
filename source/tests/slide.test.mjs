@@ -1,6 +1,6 @@
 // 对话窗怎么滑（src/slide.js）：侧栏拉出来、收回去的时候，对话窗一帧一帧挪，不交给系统动画。只验规矩，不碰浏览器。
 // 为什么不交给系统动画（长对话里 iPhone 会把整页杀掉）见 src/slide.js 开头；真浏览器里的那一遍在 tests/e2e_gesture.py。
-import { SLIDE_MS, SLIDE_EASE, bezier, createSlide } from "../src/slide.js";
+import { SLIDE_MS, SLIDE_EASE, ENTER_MS, ENTER_X, bezier, createSlide, enterLook } from "../src/slide.js";
 
 let pass = 0, failN = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); } };
@@ -228,6 +228,49 @@ const falling = (a) => a.every((v, i) => i === 0 || v < a[i - 1]);
     if (!bad && (s.at() !== want || pending() !== 0)) bad = `第 ${run} 趟：最后该在 ${want}，却在 ${s.at()}（还排着 ${pending()} 帧）`;
   }
   ok(!bad, bad || "乱来三百趟（滑、手指接、停、切走、过几帧，随便排）：位置从不跑到起点和终点外头，一回只排一帧，说的和做的对得上，最后都落在该在的地方");
+}
+
+// ====================================================================================
+// 三、一整页进来的那一下（历史对话那一页）
+// ====================================================================================
+
+ok(ENTER_MS === 300 && ENTER_X === 28, "说好的两个数：一整页进来走 300 毫秒，从右边 28 像素的地方起步（和 CSS 的 kfsPage 一样）");
+{
+  const same = (a, t, o) => a.transform === t && a.opacity === o;
+  ok(same(enterLook(28), "translateX(28px)", "0") && same(enterLook(14), "translateX(14px)", "0.5") && same(enterLook(7), "translateX(7px)", "0.75"),
+     "起点：在右边 28 像素、看不见；走到一半：14 像素、半透明；位置和深浅是一起走的");
+  ok(same(enterLook(0), "", "") && same(enterLook(-2), "", "") && same(enterLook(NaN), "", ""), "到位了：两样都交回空的（写在那一页身上的收干净）；不像话的数也当到位");
+  ok(same(enterLook(40), "translateX(28px)", "0"), "比起点还远的数：照起点算，深浅不会成负的");
+  ok(same(enterLook(1.23456), "translateX(1.23px)", "0.956") && same(enterLook(0.0000027), "translateX(0px)", "1"),
+     "位置写到百分之一个像素、深浅写到千分之一：小得很的数也不会写成 2.7e-06 这种样子");
+  ok(same(enterLook(5, 10), "translateX(5px)", "0.5"), "起点能换（从 10 像素起步的话，5 像素就是一半）");
+}
+{
+  // 照那一页的用法走一趟：先摆在起点，再滑到位
+  const { s, puts, tick, pending } = world({ ms: ENTER_MS });
+  s.jump(ENTER_X);
+  s.to(0);
+  const first = enterLook(puts[0]);
+  tick(Math.ceil(ENTER_MS / 16) + 2);
+  const looks = puts.map((v) => enterLook(v));
+  const xs = puts.slice(0, -1), os = looks.slice(0, -1).map((l) => Number(l.opacity));
+  ok(first.transform === "translateX(28px)" && first.opacity === "0", "头一回画之前先摆在起点上：在右边 28 像素、看不见（不会先闪一下整页）");
+  ok(falling(xs) && os.every((o, i) => i === 0 || o >= os[i - 1]) && os[os.length - 1] > 0.99, `一路往左、越来越实（${xs.length} 回）`);
+  ok(puts[puts.length - 1] === 0 && looks[looks.length - 1].transform === "" && looks[looks.length - 1].opacity === "" && pending() === 0 && puts.length === 1 + Math.ceil(ENTER_MS / 16),
+     "300 毫秒到位（19 帧）：身上写的收干净，停稳了不再排动画帧");
+  const k = 5;
+  ok(near(puts[k], ENTER_X * (1 - SLIDE_EASE((16 * k) / ENTER_MS)), 1e-9) && near(Number(looks[k].opacity), SLIDE_EASE((16 * k) / ENTER_MS), 1e-3),
+     "和 CSS 动画是一回事：第 5 帧的位置是 28 × (1 − 曲线)，深浅就是曲线走到的那个数");
+}
+{
+  // 还没滑完那一页就关了
+  const { s, puts, tick, pending } = world({ ms: ENTER_MS });
+  s.jump(ENTER_X); s.to(0);
+  tick(3);
+  const n = puts.length;
+  s.stop();
+  tick(30);
+  ok(pending() === 0 && puts.length === n, "滑到一半那一页被关掉：撤掉，不会过一会儿往一个已经没了的东西身上写");
 }
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);
