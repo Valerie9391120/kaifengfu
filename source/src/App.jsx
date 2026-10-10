@@ -3105,7 +3105,7 @@ export default function App({ account = {} }) {
     }
     if (sheet === "memory") {
       return (
-        <Sheet title="记忆库" onClose={() => { setSheet(null); setMemNote(""); }}>
+        <Sheet title="万岁殿" onClose={() => { setSheet(null); setMemNote(""); }}>
           <MemoryPanel files={memFiles} texts={memTexts} note={memNote} onUpload={uploadDocs} onToggle={toggleDoc} onDelete={deleteDoc} />
         </Sheet>
       );
@@ -3196,8 +3196,8 @@ export default function App({ account = {} }) {
         <div className="kfs-side-scroll flex-1 overflow-y-auto kfs-scroll flex flex-col" style={{ padding: "4px 16px 12px", gap: 12, minHeight: 0 }}>
           <DaysCard now={now} />
           <div className="grid grid-cols-2 flex-shrink-0" style={{ gap: 12 }}>
-            {/* 头一个方块上写“万岁殿”（卿卿 10 月 10 日改的，原来写“记忆库”）。只换了方块上这三个字：点开以后面板顶上的标题、
-                空对话里“记忆库还是空的”那一句、寄给那边的【记忆库】（prompt/system.js）都没动，还叫记忆库 */}
+            {/* 头一个方块上写“万岁殿”（卿卿 10 月 10 日改的，原来写“记忆库”）。换了两处：方块上这三个字、点开以后面板顶上的标题。
+                空对话里“记忆库还是空的”那一句、寄给那边的【记忆库】（prompt/system.js）没动，还叫记忆库 */}
             <Tile icon="doc" label="万岁殿" sub={memFiles.length ? `带着 ${enabledDocs} 份文档` : "放文档"} onClick={() => setSheet("memory")} />
             <Tile icon="plug" label="MCP" sub={enabledMcp ? `开着 ${enabledMcp} 个` : `装了 ${(settings.mcps || []).length} 个`} onClick={() => setSheet("mcp")} />
             <Tile icon="key" label="API" sub={monthUsage && monthUsage.month === usageKey() && monthUsage.replies ? `本月约 ${money(monthUsage.cost)}` : "连接与用量"} onClick={() => setSheet("api")} />
