@@ -7,6 +7,7 @@ import { MOTTO_KEY, MOTTO_LAST, DEFAULT_MOTTO, parseMotto, pickMotto, poolAt, fi
 import { MottoPanel } from "./panels/MottoPanel.jsx";
 import { openProbe } from "./probe.js";
 import { createFollow } from "./scroll.js";
+import { createSlide } from "./slide.js";
 import { gapInfo, setFill } from "./gap.js";
 import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
 import { HER_NAME, HIS_NAME, NAME_KEYS, cleanName, tidyName } from "./names.js";
@@ -279,6 +280,8 @@ export default function App({ account = {} }) {
   const taRef = useRef(null);
   const listMount = useRef(Date.now());
   const touch = useRef(null);
+  const winRef = useRef(null); // 对话窗那一整块（侧栏出来的时候往右让开的就是它）
+  const slideRef = useRef(null); // 它怎么滑（见 slide.js，下面量 x 的地方接上）
   // 聊天记录怎么滚（见 scroll.js）：她在最底下就跟着最新，往上翻了就不拽她。
   // away：她翻上去了，输入框上面浮出“回到最新”的圆钮
   const [away, setAway] = useState(false);
@@ -2889,6 +2892,26 @@ export default function App({ account = {} }) {
 
   const x = dragX !== null ? dragX : drawerOpen ? drawerW : 0;
   const progress = drawerW ? x / drawerW : 0;
+  // ---- 对话窗跟着侧栏让开、滑回来（见 slide.js）----
+  // 它的 transform 不交给系统动画（不写 CSS 过渡），在这里一帧一帧写：长对话里 iPhone 的 WebKit 会在系统动画那一下
+  // 把整段对话每个气泡的画面一起备上，内存顶破，整页被杀。手指拖着的时候一下到位，松了手、点了按钮才自己滑
+  if (!slideRef.current) {
+    slideRef.current = createSlide({
+      // 写到百分之一个像素为止：再细的眼睛看不出；滑到最后那几帧的数小得很，不收一收浏览器会记成 2.7e-06 这种样子
+      put: (v) => {
+        if (winRef.current) winRef.current.style.transform = `translateX(${Math.round(v * 100) / 100}px)`;
+      },
+      raf: (fn) => requestAnimationFrame(fn),
+      caf: (id) => cancelAnimationFrame(id),
+      now: () => performance.now(),
+    });
+  }
+  const dragging = dragX !== null;
+  useLayoutEffect(() => {
+    if (dragging) slideRef.current.jump(x);
+    else slideRef.current.to(x);
+  }, [x, dragging]);
+  useEffect(() => () => slideRef.current.stop(), []);
   const typing = loading || reveal !== null;
   // 那边的我在回：她一发完话就算（话还排着队），到回话全蹦完为止。停键认的是这个
   const replying = queued || typing;
@@ -3240,11 +3263,13 @@ export default function App({ account = {} }) {
       </div>
 
       {/* ============ 对话窗 ============ */}
+      {/* 往右让开多少（transform）不写在这儿，也不写它的 CSS 过渡：由 slide.js 一帧一帧写到它身上（见上面量 x 的地方）。
+          **别把 transform 的过渡加回来**：长对话里 iPhone 会白屏、退回开屏（见 slide.js 开头）。圆角的过渡照旧 */}
       <div
+        ref={winRef}
         className="absolute inset-0 flex flex-col overflow-hidden"
         style={{
-          transform: `translateX(${x}px)`,
-          transition: dragX === null ? "transform .35s cubic-bezier(.2,.8,.2,1), border-radius .35s" : "none",
+          transition: dragX === null ? "border-radius .35s" : "none",
           borderRadius: x > 0 ? 30 : 0,
           boxShadow: x > 0 ? "-14px 0 40px rgba(var(--k-shade),0.2)" : "none",
           background: WALL.paper,

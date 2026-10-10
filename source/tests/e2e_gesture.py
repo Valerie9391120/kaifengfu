@@ -1,4 +1,5 @@
-# 手上的事：整页不许捏（连带着侧栏、长按只认一根手指）；聊天记录怎么滚（不拽、回到最新的圆钮、点上面回顶）；点横幅回来到底。
+# 手上的事：整页不许捏（连带着侧栏、长按只认一根手指）；聊天记录怎么滚（不拽、回到最新的圆钮、点上面回顶）；点横幅回来到底；
+# 对话窗怎么滑（侧栏出来、收回去的那一下不交给系统动画）。
 # 真的浏览器，用调试接口发真的触摸（不是鼠标装的）。
 # 先在 source/ 里 npm run build:test，起好两个服务（见开发说明），再：python3 tests/e2e_gesture.py
 # 每一段从头来过；只想跑其中几段就把名字写在后面：python3 tests/e2e_gesture.py photo
@@ -672,7 +673,122 @@ def notice(browser):
     A.close()
 
 
-SCENES = [("nopinch", nopinch), ("photo", photo), ("scroll", scroll), ("notice", notice)]
+# ---------- 对话窗怎么滑：侧栏出来、收回去的那一下，对话窗不交给系统动画 ----------
+# 卿卿 10 月 10 日报的：聊了很久的那段对话里，拉开侧栏再点一下右边，整页白屏、退回开屏。iPhone 的 WebKit 在一层东西跑
+# transform 的系统动画（CSS 过渡、动画）的时候，把它里面每个单独成层的东西（每个气泡都是）的画面一起备上，内存顶破，整页被杀
+# （见 src/slide.js 开头）。Chrome 不这么干，白屏在这儿试不出来；这里拦的是那个由头：
+# 聊天记录的每一层长辈身上都不许有 transform 的系统动画，对话窗得是一帧一帧挪过去的。
+# 看着它滑：每一帧记下对话窗挪到哪了、聊天记录的哪一层长辈身上跑着会挪位置的系统动画、侧栏自己身上跑着哪几样
+WATCH = """(ms) => { window.__slid = new Promise((done) => {
+  const rows = document.querySelector('.kfs-chat-rows'), shell = document.querySelector('.select-none');
+  const win = document.querySelector('.kfs-chat-scroll').parentElement, side = document.querySelector('.kfs-side-scroll').parentElement;
+  const chain = []; for (let el = rows; el; el = el.parentElement) { chain.push(el); if (el === shell) break; }
+  const MOVES = /^(transform|translate|scale|rotate)$/;
+  const moves = (a) => (a.transitionProperty ? MOVES.test(a.transitionProperty) : !!a.effect && a.effect.getKeyframes().some((k) => Object.keys(k).some((p) => MOVES.test(p))));
+  const xs = [], sys = new Set(), sides = new Set(), t0 = performance.now();
+  const tick = () => {
+    xs.push([Math.round(performance.now() - t0), Math.round(new DOMMatrixReadOnly(getComputedStyle(win).transform).m41 * 10) / 10]);
+    chain.forEach((el, i) => el.getAnimations().filter(moves).forEach((a) => sys.add(i + ':' + (a.transitionProperty || a.animationName))));
+    side.getAnimations().forEach((a) => sides.add(a.transitionProperty || a.animationName));
+    if (performance.now() - t0 < ms) requestAnimationFrame(tick); else done({ xs, sys: [...sys], side: [...sides].sort(), chain: chain.length });
+  };
+  requestAnimationFrame(tick);
+}); }"""
+# 聊天记录的每一层长辈（一直到外壳）：样式里写没写会挪位置的过渡（写了、时长不是零就算），带没带动画
+CHAIN = """(() => { const bad = []; const shell = document.querySelector('.select-none');
+  for (let el = document.querySelector('.kfs-chat-rows'); el; el = el.parentElement) {
+    const cs = getComputedStyle(el); const props = cs.transitionProperty.split(',').map((s) => s.trim()); const durs = cs.transitionDuration.split(',').map((s) => parseFloat(s) || 0);
+    props.forEach((p, i) => { if (/^(all|transform|translate|scale|rotate)$/.test(p) && durs[i % durs.length] > 0) bad.push(String(el.className).slice(0, 24) + ' 过渡 ' + p); });
+    if (cs.animationName !== 'none') bad.push(String(el.className).slice(0, 24) + ' 动画 ' + cs.animationName);
+    if (el === shell) break;
+  }
+  const win = document.querySelector('.kfs-chat-scroll').parentElement;
+  return { bad, win: getComputedStyle(win).transitionProperty, inline: win.style.transform }; })()"""
+
+def slide(browser):
+    A = phone(browser)
+    pa = page_of(A, "slide")
+    first_time(pa)
+    for i in range(3):
+        chat(pa, f"第{i + 1}句")
+    f = Fingers(pa)
+    W = 322   # 侧栏全拉出来，对话窗让开这么多（屏幕宽 393 的 82%）
+    def watched(act, ms=900):
+        pa.evaluate(WATCH, ms)
+        act()
+        return pa.evaluate("window.__slid")
+    path = lambda r: [x for _, x in r["xs"]]
+    between = lambda r, lo=0, hi=W: len({x for x in path(r) if lo + 1 < x < hi - 1})     # 半路上停过几个不一样的地方
+    took = lambda r, end: next((t for t, x in r["xs"] if x == end), -1) - next((t for (t, x), (_, nx) in zip(r["xs"], r["xs"][1:]) if nx != x), 0)
+    rising = lambda p: all(b >= a for a, b in zip(p, p[1:]))
+    falling = lambda p: all(b <= a for a, b in zip(p, p[1:]))
+
+    still = pa.evaluate(CHAIN)
+    ok(still["bad"] == [] and "transform" not in still["win"] and still["win"] != "all" and still["inline"] == "translateX(0px)",
+       f"停着的时候：聊天记录的每一层长辈身上都没写会挪位置的过渡、动画；对话窗的位置是直接写在它身上的（{still['inline']}），它的过渡只管{still['win']}")
+
+    # 点左上角的按钮拉出来
+    r = watched(lambda: pa.get_by_role("button", name="打开侧栏").tap())
+    p = path(r)
+    ok(r["sys"] == [] and r["chain"] == 4, f"点按钮拉出侧栏：聊天记录、会滚的盒子、对话窗、外壳这四层身上，从头到尾没有一样会挪位置的系统动画（{r['sys']}）")
+    ok(p[0] == 0 and p[-1] == W and rising(p) and between(r) >= 5 and 200 <= took(r, W) <= 650,
+       f"对话窗是一帧一帧挪过去的：从 0 到 {W}，半路上停过 {between(r)} 处，一路往右不回头，走了 {took(r, W)} 毫秒")
+    ok("transform" in r["side"] and "opacity" in r["side"], f"侧栏自己那一层照旧是系统动画（{r['side']}）：它里面单独成层的只有那几张卡片")
+    opened = pa.evaluate(CHAIN)
+    ok(opened["bad"] == [] and pa.evaluate(REACHABLE) and opened["inline"] == f"translateX({W}px)", f"拉出来以后：侧栏点得着，对话窗停在 {opened['inline']}")
+
+    # 点一下露在右边的对话窗收回去（她报的那一下）
+    r = watched(lambda: pa.locator("div.absolute.inset-0.z-30").tap())
+    p = path(r)
+    ok(r["sys"] == [], f"点右边收回去：四层身上还是没有会挪位置的系统动画（{r['sys']}）")
+    ok(p[0] == W and p[-1] == 0 and falling(p) and between(r) >= 5 and 200 <= took(r, 0) <= 650 and not pa.evaluate(REACHABLE),
+       f"对话窗一帧一帧滑回来：从 {W} 到 0，半路上停过 {between(r)} 处，一路往左不回头，走了 {took(r, 0)} 毫秒")
+
+    # 手指拖：拖着的时候跟手（手指到哪它当场到哪，不是慢慢滑过去），松了手才自己滑到头。
+    # 手指只挪一大步、然后按着不动：Chrome 把一连串“手指动了”攒着隔一阵才报，一步一步挪的话量不准是哪一步
+    def grab_open():
+        f.down([(0, 24, 420)]); f.move([(0, 174, 422)]); pa.wait_for_timeout(520)
+    r = watched(grab_open, 420)
+    p = path(r)
+    ok(r["sys"] == [] and p[0] == 0 and p[-1] == 150 and between(r, 0, 150) == 0,
+       f"手指按着一下往右挪了 150：对话窗当场就在 {p[-1]}，半路上一处都没停（拖着的时候跟手，不是慢慢滑过去）")
+    r = watched(lambda: f.up(), 900)
+    p = path(r)
+    ok(r["sys"] == [] and p[0] == 150 and p[-1] == W and rising(p) and between(r, 150) >= 5 and pa.evaluate(REACHABLE),
+       f"拖出来一半松手：从 150 接着自己滑到 {W}（又停过 {between(r, 150)} 处），没有系统动画")
+    def grab_close():
+        f.down([(0, 360, 420)]); f.move([(0, 200, 422)]); pa.wait_for_timeout(520)
+    r = watched(grab_close, 420)
+    p = path(r)
+    ok(r["sys"] == [] and p[0] == W and p[-1] == W - 160 and between(r, W - 160, W) == 0,
+       f"手指按着一下往回挪了 160：对话窗当场就在 {p[-1]}，半路上一处都没停")
+    r = watched(lambda: f.up(), 900)
+    p = path(r)
+    ok(r["sys"] == [] and p[0] == W - 160 and p[-1] == 0 and falling(p) and between(r, 0, W - 160) >= 5 and not pa.evaluate(REACHABLE),
+       f"往回拖一半松手：从 {W - 160} 接着自己滑回 0（又停过 {between(r, 0, W - 160)} 处），没有系统动画")
+
+    # 滑到一半改主意：刚点了按钮往外滑，马上点右边收回去。不跳，从半路接着往回走
+    def flip():
+        pa.get_by_role("button", name="打开侧栏").tap(); pa.wait_for_timeout(50)
+        turned.append(pa.evaluate(SHIFT))
+        pa.touchscreen.tap(380, 430)   # 照着屏幕上的位置点：对话窗还在动，按元素去点的话测试工具会等它停稳了才点
+    turned = []
+    r = watched(flip, 1100)
+    p = path(r)
+    top = max(p)
+    ok(r["sys"] == [] and 0 < turned[0] < W and p[-1] == 0 and rising(p[: p.index(top) + 1]) and falling(p[p.index(top):]) and top < W,
+       f"滑到一半（{turned[0]}）改主意：最远到 {top}，没冲到头再回来，也没跳，接着往回滑到 0")
+
+    # 从侧栏里点“新对话”、点开历史对话：也是这一条路
+    pa.get_by_role("button", name="打开侧栏").tap(); pa.wait_for_timeout(700)
+    r = watched(lambda: pa.locator(".kfs-history button").nth(1).tap())
+    p = path(r)
+    ok(r["sys"] == [] and p[0] == W and p[-1] == 0 and falling(p) and between(r) >= 5, f"从侧栏点开一段历史对话：对话窗也是一帧一帧滑回来的（停过 {between(r)} 处），没有系统动画")
+    f.close()
+    A.close()
+
+
+SCENES = [("nopinch", nopinch), ("photo", photo), ("scroll", scroll), ("notice", notice), ("slide", slide)]
 want = [a for a in sys.argv[1:] if not a.startswith("-")]
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])
