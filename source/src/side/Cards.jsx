@@ -1,6 +1,6 @@
 import { dayNumber, nextAnniv, dateLabel } from "../days.js";
 import { SERIF, T, glass } from "../ui/style.js";
-import { Icon } from "../ui/Icon.jsx";
+import { Icon, artSize } from "../ui/Icon.jsx";
 import { useLongPress } from "../ui/press.js";
 
 // 侧栏最上面那张卡片。flex-shrink-0 不能丢：侧栏上面那段是竖着排的弹性盒子，东西放不下的时候
@@ -45,8 +45,8 @@ export function DaysCard({ now }) {
   );
 }
 
-// iconSize：图标摆多大。别的图标都是 20；牡丹（南衙）是 25，见 ui/peony.js
-export function Tile({ icon, label, sub, onClick, iconSize = 20 }) {
+// 图标摆多大：手绘的那一套是 20；恩师画的那一套（殿、三足乌、云月、牡丹）照它自己的大小，是 25（见 ui/Icon.jsx 的 artSize）
+export function Tile({ icon, label, sub, onClick }) {
   return (
     <button
       onClick={onClick}
@@ -63,7 +63,7 @@ export function Tile({ icon, label, sub, onClick, iconSize = 20 }) {
           color: T.dai,
         }}
       >
-        <Icon name={icon} size={iconSize} />
+        <Icon name={icon} size={artSize(icon) || 20} />
       </span>
       <span className="block min-w-0 w-full">
         <span className="block" style={{ fontSize: 15, color: T.ink }}>
