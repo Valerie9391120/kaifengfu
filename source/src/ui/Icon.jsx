@@ -1,4 +1,19 @@
-import { PEONY_PATH } from "./peony.js";
+import * as hall from "./art/hall.js";
+import * as crow from "./art/crow.js";
+import * as moon from "./art/moon.js";
+import * as peony from "./art/peony.js";
+
+// ---------- 恩师画的那一套（侧栏四个方块上的：殿、三足乌、云月、牡丹） ----------
+// 线稿描成的路径，一样一个文件，在 art/ 里（tools/make_art.py 生成的，别手改）。
+// 和下面手绘的那一套有两处不一样：
+//   是一块填色的形状，不是描线的。所以自己写上填色、不描边，盖掉 Icon 给整张图定的那两样
+//   （不写“不描边”的话，它会被照 1.8 再描一圈，整个糊成一团）；
+//   大小不是 20：照各自文件里的 PT（都是 25）摆，线的粗细才是量好的那个。要多大问 artSize。
+// 画里面是空的：描出来的路径里，洞和外圈是反着绕的，本来就留空；evenodd 是另加的一道，哪天换了描法、绕的方向不讲究了也不怕。
+const ART = { hall, crow, moon, peony };
+const art = (a) => <path d={a.PATH} fill="currentColor" fillRule="evenodd" stroke="none" />;
+// 这一套里的图标该摆多大；不是这一套的回 0
+export const artSize = (name) => (ART[name] ? ART[name].PT : 0);
 
 // ---------- 图标（手绘，不依赖外部库） ----------
 const ICON_PATHS = {
@@ -116,11 +131,11 @@ const ICON_PATHS = {
       <path d="M6.5 7l.9 12.5h9.2L17.5 7" />
     </>
   ),
-  // 牡丹（南衙那一格）：恩师画的线稿描成的一块形状，不是描线的。所以自己写上填色、不描边，盖掉下面 svg 上那两样
-  // （不写“不描边”的话，它会被照 1.8 再描一圈，整朵糊成一团）。
-  // 花瓣里是空的：描出来的路径里，洞和外圈是反着绕的，本来就留空；evenodd 是另加的一道，哪天换了描法、绕的方向不讲究了也不怕。
-  // 大小别用 20，照 peony.js 里的 PEONY_PT 摆，线的粗细才是量好的那个
-  peony: <path d={PEONY_PATH} fill="currentColor" fillRule="evenodd" stroke="none" />,
+  // 恩师画的那一套（见最上面）
+  hall: art(hall),
+  crow: art(crow),
+  moon: art(moon),
+  peony: art(peony),
 };
 
 export function Icon({ name, size = 22, color = "currentColor", sw = 1.8 }) {

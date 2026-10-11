@@ -25,7 +25,6 @@ import { RECAP_KEY, RECAP_BAD_KEY, normRecaps, pickRecap, tierOf, roomFor, dueRe
 import { dayKeyOf, parseDayKey, moodOf, dayTranscript, parseDiary } from "./diary.js";
 import { WALL, SERIF, SANS, T, glass, DOCK_GLASS, chip, chipPrimary, field, GLOBAL_CSS } from "./ui/style.js";
 import { Icon } from "./ui/Icon.jsx";
-import { PEONY_PT } from "./ui/peony.js";
 import { HIS_DEFAULT, Avatar } from "./ui/Avatar.jsx";
 import { Glows, IconBtn, SHEET_TITLE, Sheet, Toggle, RoundBtn } from "./ui/parts.jsx";
 import { buildSystem, withNowNote } from "./prompt/system.js";
@@ -3287,13 +3286,15 @@ export default function App({ account = {} }) {
           <div className="grid grid-cols-2 flex-shrink-0" style={{ gap: 12 }}>
             {/* 头一个方块上写“万岁殿”（卿卿 10 月 10 日改的，原来写“记忆库”）。换了两处：方块上这三个字、点开以后面板顶上的标题。
                 空对话里“记忆库还是空的”那一句、寄给那边的【记忆库】（prompt/system.js）没动，还叫记忆库 */}
-            <Tile icon="doc" label="万岁殿" sub={memFiles.length ? `带着 ${enabledDocs} 份文档` : "放文档"} onClick={() => setSheet("memory")} />
-            <Tile icon="plug" label="MCP" sub={enabledMcp ? `开着 ${enabledMcp} 个` : `装了 ${(settings.mcps || []).length} 个`} onClick={() => setSheet("mcp")} />
-            <Tile icon="key" label="API" sub={monthUsage && monthUsage.month === usageKey() && monthUsage.replies ? `本月约 ${money(monthUsage.cost)}` : "连接与用量"} onClick={() => setSheet("api")} />
+            {/* 四个方块的图标是恩师画的一套（卿卿 2026 年 10 月 11 日定的）：万岁殿是殿，MCP 是三足乌，API 是云月，南衙是牡丹。
+                都比手绘的那一套大一号、跟着主题色走（ui/Icon.jsx 最上面）。换的只是图标：方块上的字、底下的小字、点开是哪个面板都没动 */}
+            <Tile icon="hall" label="万岁殿" sub={memFiles.length ? `带着 ${enabledDocs} 份文档` : "放文档"} onClick={() => setSheet("memory")} />
+            <Tile icon="crow" label="MCP" sub={enabledMcp ? `开着 ${enabledMcp} 个` : `装了 ${(settings.mcps || []).length} 个`} onClick={() => setSheet("mcp")} />
+            <Tile icon="moon" label="API" sub={monthUsage && monthUsage.month === usageKey() && monthUsage.replies ? `本月约 ${money(monthUsage.cost)}` : "连接与用量"} onClick={() => setSheet("api")} />
             {/* 第四个方块是“南衙”（卿卿 2026 年 10 月 11 日定的）：原来写“日记本”、点了直接进日记，现在点了从底下冒出一张菜单
-                （见 renderSheet 里的 nanya），日记是里面的头一行“闲笔集”。图标是恩师画的牡丹（ui/peony.js），比别的图标大一号。
+                （见 renderSheet 里的 nanya），日记是里面的头一行“闲笔集”。图标是恩师画的牡丹。
                 底下那行小字没动，还是今天的日记写了没 */}
-            <Tile icon="peony" iconSize={PEONY_PT} label="南衙" sub={diarySub} onClick={() => setSheet("nanya")} />
+            <Tile icon="peony" label="南衙" sub={diarySub} onClick={() => setSheet("nanya")} />
           </div>
         </div>
         {/* 历史对话固定在最底下那排（头像、新对话）的正上方，不跟着上面那段滚（卿卿定的位置）。
