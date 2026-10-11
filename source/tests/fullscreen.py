@@ -197,3 +197,4 @@ with sync_playwright() as p:
     ok(d["gap"] == "" and d["mist"] == "none" and d["gate_h"] == 793, "在 Safari 里打开不加")
     browser.close()
 print(f"\n通过 {passed}  失败 {failed}")
+raise SystemExit(1 if failed else 0)   # 有没过的就照实退出（原来不管过没过都说自己过了）

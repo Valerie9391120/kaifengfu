@@ -36,6 +36,15 @@ def back_to_last(page):
 def mock(path):
     return json.loads(urllib.request.urlopen(MOCK + path).read() or b"null")
 
+# 进日记（侧栏已经开着）：第四个格子是“南衙”，点了从底下冒出一张菜单，日记是里面的头一行“闲笔集”。
+# 2026 年 10 月 11 日以前这一格叫“日记本”，点了直接进。南衙自己的检查在 tests/e2e_nanya.py
+def open_diary(page):
+    page.get_by_role("button", name=re.compile("^南衙")).click()
+    row = page.locator(".kfs-nanya-row", has_text="闲笔集")
+    row.wait_for(timeout=5000); time.sleep(0.4)
+    row.click()
+    page.locator(".kfs-page").wait_for(timeout=10000)
+
 def shot(page, name):
     page.screenshot(path=f"{SHOTS}/{name}.png")
 
@@ -212,10 +221,10 @@ with sync_playwright() as p:
     skew = pa.evaluate("""() => new Promise((done) => { const s = document.querySelector('.select-none'); const wide = s.scrollWidth - s.clientWidth; s.scrollLeft = 80; s.scrollTop = 40; const now = [s.scrollLeft, s.scrollTop];
         setTimeout(() => { const later = [s.scrollLeft, s.scrollTop]; s.scrollLeft = 0; s.scrollTop = 0; done({ wide, now, later }); }, 150); })""")
     ok(skew["wide"] > 100 and skew["later"] == [0, 0], f"侧栏开着时外壳推不歪（对话窗伸出去 {skew['wide']} 像素，往右推 80 以后还在 {skew['later']}）")
-    pa.get_by_text("日记本").click()
+    open_diary(pa)
     pa.get_by_text("在一起的第").first.wait_for(timeout=10000)
     time.sleep(0.6)
-    box = pa.evaluate("""() => { const h = [...document.querySelectorAll('div')].find(d => d.textContent.trim() === '日记本' && d.children.length === 0); const page = h.closest('.kfs-page').getBoundingClientRect(); const mon = [...document.querySelectorAll('div')].find(d => d.textContent.trim() === '一' && d.children.length === 0).getBoundingClientRect(); return [page.x, page.width, mon.x]; }""")
+    box = pa.evaluate("""() => { const h = [...document.querySelectorAll('div')].find(d => d.textContent.trim() === '闲笔集' && d.children.length === 0); const page = h.closest('.kfs-page').getBoundingClientRect(); const mon = [...document.querySelectorAll('div')].find(d => d.textContent.trim() === '一' && d.children.length === 0).getBoundingClientRect(); return [page.x, page.width, mon.x]; }""")
     ok(abs(box[0]) < 1 and abs(box[1] - 390) < 1 and box[2] > 20, f"日记页完全展开，周一那一列也在屏幕里（{box}）")
     gap = pa.evaluate("""() => { const page = document.querySelector('.kfs-page'); const head = page.querySelector('[aria-label="返回"]').closest('div.relative'); const sc = page.querySelector('.kfs-page-scroll');
         sc.scrollTop = 200; const first = sc.firstElementChild.getBoundingClientRect();
@@ -321,7 +330,7 @@ with sync_playwright() as p:
     time.sleep(0.6)
     ok(pb.get_by_text("带着 1 份文档").is_visible(), "第二台设备的记忆库里也有名帖")
     ok(pb.locator("button", has_text="卿卿的测试对话").first.is_visible(), "第一台改的对话名字，第二台也同步过来了")
-    pb.get_by_text("日记本").click()
+    open_diary(pb)
     pb.get_by_text("在一起的第").first.wait_for(timeout=10000)
     time.sleep(0.5)
     sweet = pb.get_by_role("button", name=re.compile("甜")).first
@@ -400,15 +409,15 @@ with sync_playwright() as p:
     ok("你现在顶上的名字：测试狐狐。" in body["messages"][-1]["content"][-1]["text"] and "[NAME:测试狐狐]" in said,
        "下一轮：【此刻】里是新名字，他自己上回写的 [NAME:…] 也原样留在记录里")
 
-    # 别处都不跟着变：日记本里还是卿卿、光义；让他写日记时也不提昵称
+    # 别处都不跟着变：日记（闲笔集）里还是卿卿、光义；让他写日记时也不提昵称
     pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
-    pa.get_by_text("日记本").click()
+    open_diary(pa)
     pa.get_by_text("在一起的第").first.wait_for(timeout=10000); time.sleep(0.5)
     pa.get_by_role("button", name="让光义写这一天").click()
     pa.get_by_text(re.compile("今天她第一次从开封府的新门进来")).wait_for(timeout=15000)
     diary = pa.locator(".kfs-page").inner_text()
     asked = mock("/__debug/claude")[-1]["body"]["messages"][0]["content"]
-    ok("卿卿写的" in diary and "光义写的" in diary and "测试大王" not in diary and "测试狐狐" not in diary, "日记本里还是“卿卿写的”“光义写的”，昵称不跟过去")
+    ok("卿卿写的" in diary and "光义写的" in diary and "测试大王" not in diary and "测试狐狐" not in diary, "日记（闲笔集）里还是“卿卿写的”“光义写的”，昵称不跟过去")
     ok("光义：行，改了。 抬头看" in asked and "卿卿：改名叫测试狐狐" in asked and "[NAME" not in asked and "昵称" not in asked and "顶上的名字" not in asked,
        "让光义写日记：聊天摘录里还是“卿卿：”“光义：”，改名的标记摘掉了，【此刻】里不提昵称")
     pa.get_by_role("button", name="返回").first.click(); time.sleep(0.5)
@@ -715,3 +724,6 @@ with sync_playwright() as p:
 
 print("\n页面报错：" + ("\n".join(errors[:10]) if errors else "无"))
 print(f"\n通过 {passed}  失败 {failed}")
+# 有没过的就照实退出：npm run test:e2e 是一份接一份串着跑的，原来这一份不管过没过都说自己过了，后面的照跑、最后还是绿的。
+# 页面报错不算进来：这一份里有故意走错的几步（比如密码填错），控制台里本来就会有几条“取不到”
+raise SystemExit(1 if failed else 0)

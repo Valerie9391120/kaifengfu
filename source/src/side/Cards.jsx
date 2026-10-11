@@ -45,7 +45,8 @@ export function DaysCard({ now }) {
   );
 }
 
-export function Tile({ icon, label, sub, onClick }) {
+// iconSize：图标摆多大。别的图标都是 20；牡丹（南衙）是 25，见 ui/peony.js
+export function Tile({ icon, label, sub, onClick, iconSize = 20 }) {
   return (
     <button
       onClick={onClick}
@@ -62,7 +63,7 @@ export function Tile({ icon, label, sub, onClick }) {
           color: T.dai,
         }}
       >
-        <Icon name={icon} size={20} />
+        <Icon name={icon} size={iconSize} />
       </span>
       <span className="block min-w-0 w-full">
         <span className="block" style={{ fontSize: 15, color: T.ink }}>

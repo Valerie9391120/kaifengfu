@@ -112,8 +112,9 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
         <IconBtn onClick={onBack} label="返回">
           <Icon name="chevL" />
         </IconBtn>
+        {/* 顶上写“闲笔集”（卿卿 2026 年 10 月 11 日改的，原来写“日记本”）。只换这三个字；里面的“卿卿写的”“光义写的”这些都没动 */}
         <div className="flex-1 text-center" style={{ fontFamily: SERIF, fontSize: 17, letterSpacing: "0.12em", color: T.ink }}>
-          日记本
+          闲笔集
         </div>
         <div style={{ width: 40 }} />
       </div>
