@@ -1527,6 +1527,35 @@ function resetWorld() {
   const nested = forkAt([her("a"), him("b", 2, "J9"), her("c")], 0, her("a2"));
   ok(hasJob(nested, "J9") && !hasJob(nested, "J8"), "取信：改过她的话、整段收进旧分支的，里面的回话也认得出");
 
+  // ---- 上回那段还在不在等他回话（开机认“重新打开先回到那段”用） ----
+  const { unanswered, stillWaiting } = thread;
+  ok(unanswered(chat, "c") && unanswered(chat.concat([her("d", 4)]), "c") && unanswered(chat.concat([ev("e"), her("d", 4)]), "c") && unanswered([her("a")], "a"),
+    "还在等·这一句：它还在、后面一句他的话都没有（她接着说的、换头像提示都不算他的话），就是还空等着");
+  ok(!unanswered(chat, "a") && !unanswered([her("a"), her("a2"), him("b")], "a") && !unanswered([her("a"), ev("e"), her("a2"), her("a3"), him("b"), her("c")], "a") && unanswered([her("a"), her("a2"), him("b"), her("c")], "c"),
+    "还在等·这一句：后面有过他的话就不算了。中间隔着她又说的一句也一样（一句没送成、她又说了一句、两句一起回上了：头一句不再算在等；紧跟着的那句是谁的不管）");
+  const editedC = forkAt([her("a", 1), her("c", 3)], 1, her("c2", 9));
+  ok(!unanswered(chat, "不在") && !unanswered([], "a") && !unanswered(editedC, "c") && unanswered(editedC, "c2") && unanswered(thread.switchAlt(editedC, 1, 0), "c"),
+    "还在等·这一句：它不在外面摆着了（没有这一句；她把它改了，原来那句收进了旧版本）不算；改出来的那一句照样认；翻回原来那一句，又认");
+  const recA = { job: "JA", last: "c", fork: "", dead: false };
+  const recF = { job: "JF", last: "c", fork: "old", dead: false };
+  const answeredChat = chat.concat([him("r", 4)]);
+  ok(stillWaiting(chat, recA) && stillWaiting(chat.concat([her("d", 4)]), recA) && !stillWaiting(answeredChat, recA) && !stillWaiting(chat.concat([her("d", 4), him("r", 5)]), recA) && !stillWaiting([her("a")], recA),
+    "还在等·平常的话：那一句还在、后面没有他的话才算；后面有了他的话（哪怕中间隔着她又说的一句）、这台设备上没有那一句，都不算");
+  ok(stillWaiting(chat, { ...recA, dead: true }) && stillWaiting(chat.concat([her("d", 4)]), { ...recA, dead: true }) && !stillWaiting(answeredChat, { ...recA, dead: true }),
+    "还在等·平常的话：记没记“没着落了”都一样认（那一句后面还空着的照样算：等着补发、等她点重发；后面有了他的话的不算）");
+  const movedOn = full.concat([her("新说的", 200), him("后来的回话", 201)]);
+  ok(stillWaiting(full, recF) && stillWaiting(movedOn, recF) && stillWaiting(chat, recF) && stillWaiting(full.slice(0, 3).concat([him("另一个版本", 4)]), recF),
+    "还在等·重新回答：只要记着、没认过没着落、它接的那一句还在，就算（旧回答还摆着、后面又聊过、要换掉的那一条找不着了，也算：回话也许在路上、在信箱里）");
+  ok(!stillWaiting(full, { ...recF, dead: true }) && !stillWaiting(movedOn, { ...recF, dead: true }) && !stillWaiting(chat, { ...recF, dead: true }),
+    "还在等·重新回答：认准没着落了（记着 dead）的不算");
+  const editedBefore = forkAt(full, 2, her("c 改过", 300));
+  ok(!stillWaiting([her("别的话")], recF) && !stillWaiting(editedBefore, recF) && mailFit(editedBefore, finfo, "JF") === "later" && stillWaiting(thread.switchAlt(editedBefore, 2, 0), recF) && mailFit(thread.switchAlt(editedBefore, 2, 0), finfo, "JF") === "ok",
+    "还在等·重新回答：它接的那一句不在外面摆着了（没有这一句；她把那一句改了）不算：新回答到了也放不进来（取信那一头说 later）；翻回原来那一句，又算、也放得进了");
+  ok(!stillWaiting(chat.concat([him("rJA", 9, "JA")]), recA) && !stillWaiting(mailPut(tail, finfo, him("rJF", 150, "JF")), recF) && !stillWaiting(thread.switchAlt(mailPut(tail, finfo, him("rJF", 150, "JF")), 3, 0), recF),
+    "还在等：这一回的回话已经在对话里了（别的设备取走放进去、同步过来的；翻回旧版本、收在别的版本里的也认得出）：不算");
+  ok(!stillWaiting(null, recA) && !stillWaiting(undefined, recF) && !stillWaiting(chat, null) && !stillWaiting("不是对话", recA),
+    "还在等：那段对话读不出来（删了、还没同步到）、没有这一回：不算");
+
   // ---- 她按了停 ----
   const { markStopped, stoppedAt, cutReply } = thread;
   const marked = markStopped(chat);
@@ -1582,7 +1611,7 @@ function world({ visible = true } = {}) {
     rows: new Map(), removed: [], sent: [], replies: [], aborted: 0,
     storage: "", vis: new Set(), freshed: 0, synced: 0, answered: false, hint: false,
     backAt: -Infinity, probe: true, probes: 0, knock: ["https://web.push.apple.com/this-device"], hang: "", looks: [],
-    removedWorking: [], askedJobs: null, onRemove: null, removeFails: 0, halted: "",
+    removedWorking: [], askedJobs: null, onRemove: null, removeFails: 0, halted: "", onGet: null,
   };
   const never = new Promise(() => {});
   const box = {
@@ -1598,6 +1627,7 @@ function world({ visible = true } = {}) {
       if (w.hang === "get") return never;
       if (!w.table) throw coded("notable");
       if (w.getFails > 0) { w.getFails--; throw coded("refused", "TypeError: Failed to fetch"); }
+      if (w.onGet) await w.onGet(job);
       const r = w.rows.get(job);
       return r ? { ...r } : null;
     },
@@ -2458,6 +2488,132 @@ const drive = async (p, step = 500, max = 400000) => {
   const gotO = await drive(wo3.relay.ask(ARGS), 200);
   await gotO.v.settle();
   ok(wo3.relay.owed("chatA", "m7") === null && wo3.relay.pendingFor("chatA").map((r) => r.job).join() === wo3.sent[1].job, "有了着落的那一回：再问就没有了（重新回答那一回还没着落，照旧在）");
+
+  // 外头看完信箱，把记着的那几回里已经没着落的重新回答认出来：先要一份单子（哪段对话的都在），再一回一回问“是不是没着落了”
+  const wlq = world();
+  wlq.hint = true;
+  // 头一回（chatA，平常的话）：话到了小后端，信箱里开出了那一格，这头没连上
+  wlq.replies.push(async (p) => { wlq.working(p); wlq.getFails = 99; throw coded("unreachable", "连不上"); });
+  await drive(wlq.relay.ask(ARGS), 100);
+  // 第二回（chatB，重新回答）：话根本没出手机，信箱里没有它
+  wlq.replies.push(async () => { wlq.getFails = 99; throw coded("unreachable", "连不上"); });
+  await drive(wlq.relay.ask({ ...ARGS, chat: "chatB", last: "n3", fork: "oldB" }), 100);
+  wlq.getFails = 0;
+  const [jobQ1, jobQ2] = wlq.sent.map((p) => p.job);
+  const allQ = wlq.relay.pendingAll();
+  ok(wlq.sent.length === 2 && allQ.length === 2 && allQ[0].job === jobQ1 && allQ[0].chat === "chatA" && allQ[0].last === "m7" && allQ[0].fork === "" && allQ[0].dead === false
+    && allQ[1].job === jobQ2 && allQ[1].chat === "chatB" && allQ[1].last === "n3" && allQ[1].fork === "oldB" && allQ[1].dead === false && allQ[0].at > 0 && allQ[0].at <= allQ[1].at,
+    "记着的那几回的单子：哪段对话的都在（编号、哪段对话、接的哪一句、是不是重新回答、几点发的、认没认过没着落），旧的在前");
+  const atQ2 = allQ[1].at;
+  allQ[0].job = "改了"; allQ[1].dead = true; allQ.length = 0;
+  ok(wlq.relay.pendingAll().length === 2 && wlq.relay.pendingAll()[0].job === jobQ1 && wlq.relay.pendingAll()[1].dead === false && wlq.jobs().join() === [jobQ1, jobQ2].join(), "要一份单子不动记着的：交出去的单子外头改了也不碍事");
+  const looksQ = wlq.looks.length;
+  const stillThere = await wlq.relay.lapse(jobQ1);
+  ok(stillThere === false && wlq.looks.length === looksQ + 1 && wlq.relay.pendingFor("chatA")[0].dead === false && wlq.rows.has(jobQ1), "问一回是不是没着落了：现去信箱里看那一格；它还在（写着在等）：不记，回 false");
+  await wlq.done(wlq.sent[0]);
+  ok((await wlq.relay.lapse(jobQ1)) === false && wlq.relay.pendingFor("chatA")[0].dead === false && wlq.rows.get(jobQ1).state === "done", "问一回是不是没着落了：那一格里回话已经放好了：更不记（下一遍看信箱来取）");
+  wlq.getFails = 1;
+  const blindQ = await wlq.relay.lapse(jobQ2);
+  wlq.hang = "get";
+  const hungQ = await drive(wlq.relay.lapse(jobQ2), 500, 20000);
+  wlq.hang = "";
+  ok(blindQ === null && hungQ.v === null && wlq.relay.pendingFor("chatB")[0].dead === false, "问一回是不是没着落了：这一眼没看成（没连上、悬着八秒不应）：不记，回 null，下一遍再说");
+  const storedQ = wlq.storage;
+  const goneQ = await wlq.relay.lapse(jobQ2);
+  const afterQ = wlq.relay.pendingAll();
+  ok(goneQ === true && wlq.jobs().join() === [jobQ1, jobQ2].join() && afterQ[1].job === jobQ2 && afterQ[1].dead === true && afterQ[1].last === "n3" && afterQ[1].fork === "oldB" && afterQ[1].at === atQ2 && afterQ[0].dead === false
+    && wlq.relay.pendingFor("chatB")[0].dead === true && wlq.storage !== storedQ && wlq.removed.length === 0 && wlq.removedWorking.length === 0 && wlq.rows.size === 1,
+    "问一回是不是没着落了：信箱里没有它、也没人守着：这台设备上记的那一笔添一个“没着落了”，回 true；那一笔照旧记着（别的一样没变），不碰信箱，别的那一回不动");
+  const storedQ2 = wlq.storage;
+  ok((await wlq.relay.lapse(jobQ2)) === true && (await wlq.relay.lapse("没记过的那一回000001")) === true && wlq.storage === storedQ2, "问一回是不是没着落了：已经记过的、本来就没记着的：回 true，记着的东西一个字不动");
+  // 别的那一回有了着落、划掉了，又新记了一回：这个记号不跟着丢
+  await wlq.relay.discard(jobQ1);
+  wlq.replies.push(async () => { wlq.getFails = 99; throw coded("unreachable", "连不上"); });
+  await drive(wlq.relay.ask({ ...ARGS, chat: "chatC", last: "k1" }), 100);
+  wlq.getFails = 0;
+  const shuffledQ = wlq.relay.pendingAll().map((r) => r.chat + ":" + r.dead).join();
+  ok(wlq.sent.length === 3 && shuffledQ === "chatB:true,chatC:false", `别的那一回划掉了、又新记了一回：记过的“没着落了”还在，新记的那一回上没有（${shuffledQ}）`);
+  // 认错了：记了“没着落了”，那一格后来却在信箱里冒出来了（话其实出了手机，小后端开那一格开得晚）。再认一遍，看到那一格在，把记号擦掉；那一格又没了，再记上
+  wlq.working(wlq.sent[1]);
+  const revivedQ = await wlq.relay.lapse(jobQ2);
+  const clearedQ = wlq.relay.pendingFor("chatB")[0].dead;
+  wlq.rows.delete(jobQ2);
+  const againDeadQ = await wlq.relay.lapse(jobQ2);
+  ok(revivedQ === false && clearedQ === false && againDeadQ === true && wlq.relay.pendingFor("chatB")[0].dead === true && wlq.relay.pendingAll().map((r) => r.chat).join() === "chatB,chatC" && wlq.removedWorking.length === 0,
+    "记了“没着落了”、那一格后来却冒出来了：再认一遍，记号擦掉（回 false）；那一格又没了，再认一遍又记上。那一笔一直记着，信箱不碰");
+  // 记了“没着落了”的那一回，原来的用处一样不少。她再点一回重新回答：照旧先去信箱里找它，再同步看一眼别的设备是不是已经把这一回的回话放进对话了；放了，就不白问第二回
+  wlq.answered = (jobs) => jobs.includes(jobQ2);
+  const againQ = await drive(wlq.relay.ask({ ...ARGS, chat: "chatB", last: "n3", fork: "oldB" }), 500, 30000);
+  ok(againQ.e && againQ.e.code === "answered" && wlq.sent.length === 3 && wlq.askedJobs.join() === jobQ2 && wlq.relay.pendingFor("chatB").length === 0,
+    "记了“没着落了”的那一回，她再点重新回答：照旧认得出为这一句发过这一回；别的设备已经把它的回话放进对话了：不再发（没有问第二回），这一回才不记了");
+  wlq.answered = false;
+  // 连信箱那张表都没有：更不会有它的回话
+  const wlt = world();
+  wlt.hint = true;
+  wlt.replies.push(async () => { wlt.getFails = 99; throw coded("unreachable", "连不上"); });
+  await drive(wlt.relay.ask({ ...ARGS, fork: "oldT" }), 100);
+  wlt.getFails = 0;
+  wlt.table = false;
+  ok((await wlt.relay.lapse(wlt.sent[0].job)) === true && wlt.relay.pendingFor("chatA")[0].dead === true, "问一回是不是没着落了：连信箱那张表都没有：记上");
+  // 她按停：记了“没着落了”的那一回照旧一并作废
+  wlt.table = true;
+  wlt.relay.forget("chatA");
+  ok(wlt.jobs().length === 0 && wlt.relay.wasHalted(wlt.sent[0].job), "记了“没着落了”的那一回，她在那段对话里按停：照旧一并作废");
+  // 正有人守着的那一回：不看、不记
+  const wlv = world();
+  wlv.hint = true;
+  let handV = null;
+  wlv.replies.push((p) => new Promise((resolve) => { handV = () => resolve({ type: "reply", job: p.job, result: GOOD }); }));
+  const askV = wlv.relay.ask({ ...ARGS, fork: "oldV" });
+  await until(() => !!handV, 3000);
+  const looksV = wlv.looks.length;
+  const liveV = await wlv.relay.lapse(wlv.sent[0].job);
+  ok(wlv.sent.length === 1 && liveV === false && wlv.looks.length === looksV && wlv.relay.pendingFor("chatA")[0].dead === false, "问一回是不是没着落了：这会儿正有人守着它（话刚交出去、还在等）：不去看信箱、不记，回 false");
+  // 去信箱里看的那一下工夫里，有人守上它了（她又点了一回重新回答，先去信箱里找这一回）：也不记
+  const wlw = world();
+  wlw.hint = true;
+  wlw.replies.push(async () => { wlw.getFails = 99; throw coded("unreachable", "连不上"); });
+  await drive(wlw.relay.ask({ ...ARGS, fork: "oldW" }), 100);
+  wlw.getFails = 0;
+  const jobW = wlw.sent[0].job;
+  let letGoW = null;
+  wlw.onGet = () => new Promise((resolve) => { letGoW = resolve; }); // 那一眼先悬着
+  let lapsedW = null;
+  wlw.relay.lapse(jobW).then((v) => { lapsedW = v; });
+  await until(() => !!letGoW, 3000);
+  wlw.onGet = null;
+  wlw.replies.push(async (p) => { await wlw.done(p); return { type: "reply", job: p.job, result: GOOD }; });
+  const againW = wlw.relay.ask({ ...ARGS, fork: "oldW" }); // 先去信箱里找记着的那一回：这一下就守上它了
+  const liveW = wlw.relay.isLive(jobW);
+  letGoW(); // 那一眼看完了：信箱里没有它
+  await until(() => lapsedW !== null, 3000);
+  const keptW = wlw.relay.pendingFor("chatA").map((r) => r.job + ":" + r.dead).join();
+  const outW = await drive(againW, 500, 20000);
+  if (outW.v) await outW.v.settle();
+  ok(liveW && lapsedW === false && keptW === jobW + ":false" && !!outW.v && wlw.sent.length === 2 && wlw.jobs().length === 0,
+    "问一回是不是没着落了：去看的那一下工夫里有人守上它了（她又点了一回重新回答）：不记，让守着的那一头自己收场（它在信箱里没找着，照常另发一回、回上了）");
+  // 记了“没着落了”以后，那一格又冒出来、有人接着守它：重记的那一笔上没有这个记号了
+  const wlr = world();
+  wlr.hint = true;
+  let lateR = null;
+  wlr.replies.push(async (p) => { lateR = p; wlr.getFails = 99; throw coded("unreachable", "连不上"); });
+  await drive(wlr.relay.ask({ ...ARGS, fork: "oldR" }), 100);
+  wlr.getFails = 0;
+  const markedR = (await wlr.relay.lapse(lateR.job)) === true && wlr.relay.pendingFor("chatA")[0].dead === true;
+  wlr.working(lateR);                                   // 小后端后来还是把那一格开出来了
+  const infoR = await readNote((t) => vaultjs.unseal(vault, t), lateR.note, lateR.job);
+  const resumedR = wlr.relay.resume(lateR.job, infoR);
+  await breathe();
+  const clearedR = wlr.relay.pendingFor("chatA").map((r) => r.job + ":" + r.dead).join();
+  await wlr.done(lateR);
+  const outR = await drive(resumedR, 500, 20000);
+  if (outR.v) await outR.v.settle();
+  ok(markedR && clearedR === lateR.job + ":false" && !!outR.v && outR.v.via === "mailbox" && wlr.jobs().length === 0,
+    "记了“没着落了”以后那一格又冒出来、有人接着守它：重记的那一笔上没有这个记号了；回话照常取到、照常不再记着");
+  handV();
+  const gotV = (await settled(askV)).v;
+  if (gotV) await gotV.settle();
+  ok(!!gotV && wlv.jobs().length === 0, "正有人守着的那一回照常回完、照常不再记着（问那一下没碍着它）");
   // 直接等着的时候看出那一格早断了：也一样，只收还写着“在等”的
   const we = world();
   we.hint = true;

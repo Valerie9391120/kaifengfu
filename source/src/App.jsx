@@ -13,7 +13,7 @@ import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.
 import { HER_NAME, HIS_NAME, NAME_KEYS, cleanName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, docFmtOf, readDoc, replyRoom } from "./docs.js";
 import { parseReply, settleAvatarItems } from "./reply.js";
-import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, markStopped, unmarkStopped, stoppedAt, cutReply } from "./thread.js";
+import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, markStopped, unmarkStopped, stoppedAt, cutReply, stillWaiting } from "./thread.js";
 import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY, HALTED_KEY } from "./mail.js";
 import { disablePush, resyncPush, watchNotices, probeReply, knockList, clearReplyNotices } from "./push.js";
 import { WEEK, sepLabel, timeAgo } from "./days.js";
@@ -417,6 +417,12 @@ export default function App({ account = {} }) {
       // 其中有一回是一天之内交出去的、它的回话还没在对话里（别的设备取走放进去、同步过来了的不算在等），她最后那句也没按停。
       // 只看存档里最后一句是不是她的不够：别的设备上说的话同步过来了、回话还没同步过来，也像在等；
       // 反过来，等的是重新回答、或者等的工夫里她又说了一句，最后那句又不像在等。
+      // 一回还算不算在等，照 thread.js 的 stillWaiting（10 月 10 日夜里卿卿报了“划掉重新打开还是回到旧对话”以后改的）：
+      // 平常的话得是“那一句还在、它后面一句他的话都没有”。原来只看紧跟着的那一句：一句没送成、她没点重发又说了一句、
+      // 两句一起回上了的，为头一句记着的那一回没人划，会一直当它在等，一天里每回重新打开都回到那段。
+      // （头一句那一回要是其实到了小后端、回话晚些才进信箱：照旧悄悄插在那一句后面，不为它回到那段。）
+      // 重新回答的那一回照旧只要记着就算，除非看过信箱、认准它没着落了（记着 dead，见 checkMail 最后那一段），
+      // 或者它接的那一句不在外面摆着了。所以没着落的重新回答最多认错到下一回看成信箱为止
       // 回话正在路上、在信箱里等着、那一句没送出去要补发、没回成要摆“点这里重发”，这几样都只认眼前这段对话（信箱那条路审过三遍，不为这个动它）；
       // 换成新的一页的话，回话会悄悄落进那段里，没送出去的那句要等她自己点开那段才补发
       const lastId = await store.get("kfs2:lastChat");
@@ -427,7 +433,7 @@ export default function App({ account = {} }) {
           !stoppedAt(msgs) &&
           getRelay()
             .pendingFor(lastId)
-            .some((r) => now - r.at < WAITING_MAX && !hasJob(msgs, r.job) && (r.fork || !answeredAfter(msgs, r.last)));
+            .some((r) => now - r.at < WAITING_MAX && stillWaiting(msgs, r));
         if (waiting && chatIdRef.current !== lastId && !messagesRef.current.length) {
           chatIdRef.current = lastId;
           messagesRef.current = msgs;
@@ -1293,6 +1299,7 @@ export default function App({ account = {} }) {
         }
       }
       if (settle) settle();
+      lapseSoon(id);
       recapSoon(id);
     } catch (e) {
       if (e && e.code === "stopped") {
@@ -1401,6 +1408,7 @@ export default function App({ account = {} }) {
       await saveChat(id, next);
       if (!here) wantVoices(id, him); // 她翻到别的对话去了：存好以后再记（念之前要在存档里认得出这一条）
       if (settle) settle();
+      lapseSoon(id);
       recapSoon(id);
       // 这工夫里她新说的：等这一回完了接着回。存的那一下工夫里她按了停的话就不接了
       // （那几句在按停的那一下已经记上“停了”：它们那时候不是还排着队，就是已经在等这一回完，见 stopReply）
@@ -1932,6 +1940,20 @@ export default function App({ account = {} }) {
     return "applied";
   };
 
+  // 回话落进 id 那段对话以后：这台设备上要是还为这段记着一回没认过的重新回答、这会儿又没人守着它（多半就是没成的那一回），
+  // 过两秒看一遍信箱，好把它认成没着落的（见 checkMail 最后那一段）。平常没有这样的一回，什么都不做。
+  // 没有这一下的话，要等下一个看信箱的由头（她切回来、网回来、翻对话、重新打开）：重新回答没成（那会儿没网，过后自己再看的那几遍
+  // 也都没看成）、网悄悄好了她接着聊、聊完就划掉的，中间一个由头都没有，重新打开还会先回到那段
+  const lapseSoon = (id) => {
+    // 叫它的地方回话已经存好了：这里出什么岔子都不许往外抛（外头会当成那一回没成）
+    try {
+      const relay = getRelay();
+      if (!relay.pendingFor(id).some((r) => r.fork && !r.dead && !relay.isLive(r.job))) return;
+      clearTimeout(mailTimer.current);
+      mailTimer.current = setTimeout(() => latest.current.checkMail(), 2000);
+    } catch (e) {}
+  };
+
   // 看一遍信箱：到了的回话放进对话；还在等的，是眼前这段对话就守着它（顶上显示“正在输入”），别的过几秒再看。
   // 开封府不在眼前的时候不看：这时候把信取走，小后端就以为她看到了、不敲手机了。
   // retry：这是没看成以后自己再来的第几回（外头叫的时候不带）
@@ -2006,6 +2028,26 @@ export default function App({ account = {} }) {
       // 没看成的时候不收：回话还没进对话，横幅上那几行字她还用得着。
       // 她不在眼前的时候根本没去看（上面那个空单子）：也不算看成，连“过一会儿再收”的弦都不上
       if (list !== null && document.visibilityState === "visible") tidyBanners();
+      // 记着的重新回答里已经没着落的：记一笔“没着落了”（mail.js 的 lapse），开机就不再当那段还在等他回话。
+      // 重新回答的那一回只要记着就算“在等”（它的回话也许在路上、在信箱里，开机那一下分不出来）。可有的再也不会有回话：
+      // 重新回答没成（没连上）、她没再点；点了重新回答、话还没出手机开封府就被收掉。原来这种要等记下满一天才不算，
+      // 这一天里每回重新打开都回到那段（卿卿 10 月 10 日夜里报的“划掉重新打开还是回到旧对话”，平常的话那一半见开机那一段）。
+      // 这里只挑：这一遍信箱看成了（看不成就不白跑下面那一眼），单子里没有它，这会儿没人守着它，
+      // 记下也过了十秒（不是话刚出手机、小后端还没来得及开出那一格的；不满十秒的过三秒再看）。
+      // 认准没着落是 lapse 的事：它自己再去信箱里看一眼那一格，真没有才记。不等它（那一眼最多悬八秒，不能压着这一遍）。
+      // 反过来，记过“没着落了”、单子里却有它的（认错了：那一格是后来才冒出来的），也交给 lapse，它看到那一格在就把记号擦掉。
+      // 只动那一个记号，那一回照旧记着、信箱不碰；平常的话记着的那几回这里不管
+      if (list !== null && document.visibilityState === "visible") {
+        for (const r of relay.pendingAll()) {
+          if (!r.fork || relay.isLive(r.job)) continue;
+          const here = list.some((m) => m.job === r.job);
+          if (here ? !r.dead : r.dead) continue; // 单子里有它、没记过；单子里没有它、已经记过：都不用再认
+          const age = Date.now() - r.at;
+          // 手机的钟被往回拨过、记的钟点比现在还晚的：不等
+          if (!here && age >= 0 && age < ORPHAN_AGE) again = true;
+          else relay.lapse(r.job).catch(() => {});
+        }
+      }
     } catch (e) {}
     mailBusy.current = false;
     const soon = mailAgain.current;

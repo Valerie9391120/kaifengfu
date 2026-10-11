@@ -216,16 +216,21 @@ with sync_playwright() as p:
     took = wait_js(pb, "document.body.innerText.includes('2/2')", 30000) and wait_mock(lambda: box()["rows"] == [], 10)
     ok(len(fork) == 1 and fork[0]["fork"] and took, "另一台设备把新回答取走、放进了对话（第二个版本）")
     pb.wait_for_timeout(2500)                                       # 等它传上云端
+    # 这台设备这会儿看不成信箱。10 月 10 日夜里起，看得成信箱的时候，没着落的重新回答会被记上“没着落了”，单凭那个记号就不算在等
+    # （见 tests/e2e_reopen.py）；这里要验的是另一道（回话已经在对话里），所以不让它看信箱，那个记号记不上
+    no_box = lambda route: route.abort("internetdisconnected") if route.request.method == "GET" else route.continue_()
     pa = ctx.new_page(); pa.on("pageerror", lambda e: errors.append(str(e)))
+    pa.route("**/rest/v1/mailbox*", no_box)
     pa.goto(BASE); kite(pa)                                         # 这一回开门的时候存档还是旧的：先回到那段也说得过去，不管
     synced = wait_mock(lambda: fork[0]["job"] in json.dumps(chat_by(pa, cid)), 20)
     pa.wait_for_timeout(800)
     pa.close()
     pa = ctx.new_page(); pa.on("pageerror", lambda e: errors.append(str(e)))
+    pa.route("**/rest/v1/mailbox*", no_box)
     pa.goto(BASE); kite(pa); pa.wait_for_timeout(1200)
-    still = fork[0]["job"] in {j["job"] for j in jobs(pa)}
+    still = [bool(j.get("dead")) for j in jobs(pa) if j["job"] == fork[0]["job"]] == [False]
     ok(synced and still and motto(pa) in (["早一"], ["早二"]) and bubbles(pa) == 0,
-       f"那一回还记着、可它的回话已经同步到这台设备的对话里：重新打开是新的一页（{motto(pa)}，还记着：{still}）")
+       f"那一回还记着（也没记过“没着落了”）、可它的回话已经同步到这台设备的对话里：重新打开是新的一页（{motto(pa)}，还记着：{still}）")
     ctxb.close()
     ctx.close()
 
