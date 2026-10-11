@@ -25,6 +25,7 @@ import { RECAP_KEY, RECAP_BAD_KEY, normRecaps, pickRecap, tierOf, roomFor, dueRe
 import { dayKeyOf, parseDayKey, moodOf, dayTranscript, parseDiary } from "./diary.js";
 import { WALL, SERIF, SANS, T, glass, DOCK_GLASS, chip, chipPrimary, field, GLOBAL_CSS } from "./ui/style.js";
 import { Icon } from "./ui/Icon.jsx";
+import { PEONY_PT } from "./ui/peony.js";
 import { HIS_DEFAULT, Avatar } from "./ui/Avatar.jsx";
 import { Glows, IconBtn, SHEET_TITLE, Sheet, Toggle, RoundBtn } from "./ui/parts.jsx";
 import { buildSystem, withNowNote } from "./prompt/system.js";
@@ -48,6 +49,7 @@ import { McpPanel } from "./panels/McpPanel.jsx";
 import { ApiPanel } from "./panels/ApiPanel.jsx";
 import { PushPanel } from "./panels/PushPanel.jsx";
 import { ModelPanel } from "./panels/ModelPanel.jsx";
+import { NanyaPanel, soonToast } from "./panels/NanyaPanel.jsx";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -390,7 +392,7 @@ export default function App({ account = {} }) {
         if (v) thumbsRef.current[k.slice(15)] = v;
       }
 
-      // 日记本：今天写了没
+      // 日记（界面上叫“闲笔集”）：今天写了没
       const tk = dayKeyOf(new Date());
       const dm = safeParse(await store.get("kfs2:diary:" + tk.slice(0, 7)), {}) || {};
       diaryCache.current[tk.slice(0, 7)] = dm;
@@ -2694,6 +2696,8 @@ export default function App({ account = {} }) {
   };
 
   // ---- 日记本 ----
+  // 界面上叫“闲笔集”（卿卿 2026 年 10 月 11 日改的名，入口也从侧栏的格子挪进了“南衙”那张菜单）。
+  // 代码、存档的钥匙名、让那边写日记时寄去的话里都还叫日记、diary，没跟着改
   const loadMonth = async (ym) => {
     if (diaryCache.current[ym]) return diaryCache.current[ym];
     const data = safeParse(await store.get("kfs2:diary:" + ym), {}) || {};
@@ -3022,6 +3026,8 @@ export default function App({ account = {} }) {
     : `都已同步，锁好存在云端。${sync.lastSync ? "上次同步：" + timeAgo(sync.lastSync) : ""}`;
   const enabledMcp = (settings.mcps || []).filter((m) => m.enabled).length;
   const enabledDocs = memFiles.filter((f) => f.enabled).length;
+  // 今天的日记写了没：侧栏“南衙”那一格底下的小字，和点开以后“闲笔集”那一行的小字，是同一句
+  const diarySub = diaryToday.her && diaryToday.him ? "今天都写了" : diaryToday.her ? "今天卿卿写了" : diaryToday.him ? "今天光义写了" : "今天还没写";
 
   // ---- 弹层 ----
   const renderSheet = () => {
@@ -3206,6 +3212,24 @@ export default function App({ account = {} }) {
         </Sheet>
       );
     }
+    if (sheet === "nanya") {
+      // 南衙：小功能汇总（见 panels/NanyaPanel.jsx）。点“闲笔集”：菜单收起，日记那一页照原来的样子滑进来；
+      // 从日记按返回是回到侧栏，不回这张菜单（卿卿点过头的）。还没盖好的那几行，点了只冒一句话
+      return (
+        <Sheet title="南衙" onClose={() => setSheet(null)}>
+          <NanyaPanel
+            subs={{ diary: diarySub }}
+            open={{
+              diary: () => {
+                setSheet(null);
+                setDiaryOpen(true);
+              },
+            }}
+            onSoon={(name) => setToast(soonToast(name))}
+          />
+        </Sheet>
+      );
+    }
     if (sheet === "model") {
       return (
         <Sheet title="选择模型" onClose={() => setSheet(null)}>
@@ -3266,20 +3290,10 @@ export default function App({ account = {} }) {
             <Tile icon="doc" label="万岁殿" sub={memFiles.length ? `带着 ${enabledDocs} 份文档` : "放文档"} onClick={() => setSheet("memory")} />
             <Tile icon="plug" label="MCP" sub={enabledMcp ? `开着 ${enabledMcp} 个` : `装了 ${(settings.mcps || []).length} 个`} onClick={() => setSheet("mcp")} />
             <Tile icon="key" label="API" sub={monthUsage && monthUsage.month === usageKey() && monthUsage.replies ? `本月约 ${money(monthUsage.cost)}` : "连接与用量"} onClick={() => setSheet("api")} />
-            <Tile
-              icon="calendar"
-              label="日记本"
-              sub={
-                diaryToday.her && diaryToday.him
-                  ? "今天都写了"
-                  : diaryToday.her
-                  ? "今天卿卿写了"
-                  : diaryToday.him
-                  ? "今天光义写了"
-                  : "今天还没写"
-              }
-              onClick={() => setDiaryOpen(true)}
-            />
+            {/* 第四个方块是“南衙”（卿卿 2026 年 10 月 11 日定的）：原来写“日记本”、点了直接进日记，现在点了从底下冒出一张菜单
+                （见 renderSheet 里的 nanya），日记是里面的头一行“闲笔集”。图标是恩师画的牡丹（ui/peony.js），比别的图标大一号。
+                底下那行小字没动，还是今天的日记写了没 */}
+            <Tile icon="peony" iconSize={PEONY_PT} label="南衙" sub={diarySub} onClick={() => setSheet("nanya")} />
           </div>
         </div>
         {/* 历史对话固定在最底下那排（头像、新对话）的正上方，不跟着上面那段滚（卿卿定的位置）。

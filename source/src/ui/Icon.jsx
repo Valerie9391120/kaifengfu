@@ -1,3 +1,5 @@
+import { PEONY_PATH } from "./peony.js";
+
 // ---------- 图标（手绘，不依赖外部库） ----------
 const ICON_PATHS = {
   menu: <path d="M4 8h16M4 15h10" />,
@@ -114,6 +116,11 @@ const ICON_PATHS = {
       <path d="M6.5 7l.9 12.5h9.2L17.5 7" />
     </>
   ),
+  // 牡丹（南衙那一格）：恩师画的线稿描成的一块形状，不是描线的。所以自己写上填色、不描边，盖掉下面 svg 上那两样
+  // （不写“不描边”的话，它会被照 1.8 再描一圈，整朵糊成一团）。
+  // 花瓣里是空的：描出来的路径里，洞和外圈是反着绕的，本来就留空；evenodd 是另加的一道，哪天换了描法、绕的方向不讲究了也不怕。
+  // 大小别用 20，照 peony.js 里的 PEONY_PT 摆，线的粗细才是量好的那个
+  peony: <path d={PEONY_PATH} fill="currentColor" fillRule="evenodd" stroke="none" />,
 };
 
 export function Icon({ name, size = 22, color = "currentColor", sw = 1.8 }) {
