@@ -1,6 +1,6 @@
 // =====================================================
 // 一段对话（一串消息）上的几样手艺：欠不欠回复、回复插在哪、开分支、翻分支，
-// 还有从信箱里取出来的回话该不该放、放在哪。
+// 从信箱里取出来的回话该不该放、放在哪，还有记着的一回还算不算“在等他回话”。
 // 不碰页面，测试在 Node 里跑。
 //
 // 一条消息：{ id, role: "her" | "him" | "event", ts, … }。
@@ -148,4 +148,37 @@ export function mailPut(msgs, info, him) {
   const later = tail.filter((m) => (m.ts || 0) > (info.at || 0));
   const old = tail.filter((m) => !((m.ts || 0) > (info.at || 0)));
   return forkAt(msgs.slice(0, j + 1).concat(old), j, him).concat(later);
+}
+
+// ---------- 上回那段还在不在等他回话 ----------
+// 重新打开开封府是新的一页，只有上回那段还在等他回话的时候才先回到它（见 App.jsx 开机那一段）。
+// “在等”认的是这台设备上记着的、为那段对话交出去过还没着落的那几回（mail.js 的 pendingFor）。
+
+// 这一句还空等着没有：它还摆在这段对话里，它后面一句他的话都没有（她接着说的、换头像提示不算他的话）。
+// 和 answeredAfter 不一样：那个只看紧跟着的那一句是谁的（信箱里取出来的回话放不放、接在哪儿，认的是它，不动）；
+// 这里只要后面有过他的话，就不算还在等这一句了。
+// 2026 年 10 月 10 日卿卿报的“划掉重新打开还是回到旧对话”就出在这儿：有一句没送出去（“消息没送到…点这里重发”），
+// 她没点重发、又说了一句，两句一起回上了。为头一句记着的那一回没人划掉；只看紧跟着的那句（是她的），
+// 就一直当头一句还在等，往后一天里每回重新打开都回到那段。
+// 那一句不在外面摆着了（她改过它、翻到了别的版本）：没什么可等的，也不算
+export function unanswered(msgs, lastId) {
+  const pos = msgs.findIndex((m) => m.id === lastId);
+  if (pos < 0) return false;
+  for (let i = pos + 1; i < msgs.length; i++) {
+    if (msgs[i].role === "him") return false;
+  }
+  return true;
+}
+
+// 记着的一回（rec：{ job, last, fork, dead }，见 mail.js 的 pendingFor）在这段对话里还算不算“在等他回话”。
+//   它的回话已经在对话里了（别的设备取走放进去、同步过来的）：不算。
+//   平常的话：那一句还在、后面还没有他的话就算，记没记 dead 都一样：那一句她还等着回话
+//     （多半会自己补发、或者底下有“点这里重发”；补不上的那两种见开发说明“划掉重新打开还是回到旧对话”里“没改的、知道的”）。
+//   重新回答：那一句后面本来就有回话，没法照“后面空不空”认。只要记着就算（回话也许在路上、在信箱里），除了两样：
+//     那一回已经认准没着落了（rec.dead：看过信箱，那里没有它，也没人守着它；见 mail.js 的 lapse）：旧回答原样摆着，没有什么要补的；
+//     它接的那一句不在外面摆着了（她改了那一句、翻到了别的版本）：新回答就算到了也放不进来（mailFit 说 later），眼前不会有动静
+export function stillWaiting(msgs, rec) {
+  if (!Array.isArray(msgs) || !rec || hasJob(msgs, rec.job)) return false;
+  if (rec.fork) return !rec.dead && msgs.some((m) => m.id === rec.last);
+  return unanswered(msgs, rec.last);
 }

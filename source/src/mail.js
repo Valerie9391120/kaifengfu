@@ -705,6 +705,42 @@ export function createRelay(d) {
     return out;
   }
 
+  // 认一认记着的一回还有没有着落。现去信箱里看那一格，不靠外头手上那份单子：那份是那一遍开头看的，办到这儿可能已经过了好几秒
+  // （那时候有人守着的不在单子里；这几秒里那一头要是断了，那一格其实还在）。
+  //   信箱里没有它，这会儿也没人守着它：那一回不会再有回话了。在这台设备上记的那一笔上添一个 dead，回 true。
+  //   那一格在：还有着落。原来认错了、记过 dead 的（那一格是后来才冒出来的），把记号擦掉。回 false。
+  //   这会儿有人守着它：不看、不动，回 false。这一眼没看成（没连上、悬着不应）：不动，回 null，下一遍看信箱再说。
+  // 只动这一个记号：那一笔照旧记着，信箱不碰。记着它的那几样用处一样不少：她再点一回“重新回答”，照旧先去信箱里找它、
+  // 再同步看一眼别的设备是不是已经把这一回的回话放进对话了（见 asking），不白问第二回；她按停，照旧一并作废（forget）。
+  // 这个记号管的只有一件事：开机认“上回那段还在等他回话”，重新回答的那一回带着它就不算在等（见 thread.js 的 stillWaiting）。
+  // 外头只拿重新回答的那几回来认（App.jsx 的 checkMail 最后那一段；平常的话不靠这个记号）。
+  // 2026 年 10 月 10 日夜里加的：没着落的重新回答原来一直算“在等”，重新打开老是回到那段，要等记下满一天才好
+  async function lapse(job) {
+    if (live.has(job)) return false;
+    let row = null;
+    try {
+      row = await timed(d.box.get(job));
+    } catch (e) {
+      // 连信箱那张表都没有：更不会有它的回话。别的（没连上、悬着不应）：没看成
+      if (!(e && e.code === "notable")) return null;
+    }
+    if (live.has(job)) return false;
+    const list = pending.all();
+    const rec = list.find((x) => x.job === job);
+    if (row) {
+      if (rec && rec.dead) {
+        delete rec.dead;
+        pending.save(list);
+      }
+      return false;
+    }
+    if (rec && !rec.dead) {
+      rec.dead = true;
+      pending.save(list);
+    }
+    return true;
+  }
+
   // 走老路回成了一条：记一笔（“看细节”里要说）
   function tookOld(why) {
     lastRun = { path: "old", why: why || offWhy || "", at: d.now() };
@@ -744,14 +780,18 @@ export function createRelay(d) {
       const rec = pending.find(chat, last, "");
       return rec ? { job: rec.job, at: rec.at || 0 } : null;
     },
-    // 这台设备上为这段对话交出去过、还没着落的那几回（平常的话、重新回答都算）：[{ job, last, fork, at }]，新的在前；没有就是空的。
-    // 只看不动。外头开机的时候拿它认“上回那段还在等他回话”
+    // 这台设备上为这段对话交出去过、还没着落的那几回（平常的话、重新回答都算）：[{ job, last, fork, at, dead }]，新的在前；没有就是空的。
+    // dead：看过信箱、认准这一回不会再有回话了（见 lapse）。只看不动。外头开机的时候拿它认“上回那段还在等他回话”
     pendingFor: (chat) =>
       pending
         .all()
         .filter((x) => x.chat === chat)
         .reverse()
-        .map((x) => ({ job: x.job, last: x.last, fork: x.fork || "", at: x.at || 0 })),
+        .map((x) => ({ job: x.job, last: x.last, fork: x.fork || "", at: x.at || 0, dead: !!x.dead })),
+    // 这台设备上记着的还没着落的那几回，哪段对话的都在：[{ job, chat, last, fork, at, dead }]，旧的在前。只看不动。
+    // 外头看完一遍信箱，拿它挑出该认一认的重新回答（多半没着落了的、认错了的），一回一回交给 lapse
+    pendingAll: () => pending.all().map((x) => ({ job: x.job, chat: x.chat, last: x.last, fork: x.fork || "", at: x.at || 0, dead: !!x.dead })),
+    lapse,
     status: () => ({ off: d.now() < offUntil, why: offWhy, last: lastRun }),
   };
 }
