@@ -5,15 +5,18 @@ import { useLongPress } from "../ui/press.js";
 
 // 侧栏最上面那张卡片。flex-shrink-0 不能丢：侧栏上面那段是竖着排的弹性盒子，东西放不下的时候
 // 会先压这张卡片（它带 overflow-hidden，压得动），“在一起的第几天”就只露半截、纪念日那行整行不见。
-// 不许压，放不下就让那一段自己滚
-export function DaysCard({ now }) {
+// 不许压，放不下就让那一段自己滚。
+// 长按它（0.45 秒，和长按历史对话一样）冒出“去看并蒂莲”那张小菜单（side/DaysMenu.jsx）；光点它什么都不做
+export function DaysCard({ now, onLongPress }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const today = a.days === 0;
+  const lp = useLongPress((rect) => onLongPress && onLongPress(rect));
   return (
     <div
+      {...lp}
       className="kfs-days relative overflow-hidden flex-shrink-0"
-      style={{ ...glass(0.5, 26), borderRadius: 28, padding: "20px 20px 18px" }}
+      style={{ ...glass(0.5, 26), borderRadius: 28, padding: "20px 20px 18px", WebkitTouchCallout: "none" }}
     >
       <div
         className="absolute pointer-events-none"

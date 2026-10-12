@@ -12,6 +12,8 @@
 // 账户面板里有个开关能把 "fill" 关掉退回 "bottom"，万一撑满在哪台手机上出毛病，她自己就能退回去。
 // =====================================================
 
+import { focusInside } from "./keyboard.js";
+
 const PREF_KEY = "kfs-fill";
 
 function readPref() {
@@ -89,7 +91,8 @@ export function setFill(on) {
 // 键盘开着的时候不管，让 iOS 自己把输入框露出来。
 function settle() {
   if (document.documentElement.getAttribute("data-kfs-gap") !== "fill") return;
-  const a = document.activeElement;
+  // 焦点在并蒂莲那个框里的起名框上，也算在打字（框里那一下 iOS 推整页，别跟它拧着，见 keyboard.js 的 focusInside）
+  const a = focusInside(document.activeElement);
   if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT")) return;
   if (window.scrollY !== 0 || document.documentElement.scrollTop !== 0) window.scrollTo(0, 0);
 }
@@ -117,4 +120,8 @@ export function initGap() {
   if (mq.addEventListener) mq.addEventListener("change", onTurn);
   window.addEventListener("scroll", settle, { passive: true });
   document.addEventListener("focusout", () => setTimeout(settle, 150));
+  // 键盘收起来（keyboard.js 报的）也挪一下：框里的输入框失了焦点，开封府这头听不到 focusout
+  window.addEventListener("kfs-kb", (e) => {
+    if (e.detail && !e.detail.open) setTimeout(settle, 150);
+  });
 }
