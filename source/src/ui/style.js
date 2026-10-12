@@ -125,9 +125,10 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 @keyframes kfsKiteAway { 0% { transform: translate(0,0) rotate(0) scale(1); opacity: 1; } 100% { transform: translate(26px,-330px) rotate(-10deg) scale(.42); opacity: 0; } }
 .kfs-kite { animation: kfsKite 3.4s ease-in-out infinite; transform-origin: 50% 35%; }
 .kfs-kite-away { animation: kfsKiteAway .95s cubic-bezier(.45,0,.2,1) forwards; }
-/* 并蒂莲那一层：黑幕淡进来，只动透明度（见 panels/LotusPage.jsx） */
+/* 并蒂莲那一层：黑幕淡进来，只动透明度（见 panels/LotusPage.jsx）；日期卡片最底下那行换字也是只淡（见 side/Cards.jsx） */
 @keyframes kfsFade { from { opacity: 0; } to { opacity: 1; } }
 .kfs-lotus { animation: kfsFade .32s ease both; }
+.kfs-fade { animation: kfsFade .3s ease both; }
 
-@media (prefers-reduced-motion: reduce) { .kfs-in, .kfs-sheet, .kfs-page, .kfs-breath, .kfs-splash-img, .kfs-moonglow, .kfs-kite, .kfs-lotus { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .kfs-in, .kfs-sheet, .kfs-page, .kfs-breath, .kfs-splash-img, .kfs-moonglow, .kfs-kite, .kfs-lotus, .kfs-fade { animation: none !important; } }
 `;

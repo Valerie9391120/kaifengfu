@@ -1,17 +1,37 @@
+import { useEffect, useRef } from "react";
 import { dayNumber, nextAnniv, dateLabel } from "../days.js";
 import { SERIF, T, glass } from "../ui/style.js";
 import { Icon, artSize } from "../ui/Icon.jsx";
 import { useLongPress } from "../ui/press.js";
 
+// 纪念日那行字多高（12.5 号，行高照全局的 1.5）。“去看并蒂莲”那一行照这个高摆，换来换去卡片不跳
+const LINE_H = 18.75;
+
 // 侧栏最上面那张卡片。flex-shrink-0 不能丢：侧栏上面那段是竖着排的弹性盒子，东西放不下的时候
 // 会先压这张卡片（它带 overflow-hidden，压得动），“在一起的第几天”就只露半截、纪念日那行整行不见。
 // 不许压，放不下就让那一段自己滚。
-// 长按它（0.45 秒，和长按历史对话一样）冒出“去看并蒂莲”那张小菜单（side/DaysMenu.jsx）；光点它什么都不做
-export function DaysCard({ now, onLongPress }) {
+// 并蒂莲的暗门（卿卿 2026 年 10 月 12 日定的，她挑的“B 藏在卡片里”）：光点卡片什么都不做；
+// 长按它（0.45 秒，和长按历史对话一样）最底下那行（纪念日）淡成“去看并蒂莲 ›”，点这一行才进去（armed）；
+// 别处一落手指（连卡片上别的地方）、收起侧栏，就变回纪念日那行。什么都不往外蹦，侧栏也不压暗
+export function DaysCard({ now, armed, onArm, onDisarm, onLotus }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const today = a.days === 0;
-  const lp = useLongPress((rect) => onLongPress && onLongPress(rect));
+  const lp = useLongPress(() => onArm && onArm());
+  const door = useRef(null);
+  // 换过一回以后，纪念日那行换回来时也淡进来；开门头一回摆出来的时候不淡
+  const swapped = useRef(false);
+  if (armed) swapped.current = true;
+  useEffect(() => {
+    if (!armed) return undefined;
+    // 抢在前头听（capture）：落在“去看并蒂莲”那一行上的不算，别处一律变回去
+    const off = (e) => {
+      if (door.current && door.current.contains(e.target)) return;
+      if (onDisarm) onDisarm();
+    };
+    document.addEventListener("pointerdown", off, true);
+    return () => document.removeEventListener("pointerdown", off, true);
+  }, [armed]);
   return (
     <div
       {...lp}
@@ -38,12 +58,38 @@ export function DaysCard({ now, onLongPress }) {
         <span style={{ fontFamily: SERIF, fontSize: 54, lineHeight: 1 }}>{n}</span>
         <span style={{ fontSize: 14 }}>天</span>
       </div>
-      <div
-        className="relative"
-        style={{ marginTop: 12, fontSize: 12.5, color: today ? T.gold : T.inkSoft }}
-      >
-        {today ? `今天是我们的${a.name}纪念日` : `离${a.name}纪念日还有 ${a.days} 天`}
-      </div>
+      {armed ? (
+        // 这一行的按得到的地方往左右、往下撑到卡片边上（外边距负的、内边距补回来），手指好按；字还落在纪念日那行原来的位置
+        <button
+          ref={door}
+          key="door"
+          onClick={onLotus}
+          className="kfs-lotus-door kfs-fade relative flex items-center text-left"
+          style={{
+            margin: "4px -20px -18px",
+            padding: "8px 20px 18px",
+            width: "calc(100% + 40px)",
+            fontFamily: SERIF,
+            fontSize: 14,
+            lineHeight: `${LINE_H}px`,
+            letterSpacing: "0.14em",
+            color: T.dai,
+          }}
+        >
+          去看并蒂莲
+          <span className="inline-flex" aria-hidden="true" style={{ marginLeft: 2 }}>
+            <Icon name="chevR" size={14} color={T.dai} />
+          </span>
+        </button>
+      ) : (
+        <div
+          key="anniv"
+          className={swapped.current ? "relative kfs-fade" : "relative"}
+          style={{ marginTop: 12, fontSize: 12.5, color: today ? T.gold : T.inkSoft }}
+        >
+          {today ? `今天是我们的${a.name}纪念日` : `离${a.name}纪念日还有 ${a.days} 天`}
+        </div>
+      )}
     </div>
   );
 }
