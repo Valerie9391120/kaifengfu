@@ -1,5 +1,6 @@
 # 并蒂莲：长按侧栏最上面那张日期卡片进去（卿卿 2026 年 10 月 12 日定的，那一页是项目外的 Claude 做的，她拿来放进开封府）。
-#   光点卡片什么都不做；长按 0.45 秒冒出一张小菜单，里面就一行“去看并蒂莲”，只写字、不带图标；点别处收起；
+#   光点卡片什么都不做；长按 0.45 秒，卡片最底下那行（纪念日）换成“去看并蒂莲 ›”（她挑的“B 藏在卡片里”），什么都不往外蹦；
+#   卡片不跳（换的那一行一样高），这一行按得到的地方撑到卡片边上；别处落手指（连卡片上别的地方）、收起侧栏，都变回纪念日那行；
 #   手指一挪、两根手指一起按，都不算长按（ui/press.js 本来的规矩）；
 #   点“去看并蒂莲”：盖一层全屏的黑幕，里面一个框装着那一页，点进来的时候才去下载它；
 #   配色跟着主题：青绿是青瓷，丁香是藕荷；在里面换了配色，下回进来还是照主题；
@@ -37,11 +38,14 @@ FAKE_KEYBOARD = """(() => {
 # 每一层（开封府和框里那一页）各记自己没接住的错
 CATCH = "window.__errs = []; window.addEventListener('error', (e) => window.__errs.push(String(e.message)));"
 
-MENU = """() => { const m = document.querySelector('.kfs-days-menu'); if (!m) return null; const box = m.querySelector('[role=menu]').getBoundingClientRect();
-  const card = document.querySelector('.kfs-days').getBoundingClientRect(), item = m.querySelector('[role=menuitem]');
-  const r = document.createRange(); r.selectNodeContents(item); const t = r.getBoundingClientRect(), b = item.getBoundingClientRect();
-  return { items: [...m.querySelectorAll('[role=menuitem]')].map((b) => b.textContent.trim()), svgs: m.querySelectorAll('svg').length, top: box.top, cardBottom: card.bottom,
-    off: (box.left + box.width / 2) - (card.left + card.width / 2), textOff: (t.left + t.width / 2) - (b.left + b.width / 2) }; }"""
+# 卡片最底下那一行眼下是什么：纪念日那行，还是“去看并蒂莲”那一行（门）；卡片多高；门按得到的地方、字落在哪儿
+CARD = """() => { const c = document.querySelector('.kfs-days'), cr = c.getBoundingClientRect(), last = c.lastElementChild, door = c.querySelector('.kfs-lotus-door');
+  const r = document.createRange(); r.selectNodeContents(last.firstChild || last); const t = r.getBoundingClientRect();
+  const cs = getComputedStyle(last);
+  return { door: !!door, text: last.textContent.trim(), svgs: last.querySelectorAll('svg').length, cardH: cr.height, textTop: t.top - cr.top, textLeft: t.left - cr.left,
+    hit: door ? [door.getBoundingClientRect().left - cr.left, cr.right - door.getBoundingClientRect().right, cr.bottom - door.getBoundingClientRect().bottom] : null,
+    serif: /Songti|STSong|Serif/i.test(cs.fontFamily), dim: !!document.querySelector('.kfs-days-menu'), chat: document.documentElement.hasAttribute('data-kfs-chat'),
+    fixed: [...document.querySelectorAll('.absolute.inset-0.z-50')].length }; }"""
 LAYER = """() => { const l = document.querySelector('.kfs-lotus'); if (!l) return null; const r = l.getBoundingClientRect(), f = l.querySelector('iframe');
   const x = l.querySelector('.kfs-lotus-close').getBoundingClientRect(), hit = document.elementFromPoint(x.left + x.width / 2, x.top + x.height / 2);
   return { rect: [r.left, r.top, r.width, r.height], frames: document.querySelectorAll('iframe').length, src: f.getAttribute('src'), z: getComputedStyle(l).zIndex,
@@ -69,9 +73,14 @@ def card_center(pg):
     b = pg.locator(".kfs-days").bounding_box()
     return b["x"] + b["width"] / 2, b["y"] + b["height"] / 2
 
-def no_menu_after(pg, act):
+def no_door_after(pg, act):
     act(); time.sleep(0.9)
-    return pg.locator(".kfs-days-menu").count() == 0 and pg.locator(".kfs-lotus").count() == 0
+    return pg.locator(".kfs-lotus-door").count() == 0 and pg.locator(".kfs-lotus").count() == 0
+
+# 点那一行要用手指点（tap）：长按那一回把 useLongPress 记成“刚长按过”，紧接着的鼠标点击会被它吞掉；手指落下时才把这一笔清掉（真手机上都是手指）
+def door(pg):
+    long_press(pg, pg.locator(".kfs-days"))
+    return pg.locator(".kfs-lotus-door")
 
 # 截图用：软着画太慢，那一页会自己一档一档降画质，截出来是糊的。截之前把画质钉回最高（只为截图，测的那些不靠它）
 def sharp(f):
@@ -90,8 +99,7 @@ def wait_frame(f, expr, timeout=90):
     return False
 
 def open_lotus(pg):
-    long_press(pg, pg.locator(".kfs-days"))
-    pg.get_by_role("menuitem", name="去看并蒂莲").click()
+    door(pg).tap()
     pg.locator(".kfs-lotus").wait_for(timeout=5000)
     f = lotus_frame(pg)
     if f:
@@ -115,29 +123,44 @@ def run(browser):
     ok(not asked, f"开门、拉开侧栏，都没去下载并蒂莲那一页（{asked}）")
 
     # ---- 光点、挪手指、两根手指：都不算 ----
-    ok(no_menu_after(pg, lambda: pg.locator(".kfs-days").tap()), "光点日期卡片：什么都不出来")
+    before = pg.evaluate(CARD)
+    ok(no_door_after(pg, lambda: pg.locator(".kfs-days").tap()), "光点日期卡片：什么都不变")
     x, y = card_center(pg)
     def slide():
         touch(cdp, "touchStart", [(x, y)]); time.sleep(0.05)
         touch(cdp, "touchMove", [(x, y + 20)]); time.sleep(0.7)
         touch(cdp, "touchEnd", [])
-    ok(no_menu_after(pg, slide), "按着卡片手指挪开了：不算长按，菜单不出来")
+    ok(no_door_after(pg, slide), "按着卡片手指挪开了：不算长按，那一行不换")
     def two():
         touch(cdp, "touchStart", [(x - 40, y), (x + 40, y)]); time.sleep(0.7)
         touch(cdp, "touchEnd", [])
-    ok(no_menu_after(pg, two), "两根手指一起按住卡片：不算长按，菜单不出来")
+    ok(no_door_after(pg, two), "两根手指一起按住卡片：不算长按，那一行不换")
 
-    # ---- 长按：冒出菜单 ----
-    long_press(pg, pg.locator(".kfs-days"))
-    m = pg.evaluate(MENU)
-    ok(bool(m) and m["items"] == ["去看并蒂莲"] and m["svgs"] == 0, f"长按卡片：冒出一张小菜单，里面就一行“去看并蒂莲”，只写字不带图标（{m}）")
-    ok(bool(m) and 0 <= m["top"] - m["cardBottom"] <= 12 and abs(m["off"]) < 0.6 and abs(m["textOff"]) < 0.6,
-       f"菜单在卡片正下方、左右居中，字也居中（她 21:09 改的；离卡片底 {m and round(m['top'] - m['cardBottom'])}，"
-       f"偏了 {m and round(m['off'], 2)}，字偏了 {m and round(m['textOff'], 2)}）")
-    if SHOTS: pg.screenshot(path=os.path.join(SHOTS, "1-长按出菜单.png"))
-    pg.mouse.click(196, 760); time.sleep(0.5)
-    ok(pg.locator(".kfs-days-menu").count() == 0 and pg.locator(".kfs-lotus").count() == 0 and pg.evaluate(CARD_ON_TOP) and not asked,
-       "点菜单外头：菜单收起，回到侧栏，哪儿也没进，也没去下载")
+    # ---- 长按：卡片最底下那行换成“去看并蒂莲” ----
+    ok(not before["door"] and (before["text"].startswith("离") or before["text"].startswith("今天是")), f"平常卡片最底下是纪念日那行（{before['text']}）")
+    door(pg); time.sleep(0.4)
+    d = pg.evaluate(CARD)
+    ok(d["door"] and d["text"] == "去看并蒂莲" and d["svgs"] == 1 and d["serif"],
+       f"长按卡片：最底下那行换成“去看并蒂莲 ›”，宋体，后面一个小箭头（{d['text']}，箭头 {d['svgs']}）")
+    ok(abs(d["cardH"] - before["cardH"]) < 0.5 and abs(d["textTop"] - before["textTop"]) < 2 and abs(d["textLeft"] - before["textLeft"]) < 0.5,
+       f"卡片不跳：一样高（{before['cardH']} → {d['cardH']}），字落在纪念日那行原来的地方（上下差 {round(d['textTop'] - before['textTop'], 2)}）")
+    ok(bool(d["hit"]) and all(0 <= v <= 1.5 for v in d["hit"]), f"这一行按得到的地方撑到卡片左右两边和底边（离边 {d['hit']}，差的那 1 是卡片的边框）")
+    ok(not d["dim"] and d["fixed"] == 0 and d["chat"], "什么都不往外蹦：没有小菜单、没有遮罩，侧栏不压暗")
+    if SHOTS: pg.screenshot(path=os.path.join(SHOTS, "1-长按以后.png"))
+    # 别处落手指：卡片上别的地方（那个大数字）
+    num = pg.locator(".kfs-days span").nth(1).bounding_box()
+    pg.touchscreen.tap(num["x"] + num["width"] / 2, num["y"] + num["height"] / 2); time.sleep(0.6)
+    back = pg.evaluate(CARD)
+    ok(not back["door"] and back["text"] == before["text"] and pg.locator(".kfs-lotus").count() == 0 and not asked,
+       f"点卡片上别的地方：变回纪念日那行（{back['text']}），哪儿也没进，也没去下载")
+    door(pg); time.sleep(0.3)
+    t = pg.get_by_text("开封府", exact=True).first.bounding_box()
+    pg.touchscreen.tap(t["x"] + t["width"] / 2, t["y"] + t["height"] / 2); time.sleep(0.6)
+    ok(not pg.evaluate(CARD)["door"], "点卡片外头（侧栏顶上的“开封府”）：也变回去")
+    door(pg); time.sleep(0.3)
+    pg.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.8)        # 点露出来的那一条，侧栏收起
+    pg.get_by_role("button", name="打开侧栏").click(); time.sleep(0.8)
+    ok(not pg.evaluate(CARD)["door"] and pg.evaluate(CARD_ON_TOP), "收起侧栏再拉开：变回纪念日那行")
 
     # ---- 进去：青绿配青瓷 ----
     f = open_lotus(pg)
