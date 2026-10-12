@@ -38,8 +38,10 @@ FAKE_KEYBOARD = """(() => {
 CATCH = "window.__errs = []; window.addEventListener('error', (e) => window.__errs.push(String(e.message)));"
 
 MENU = """() => { const m = document.querySelector('.kfs-days-menu'); if (!m) return null; const box = m.querySelector('[role=menu]').getBoundingClientRect();
-  const card = document.querySelector('.kfs-days').getBoundingClientRect();
-  return { items: [...m.querySelectorAll('[role=menuitem]')].map((b) => b.textContent.trim()), svgs: m.querySelectorAll('svg').length, top: box.top, cardBottom: card.bottom }; }"""
+  const card = document.querySelector('.kfs-days').getBoundingClientRect(), item = m.querySelector('[role=menuitem]');
+  const r = document.createRange(); r.selectNodeContents(item); const t = r.getBoundingClientRect(), b = item.getBoundingClientRect();
+  return { items: [...m.querySelectorAll('[role=menuitem]')].map((b) => b.textContent.trim()), svgs: m.querySelectorAll('svg').length, top: box.top, cardBottom: card.bottom,
+    off: (box.left + box.width / 2) - (card.left + card.width / 2), textOff: (t.left + t.width / 2) - (b.left + b.width / 2) }; }"""
 LAYER = """() => { const l = document.querySelector('.kfs-lotus'); if (!l) return null; const r = l.getBoundingClientRect(), f = l.querySelector('iframe');
   const x = l.querySelector('.kfs-lotus-close').getBoundingClientRect(), hit = document.elementFromPoint(x.left + x.width / 2, x.top + x.height / 2);
   return { rect: [r.left, r.top, r.width, r.height], frames: document.querySelectorAll('iframe').length, src: f.getAttribute('src'), z: getComputedStyle(l).zIndex,
@@ -129,7 +131,9 @@ def run(browser):
     long_press(pg, pg.locator(".kfs-days"))
     m = pg.evaluate(MENU)
     ok(bool(m) and m["items"] == ["去看并蒂莲"] and m["svgs"] == 0, f"长按卡片：冒出一张小菜单，里面就一行“去看并蒂莲”，只写字不带图标（{m}）")
-    ok(bool(m) and m["top"] >= m["cardBottom"], f"菜单摆在卡片底下（菜单顶 {m and round(m['top'])}，卡片底 {m and round(m['cardBottom'])}）")
+    ok(bool(m) and 0 <= m["top"] - m["cardBottom"] <= 12 and abs(m["off"]) < 0.6 and abs(m["textOff"]) < 0.6,
+       f"菜单在卡片正下方、左右居中，字也居中（她 21:09 改的；离卡片底 {m and round(m['top'] - m['cardBottom'])}，"
+       f"偏了 {m and round(m['off'], 2)}，字偏了 {m and round(m['textOff'], 2)}）")
     if SHOTS: pg.screenshot(path=os.path.join(SHOTS, "1-长按出菜单.png"))
     pg.mouse.click(196, 760); time.sleep(0.5)
     ok(pg.locator(".kfs-days-menu").count() == 0 and pg.locator(".kfs-lotus").count() == 0 and pg.evaluate(CARD_ON_TOP) and not asked,
