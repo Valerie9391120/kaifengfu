@@ -15,6 +15,14 @@ fs.mkdirSync(`${OUT}/assets`, { recursive: true });
 const hash = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 10);
 
 const define = { "process.env.NODE_ENV": '"production"' };
+
+// 并蒂莲那一页（长按侧栏的日期卡片进去，见开发说明“并蒂莲”那节）：一整个 HTML，九百多 KB，名字带指纹。
+// 开封府开门不碰它，点进去的时候才用框装进来；地址写进包里（LotusPage.jsx 的 LOTUS_URL）
+const lotus = fs.readFileSync("static/lotus.html");
+const lotusName = `lotus-${hash(lotus)}.html`;
+fs.writeFileSync(`${OUT}/assets/${lotusName}`, lotus);
+define.__KFS_LOTUS__ = JSON.stringify(`./assets/${lotusName}`);
+
 if (TEST_URL) {
   define.__KFS_SUPABASE_URL__ = JSON.stringify(TEST_URL);
   define.__KFS_SUPABASE_KEY__ = JSON.stringify("sb_publishable_test");
@@ -146,4 +154,5 @@ console.log(`打包完成 → ${OUT}/`);
 console.log(`  ${jsName}  ${size(`${OUT}/assets/${jsName}`)}`);
 console.log(`  ${cssName}  ${size(`${OUT}/assets/${cssName}`)}`);
 console.log(`  sw.js  ${size(`${OUT}/sw.js`)}`);
+console.log(`  ${lotusName}  ${size(`${OUT}/assets/${lotusName}`)}`);
 console.log(`  连接：${SUPABASE_URL}`);

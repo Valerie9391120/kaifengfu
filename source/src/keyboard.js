@@ -11,11 +11,25 @@
 
 const FIT = ".kfs-composer, .kfs-sheet, [data-kfs-kbfit]";
 
+const isTextField = (a) =>
+  !!a && (a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && !/^(checkbox|radio|file|button|submit|range|color)$/i.test(a.type || "")));
+
+// 焦点到底落在谁身上：落在一个框里（并蒂莲那一页）的时候，开封府这头的 activeElement 是那个框，
+// 要再往框里看一层（同一个网址下的框才看得进去，看不进去的回 null）。gap.js 也用它
+export function focusInside(a) {
+  if (!a || a.tagName !== "IFRAME") return a || null;
+  try {
+    return (a.contentDocument && a.contentDocument.activeElement) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function typingHere() {
   const a = document.activeElement;
   if (!a || !a.closest || !a.closest(FIT)) return false;
-  if (a.tagName === "TEXTAREA") return true;
-  return a.tagName === "INPUT" && !/^(checkbox|radio|file|button|submit|range|color)$/i.test(a.type || "");
+  // 框身上带 data-kfs-kbfit 的（并蒂莲那一页），看框里的焦点是不是落在输入框上（它底下那个起名框）
+  return isTextField(focusInside(a));
 }
 
 export function initKeyboardFit() {

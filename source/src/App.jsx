@@ -32,6 +32,8 @@ import { sameAv, buildMessages } from "./prompt/messages.js";
 import { buildRecapAsk, buildMergeAsk } from "./prompt/recap.js";
 import { DaysCard, Tile, HistoryCard } from "./side/Cards.jsx";
 import { ChatMenu } from "./side/ChatMenu.jsx";
+import { DaysMenu } from "./side/DaysMenu.jsx";
+import { LotusPage } from "./panels/LotusPage.jsx";
 import { buildRows } from "./chat/rows.js";
 import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/overview.js";
 import { BubbleRow } from "./chat/Bubble.jsx";
@@ -268,6 +270,8 @@ export default function App({ account = {} }) {
   const [copySheet, setCopySheet] = useState("");
   const [fillOn, setFillOn] = useState(() => gapInfo().fill);
   const [chatMenu, setChatMenu] = useState(null); // 长按一段对话弹出来的小菜单
+  const [daysMenu, setDaysMenu] = useState(null); // 长按日期卡片弹出来的小菜单（“去看并蒂莲”），记着卡片在哪儿
+  const [lotusOpen, setLotusOpen] = useState(false); // 并蒂莲那一层开着
   const [renaming, setRenaming] = useState(null); // 正在改名的那段对话
   const [usage, setUsage] = useState(null);
   const [monthUsage, setMonthUsage] = useState(null);
@@ -2897,7 +2901,7 @@ export default function App({ account = {} }) {
   // 只认一根手指。落下了第二根，这一回就不算划侧栏了（拖到一半的弹回去），等手指全抬起来再从头认：
   // 整页不许捏以后，两根手指往里一捏，头一根正好是往右走的，原来会被当成右划、把侧栏带出来
   const onTouchStart = (e) => {
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView || recapView) return;
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView || recapView || daysMenu || lotusOpen) return;
     if (e.touches.length > 1) {
       touch.current = null;
       setDragX(null);
@@ -2909,8 +2913,8 @@ export default function App({ account = {} }) {
   const onTouchMove = (e) => {
     const s = touch.current;
     if (!s) return;
-    // 手指还按着的工夫里冒出了菜单、面板（长按气泡就是）：底下的侧栏不跟着这根手指走，这一回也不算了
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView || recapView) {
+    // 手指还按着的工夫里冒出了菜单、面板（长按气泡、长按日期卡片就是）：底下的侧栏不跟着这根手指走，这一回也不算了
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView || recapView || daysMenu || lotusOpen) {
       touch.current = null;
       setDragX(null);
       return;
@@ -3009,7 +3013,9 @@ export default function App({ account = {} }) {
   const activeModel = settings.model || DEFAULT_MODEL;
 
   // 对话页（或侧栏）在最上面时，底边自己接得上那条色块，告诉 main.jsx 别再盖淡出
-  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming && !docView && !recapView;
+  // 并蒂莲那一层不算在里头：那层淡出（main.jsx 的 BottomMist）在外壳外头、层高 60，会盖到并蒂莲上面；
+  // 那一层开着的时候网页底色是黑的，本来也不该淡进浅色（见 panels/LotusPage.jsx）
+  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming && !docView && !recapView && !daysMenu;
   useEffect(() => {
     const r = document.documentElement;
     if (chatOnTop) r.setAttribute("data-kfs-chat", "");
@@ -3282,7 +3288,8 @@ export default function App({ account = {} }) {
         </div>
         {/* 上面这一段（日期、四个方块）放不下的时候自己滚；里面的东西都不许被压（flex-shrink-0） */}
         <div className="kfs-side-scroll flex-1 overflow-y-auto kfs-scroll flex flex-col" style={{ padding: "4px 16px 12px", gap: 12, minHeight: 0 }}>
-          <DaysCard now={now} />
+          {/* 长按它冒出“去看并蒂莲”那张小菜单（卿卿 10 月 12 日定的），光点不算 */}
+          <DaysCard now={now} onLongPress={(rect) => setDaysMenu({ rect })} />
           <div className="grid grid-cols-2 flex-shrink-0" style={{ gap: 12 }}>
             {/* 头一个方块上写“万岁殿”（卿卿 10 月 10 日改的，原来写“记忆库”）。换了两处：方块上这三个字、点开以后面板顶上的标题。
                 空对话里“记忆库还是空的”那一句、寄给那边的【记忆库】（prompt/system.js）没动，还叫记忆库 */}
@@ -3848,6 +3855,20 @@ export default function App({ account = {} }) {
           }}
         />
       )}
+
+      {daysMenu && (
+        <DaysMenu
+          rect={daysMenu.rect}
+          onClose={() => setDaysMenu(null)}
+          onLotus={() => {
+            setDaysMenu(null);
+            setLotusOpen(true);
+          }}
+        />
+      )}
+
+      {/* 并蒂莲：盖在最上面（比照片、提示那几层还高），叉一点就整层拆掉，回到侧栏 */}
+      {lotusOpen && <LotusPage theme={theme} onClose={() => setLotusOpen(false)} />}
 
       {chatMenu && (
         <ChatMenu
