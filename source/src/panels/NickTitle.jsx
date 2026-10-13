@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { HER_NAME } from "../names.js";
-import { T } from "../ui/style.js";
+import { T, fill, line } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { SHEET_TITLE } from "../ui/parts.jsx";
 
@@ -83,8 +83,8 @@ export function NickTitle({ name, onSave }) {
           height: 32,
           padding: "0 12px",
           borderRadius: 12,
-          backgroundColor: "rgba(255,255,255,0.6)",
-          border: "1px solid rgba(255,255,255,0.85)",
+          backgroundColor: fill(0.6),
+          border: `1px solid ${line(0.85)}`,
           outline: "none",
           userSelect: "text",
           WebkitUserSelect: "text",
@@ -95,7 +95,7 @@ export function NickTitle({ name, onSave }) {
         onMouseDown={(e) => e.preventDefault()}
         aria-label="保存昵称"
         className="kfs-tap flex-shrink-0 flex items-center justify-center"
-        style={{ width: 32, height: 32, borderRadius: 999, color: "#fff", background: T.daiGrad }}
+        style={{ width: 32, height: 32, borderRadius: 999, color: T.onDai, background: T.daiGrad }}
       >
         <Icon name="check" size={16} sw={2.2} />
       </button>

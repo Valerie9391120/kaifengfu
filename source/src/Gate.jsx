@@ -12,12 +12,13 @@ import { deriveVault, newSalt, seal, unseal, toB64, fromB64, KDF_ITER, CHECK_TEX
 import { createEngine } from "./engine.js";
 import { attachEngine } from "./store.js";
 import { THEMES, useTheme } from "./theme.js";
+import { T, fill, line } from "./ui/style.js";
 
 const PAPER = "rgb(var(--k-paper))";
 const INK = "rgb(var(--k-ink))";
 const INK_SOFT = "rgba(var(--k-soft),0.76)";
 const DAI_GRAD = "linear-gradient(140deg,rgb(var(--k-dai-a)) 0%,rgb(var(--k-dai-b)) 100%)";
-const RED = "#A8473D";
+const RED = T.red;
 const SERIF = "'Songti SC','STSong','Noto Serif SC','Source Han Serif SC',serif";
 const SANS = "-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Noto Sans SC',sans-serif";
 
@@ -26,11 +27,11 @@ const card = {
   maxWidth: 360,
   padding: "28px 24px 24px",
   borderRadius: 30,
-  backgroundColor: "rgba(255,255,255,0.5)",
+  backgroundColor: fill(0.5),
   backdropFilter: "blur(26px) saturate(160%)",
   WebkitBackdropFilter: "blur(26px) saturate(160%)",
-  border: "1px solid rgba(255,255,255,0.75)",
-  boxShadow: "0 18px 50px rgba(var(--k-shade),0.16), inset 0 1px 0 rgba(255,255,255,0.8)",
+  border: `1px solid ${line(0.75)}`,
+  boxShadow: `0 18px 50px rgba(var(--k-shade),0.16), inset 0 1px 0 ${line(0.8)}`,
 };
 const input = {
   width: "100%",
@@ -38,8 +39,8 @@ const input = {
   padding: "12px 14px",
   fontSize: 16,
   color: INK,
-  backgroundColor: "rgba(255,255,255,0.62)",
-  border: "1px solid rgba(255,255,255,0.85)",
+  backgroundColor: fill(0.62),
+  border: `1px solid ${line(0.85)}`,
   outline: "none",
   marginTop: 6,
 };
@@ -52,7 +53,7 @@ const primary = {
   fontSize: 15.5,
   letterSpacing: "0.2em",
   paddingLeft: "0.2em",
-  color: "#fff",
+  color: T.onDai,
   background: DAI_GRAD,
   boxShadow: "0 8px 20px rgba(var(--k-dai-shade),0.32)",
 };

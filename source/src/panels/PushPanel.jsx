@@ -15,7 +15,7 @@ function PushStep({ done, title, children }) {
     <div className="kfs-push-step flex" data-done={done ? "yes" : "no"} style={{ gap: 9, padding: "5px 0" }}>
       <span
         className="flex-shrink-0 flex items-center justify-center"
-        style={{ width: 18, height: 18, marginTop: 2, borderRadius: "50%", color: "#fff", background: done ? T.daiGrad : "transparent", border: done ? "none" : "1.5px solid rgba(var(--k-soft),0.4)" }}
+        style={{ width: 18, height: 18, marginTop: 2, borderRadius: "50%", color: T.onDai, background: done ? T.daiGrad : "transparent", border: done ? "none" : "1.5px solid rgba(var(--k-soft),0.4)" }}
       >
         {done && <Icon name="check" size={11} sw={2.6} />}
       </span>
@@ -323,7 +323,7 @@ export function PushPanel({ email, onCopy, back, mailStatus, onReplyReady, voice
         </div>
       )}
       {shown && (
-        <div className="kfs-push-note" data-ok={shown.ok ? "yes" : "no"} style={{ fontSize: 12.5, lineHeight: 1.6, marginTop: 8, color: shown.ok ? T.ink : "#A8473D" }}>
+        <div className="kfs-push-note" data-ok={shown.ok ? "yes" : "no"} style={{ fontSize: 12.5, lineHeight: 1.6, marginTop: 8, color: shown.ok ? T.ink : T.red }}>
           {shown.when ? `上一回（${timeAgo(shown.when)}）：` : ""}
           {shown.say}
         </div>

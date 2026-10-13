@@ -5,3 +5,4 @@ source/dist-test/
 source/.cache/
 source/tests/shots/
 __pycache__/
+source/tests/look/

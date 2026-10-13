@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { shortDate } from "../days.js";
-import { SERIF, T, glass } from "../ui/style.js";
+import { SERIF, T, glass, fill } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { useLongPress } from "../ui/press.js";
 import { Glows, IconBtn } from "../ui/parts.jsx";
@@ -32,7 +32,7 @@ function HistoryItem({ c, currentId, now, editing, onOpen, onDelete, onLongPress
           onClick={() => onDelete(c.id)}
           aria-label="删除这段对话"
           className="kfs-tap flex items-center justify-center flex-shrink-0"
-          style={{ width: 36, height: 36, borderRadius: 999, color: "#B4544A", background: "rgba(255,255,255,0.6)" }}
+          style={{ width: 36, height: 36, borderRadius: 999, color: T.red2, background: fill(0.6) }}
         >
           <Icon name="trash" size={18} />
         </button>

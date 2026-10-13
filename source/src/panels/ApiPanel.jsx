@@ -29,7 +29,7 @@ function Pick({ options, value, onPick, label }) {
             padding: "8px 0",
             borderRadius: 999,
             fontSize: 13.5,
-            color: value === o.v ? "#fff" : T.inkSoft,
+            color: value === o.v ? T.onDai : T.inkSoft,
             background: value === o.v ? T.daiGrad : "transparent",
             transition: "background .2s ease",
           }}
@@ -103,7 +103,7 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
         <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>
           开着的时候，他想说的话可以发成一条语音，用 ElevenLabs 里他的声音念。念一条扣一回 ElevenLabs 的额度；你不在开封府的时候不念，回来点开才念。
         </p>
-        <p className="kfs-voice-check" data-state={voiceCheck ? voiceCheck.state : "checking"} style={{ fontSize: 11.5, color: voiceCheck && voiceCheck.state !== "ok" ? "#A8473D" : T.inkSoft, marginTop: 6, lineHeight: 1.6 }}>
+        <p className="kfs-voice-check" data-state={voiceCheck ? voiceCheck.state : "checking"} style={{ fontSize: 11.5, color: voiceCheck && voiceCheck.state !== "ok" ? T.red : T.inkSoft, marginTop: 6, lineHeight: 1.6 }}>
           {voiceLine(voiceCheck)}
         </p>
       </div>
@@ -132,7 +132,7 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
         {recapUsage && row("上一回抄提要", `约 ${money(recapUsage.cost)}，${modelLabel(recapUsage.model)}`)}
       </div>
       {noCache && (
-        <p className="kfs-no-cache" style={{ fontSize: 11.5, color: "#A8473D", marginTop: 6, lineHeight: 1.6 }}>
+        <p className="kfs-no-cache" style={{ fontSize: 11.5, color: T.red, marginTop: 6, lineHeight: 1.6 }}>
           上一条没走缓存，是按原价算的。偶尔一回不要紧；回回都这样的话，截个图给我。
         </p>
       )}

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { dayNumber, nextAnniv, dateLabel } from "../days.js";
-import { SERIF, T, glass } from "../ui/style.js";
+import { SERIF, T, glass, fill, line } from "../ui/style.js";
 import { Icon, artSize } from "../ui/Icon.jsx";
 import { useLongPress } from "../ui/press.js";
 
@@ -47,7 +47,7 @@ export function DaysCard({ now, armed, onArm, onDisarm, onLotus }) {
           height: 160,
           borderRadius: "50%",
           background:
-            "radial-gradient(circle, rgba(255,238,200,0.95) 0%, rgba(255,238,200,0) 68%)",
+            "radial-gradient(circle, rgba(var(--k-card-glow),0.95) 0%, rgba(var(--k-card-glow),0) 68%)",
         }}
       />
       <div className="relative" style={{ fontSize: 13, color: T.inkSoft }}>
@@ -108,7 +108,7 @@ export function Tile({ icon, label, sub, onClick }) {
           width: 38,
           height: 38,
           borderRadius: 14,
-          background: "rgba(255,255,255,0.7)",
+          background: fill(0.7),
           color: T.dai,
         }}
       >
@@ -133,7 +133,7 @@ function RecentItem({ c, currentId, onOpen, onLongPress }) {
       {...lp}
       onClick={() => onOpen(c.id)}
       className="w-full text-left block"
-      style={{ padding: "9px 0", borderTop: "1px solid rgba(255,255,255,0.65)", WebkitTouchCallout: "none" }}
+      style={{ padding: "9px 0", borderTop: `1px solid ${line(0.65)}`, WebkitTouchCallout: "none" }}
     >
       <span className="block truncate" style={{ fontSize: 14, color: c.id === currentId ? T.dai : T.ink }}>
         {c.title}
