@@ -3060,6 +3060,7 @@ export default function App({ account = {} }) {
             {[
               ["qinglv", "linear-gradient(140deg,#BCD4CA,#7FA39A)"],
               ["dingxiang", "linear-gradient(140deg,#DCCFF0,#A58BC9)"],
+              ["heiye", "linear-gradient(140deg,#8FABDC,#0E1A36)"],
             ].map(([k, g]) => (
               <button
                 key={k}
@@ -3074,7 +3075,15 @@ export default function App({ account = {} }) {
               </button>
             ))}
           </div>
-          {theme !== entranceTheme() && (
+          {/* 黑夜还没有自己的入口和图标（theme.js 里 entrance 是空的）：只说一句图标不变，不给网址 */}
+          {theme !== entranceTheme() && !THEMES[theme].entrance && (
+            <div style={{ ...glass(0.5, 16), borderRadius: 16, padding: "12px 14px", marginBottom: 22 }}>
+              <p className="kfs-theme-noentry" style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.65 }}>
+                {THEMES[theme].label}还没有自己的主屏幕图标，图标还是{THEMES[entranceTheme()].icon}。换过来就记在这台手机上了，下回打开还是{THEMES[theme].label}。
+              </p>
+            </div>
+          )}
+          {theme !== entranceTheme() && THEMES[theme].entrance && (
             <div style={{ ...glass(0.5, 16), borderRadius: 16, padding: "12px 14px", marginBottom: 22 }}>
               <p style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.65, marginBottom: 10 }}>
                 主屏幕上的图标还是{THEMES[entranceTheme()].icon}，它不会自己变。想换成{THEMES[theme].icon}：先看下面写着“都已同步”，删掉旧图标，用 Safari 打开{THEMES[theme].label}的入口重新添加，再登录、对暗号。

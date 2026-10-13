@@ -49,7 +49,7 @@ const css = fs.readFileSync(`${OUT}/assets/_app.css`);
 const cssName = `app-${hash(css)}.css`;
 fs.renameSync(`${OUT}/assets/_app.css`, `${OUT}/assets/${cssName}`);
 
-const IMAGES = ["splash.webp", "kite.webp", "wall.webp", "splash-dingxiang.webp", "dx-heart.webp", "dx-blush.webp", "wall-dingxiang.webp"];
+const IMAGES = ["splash.webp", "kite.webp", "wall.webp", "splash-dingxiang.webp", "dx-heart.webp", "dx-blush.webp", "wall-dingxiang.webp", "wall-heiye.webp"];
 for (const f of IMAGES) fs.copyFileSync(`static/${f}`, `${OUT}/assets/${f}`);
 
 // 两个入口：从哪个入口“添加到主屏幕”，图标就是哪个，头一回进去就是哪个主题（见 src/theme.js）。
