@@ -169,8 +169,10 @@ def tour(browser, theme):
     time.sleep(0.5)
 
     bubble = page.locator("div.whitespace-pre-wrap.break-words", has_text=re.compile("^上回也是五分钟。$")).first
-    long_press(page, bubble)
-    shot("11_msgmenu", 0.6)
+    # 气泡的长按是它自己掐的表（Bubble.jsx 的 startPress），钉了时间以后用手指按不出来；右键也算长按（onContextMenu）
+    bubble.click(button="right")
+    page.locator(".absolute.inset-0.z-50 button").first.wait_for(state="attached", timeout=5000)
+    shot("11_msgmenu", 0.8)
     page.mouse.click(196, 140)
     time.sleep(0.6)
 

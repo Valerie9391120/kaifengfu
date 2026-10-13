@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /* 跟主题走的颜色，写成“红,绿,蓝”三个数，用的时候 rgb(var(--k-ink))、rgba(var(--k-soft),0.5)。
-   默认是青绿；丁香在 <html data-kfs-theme="dingxiang"> 时换一套（见 src/theme.js）。
+   默认是青绿；丁香在 <html data-kfs-theme="dingxiang"> 时换一套，黑夜在 data-kfs-theme="heiye" 时换一套（见 src/theme.js）。
    --k-base 是聊天背景最底边的颜色，也是网页底色；
    --k-motto 是空对话里那句题字的颜色：青绿的背景里它压在一方深青上，要用实墨；丁香的背景中间是浅的，用轻一档的紫 */
 :root {
