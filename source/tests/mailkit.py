@@ -172,6 +172,13 @@ def back_to_last(page):
     page.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
     page.locator(".kfs-history button").nth(1).click()   # 头一个是“历史对话”那个标题，后面才是一段一段的对话
     time.sleep(0.8)
+# 重新回答他最后那条回话：右键他最后一个气泡叫出长按的菜单（右键也出这个菜单，比长按快），点菜单里的“重新回答”。
+# 10 月 13 日夜里起他回话底下那颗“重新回答”拿掉了（她老误触），只剩菜单里这一个。
+# 原来那一颗要等他回完、话全蹦完才摆出来，所以先等顶上的“正在输入…”（念语音时是“正在录音…”）收了，和原来点它一样
+def retry_last(page, timeout=30000):
+    wait_js(page, "!document.querySelector('.kfs-typing')", timeout)
+    page.locator(".kfs-chat-rows [data-kfs-bubble='him']").last.click(button="right")
+    page.locator(".z-50 button", has_text="重新回答").first.click()
 # 长按一个气泡（手指按住不放）
 def long_press(page, locator, hold=0.7):
     b = locator.bounding_box()

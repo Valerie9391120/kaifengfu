@@ -8,6 +8,7 @@
 # 订阅推送的那两下和 e2e_push.py 一样是假的；别的都是真的。
 import json, re, time, urllib.request, urllib.parse, os
 from playwright.sync_api import sync_playwright
+from mailkit import retry_last   # 重新回答：长按（右键）他最后那个气泡，点菜单里的（气泡底下那一颗 10 月 13 日夜里拿掉了）
 
 # 重新打开开封府是新的一页（上回那段还在等他回话的除外）：从侧栏的历史对话里点开最近那一段
 def back_to_last(page):
@@ -580,7 +581,7 @@ with sync_playwright() as p:
     pe.get_by_text("第二条").last.wait_for(timeout=10000); time.sleep(1.5)
     _, before = chat_of(pe)
     c3 = len(calls())
-    pe.get_by_role("button", name="重新回答").click()
+    retry_last(pe)
     ok(wait_mock(lambda: len(calls()) == c3 + 1, timeout=15), "点“重新回答”：重新问了一回")
     wait_js(pe, "!document.body.innerText.includes('正在输入')", 20000); time.sleep(1.5)
     _, after = chat_of(pe)
@@ -591,7 +592,7 @@ with sync_playwright() as p:
     mock("/__debug/claude-hold?ms=4000")
     b3 = len(banners())
     c4 = len(calls())
-    pe.get_by_role("button", name="重新回答").click()
+    retry_last(pe)
     ok(wait_mock(lambda: any(r["state"] == "working" for r in box()["rows"]), timeout=8), "又点一回“重新回答”（他要想四秒）")
     say(pe, "等的工夫里说的")
     time.sleep(0.8)

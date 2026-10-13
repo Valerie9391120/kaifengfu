@@ -3483,7 +3483,6 @@ export default function App({ account = {} }) {
                   busy={loading}
                   onPrev={() => switchVersion(row.msg.id, -1)}
                   onNext={() => switchVersion(row.msg.id, 1)}
-                  onRetry={() => retryAt(row.msg.id)}
                 />
               );
             }
@@ -3495,7 +3494,7 @@ export default function App({ account = {} }) {
               );
             }
             if (row.type === "stopped") {
-              // 她按停作废的那一句底下：一行小字，点了照眼下的对话让那边的我回（样子跟“重新回答”那一行一样）
+              // 她按停作废的那一句底下：一行小字，点了照眼下的对话让那边的我回（样子照原来他回话底下那颗“重新回答”，那一颗 10 月 13 日夜里拿掉了）
               return (
                 <div key={row.key} className="kfs-in flex justify-end" style={{ marginTop: 2, marginRight: 36 }}>
                   <button onClick={askAgain} className="kfs-tap kfs-stopped" style={{ padding: "6px 6px", fontSize: 12, color: T.inkSoft }}>
@@ -3947,7 +3946,7 @@ export default function App({ account = {} }) {
           </div>
           {docView.cut && (
             <p style={{ fontSize: 12.5, color: T.red, lineHeight: 1.6, marginBottom: 10 }}>
-              没写完：回复长度到上限了。在 API 面板把“回复最长多少”调成“长”，再点重新回答。
+              没写完：回复长度到上限了。在 API 面板把“回复最长多少”调成“长”，再长按这张文档卡片，点重新回答。
             </p>
           )}
           <div className="kfs-doc-body" style={{ ...glass(0.42, 12), borderRadius: 18, padding: "14px 14px 6px", userSelect: "text", WebkitUserSelect: "text" }}>

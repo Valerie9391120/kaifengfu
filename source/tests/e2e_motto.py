@@ -207,7 +207,7 @@ with sync_playwright() as p:
     back_to_last(pa)
     mock("/__debug/claude-hold?ms=6000")
     before_jobs = {j["job"] for j in jobs(pa)}
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     ok(wait_mock(lambda: any(r["state"] == "working" for r in box()["rows"]), 10), "又一回：点了重新回答（他要想六秒），开封府被收掉")
     fork = [j for j in jobs(pa) if j["job"] not in before_jobs]
     pa.close()

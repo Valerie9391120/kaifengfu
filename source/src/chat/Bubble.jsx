@@ -275,6 +275,8 @@ export function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, voices 
       </div>
       <div
         className={animate ? "kfs-in" : ""}
+        // 给测试认气泡是谁的（tests/mailkit.py 的 retry_last：长按他最后那个气泡点“重新回答”）
+        data-kfs-bubble={row.role}
         onTouchStart={startPress}
         onTouchMove={movePress}
         onTouchEnd={endPress}

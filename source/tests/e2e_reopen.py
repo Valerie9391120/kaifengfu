@@ -168,7 +168,7 @@ def regen_failed(browser):
     first_time(pa); chat(pa, "第一句")
     c0, d0 = len(calls()), deletes()
     st["down"] = True
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     noted = wait_js(pa, "document.body.innerText.includes('重新回答没成功')", 15000)
     rec = recorded(pa)
     pa.wait_for_timeout(11000)
@@ -185,7 +185,7 @@ def regen_failed(browser):
     pb = reopen(A, "regen_failed2")
     ok(fresh(pb) and recorded(pb) == [(True, True)], "划掉重新打开：新的一页")
     back_to_last(pb)
-    pb.get_by_role("button", name="重新回答").last.click()
+    retry_last(pb)
     again = wait_js(pb, "document.body.innerText.includes('2/2')", 25000)
     pb.wait_for_timeout(1500)
     ok(again and len(calls()) - c0 == 1 and jobs(pb) == [], "回到那段再点重新回答：照常回出第二个版本（只问了一回），回完那两回都不再记着")
@@ -201,7 +201,7 @@ def regen_moved_on(browser):
     first_time(pa); chat(pa, "第一句")
     c0 = len(calls())
     st["down"] = True
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     noted = wait_js(pa, "document.body.innerText.includes('重新回答没成功')", 15000)
     pa.wait_for_timeout(40000)                 # 四秒以后看一遍，再隔两秒、四秒、八秒、十六秒各一遍：都没看成，到这儿不再自己看了
     tried = seen["lists"]
@@ -239,7 +239,7 @@ def regen_killed(browser):
     first_time(pa); chat(pa, "第一句")
     c0, o0 = len(calls()), box()["ops"].count("reply")
     st["stuck"] = True
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     t0 = time.time()
     end = time.time() + 5
     while time.time() < end and not held: pa.wait_for_timeout(100)
@@ -276,7 +276,7 @@ def regen_alive(browser):
     first_time(pa); chat(pa, "第一句")
     c0 = len(calls())
     mock("/__debug/claude-hold?ms=24000")
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     t0 = time.time()
     sent = wait_mock(working, 10)
     rec = recorded(pa)
@@ -321,7 +321,7 @@ def came_back(browser):
     first_time(pa); chat(pa, "第一句")
     c0 = len(calls())
     st["stuck"] = True
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     end = time.time() + 5
     while time.time() < end and not held: pa.wait_for_timeout(100)
     rec = recorded(pa)
@@ -358,7 +358,7 @@ def elsewhere(browser):
     c0 = len(calls())
     jia = last_chat(pa)
     st["down"] = True
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     failed = wait_js(pa, "document.body.innerText.includes('重新回答没成功')", 15000)
     pa.get_by_label("新对话").click(); pa.wait_for_timeout(600)
     say(pa, "乙一")

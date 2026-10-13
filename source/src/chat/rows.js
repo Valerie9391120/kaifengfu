@@ -5,13 +5,6 @@ import { HIS_NAME } from "../names.js";
 export function buildRows(messages, reveal, stoppedId = "", recap = null) {
   const rows = [];
   let prevTs = null;
-  let lastHimId = null;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "him") {
-      lastHimId = messages[i].id;
-      break;
-    }
-  }
   messages.forEach((m) => {
     if (prevTs === null || m.ts - prevTs > 15 * 60 * 1000) {
       rows.push({ type: "sep", key: "sep-" + m.id, ts: m.ts });
@@ -84,9 +77,10 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null) {
           text: m.rename === HIS_NAME ? "光义把名字改回来了" : "光义改了名字",
         });
       }
-      const latest = m.id === lastHimId;
-      if (!revealing && (latest || (m.alts && m.alts.length > 1))) {
-        rows.push({ type: "ctrl", key: "ct-" + m.id, msg: m, role: "him", latest });
+      // 翻版本的那一小行：有好几个版本才摆。原来他最后那条底下总跟着一颗“重新回答”，
+      // 卿卿 10 月 13 日夜里说老误触，拿掉了，重新回答只在长按菜单里（见 Lines.jsx 的 CtrlRow）
+      if (!revealing && m.alts && m.alts.length > 1) {
+        rows.push({ type: "ctrl", key: "ct-" + m.id, msg: m, role: "him" });
       }
     }
     if (recap && recap.upto === m.id) rows.push({ type: "recap", key: "rc-" + m.id, msg: m, recap });
