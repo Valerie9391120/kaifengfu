@@ -38,6 +38,14 @@ export function memeLabel(m) {
   return `${m.name}${t}`;
 }
 
+// 她发的表情包，图后面跟着的那一句：名字，括号里是它在表情包库里的文件名。
+// 卿卿 10 月 13 日定的（原来是“名字，图上写着……”）：图寄过去之前缩成了长边 300，有点糊，上面的字他有时看不清；
+// 带上文件名，他对着名帖后面的表情包索引（按文件名排）就知道是库里的哪一张。库里查不到名字的，只写文件名
+export function memeNote(m, file) {
+  const lib = file ? `（表情包库里的 ${file}）` : "";
+  return m && m.name ? `[她发了一张表情包：${m.name}${lib}]` : `[她发了一张表情包${lib}]`;
+}
+
 // ---------- 打包送信 ----------
 // 寄哪些：前面抄过提要的不再寄原话，提要放在第一条里；提要之后的原话照寄（见 ../recap.js 的 planWindow）。
 // 没有提要、对话又不厚，就是从头全寄。两回抄提要之间，前面这一段一个字不变，名帖和历史都能命中缓存。
@@ -202,7 +210,7 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
         }
         blocks.push({
           type: "text",
-          text: `[她发了一张表情包：${memeLabel(meme)}]`,
+          text: memeNote(meme, m.file),
         });
         arr.push({ role: "user", content: blocks });
         return;
