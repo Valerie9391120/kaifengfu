@@ -2,41 +2,30 @@ import { SERIF, T, BUBBLE_GLASS, fill, flat } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { Avatar } from "../ui/Avatar.jsx";
 
-export function CtrlRow({ row, busy, onPrev, onNext, onRetry }) {
+// 翻版本的那一小行（‹ 2/3 ›）：重新回答过、改过的那一条底下才有。
+// 原来他最后那条回话底下还跟着一颗“重新回答”，卿卿 10 月 13 日夜里说老误触，拿掉了；
+// 重新回答只在长按气泡的菜单里（MsgMenu.jsx）。见开发说明“气泡底下的重新回答拿掉”那节
+export function CtrlRow({ row, busy, onPrev, onNext }) {
   const her = row.role === "her";
   const m = row.msg;
   const n = m.alts ? m.alts.length : 1;
   const cur = m.alts ? m.altIdx + 1 : 1;
   const btn = (enabled) => ({ padding: "4px 6px", opacity: enabled && !busy ? 1 : 0.35, display: "inline-flex" });
+  if (n < 2) return null;
   return (
     <div
       className={`flex items-center ${her ? "justify-end" : ""}`}
       style={{ gap: 2, marginTop: 4, marginLeft: her ? 0 : 38, marginRight: her ? 38 : 0, color: T.inkSoft, fontSize: 12 }}
     >
-      {n > 1 && (
-        <>
-          <button onClick={onPrev} disabled={busy || cur <= 1} aria-label="上一个版本" style={btn(cur > 1)}>
-            <Icon name="chevL" size={14} />
-          </button>
-          <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 26, textAlign: "center" }}>
-            {cur}/{n}
-          </span>
-          <button onClick={onNext} disabled={busy || cur >= n} aria-label="下一个版本" style={btn(cur < n)}>
-            <Icon name="chevR" size={14} />
-          </button>
-        </>
-      )}
-      {!her && row.latest && (
-        <button
-          onClick={onRetry}
-          disabled={busy}
-          className="kfs-tap flex items-center"
-          style={{ gap: 4, padding: "4px 8px", borderRadius: 999, opacity: busy ? 0.35 : 1 }}
-        >
-          <Icon name="retry" size={14} />
-          <span>重新回答</span>
-        </button>
-      )}
+      <button onClick={onPrev} disabled={busy || cur <= 1} aria-label="上一个版本" style={btn(cur > 1)}>
+        <Icon name="chevL" size={14} />
+      </button>
+      <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 26, textAlign: "center" }}>
+        {cur}/{n}
+      </span>
+      <button onClick={onNext} disabled={busy || cur >= n} aria-label="下一个版本" style={btn(cur < n)}>
+        <Icon name="chevR" size={14} />
+      </button>
     </div>
   );
 }

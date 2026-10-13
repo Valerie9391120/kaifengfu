@@ -146,7 +146,7 @@ def regen(browser):
     mock("/__debug/claude-hold?ms=1500")
     mock("/__debug/mail-setup?drop=1")       # 小后端照常办完，回话却没送回网页
     state["asleep"] = True
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     note = pa.get_by_text(re.compile("重新回答没成功"))
     note.first.wait_for(timeout=15000)
     state["asleep"] = False                  # 网络好了
@@ -183,7 +183,7 @@ def typed(browser):
     _, before = chat_of(pa)
     mock("/__debug/claude-fail?kind=broken")
     mock("/__debug/claude-hold?ms=3000")
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     ok(wait_mock(working, 8), "重新回答没成、她新说了一句·准备：他在重新回答")
     say(pa, "新说的一句")
     pa.get_by_text(re.compile("重新回答没成功")).first.wait_for(timeout=20000)
@@ -288,7 +288,7 @@ def edit(browser):
     pa.locator("button", has_text="编辑").first.click(); time.sleep(0.5)
     c0 = len(calls())
     mock("/__debug/claude-hold?ms=4000")
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     ok(wait_mock(working, 8), "改到一半点重新回答·准备：他在重新回答")
     ta = pa.locator("textarea").first
     ta.fill("甲一改过了"); ta.press("Enter"); time.sleep(0.5)
@@ -345,7 +345,7 @@ def pair(browser):
     c0 = len(calls())
     state["hang"] = True
     mock("/__debug/claude-hold?ms=2500")
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     pa.evaluate("window.__away(true)")
     ok(pump(working, 10), "两台设备·重新回答·准备：手机点了重新回答就放下")
     pa.wait_for_timeout(1500)
@@ -489,7 +489,7 @@ def refail(browser):
     _, before = chat_of(pa)
     mock("/__debug/claude-fail?kind=broken")
     mock("/__debug/claude-hold?ms=3000")
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     ok(wait_mock(working, 8), "重新回答没成·准备：点了重新回答、开封府被收掉")
     pa.close()
     ok(wait_mock(lambda: len(banners()) == b0 + 1, GRACE + 12) and "没送到" in banners()[-1]["json"]["notification"]["body"], "重新回答没成、她不在：横幅照实说没送到")
@@ -545,7 +545,7 @@ def leftover(browser):
     pa.evaluate("window.__away(false)")      # 她回来，那一眼信箱没看成
     pa.wait_for_timeout(900)
     mock("/__debug/claude-hold?ms=4500")
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     ready = wait_mock(working, 8)
     st["asleep"] = False                     # 网好了，又看了一遍信箱（旧回答那一封还在里面）
     pa.evaluate("window.dispatchEvent(new Event('online'))")
@@ -585,7 +585,7 @@ def leftover2(browser):
     pa.wait_for_timeout(900)
     st["hang"] = True
     mock("/__debug/claude-hold?ms=1500")
-    pa.get_by_role("button", name="重新回答").last.click()
+    retry_last(pa)
     pa.wait_for_timeout(200)
     pa.evaluate("window.__away(true)")       # 放下手机：页面被挂起
     st["asleep"] = False

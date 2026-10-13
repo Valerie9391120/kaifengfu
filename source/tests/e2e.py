@@ -667,8 +667,16 @@ with sync_playwright() as p:
     half = pa.locator(".kfs-doc-card").last
     half_text = half.inner_text()
     half.click(); time.sleep(0.5)
-    ok("半截.md" in half_text and "没写完" in half_text and pa.get_by_text(re.compile("没写完：回复长度到上限了")).is_visible(), "文档块只有开头没有结尾：卡片上写“没写完”，点开告诉她怎么办")
+    ok("半截.md" in half_text and "没写完" in half_text and pa.get_by_text(re.compile("没写完：回复长度到上限了.*再长按这张文档卡片，点重新回答")).is_visible(), "文档块只有开头没有结尾：卡片上写“没写完”，点开告诉她怎么办（长按卡片点重新回答）")
     pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+    # 他回话底下没有“重新回答”那一颗了（她老误触，10 月 13 日夜里拿掉的）；长按他的回话，菜单里还有
+    under = pa.get_by_text("重新回答", exact=True).count()
+    half.click(button="right"); time.sleep(0.5)
+    in_menu = pa.locator(".z-50 button", has_text="重新回答").count()
+    opened = pa.locator(".kfs-doc-body").count()
+    pa.mouse.click(200, 60); time.sleep(0.4)
+    ok(under == 0 and in_menu == 1 and opened == 0 and pa.locator(".z-50 button", has_text="重新回答").count() == 0,
+       f"他回话底下没有“重新回答”那一颗了；长按他的回话，菜单里有（底下 {under} 个，菜单里 {in_menu} 个）")
     # 云端：文档的全文也是乱码；第二台设备同步以后看得到、点得开
     time.sleep(3)
     rows = mock("/__debug/rows")

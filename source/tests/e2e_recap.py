@@ -260,7 +260,7 @@ with sync_playwright() as p:
 
     # 重新回答：提要照用
     c0 = len(chat_calls())
-    pa.get_by_text("重新回答").last.click()
+    retry_last(pa)
     ok(wait_mock(lambda: len(chat_calls()) == c0 + 1, 20), "点重新回答：又问了一回")
     pa.wait_for_timeout(3500)
     body = chat_calls()[-1]["body"]

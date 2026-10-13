@@ -893,6 +893,12 @@ ok(rows.filter((r) => r.type === "recap").length === 1 && rows[rowAt].recap === 
   "那行小字摆在作数的那份提要抄到的那一条后面、下一条前面；上下两个气泡各自成段");
 ok(JSON.stringify(buildRows(rowsChat, null, "")) === JSON.stringify(buildRows(rowsChat, null, "", null)) && buildRows(rowsChat, null, "").every((r) => r.type !== "recap") && buildRows(rowsChat, null, "", normRecaps([R("不在这儿")])[0]).every((r) => r.type !== "recap"),
   "没有提要、提要抄到的那一条不在外面：没有那一行，别的行一个不差");
+// 翻版本的那一小行（‹ 2/2 ›）：有好几个版本的才摆。他最后那条回话底下原来总跟着一颗“重新回答”，她 10 月 13 日夜里说老误触，拿掉了
+const plainRows = buildRows(rowsChat, null, "");
+const twoVer = rowsChat.map((m, i) => (i === rowsChat.length - 1 ? { ...m, alts: [{ node: m, after: [] }, { node: m, after: [] }], altIdx: 1 } : m));
+const verRows = buildRows(twoVer, null, "");
+ok(plainRows.every((r) => r.type !== "ctrl") && verRows.filter((r) => r.type === "ctrl").length === 1 && verRows[verRows.length - 1].type === "ctrl" && verRows[verRows.length - 1].msg.id === rowsChat[rowsChat.length - 1].id,
+  "翻版本的那一小行：只有一个版本的回话底下什么都不摆（原来最后那条底下总有一颗“重新回答”，拿掉了）；有两个版本的才摆");
 
 // =====================================================
 // 叫他抄的那一回

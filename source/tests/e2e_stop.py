@@ -278,15 +278,15 @@ def reveal(browser):
     parts = [LONG("头一条"), LONG("第二条"), LONG("第三条"), LONG("第四条")]
     say(pa, "原样回：" + "\n[SPLIT]\n".join(parts))
     two = wait_js(pa, shown(parts[0]), 20000) and wait_js(pa, shown(parts[1]), 6000)
-    ctrl0 = pa.get_by_text("重新回答").count()
     click_stop(pa)
     pa.wait_for_timeout(300)
-    now = (key(pa), typing(pa), pa.get_by_text("重新回答").count())
+    # （原来还数他回话底下那颗“重新回答”出没出来；那一颗 10 月 13 日夜里拿掉了，“正在输入”收了、那个键变回声波就是蹦完了）
+    now = (key(pa), typing(pa))
     pa.wait_for_timeout(4500)                # 后两条本该在这工夫里蹦出来
     cid, msgs = chat_of(pa)
     m = msgs[-1]
-    ok(two and ctrl0 == 0 and now == ("发语音", False, 1) and pa.evaluate(shown(parts[1])) and not pa.evaluate(shown(parts[2])) and not pa.evaluate(shown(parts[3])) and notes(pa) == 0,
-       f"蹦到一半按停：蹦出来的两条留着，后两条不再出来；“正在输入”收了，底下出了“重新回答”（{now}）")
+    ok(two and now == ("发语音", False) and pa.evaluate(shown(parts[1])) and not pa.evaluate(shown(parts[2])) and not pa.evaluate(shown(parts[3])) and notes(pa) == 0,
+       f"蹦到一半按停：蹦出来的两条留着，后两条不再出来；“正在输入”收了，那个键变回声波（{now}）")
     ok(m["role"] == "him" and [it.get("text") for it in m["items"]] == parts[:2] and m.get("cut") is True and m["raw"] == parts[0] + "\n[SPLIT]\n" + parts[1] and "照着说" in (m.get("thinking") or ""),
        "蹦到一半按停：存档里他那一条只剩前两条，他“自己说过的话”也改成只有这两条；心里话照旧留着")
     chat(pa, "接着说")
@@ -330,7 +330,7 @@ def regen(browser):
     chat(pa, "老公在吗")
     c0 = len(calls())
     mock("/__debug/claude-hold?ms=5000")
-    pa.get_by_text("重新回答").last.click()
+    retry_last(pa)
     ok(wait_js(pa, TYPING, 5000) and wait_mock(working, 8), "重新回答时按停·准备：点了重新回答，他正在回")
     hidden = count_text(pa, "收到：老公在吗") == 0
     pa.wait_for_timeout(int(SETTLE * 1000))
@@ -347,7 +347,7 @@ def regen(browser):
        "重新回答时按停：那边回完了也不多出一个版本，信箱里不留东西")
     # 重新回答的工夫里她又说了一句，再按停
     mock("/__debug/claude-hold?ms=6000")
-    pa.get_by_text("重新回答").last.click()
+    retry_last(pa)
     ok(wait_js(pa, TYPING, 5000), "重新回答时按停（她又说了一句）·准备：他正在回")
     say(pa, "新说的")
     pa.wait_for_timeout(700)
@@ -360,7 +360,7 @@ def regen(browser):
        f"重新回答的工夫里她又说了一句、再按停：旧回答回来，她新说的那句留着、底下一行小字，没有另问一回（一共问了 {len(calls()) - c0} 回）")
     # 她新说的那句已经停手两秒多（记成“等重新回答完了接着回”）才按停：也一样
     mock("/__debug/claude-hold?ms=7000")
-    pa.get_by_text("重新回答").last.click()
+    retry_last(pa)
     ok(wait_js(pa, TYPING, 5000), "重新回答时按停（她那句已经排上了）·准备：他正在回")
     say(pa, "又说一句")
     pa.wait_for_timeout(2800)
@@ -695,7 +695,7 @@ def regen_old(browser):
     c0 = len(calls())
     old = calls()[-1]["via"] == "claude"
     mock("/__debug/claude-hold?ms=5000")
-    pa.get_by_text("重新回答").last.click()
+    retry_last(pa)
     ok(old and wait_js(pa, TYPING, 5000), "老路上重新回答时按停·准备：走的是老路，他正在回")
     pa.wait_for_timeout(900)
     click_stop(pa)
@@ -769,7 +769,7 @@ def unstuck(browser):
     # 话排着队的时候点重新回答
     say(pa, "排着队的一句")
     pa.wait_for_timeout(300)
-    pa.get_by_text("重新回答").last.click()
+    retry_last(pa)
     wait_js(pa, TYPING, 5000)
     wait_js(pa, "!(" + TYPING + ")", 20000); pa.wait_for_timeout(2500)
     ok(key(pa) == "发语音" and pa.get_by_text("2/2").count() == 1, "话排着队的时候点了重新回答：回完了那个键是声波")
@@ -893,7 +893,7 @@ def regen_save(browser):
     chat(pa, "老公在吗")
     c0 = len(calls())
     mock("/__debug/claude-hold?ms=7000")
-    pa.get_by_text("重新回答").last.click()
+    retry_last(pa)
     ok(wait_js(pa, TYPING, 5000), "重新回答到手的那一下按停·准备：他正在回")
     say(pa, "新说的")
     pa.wait_for_timeout(2900)
@@ -919,7 +919,7 @@ def regen_more(browser):
     chat(pa, "老公在吗")
     c0 = len(calls())
     mock("/__debug/claude-hold?ms=5000")
-    pa.get_by_text("重新回答").last.click()
+    retry_last(pa)
     ok(wait_js(pa, TYPING, 5000), "重新回答的工夫里又说一句（不按停）·准备：他正在重新回答")
     say(pa, "顺便再说一句")
     got = wait_js(pa, shown("收到：顺便再说一句"), 30000)
@@ -938,7 +938,7 @@ def regen_away(browser):
     chat(pa, "老公在吗")
     c0 = len(calls())
     mock("/__debug/claude-hold?ms=9000")
-    pa.get_by_text("重新回答").last.click()
+    retry_last(pa)
     ok(wait_js(pa, TYPING, 5000), "重新回答、翻走、按停·准备：他正在重新回答")
     say(pa, "新说的")
     pa.wait_for_timeout(2900)                                  # 记成“等这一回完了接着回”
