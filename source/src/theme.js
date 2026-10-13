@@ -1,5 +1,5 @@
 // =====================================================
-// 主题：青绿（沙燕）和丁香（小猪）
+// 主题：青绿（沙燕）、丁香（小猪）、黑夜（10 月 13 日添的，还没有自己的入口和图标）
 // 颜色全写成 CSS 变量（input.css 里 :root 是青绿，html[data-kfs-theme="dingxiang"] 是丁香），
 // 换主题就是换 <html> 上的 data-kfs-theme，页面不用重画；图（聊天背景、开屏）跟着 useTheme() 换。
 // 主题记在这台手机上（localStorage），不跟着云端走：
@@ -24,6 +24,15 @@ export const THEMES = {
     meta: "#EFE2EF",
     entrance: "./dingxiang/",
     icon: "小猪",
+  },
+  // 黑夜（10 月 13 日添的，样子照并蒂莲）：还没有自己的入口和主屏幕图标，等她挑了图标再加；
+  // 眼下在账户面板里换过来就行，记在这台手机上，跟另两套一样
+  heiye: {
+    label: "黑夜",
+    wall: "./assets/wall-heiye.webp",
+    meta: "#060911",
+    entrance: null,
+    icon: null,
   },
 };
 
@@ -81,6 +90,7 @@ export function useTheme() {
 // 某个主题的入口网址（换图标时要用 Safari 打开它重新添加）
 export function entranceUrl(t) {
   try {
+    if (!THEMES[t].entrance) return "";
     return new URL(THEMES[t].entrance, document.baseURI).href;
   } catch (e) {
     return "";

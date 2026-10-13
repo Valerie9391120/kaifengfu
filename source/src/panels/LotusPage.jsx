@@ -13,7 +13,7 @@ export const LOTUS_URL = typeof __KFS_LOTUS__ !== "undefined" ? __KFS_LOTUS__ : 
 
 // 主题 → 那一页里的配色（她那一页自带五套，刚好有这两套）：青绿配青瓷，丁香配藕荷。
 // 每回进来都照主题，在里面换的配色只管这一回
-const PALETTE = { qinglv: "celadon", dingxiang: "mauve" };
+const PALETTE = { qinglv: "celadon", dingxiang: "mauve", heiye: "mist" }; // 黑夜配它自己的雾蓝（那一页默认的那套，蓝黑星海就是从这儿来的）
 export const lotusSrc = (theme) => `${LOTUS_URL}?palette=${PALETTE[theme] || PALETTE.qinglv}`;
 
 // 量一个长度（写成 CSS 的样子）在开封府这头是多少像素
