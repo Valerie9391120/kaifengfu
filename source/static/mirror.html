@@ -3960,11 +3960,14 @@ camera.updateProjectionMatrix();
 
 const DEBUG_MANUAL = /debug-manual/.test(location.hash);
 let lastNow = performance.now();
-let kfsSkip = false;
+let kfsSkip = false, kfsBeat = 0;
 function frame(now) {
   requestAnimationFrame(frame);
+  // 开封府：隔两秒报一声还活着（开屏那一层听不到就换成定格图，见 src/SplashHeiye.jsx）
+  if (now - kfsBeat > 2000) { kfsBeat = now; kfsTell('tick'); }
   // 开封府：在月海里待了两分钟以上，隔一帧画一帧（省电，不烫手）；这一帧不画，时间也不往前记
-  if (app.state === STATE.MOON_SEA && app.time - app.pushStart > CONFIG.camera.traverseDuration + 120 && (kfsSkip = !kfsSkip)) return;
+  const kfsSlow = app.state === STATE.MOON_SEA && app.time - app.pushStart > CONFIG.camera.traverseDuration + 120;
+  if (kfsSlow && (kfsSkip = !kfsSkip)) return;
   let dt = (now - lastNow) / 1000;
   lastNow = now;
   if (!(dt > 0)) dt = 1 / 60;
@@ -3972,7 +3975,7 @@ function frame(now) {
   dt = Math.min(dt, 1 / 20);
   update(dt);
   render();
-  adaptQuality(raw);
+  adaptQuality(kfsSlow ? raw / 2 : raw); // 开封府：隔帧画的时候量出来是两帧的工夫，交给它一半
 }
 function start() {
   update(1 / 60);
