@@ -1,4 +1,4 @@
-import { T, glass } from "../ui/style.js";
+import { T, glass, fill } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 
 // 南衙：侧栏第四个格子点开以后的小功能汇总（卿卿 2026 年 10 月 11 日定的，名字、里面放什么、长什么样都是她定的）。
@@ -28,7 +28,7 @@ function Row({ icon, name, sub, soon, onClick }) {
     >
       <span
         className="flex items-center justify-center flex-shrink-0"
-        style={{ width: 38, height: 38, borderRadius: 14, background: "rgba(255,255,255,0.7)", color: T.dai, opacity: soon ? 0.55 : 1 }}
+        style={{ width: 38, height: 38, borderRadius: 14, background: fill(0.7), color: T.dai, opacity: soon ? 0.55 : 1 }}
       >
         <Icon name={icon} size={20} />
       </span>

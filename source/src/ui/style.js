@@ -17,32 +17,40 @@ export const T = {
   inkFaint: "rgba(var(--k-soft),0.48)",
   dai: "rgb(var(--k-dai))",
   daiGrad: "linear-gradient(140deg,rgb(var(--k-dai-a)) 0%,rgb(var(--k-dai-b)) 100%)",
+  // 主题色按钮（daiGrad）上的字和图标、开关的圆钮
+  onDai: "rgb(var(--k-on-dai))",
+  // 出错、退出这类字；red2 是删除那一类
+  red: "rgb(var(--k-red))",
+  red2: "rgb(var(--k-red-2))",
   rouge:
     "linear-gradient(140deg,rgba(243,186,196,0.66) 0%,rgba(224,150,168,0.58) 100%)",
   rougeSolid: "linear-gradient(140deg,#E6CC8F 0%,#B9914C 100%)",
   rougeInk: "#45262F",
-  gold: "#94733A",
+  gold: "rgb(var(--k-gold))",
+  goldDot: "rgb(var(--k-gold-dot))",
   bg: "linear-gradient(168deg,rgb(var(--k-bg1)) 0%,rgb(var(--k-bg2)) 46%,rgb(var(--k-bg3)) 100%)",
   motto: "rgb(var(--k-motto))",
 };
 
+// 玻璃的底、玻璃的边（分隔线、边上那道高光也算边）：颜色跟主题走（--k-fill、--k-line，见 input.css），深浅照各处原来的数。
+// 往后新加的东西要底色、要线，用这两个，别再写死白色（见开发说明“收拢”那节）
+export const fill = (a) => `rgba(var(--k-fill),${a})`;
+export const line = (a) => `rgba(var(--k-line),${a})`;
+
 export const glass = (a = 0.55, blur = 24) => ({
-  backgroundColor: `rgba(255,255,255,${a})`,
+  backgroundColor: fill(a),
   backdropFilter: `blur(${blur}px) saturate(165%)`,
   WebkitBackdropFilter: `blur(${blur}px) saturate(165%)`,
-  border: "1px solid rgba(255,255,255,0.7)",
-  boxShadow:
-    "0 10px 30px rgba(var(--k-shade),0.12), inset 0 1px 0 rgba(255,255,255,0.75)",
+  border: `1px solid ${line(0.7)}`,
+  boxShadow: `0 10px 30px rgba(var(--k-shade),0.12), inset 0 1px 0 ${line(0.75)}`,
 });
 
 export const BUBBLE_GLASS = {
-  background:
-    "linear-gradient(150deg, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.1) 55%, rgba(255,255,255,0.2) 100%)",
+  background: `linear-gradient(150deg, ${fill(0.34)} 0%, ${fill(0.1)} 55%, ${fill(0.2)} 100%)`,
   backdropFilter: "blur(10px) saturate(150%)",
   WebkitBackdropFilter: "blur(10px) saturate(150%)",
-  border: "1px solid rgba(255,255,255,0.62)",
-  boxShadow:
-    "0 6px 20px rgba(var(--k-shade),0.08), inset 0 1px 1px rgba(255,255,255,0.8), inset 0 -1px 1px rgba(255,255,255,0.2)",
+  border: `1px solid ${line(0.62)}`,
+  boxShadow: `0 6px 20px rgba(var(--k-shade),0.08), inset 0 1px 1px ${line(0.8)}, inset 0 -1px 1px ${line(0.2)}`,
   color: "rgb(var(--k-ink))",
 };
 
@@ -52,11 +60,11 @@ export const BUBBLE_GLASS = {
 export const DOCK_GLASS = {
   background:
     "linear-gradient(to bottom, rgba(var(--k-base),0) calc(100% - 14px), rgb(var(--k-base)) 100%), " +
-    "linear-gradient(to bottom, rgba(255,255,255,0.44) 0%, rgba(255,255,255,0.3) 52%, rgba(var(--k-base),0.6) 100%)",
+    `linear-gradient(to bottom, ${fill(0.44)} 0%, ${fill(0.3)} 52%, rgba(var(--k-base),0.6) 100%)`,
   backdropFilter: "blur(30px) saturate(140%)",
   WebkitBackdropFilter: "blur(30px) saturate(140%)",
-  borderTop: "1px solid rgba(255,255,255,0.72)",
-  boxShadow: "0 -10px 30px rgba(var(--k-shade),0.1), inset 0 1px 0 rgba(255,255,255,0.7)",
+  borderTop: `1px solid ${line(0.72)}`,
+  boxShadow: `0 -10px 30px rgba(var(--k-shade),0.1), inset 0 1px 0 ${line(0.7)}`,
   borderRadius: "26px 26px 0 0",
 };
 
@@ -71,7 +79,7 @@ export const chipPrimary = {
   borderRadius: 999,
   padding: "8px 16px",
   fontSize: 13,
-  color: "#fff",
+  color: T.onDai,
   background: T.daiGrad,
   boxShadow: "0 6px 16px rgba(var(--k-dai-shade),0.3)",
 };
@@ -81,8 +89,8 @@ export const field = {
   padding: "11px 14px",
   fontSize: 16,
   color: T.ink,
-  backgroundColor: "rgba(255,255,255,0.55)",
-  border: "1px solid rgba(255,255,255,0.8)",
+  backgroundColor: fill(0.55),
+  border: `1px solid ${line(0.8)}`,
   outline: "none",
 };
 

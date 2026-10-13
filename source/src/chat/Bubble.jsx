@@ -3,7 +3,7 @@ import { DOC_FMT } from "../docs.js";
 import { richBlocks } from "../rich.js";
 import { fmtChars } from "../util.js";
 import { memeSrc } from "../memes.js";
-import { T, glass, BUBBLE_GLASS } from "../ui/style.js";
+import { T, glass, BUBBLE_GLASS, fill, line } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { Avatar } from "../ui/Avatar.jsx";
 import { twoFingers } from "../ui/press.js";
@@ -62,7 +62,7 @@ function MemeImg({ file, width = 140 }) {
         width,
         display: "block",
         borderRadius: 18,
-        border: "1.5px solid rgba(255,255,255,0.8)",
+        border: `1.5px solid ${line(0.8)}`,
         boxShadow: "0 8px 22px rgba(var(--k-shade),0.16)",
       }}
     />
@@ -93,7 +93,7 @@ function PhotoImg({ data, onOpen }) {
         maxWidth: 210,
         maxHeight: 280,
         borderRadius: 18,
-        border: "1.5px solid rgba(255,255,255,0.8)",
+        border: `1.5px solid ${line(0.8)}`,
         boxShadow: "0 8px 22px rgba(var(--k-shade),0.16)",
       }}
     />
@@ -181,7 +181,7 @@ function HisVoice({ text, st, heard, playing, onTap, onAgain }) {
       {heard && (
         <div
           className="kfs-heard whitespace-pre-wrap break-words"
-          style={{ marginTop: 5, padding: "8px 13px", borderRadius: 16, background: "rgba(255,255,255,0.86)", border: "1px solid rgba(255,255,255,0.9)", boxShadow: "0 4px 14px rgba(var(--k-shade),0.10)", fontSize: 14.5, lineHeight: 1.55, color: T.ink, userSelect: "none", WebkitUserSelect: "none" }}
+          style={{ marginTop: 5, padding: "8px 13px", borderRadius: 16, background: fill(0.86), border: `1px solid ${line(0.9)}`, boxShadow: "0 4px 14px rgba(var(--k-shade),0.10)", fontSize: 14.5, lineHeight: 1.55, color: T.ink, userSelect: "none", WebkitUserSelect: "none" }}
         >
           {words}
         </div>
@@ -209,7 +209,7 @@ function DocCard({ name, sub, onOpen }) {
     >
       <span
         className="flex items-center justify-center flex-shrink-0"
-        style={{ width: 38, height: 38, borderRadius: 13, background: "rgba(255,255,255,0.7)", color: T.dai }}
+        style={{ width: 38, height: 38, borderRadius: 13, background: fill(0.7), color: T.dai }}
       >
         <Icon name="doc" size={20} />
       </span>

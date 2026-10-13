@@ -23,7 +23,7 @@ import { urlToThumb, fileToPhoto } from "./images.js";
 import { DEFAULT_MODEL, modelLabel, costOf, money, usageKey, windowOf, thinksFirst } from "./models.js";
 import { RECAP_KEY, RECAP_BAD_KEY, normRecaps, pickRecap, tierOf, roomFor, dueRecap, splitForMerge, nextRecap, cleanRecap, addRecap, mayRetry, afterFail, afterAway, loadBad } from "./recap.js";
 import { dayKeyOf, parseDayKey, moodOf, dayTranscript, parseDiary } from "./diary.js";
-import { WALL, SERIF, SANS, T, glass, DOCK_GLASS, chip, chipPrimary, field, GLOBAL_CSS } from "./ui/style.js";
+import { WALL, SERIF, SANS, T, glass, fill, line, DOCK_GLASS, chip, chipPrimary, field, GLOBAL_CSS } from "./ui/style.js";
 import { Icon } from "./ui/Icon.jsx";
 import { HIS_DEFAULT, Avatar } from "./ui/Avatar.jsx";
 import { Glows, IconBtn, SHEET_TITLE, Sheet, Toggle, RoundBtn } from "./ui/parts.jsx";
@@ -3054,7 +3054,7 @@ export default function App({ account = {} }) {
         >
           <AvatarSection av={avatars.her} onChange={changeHerAvatar} />
           <HisAvatarCard av={avatars.him} name={avatarName(avatars.him, false) || "炅"} />
-          <div style={{ height: 1, background: "rgba(255,255,255,0.7)", margin: "22px 0 18px" }} />
+          <div style={{ height: 1, background: line(0.7), margin: "22px 0 18px" }} />
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>主题色</div>
           <div className="flex items-center flex-wrap" style={{ gap: 8, marginBottom: theme === entranceTheme() ? 22 : 10 }}>
             {[
@@ -3067,9 +3067,9 @@ export default function App({ account = {} }) {
                 aria-pressed={theme === k}
                 aria-label={`${THEMES[k].label}主题`}
                 className="kfs-tap flex items-center"
-                style={{ ...chip, gap: 8, padding: "5px 14px 5px 6px", backgroundColor: theme === k ? "rgba(255,255,255,0.82)" : chip.backgroundColor }}
+                style={{ ...chip, gap: 8, padding: "5px 14px 5px 6px", backgroundColor: theme === k ? fill(0.82) : chip.backgroundColor }}
               >
-                <span style={{ width: 26, height: 26, borderRadius: "50%", background: g, border: "2px solid #fff", boxShadow: theme === k ? `0 0 0 2px ${T.dai}` : "none" }} />
+                <span style={{ width: 26, height: 26, borderRadius: "50%", background: g, border: `2px solid ${T.onDai}`, boxShadow: theme === k ? `0 0 0 2px ${T.dai}` : "none" }} />
                 {THEMES[k].label}
               </button>
             ))}
@@ -3099,7 +3099,7 @@ export default function App({ account = {} }) {
             <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 2 }}>新开一段时对话正中间那一行。点这里放素材库、改句子</div>
           </button>
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>云端同步</div>
-          <div style={{ ...glass(0.5, 16), borderRadius: 16, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6, color: sync.offline || !storageOk ? "#A8473D" : T.ink }}>
+          <div style={{ ...glass(0.5, 16), borderRadius: 16, padding: "12px 14px", fontSize: 13.5, lineHeight: 1.6, color: sync.offline || !storageOk ? T.red : T.ink }}>
             {syncLine}
           </div>
           <div className="flex flex-wrap" style={{ gap: 8, marginTop: 10, marginBottom: 22 }}>
@@ -3150,7 +3150,7 @@ export default function App({ account = {} }) {
             量一量屏幕底下
           </button>
 
-          <div style={{ height: 1, background: "rgba(255,255,255,0.7)", margin: "22px 0 18px" }} />
+          <div style={{ height: 1, background: line(0.7), margin: "22px 0 18px" }} />
           <div className="flex flex-wrap" style={{ gap: 8 }}>
             <button
               onClick={() => {
@@ -3163,11 +3163,11 @@ export default function App({ account = {} }) {
                 setSheet(null);
               }}
               className="kfs-tap"
-              style={{ ...chip, color: "#A8473D" }}
+              style={{ ...chip, color: T.red }}
             >
               {clearArmed ? "再点一次，删掉这段对话" : "删掉当前这段对话"}
             </button>
-            <button onClick={logout} className="kfs-tap" style={{ ...chip, color: "#A8473D" }}>
+            <button onClick={logout} className="kfs-tap" style={{ ...chip, color: T.red }}>
               {logoutArmed
                 ? sync.pending
                   ? `还有 ${sync.pending} 条没传上去，再点一次也退出`
@@ -3405,7 +3405,7 @@ export default function App({ account = {} }) {
         {storageBanner && (
           <div
             className="relative z-10 flex items-center justify-between flex-shrink-0"
-            style={{ ...glass(0.62, 20), borderRadius: 14, margin: "8px 12px 0", padding: "8px 12px", fontSize: 12, color: "#A8473D" }}
+            style={{ ...glass(0.62, 20), borderRadius: 14, margin: "8px 12px 0", padding: "8px 12px", fontSize: 12, color: T.red }}
           >
             <span>手机本地存档写不进去，关掉后这段对话可能留不住</span>
             <button onClick={() => setStorageBanner(false)} aria-label="关闭提示" style={{ marginLeft: 8, opacity: 0.6 }}>
@@ -3533,7 +3533,7 @@ export default function App({ account = {} }) {
           {typing && <TypingRow avatars={avatars} />}
           {errorNote && !loading && (
             <div className="flex justify-center" style={{ marginTop: 14 }}>
-              <button onClick={retry} className="kfs-tap" style={{ ...glass(0.62, 18), borderRadius: 18, padding: "8px 16px", fontSize: 12.5, color: "#A8473D", maxWidth: "88%" }}>
+              <button onClick={retry} className="kfs-tap" style={{ ...glass(0.62, 18), borderRadius: 18, padding: "8px 16px", fontSize: 12.5, color: T.red, maxWidth: "88%" }}>
                 {errorNote}
               </button>
             </div>
@@ -3564,7 +3564,7 @@ export default function App({ account = {} }) {
               aria-label="回到最新"
               tabIndex={away ? 0 : -1}
               className="kfs-tap flex items-center justify-center"
-              style={{ ...glass(0.66, 18), width: 38, height: 38, borderRadius: 999, color: T.ink, boxShadow: "0 6px 18px rgba(var(--k-shade),0.16), inset 0 1px 0 rgba(255,255,255,0.75)" }}
+              style={{ ...glass(0.66, 18), width: 38, height: 38, borderRadius: 999, color: T.ink, boxShadow: `0 6px 18px rgba(var(--k-shade),0.16), inset 0 1px 0 ${line(0.75)}` }}
             >
               <Icon name="down" size={19} sw={2} />
             </button>
@@ -3584,7 +3584,7 @@ export default function App({ account = {} }) {
                   onClick={() => sendMeme(m.file)}
                   aria-label={m.name}
                   className="kfs-tap overflow-hidden"
-                  style={{ aspectRatio: "1 / 1", borderRadius: 16, border: "1.5px solid rgba(255,255,255,0.8)", boxShadow: "0 3px 10px rgba(var(--k-shade),0.12)" }}
+                  style={{ aspectRatio: "1 / 1", borderRadius: 16, border: `1.5px solid ${line(0.8)}`, boxShadow: "0 3px 10px rgba(var(--k-shade),0.12)" }}
                 >
                   <img src={memeSrc(m.file)} alt="" loading="lazy" className="w-full h-full object-cover" />
                 </button>
@@ -3615,9 +3615,9 @@ export default function App({ account = {} }) {
                   {ph.kind === "doc" ? (
                     <div
                       className="kfs-doc-chip flex items-center"
-                      style={{ height: 60, maxWidth: 190, gap: 8, padding: "0 12px 0 8px", borderRadius: 14, background: "rgba(255,255,255,0.55)", border: "1.5px solid rgba(255,255,255,0.85)" }}
+                      style={{ height: 60, maxWidth: 190, gap: 8, padding: "0 12px 0 8px", borderRadius: 14, background: fill(0.55), border: `1.5px solid ${line(0.85)}` }}
                     >
-                      <span className="flex items-center justify-center flex-shrink-0" style={{ width: 34, height: 34, borderRadius: 11, background: "rgba(255,255,255,0.75)", color: T.dai }}>
+                      <span className="flex items-center justify-center flex-shrink-0" style={{ width: 34, height: 34, borderRadius: 11, background: fill(0.75), color: T.dai }}>
                         <Icon name="doc" size={18} />
                       </span>
                       <span className="block min-w-0">
@@ -3633,7 +3633,7 @@ export default function App({ account = {} }) {
                     <img
                       src={ph.data}
                       alt=""
-                      style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 14, border: "1.5px solid rgba(255,255,255,0.85)", display: "block" }}
+                      style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 14, border: `1.5px solid ${line(0.85)}`, display: "block" }}
                     />
                   )}
                   <button
@@ -3642,7 +3642,7 @@ export default function App({ account = {} }) {
                     className="absolute flex items-center justify-center"
                     style={{ top: -6, right: -6, width: 22, height: 22, borderRadius: 999, background: "rgba(var(--k-dim),0.78)" }}
                   >
-                    <Icon name="x" size={12} color="#fff" sw={2.2} />
+                    <Icon name="x" size={12} color={T.onDai} sw={2.2} />
                   </button>
                 </div>
               ))}
@@ -3730,8 +3730,8 @@ export default function App({ account = {} }) {
                     borderRadius: 999,
                     fontSize: 13,
                     color: T.ink,
-                    backgroundColor: "rgba(255,255,255,0.42)",
-                    border: "1px solid rgba(255,255,255,0.65)",
+                    backgroundColor: fill(0.42),
+                    border: `1px solid ${line(0.65)}`,
                   }}
                 >
                   {modelLabel(activeModel)}
@@ -3756,7 +3756,7 @@ export default function App({ account = {} }) {
                     boxShadow: "0 3px 8px rgba(var(--k-dai-shade),0.3)",
                   }}
                   >
-                    <Icon name="up" color="#fff" size={19} sw={2.1} />
+                    <Icon name="up" color={T.onDai} size={19} sw={2.1} />
                   </button>
                 ) : keyKind === "stop" ? (
                   // 停键（见 stopReply）。刚从发送变过来的那一小会儿点它不算：她发话的那一下手指要是连着点了两下，
@@ -3774,7 +3774,7 @@ export default function App({ account = {} }) {
                     boxShadow: "0 3px 8px rgba(var(--k-dai-shade),0.3)",
                   }}
                   >
-                    <Icon name="stop" color="#fff" size={19} sw={2} />
+                    <Icon name="stop" color={T.onDai} size={19} sw={2} />
                   </button>
                 ) : (
                   // 声波键。刚从停键变过来的那一小会儿点它不算：她按停的那一下连着点了两下、
@@ -3792,7 +3792,7 @@ export default function App({ account = {} }) {
                     boxShadow: "0 3px 8px rgba(var(--k-dai-shade),0.3)",
                   }}
                   >
-                    <Icon name="wave" color="#fff" size={19} sw={2} />
+                    <Icon name="wave" color={T.onDai} size={19} sw={2} />
                   </button>
                 )}
               </div>
@@ -3937,7 +3937,7 @@ export default function App({ account = {} }) {
             {docView.images ? `，有 ${docView.images} 张图片取不出来` : ""}
           </div>
           {docView.cut && (
-            <p style={{ fontSize: 12.5, color: "#A8473D", lineHeight: 1.6, marginBottom: 10 }}>
+            <p style={{ fontSize: 12.5, color: T.red, lineHeight: 1.6, marginBottom: 10 }}>
               没写完：回复长度到上限了。在 API 面板把“回复最长多少”调成“长”，再点重新回答。
             </p>
           )}
@@ -3998,7 +3998,7 @@ export default function App({ account = {} }) {
                 dropRecap(recapView);
               }}
               className="kfs-tap"
-              style={{ ...chip, color: "#A8473D" }}
+              style={{ ...chip, color: T.red }}
             >
               {!recapArmed ? "抄得不对，丢掉重抄" : recapFallback ? "再点一次，丢掉最近抄的这一趟" : "再点一次，整份丢掉从头抄"}
             </button>

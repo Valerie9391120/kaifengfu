@@ -134,15 +134,15 @@ export function MottoPanel({ text, draftRef, onSave, onDone }) {
               </div>
             ))}
             {seen.days.map((d, i) => (
-              <div key={"d" + i} style={{ color: d.past ? "#A8473D" : T.inkSoft }}>
+              <div key={"d" + i} style={{ color: d.past ? T.red : T.inkSoft }}>
                 {d.name}（{d.past ? "只这一天，已经过了，不会再出" : KIND[d.kind]}）· {d.count} 句
               </div>
             ))}
             {seen.start && <div style={{ color: T.inkSoft }}>{"{N}"} 个月从 {seen.start} 算起</div>}
-            {needsStart && <div style={{ color: "#A8473D" }}>有句子写着 {"{N}"}，可没写从哪天算起：那几句不会出。在标题里写上“从2030年1月1日算起”这样的</div>}
-            {seen.stray > 0 && <div className="kfs-motto-stray" style={{ color: "#A8473D" }}>有 {seen.stray} 句不在哪一节底下（写在“---”后面、下一个标题前面），不会出</div>}
+            {needsStart && <div style={{ color: T.red }}>有句子写着 {"{N}"}，可没写从哪天算起：那几句不会出。在标题里写上“从2030年1月1日算起”这样的</div>}
+            {seen.stray > 0 && <div className="kfs-motto-stray" style={{ color: T.red }}>有 {seen.stray} 句不在哪一节底下（写在“---”后面、下一个标题前面），不会出</div>}
             {seen.unknown.length > 0 && (
-              <div className="kfs-motto-unknown" style={{ color: "#A8473D" }}>
+              <div className="kfs-motto-unknown" style={{ color: T.red }}>
                 这几个标题认不出是哪个时段、哪一天，底下的句子不会出：{seen.unknown.join("、")}
               </div>
             )}

@@ -67,7 +67,7 @@ export function AvatarSection({ av, onChange }) {
           </button>
         )}
       </div>
-      {err && <div style={{ fontSize: 12, color: "#B4544A", marginTop: 8 }}>{err}</div>}
+      {err && <div style={{ fontSize: 12, color: T.red2, marginTop: 8 }}>{err}</div>}
       <input ref={fileRef} type="file" accept="image/*" onChange={pick} style={{ display: "none" }} />
     </div>
   );

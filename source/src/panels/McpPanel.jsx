@@ -54,7 +54,7 @@ export function McpPanel({ mcps, onChange }) {
                 setEditing(null);
               }}
               className="kfs-tap"
-              style={{ ...chip, color: "#A8473D" }}
+              style={{ ...chip, color: T.red }}
             >
               {armed ? "再点一次，删掉它" : "删除"}
             </button>

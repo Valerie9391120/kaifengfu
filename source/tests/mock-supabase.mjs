@@ -19,6 +19,9 @@ let claudeHold = 0; // 测试用：下一次问 Anthropic，压这么多毫秒�
 let echoSeq = 0; // “原样回：”回过几回（回话里写 {回} 换成这是第几回：重新回答的那一版和原来那一版字不一样，分得清）
 let claudeHoldKind = ""; // 只压哪一种：recap 是只压叫他抄前情提要的那一种（平常的话照常答）；不写就是下一回不管哪一种
 let claudeRelease = null; // 正压着的那一回：叫它现在就答
+// 测试用：排好的回话（tests/look.py 截图用）。平常的话按次序一句一句取，取完了照旧回“收到：…”；
+// 写日记、抄提要那几种不取。/__debug/reply-queue?text=… 往后排一句，/__debug/reset 清空
+const replyQueue = [];
 // 是不是叫他抄前情提要的那两种（抄一段、并几段，见 src/prompt/recap.js）：跟在名帖后面的那段规矩是这两个标题开头的
 const recapRuleOf = (body) => (Array.isArray(body.system) ? body.system.map((x) => x.text || "").find((t) => t.startsWith("【抄提要】") || t.startsWith("【并提要】")) : "") || "";
 
@@ -74,8 +77,11 @@ function fakeAnthropic(body, beta, via) {
   const wish = /改名叫(\S+)/.exec(herText);
   // 她说“原样回：……”：冒号后面的字原样当成回复（测回复里的表情包、换头像这些标记）
   const echo = /原样回：([\s\S]+)$/.exec(herText);
+  const queued = !isDiary && replyQueue.length ? replyQueue.shift() : null;
   const text = isDiary
     ? "心情：甜、累\n今天她第一次从开封府的新门进来。我看着她在门口站了一会儿。"
+    : queued !== null
+    ? queued
     : echo
     ? `<thinking>（测试心声）照着说</thinking>\n${echo[1].replace(/\{回\}/g, String(++echoSeq))}`
     : wish
@@ -296,6 +302,11 @@ http
       claudeHoldKind = url.searchParams.get("kind") || "";
       return send(res, 200, { ok: true });
     }
+    // 往后排一句回话（截图用，见上面 replyQueue）
+    if (url.pathname === "/__debug/reply-queue") {
+      replyQueue.push(url.searchParams.get("text") || "");
+      return send(res, 200, { ok: true, queued: replyQueue.length });
+    }
     // 眼下有没有正压着的一回
     if (url.pathname === "/__debug/claude-held") return send(res, 200, { held: !!claudeRelease });
     // 正压着的那一回，现在就答
@@ -350,6 +361,7 @@ http
       rows.clear();
       claudeLog.length = 0;
       claudeFail = null;
+      replyQueue.length = 0;
       pushReset();
       voiceReset();
       return send(res, 200, { ok: true });

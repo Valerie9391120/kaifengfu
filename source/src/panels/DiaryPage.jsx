@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { pad, WEEK, START, dayNumber } from "../days.js";
 import { dayKeyOf, ymKeyOf, parseDayKey, MOODS, moodOf, heatLevel, monthCells } from "../diary.js";
-import { SERIF, T, glass, chip, chipPrimary, field } from "../ui/style.js";
+import { SERIF, T, glass, chip, chipPrimary, field, fill, line } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { Glows, IconBtn } from "../ui/parts.jsx";
 
@@ -23,9 +23,9 @@ function MoodChips({ value = [], onToggle, readOnly }) {
               padding: "5px 10px",
               borderRadius: 999,
               fontSize: 12.5,
-              color: on ? "#fff" : T.inkSoft,
-              background: on ? T.daiGrad : "rgba(255,255,255,0.5)",
-              border: "1px solid rgba(255,255,255,0.7)",
+              color: on ? T.onDai : T.inkSoft,
+              background: on ? T.daiGrad : fill(0.5),
+              border: `1px solid ${line(0.7)}`,
             }}
           >
             <span style={{ fontSize: 13 }}>{m.e}</span>
@@ -170,7 +170,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                   style={{
                     aspectRatio: "1 / 1.1",
                     borderRadius: 13,
-                    background: selected ? "rgba(255,255,255,0.82)" : `rgba(var(--k-dai),${[0.05, 0.12, 0.22, 0.34, 0.48][lv]})`,
+                    background: selected ? fill(0.82) : `rgba(var(--k-dai),${[0.05, 0.12, 0.22, 0.34, 0.48][lv]})`,
                     border: selected ? `1.5px solid ${T.dai}` : today ? `1.5px dashed ${T.dai}` : "1.5px solid transparent",
                     opacity: future ? 0.32 : 1,
                   }}
@@ -179,7 +179,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                     <span style={{ position: "absolute", top: 4, right: 5, width: 5, height: 5, borderRadius: "50%", background: T.dai }} />
                   ) : null}
                   {e.him && e.him.text ? (
-                    <span style={{ position: "absolute", top: 4, right: e.her && e.her.text ? 12 : 5, width: 5, height: 5, borderRadius: "50%", background: "#B9914C" }} />
+                    <span style={{ position: "absolute", top: 4, right: e.her && e.her.text ? 12 : 5, width: 5, height: 5, borderRadius: "50%", background: T.goldDot }} />
                   ) : null}
                   <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.1, color: anniv ? T.gold : T.ink }}>{d}</span>
                   <span style={{ fontSize: mood ? 11 : 9.5, lineHeight: 1.3, color: T.inkSoft, minHeight: 13 }}>
@@ -189,7 +189,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               );
             })}
           </div>
-          <div className="flex items-center justify-between" style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.7)", fontSize: 11.5, color: T.inkSoft }}>
+          <div className="flex items-center justify-between" style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${line(0.7)}`, fontSize: 11.5, color: T.inkSoft }}>
             <span className="flex items-center" style={{ gap: 4 }}>
               少
               {[0, 1, 2, 3, 4].map((lv) => (
@@ -202,7 +202,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.dai }} />卿卿写的
               </span>
               <span className="flex items-center" style={{ gap: 4 }}>
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#B9914C" }} />光义写的
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.goldDot }} />光义写的
               </span>
             </span>
           </div>
@@ -218,7 +218,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               {[together >= 1 ? `在一起的第${together}天` : "", counts[sel] ? `这天说了 ${counts[sel]} 句` : "这天没在开封府说话"].filter(Boolean).join("，")}
             </div>
 
-            <div style={{ height: 1, background: "rgba(255,255,255,0.7)", margin: "16px 0" }} />
+            <div style={{ height: 1, background: line(0.7), margin: "16px 0" }} />
             <div style={{ fontSize: 12.5, color: T.dai, marginBottom: 10 }}>卿卿写的</div>
             <MoodChips value={her.moods || []} onToggle={toggleMood} />
             <div style={{ marginTop: 12 }}>
@@ -265,7 +265,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                         setArmed(null);
                       }}
                       className="kfs-tap"
-                      style={{ ...chip, color: "#A8473D" }}
+                      style={{ ...chip, color: T.red }}
                     >
                       {armed === "her" ? "再点一次删掉" : "删掉"}
                     </button>
@@ -278,8 +278,8 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               )}
             </div>
 
-            <div style={{ height: 1, background: "rgba(255,255,255,0.7)", margin: "18px 0 16px" }} />
-            <div style={{ fontSize: 12.5, color: "#94733A", marginBottom: 10 }}>光义写的</div>
+            <div style={{ height: 1, background: line(0.7), margin: "18px 0 16px" }} />
+            <div style={{ fontSize: 12.5, color: T.gold, marginBottom: 10 }}>光义写的</div>
             {him.text ? (
               <>
                 {him.moods && him.moods.length ? (
@@ -302,7 +302,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                       setArmed(null);
                     }}
                     className="kfs-tap"
-                    style={{ ...chip, color: "#A8473D" }}
+                    style={{ ...chip, color: T.red }}
                   >
                     {armed === "him" ? "再点一次删掉" : "删掉"}
                   </button>
@@ -313,7 +313,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                 {writing ? "光义在写……" : "让光义写这一天"}
               </button>
             )}
-            {err && <div style={{ fontSize: 12, color: "#A8473D", marginTop: 10 }}>{err}</div>}
+            {err && <div style={{ fontSize: 12, color: T.red, marginTop: 10 }}>{err}</div>}
           </div>
         ) : (
           <div className="text-center" style={{ ...card, marginTop: 12, fontSize: 13, color: T.inkSoft }}>

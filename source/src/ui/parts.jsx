@@ -1,4 +1,4 @@
-import { SERIF, T, glass } from "./style.js";
+import { SERIF, T, glass, fill, line } from "./style.js";
 import { Icon } from "./Icon.jsx";
 
 // =========================================================
@@ -15,7 +15,7 @@ export function Glows() {
           top: -170,
           right: -150,
           borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(250,232,190,0.45) 0%, rgba(250,232,190,0) 66%)",
+          background: "radial-gradient(circle, rgba(var(--k-glow-warm),0.45) 0%, rgba(var(--k-glow-warm),0) 66%)",
         }}
       />
       <div
@@ -55,7 +55,7 @@ export function IconBtn({ onClick, label, active, children }) {
         height: 40,
         borderRadius: 999,
         color: active ? T.dai : T.inkSoft,
-        backgroundColor: active ? "rgba(255,255,255,0.7)" : "transparent",
+        backgroundColor: active ? fill(0.7) : "transparent",
       }}
     >
       {children}
@@ -107,7 +107,7 @@ export function Sheet({ title, onClose, children }) {
               width: 32,
               height: 32,
               borderRadius: 999,
-              background: "rgba(255,255,255,0.65)",
+              background: fill(0.65),
               color: T.inkSoft,
             }}
           >
@@ -146,7 +146,7 @@ export function Toggle({ on, onChange, label }) {
           width: 22,
           height: 22,
           borderRadius: "50%",
-          background: "#fff",
+          background: T.onDai,
           boxShadow: "0 2px 6px rgba(var(--k-dim),0.25)",
           transform: on ? "translateX(18px)" : "none",
           transition: "transform .2s ease",
@@ -167,9 +167,9 @@ export function RoundBtn({ onClick, label, active, children }) {
         width: 38,
         height: 38,
         borderRadius: 999,
-        color: active ? "#fff" : T.inkSoft,
-        background: active ? T.daiGrad : "rgba(255,255,255,0.42)",
-        border: "1px solid rgba(255,255,255,0.65)",
+        color: active ? T.onDai : T.inkSoft,
+        background: active ? T.daiGrad : fill(0.42),
+        border: `1px solid ${line(0.65)}`,
       }}
     >
       {children}

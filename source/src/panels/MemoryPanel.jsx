@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { fmtChars } from "../util.js";
-import { T, glass, chipPrimary } from "../ui/style.js";
+import { T, glass, chipPrimary, fill } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { Toggle } from "../ui/parts.jsx";
 
@@ -82,7 +82,7 @@ export function MemoryPanel({ files, texts, note, onUpload, onToggle, onDelete }
                 }}
                 aria-label="删除文档"
                 className="kfs-tap flex items-center justify-center flex-shrink-0"
-                style={{ height: 30, minWidth: 30, padding: armed === f.id ? "0 10px" : 0, borderRadius: 999, color: "#A8473D", background: "rgba(255,255,255,0.55)", fontSize: 12 }}
+                style={{ height: 30, minWidth: 30, padding: armed === f.id ? "0 10px" : 0, borderRadius: 999, color: T.red, background: fill(0.55), fontSize: 12 }}
               >
                 {armed === f.id ? "确认删除" : <Icon name="trash" size={16} />}
               </button>
@@ -92,7 +92,7 @@ export function MemoryPanel({ files, texts, note, onUpload, onToggle, onDelete }
         </div>
       )}
       {files.length > 0 && (
-        <div style={{ fontSize: 12, color: total > 80000 ? "#A8473D" : T.inkSoft, marginTop: 14, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 12, color: total > 80000 ? T.red : T.inkSoft, marginTop: 14, lineHeight: 1.6 }}>
           带上的文档一共{fmtChars(total)}。
           {total > 80000 ? "带得越多，我回话越慢，用不上的可以先关掉。" : ""}
         </div>

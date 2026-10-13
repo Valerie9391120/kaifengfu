@@ -39,7 +39,7 @@ export function ChatMenu({ menu, onClose, onRename, onDelete }) {
           onClick={() => (armed ? onDelete(chat) : setArmed(true))}
           role="menuitem"
           className="w-full flex items-center text-left"
-          style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: "#B4544A" }}
+          style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: T.red2 }}
         >
           <Icon name="trash" size={19} />
           {armed ? "再点一次，删掉" : "删除"}

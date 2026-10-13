@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { SERIF, T } from "../ui/style.js";
+import { SERIF, T, fill } from "../ui/style.js";
 
 // 点开文档时把 Markdown 排一排。只认常用的：标题、列表（带勾选框）、引用、代码、表格、分隔线；
 // 行内认粗体、斜体、行内代码、删除线、链接（链接只显示字，不跳转）。认不出来的原样当字
@@ -92,7 +92,7 @@ function mdInline(text, base) {
     const k = base + "-" + i++;
     if (tok[0] === "`")
       out.push(
-        <code key={k} style={{ fontFamily: MD_MONO, fontSize: "0.88em", background: "rgba(255,255,255,0.6)", borderRadius: 5, padding: "1px 5px" }}>
+        <code key={k} style={{ fontFamily: MD_MONO, fontSize: "0.88em", background: fill(0.6), borderRadius: 5, padding: "1px 5px" }}>
           {tok.slice(1, -1)}
         </code>
       );
@@ -122,7 +122,7 @@ export function MdView({ text }) {
         if (b.t === "hr") return <div key={i} style={{ height: 1, background: "rgba(var(--k-soft),0.18)", margin: "14px 0" }} />;
         if (b.t === "pre")
           return (
-            <pre key={i} className="kfs-scroll" style={{ overflowX: "auto", fontFamily: MD_MONO, fontSize: 12.5, lineHeight: 1.6, background: "rgba(255,255,255,0.5)", borderRadius: 12, padding: "10px 12px", margin: "0 0 10px", whiteSpace: "pre" }}>
+            <pre key={i} className="kfs-scroll" style={{ overflowX: "auto", fontFamily: MD_MONO, fontSize: 12.5, lineHeight: 1.6, background: fill(0.5), borderRadius: 12, padding: "10px 12px", margin: "0 0 10px", whiteSpace: "pre" }}>
               {b.text}
             </pre>
           );

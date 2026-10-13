@@ -1,4 +1,4 @@
-import { SERIF, T, glass, BUBBLE_GLASS } from "../ui/style.js";
+import { SERIF, T, glass, BUBBLE_GLASS, fill } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { Avatar } from "../ui/Avatar.jsx";
 
@@ -77,7 +77,7 @@ export function ThinkingRow({ msg, open, onToggle }) {
             borderRadius: 16,
             // 这一块的样子是卿卿定的：2026 年 10 月 2 日试过把字加深加大、底下垫模糊，她看了对比图说原来的好看。
             // 别拿对比度的数去改它，要动先拿图问她（见开发说明“看得清，不乱动”）
-            background: "rgba(255,255,255,0.34)",
+            background: fill(0.34),
             border: "1px dashed rgba(var(--k-dai),0.3)",
             color: T.inkSoft,
             fontFamily: SERIF,

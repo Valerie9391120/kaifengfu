@@ -1,5 +1,5 @@
 import { memeSrc } from "../memes.js";
-import { SERIF, T } from "./style.js";
+import { SERIF, T, line } from "./style.js";
 
 // ---------- 头像 ----------
 export const HER_PRESETS = [
@@ -28,14 +28,14 @@ export function Avatar({ av, who, size = 34 }) {
         height: size,
         borderRadius: "50%",
         background: who === "her" ? T.rougeSolid : T.daiGrad,
-        border: "1.5px solid rgba(255,255,255,0.9)",
+        border: `1.5px solid ${line(0.9)}`,
         boxShadow: "0 3px 10px rgba(var(--k-shade),0.18)",
       }}
     >
       {src ? (
         <img src={src} alt="" draggable={false} className="w-full h-full object-cover" />
       ) : (
-        <span style={{ fontFamily: SERIF, color: "#fff", fontSize: size * 0.42 }}>
+        <span style={{ fontFamily: SERIF, color: T.onDai, fontSize: size * 0.42 }}>
           {who === "her" ? "卿" : "炅"}
         </span>
       )}
