@@ -285,7 +285,7 @@ st = staleImages(mixed, 0, mixedBytes);
 ok(inBody(mixed) === 50 && st.size === 20 && [...st].every((i) => mixed[i].kind === "meme") && st.has(10) && st.has(48) && !st.has(50) && ![0, 2, 4, 6, 8].some((i) => st.has(i)),
   "五张照片、后面六十张表情包（最后二三十条前面一共五十张图）：去掉的二十张全是表情包，最老的那五张照片的图都留着");
 const mixedApi = build(mixed, {}, () => FAKE_IMG(300000));
-ok(texts(mixedApi).filter((t) => t === "[她发了一张照片]").length === 5 && !texts(mixedApi).some((t) => t.includes("没带上")) && texts(mixedApi).filter((t) => t.startsWith("[她发了一张表情包：")).length === 60 && imgCount(mixedApi) === 5 + 40 && dueRecap(mixed, [], tierOf("short"), mixedBytes) === null,
+ok(texts(mixedApi).filter((t) => t === "[她发了一张照片]").length === 5 && !texts(mixedApi).some((t) => t.includes("没带上")) && texts(mixedApi).filter((t) => t.startsWith("[她发了一张表情包")).length === 60 && imgCount(mixedApi) === 5 + 40 && dueRecap(mixed, [], tierOf("short"), mixedBytes) === null,
   "寄的时候：五张照片都带着图；表情包那句话一句不少，去了图的只是没有图；这么薄也用不着抄");
 st = staleImages(mixed.slice(0, 10).concat(mixed.slice(10).map((m) => (m.kind === "meme" ? { ...m, kind: "photo", imgId: "was-meme" } : m))), 0, () => 300000);
 ok(st.size > 0 && st.has(0), "全是照片的时候（没有表情包可去）：才从最老的照片去起");
@@ -787,9 +787,15 @@ const memeFile = MEME_DATA[0].file;
 const memeChat = [];
 for (let i = 0; i < 70; i++) memeChat.push(meme(memeFile), him("哈"));
 api = build(memeChat);
-const labels = texts(api).filter((t) => t.startsWith("[她发了一张表情包："));
+const labels = texts(api).filter((t) => t.startsWith("[她发了一张表情包"));
 ok(imgCount(api) === 30 && labels.length === 70 && api[0].content.filter((b) => b.type === "image").length === 0 && api[api.length - 2].content.some((b) => b.type === "image"),
   "七十张表情包：最老的四十张不带图，那句“她发了一张表情包：名字”一句不少；新的三十张照带");
+// 那一句写的是名字和它在表情包库里的文件名（卿卿 10 月 13 日定的）；库里查不到的只写文件名
+const libLookup = (f) => MEME_DATA.find((x) => x.file === f) || null;
+const named = texts(buildMessages([meme(memeFile), him("哈"), meme("not_in_library.jpg"), him("哈")], AV, libLookup, noLookup, noLookup, noLookup, {}).messages);
+ok(named.includes(`[她发了一张表情包：${MEME_DATA[0].name}（表情包库里的 ${memeFile}）]`) && !named.some((t) => t.includes("图上写着")),
+  `表情包那一句：名字，括号里是表情包库里的文件名，不再写图上的字（${named.find((t) => t.startsWith("[她发了一张表情包："))}）`);
+ok(named.includes("[她发了一张表情包（表情包库里的 not_in_library.jpg）]"), "库里查不到名字的表情包：只写文件名");
 seq = 0;
 const photoChat = [];
 for (let i = 0; i < 40; i++) photoChat.push(photo("ph" + i), him("好看"));
