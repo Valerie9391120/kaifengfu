@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { dayNumber, nextAnniv, dateLabel } from "../days.js";
-import { SERIF, T, glass, fill, line } from "../ui/style.js";
+import { SERIF, T, glass, fill, HAIRLINE } from "../ui/style.js";
 import { Icon, artSize } from "../ui/Icon.jsx";
 import { useLongPress } from "../ui/press.js";
 
@@ -133,7 +133,7 @@ function RecentItem({ c, currentId, onOpen, onLongPress }) {
       {...lp}
       onClick={() => onOpen(c.id)}
       className="w-full text-left block"
-      style={{ padding: "9px 0", borderTop: `1px solid ${line(0.65)}`, WebkitTouchCallout: "none" }}
+      style={{ padding: "9px 0", borderTop: HAIRLINE, WebkitTouchCallout: "none" }}
     >
       <span className="block truncate" style={{ fontSize: 14, color: c.id === currentId ? T.dai : T.ink }}>
         {c.title}

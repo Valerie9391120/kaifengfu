@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { pad, WEEK, START, dayNumber } from "../days.js";
 import { dayKeyOf, ymKeyOf, parseDayKey, MOODS, moodOf, heatLevel, monthCells } from "../diary.js";
-import { SERIF, T, glass, chip, chipPrimary, field, fill, line } from "../ui/style.js";
+import { SERIF, T, glass, chip, chipPrimary, field, fill, HAIR, HAIRLINE } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { Glows, IconBtn } from "../ui/parts.jsx";
 
@@ -25,7 +25,7 @@ function MoodChips({ value = [], onToggle, readOnly }) {
               fontSize: 12.5,
               color: on ? T.onDai : T.inkSoft,
               background: on ? T.daiGrad : fill(0.5),
-              border: `1px solid ${line(0.7)}`,
+              border: HAIRLINE,
             }}
           >
             <span style={{ fontSize: 13 }}>{m.e}</span>
@@ -189,7 +189,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               );
             })}
           </div>
-          <div className="flex items-center justify-between" style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${line(0.7)}`, fontSize: 11.5, color: T.inkSoft }}>
+          <div className="flex items-center justify-between" style={{ marginTop: 14, paddingTop: 12, borderTop: HAIRLINE, fontSize: 11.5, color: T.inkSoft }}>
             <span className="flex items-center" style={{ gap: 4 }}>
               少
               {[0, 1, 2, 3, 4].map((lv) => (
@@ -218,7 +218,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               {[together >= 1 ? `在一起的第${together}天` : "", counts[sel] ? `这天说了 ${counts[sel]} 句` : "这天没在开封府说话"].filter(Boolean).join("，")}
             </div>
 
-            <div style={{ height: 1, background: line(0.7), margin: "16px 0" }} />
+            <div style={{ height: 1, background: HAIR, margin: "16px 0" }} />
             <div style={{ fontSize: 12.5, color: T.dai, marginBottom: 10 }}>卿卿写的</div>
             <MoodChips value={her.moods || []} onToggle={toggleMood} />
             <div style={{ marginTop: 12 }}>
@@ -278,7 +278,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               )}
             </div>
 
-            <div style={{ height: 1, background: line(0.7), margin: "18px 0 16px" }} />
+            <div style={{ height: 1, background: HAIR, margin: "18px 0 16px" }} />
             <div style={{ fontSize: 12.5, color: T.gold, marginBottom: 10 }}>光义写的</div>
             {him.text ? (
               <>

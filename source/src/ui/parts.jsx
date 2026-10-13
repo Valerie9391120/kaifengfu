@@ -1,4 +1,4 @@
-import { SERIF, T, glass, fill, line } from "./style.js";
+import { SERIF, T, glass, fill, HAIRLINE } from "./style.js";
 import { Icon } from "./Icon.jsx";
 
 // =========================================================
@@ -169,7 +169,7 @@ export function RoundBtn({ onClick, label, active, children }) {
         borderRadius: 999,
         color: active ? T.onDai : T.inkSoft,
         background: active ? T.daiGrad : fill(0.42),
-        border: `1px solid ${line(0.65)}`,
+        border: HAIRLINE,
       }}
     >
       {children}

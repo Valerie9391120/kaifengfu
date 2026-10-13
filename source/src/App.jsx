@@ -23,7 +23,7 @@ import { urlToThumb, fileToPhoto } from "./images.js";
 import { DEFAULT_MODEL, modelLabel, costOf, money, usageKey, windowOf, thinksFirst } from "./models.js";
 import { RECAP_KEY, RECAP_BAD_KEY, normRecaps, pickRecap, tierOf, roomFor, dueRecap, splitForMerge, nextRecap, cleanRecap, addRecap, mayRetry, afterFail, afterAway, loadBad } from "./recap.js";
 import { dayKeyOf, parseDayKey, moodOf, dayTranscript, parseDiary } from "./diary.js";
-import { WALL, SERIF, SANS, T, glass, fill, line, DOCK_GLASS, chip, chipPrimary, field, GLOBAL_CSS } from "./ui/style.js";
+import { WALL, SERIF, SANS, T, glass, fill, DOCK_GLASS, chip, chipPrimary, field, GLOBAL_CSS, HAIR, HAIRLINE, FLOAT_SHADOW } from "./ui/style.js";
 import { Icon } from "./ui/Icon.jsx";
 import { HIS_DEFAULT, Avatar } from "./ui/Avatar.jsx";
 import { Glows, IconBtn, SHEET_TITLE, Sheet, Toggle, RoundBtn } from "./ui/parts.jsx";
@@ -3054,7 +3054,7 @@ export default function App({ account = {} }) {
         >
           <AvatarSection av={avatars.her} onChange={changeHerAvatar} />
           <HisAvatarCard av={avatars.him} name={avatarName(avatars.him, false) || "炅"} />
-          <div style={{ height: 1, background: line(0.7), margin: "22px 0 18px" }} />
+          <div style={{ height: 1, background: HAIR, margin: "22px 0 18px" }} />
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>主题色</div>
           <div className="flex items-center flex-wrap" style={{ gap: 8, marginBottom: theme === entranceTheme() ? 22 : 10 }}>
             {[
@@ -3150,7 +3150,7 @@ export default function App({ account = {} }) {
             量一量屏幕底下
           </button>
 
-          <div style={{ height: 1, background: line(0.7), margin: "22px 0 18px" }} />
+          <div style={{ height: 1, background: HAIR, margin: "22px 0 18px" }} />
           <div className="flex flex-wrap" style={{ gap: 8 }}>
             <button
               onClick={() => {
@@ -3564,7 +3564,7 @@ export default function App({ account = {} }) {
               aria-label="回到最新"
               tabIndex={away ? 0 : -1}
               className="kfs-tap flex items-center justify-center"
-              style={{ ...glass(0.66, 18), width: 38, height: 38, borderRadius: 999, color: T.ink, boxShadow: `0 6px 18px rgba(var(--k-shade),0.16), inset 0 1px 0 ${line(0.75)}` }}
+              style={{ ...glass(0.66, 18), width: 38, height: 38, borderRadius: 999, color: T.ink, boxShadow: FLOAT_SHADOW }}
             >
               <Icon name="down" size={19} sw={2} />
             </button>
@@ -3584,7 +3584,7 @@ export default function App({ account = {} }) {
                   onClick={() => sendMeme(m.file)}
                   aria-label={m.name}
                   className="kfs-tap overflow-hidden"
-                  style={{ aspectRatio: "1 / 1", borderRadius: 16, border: `1.5px solid ${line(0.8)}`, boxShadow: "0 3px 10px rgba(var(--k-shade),0.12)" }}
+                  style={{ aspectRatio: "1 / 1", borderRadius: 16, border: HAIRLINE, boxShadow: "0 3px 10px rgba(var(--k-shade),0.12)" }}
                 >
                   <img src={memeSrc(m.file)} alt="" loading="lazy" className="w-full h-full object-cover" />
                 </button>
@@ -3615,7 +3615,7 @@ export default function App({ account = {} }) {
                   {ph.kind === "doc" ? (
                     <div
                       className="kfs-doc-chip flex items-center"
-                      style={{ height: 60, maxWidth: 190, gap: 8, padding: "0 12px 0 8px", borderRadius: 14, background: fill(0.55), border: `1.5px solid ${line(0.85)}` }}
+                      style={{ height: 60, maxWidth: 190, gap: 8, padding: "0 12px 0 8px", borderRadius: 14, background: fill(0.55), border: HAIRLINE }}
                     >
                       <span className="flex items-center justify-center flex-shrink-0" style={{ width: 34, height: 34, borderRadius: 11, background: fill(0.75), color: T.dai }}>
                         <Icon name="doc" size={18} />
@@ -3633,7 +3633,7 @@ export default function App({ account = {} }) {
                     <img
                       src={ph.data}
                       alt=""
-                      style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 14, border: `1.5px solid ${line(0.85)}`, display: "block" }}
+                      style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 14, border: HAIRLINE, display: "block" }}
                     />
                   )}
                   <button
@@ -3731,7 +3731,7 @@ export default function App({ account = {} }) {
                     fontSize: 13,
                     color: T.ink,
                     backgroundColor: fill(0.42),
-                    border: `1px solid ${line(0.65)}`,
+                    border: HAIRLINE,
                   }}
                 >
                   {modelLabel(activeModel)}

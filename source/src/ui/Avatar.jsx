@@ -1,5 +1,5 @@
 import { memeSrc } from "../memes.js";
-import { SERIF, T, line } from "./style.js";
+import { SERIF, T, HAIRLINE } from "./style.js";
 
 // ---------- 头像 ----------
 export const HER_PRESETS = [
@@ -28,7 +28,7 @@ export function Avatar({ av, who, size = 34 }) {
         height: size,
         borderRadius: "50%",
         background: who === "her" ? T.rougeSolid : T.daiGrad,
-        border: `1.5px solid ${line(0.9)}`,
+        border: HAIRLINE,
         boxShadow: "0 3px 10px rgba(var(--k-shade),0.18)",
       }}
     >
