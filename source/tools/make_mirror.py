@@ -2,7 +2,7 @@
 # 写到 static/mirror.html（打包时放进 assets/，名字带指纹；开屏用框装着它，见 src/SplashHeiye.jsx、开发说明“镜碎入月”那节）。
 #
 # 她 10 月 12 日夜里拿来的那一页是项目外的 Claude 做的（两兆多，镜框模型压成 base64 塞在里面）。
-# 只改下面这几处，别的一个字不动；她那边再改了发新版来，拿新版重跑这个就行（哪一处对不上会停下来说是哪一处）。
+# 只改下面这十处，别的一个字不动；她那边再改了发新版来，拿新版重跑这个就行（哪一处对不上会停下来说是哪一处）。
 #   1  安全规矩：不许用网络（three.js 是开封府自己带的，不再去外面四个网站现拉）
 #   2  three.js 换成同一个目录下开封府自己带的那一份（打包时把 __KFS_THREE__ 换成带指纹的文件名）
 #   3  一下就碎（原来要点三下），碎得早一点、镜头早一点动、穿越快一点（她定的“点一下整片镜子直接全碎”“适当加快一点”）
@@ -11,7 +11,8 @@
 #   6  页面底色透明：还没画出来的时候，底下开封府摆着的那张定格图透上来
 #   7  画好了、出岔子了（包括画布被显卡收走）都告诉开封府（ready / fail / enter 三样，postMessage）
 #   8  整页不许捏（同并蒂莲那一页）
-#   9  在月海里待久了（两分钟以上）隔一帧画一帧，省电，不烫手
+#   9  在月海里待久了（两分钟以上）隔一帧画一帧，省电，不烫手（这时候按帧率调清晰度那一道照一帧算，不糊）
+#  10  心跳：画着的时候隔两秒告诉开封府一声（tick），开封府听不到就当它卡住了
 # 速度：TRAVERSE 是穿越用几秒（中档 7.5，快档 5.5，她原来的 10）。改了重跑一遍，再打包。
 import os, re, sys
 
@@ -94,12 +95,21 @@ once("canvas.addEventListener('pointerdown', (e) => {\n  if (!e.isPrimary || !ap
      "  if (!app.world1) { if (!app.kfsEntered) { app.kfsEntered = true; e.preventDefault(); kfsTell('enter'); } return; }\n",
      "点镜面那一段")
 
-# 9 待久了省电：月海里两分钟以上，隔一帧画一帧
+# 9 待久了省电：月海里两分钟以上，隔一帧画一帧。
+#   隔帧画的时候一帧量出来是两帧的工夫，它自己按帧率调清晰度的那一道（adaptQuality）会当成手机画不动、一档一档降到最糊，
+#   所以那时候交给它的是一半（另一双眼睛 10 月 13 日挑出来的）
+# 10 心跳：每一帧的循环还在转，就隔两秒告诉开封府一声（tick）。开封府那一层好几秒听不到，就当它卡住了，换成定格图点一下进门
 once("function frame(now) {\n  requestAnimationFrame(frame);\n",
-     "let kfsSkip = false;\nfunction frame(now) {\n  requestAnimationFrame(frame);\n"
+     "let kfsSkip = false, kfsBeat = 0;\nfunction frame(now) {\n  requestAnimationFrame(frame);\n"
+     "  // 开封府：隔两秒报一声还活着（开屏那一层听不到就换成定格图，见 src/SplashHeiye.jsx）\n"
+     "  if (now - kfsBeat > 2000) { kfsBeat = now; kfsTell('tick'); }\n"
      "  // 开封府：在月海里待了两分钟以上，隔一帧画一帧（省电，不烫手）；这一帧不画，时间也不往前记\n"
-     "  if (app.state === STATE.MOON_SEA && app.time - app.pushStart > CONFIG.camera.traverseDuration + 120 && (kfsSkip = !kfsSkip)) return;\n",
+     "  const kfsSlow = app.state === STATE.MOON_SEA && app.time - app.pushStart > CONFIG.camera.traverseDuration + 120;\n"
+     "  if (kfsSlow && (kfsSkip = !kfsSkip)) return;\n",
      "每一帧")
+once("  render();\n  adaptQuality(raw);\n}\nfunction start() {",
+     "  render();\n  adaptQuality(kfsSlow ? raw / 2 : raw); // 开封府：隔帧画的时候量出来是两帧的工夫，交给它一半\n}\nfunction start() {",
+     "每一帧的结尾")
 
 # 8 整页不许捏（iOS Safari 的双指缩放）
 once("</script>\n</body>",

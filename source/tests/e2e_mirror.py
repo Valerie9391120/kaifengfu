@@ -66,7 +66,8 @@ with sync_playwright() as p:
     ctx = browser.new_context(**iphone)
     page = ctx.new_page()
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.add_init_script("try { if (!sessionStorage.getItem('kfs-t')) { localStorage.setItem('kfs-theme', 'heiye'); localStorage.setItem('kfs-mirror-debug', '1'); sessionStorage.setItem('kfs-t', '1'); } } catch (e) {}")
+    # 这台机器没有显卡，软着画一帧要好几秒，心跳隔得远：“多久听不到算卡住”放宽到两分钟（卡住那一段另测）
+    page.add_init_script("try { if (!sessionStorage.getItem('kfs-t')) { localStorage.setItem('kfs-theme', 'heiye'); localStorage.setItem('kfs-mirror-debug', '1'); localStorage.setItem('kfs-mirror-stall', '120000'); sessionStorage.setItem('kfs-t', '1'); } } catch (e) {}")
     t0 = time.time()
     login(page, True)
     splash = page.locator(".kfs-splash-heiye")
@@ -119,14 +120,16 @@ with sync_playwright() as p:
     st2 = fr.evaluate("() => window.__mirror.app.state")
     time.sleep(0.6)
     shot(page, "m2_moon_sea")
-    # 不点就一直在月海里：开屏还在
+    # 不点就一直在月海里：开屏还在（心跳一直在报，不会被当成卡住）
     time.sleep(1.5)
     ok(st2 == "MOON_SEA" and splash.is_visible(), f"不点就一直在月海里，开屏不走（{st2}）")
+    ok(page.evaluate("localStorage.getItem('kfs-mirror-try')") == "1", "放着的时候这台手机上记着“正在放”（整页没了下回先只摆定格图）")
     # 再点一下：进门
     page.mouse.click(box["x"] + 196, box["y"] + 420)
     page.locator(".kfs-motto").wait_for(timeout=15000)
     page.wait_for_timeout(900)
     ok(page.locator(".kfs-splash-heiye").count() == 0 and mirror_frame(page) is None, "月海里再点一下：进门，开屏连同那个框整个拆掉")
+    ok(page.evaluate("localStorage.getItem('kfs-mirror-try')") is None, "进了门，“正在放”的记号擦掉")
     theme = page.evaluate("[document.documentElement.getAttribute('data-kfs-theme'), document.querySelector('.kfs-wall').getAttribute('src')]")
     ok(theme == ["heiye", "./assets/wall-heiye.webp"], f"进来是黑夜：蓝黑星海的聊天背景（{theme}）")
     shot(page, "m3_inside")
@@ -155,7 +158,62 @@ with sync_playwright() as p:
     ok(True, "定格图点一下就进门")
     ctx.close()
 
-    errors.clear()   # 这一段是故意让那一页拿不到 WebGL，那边报的错不算
+    # ============ 二之二：画着画着卡住了（不报错地停下） ============
+    # 那一页的每一帧循环停掉：心跳没了，开屏好几秒听不到，换成定格图，点一下进门
+    ctx = browser.new_context(**iphone)
+    page = ctx.new_page()
+    # 软着画一帧最多七八秒：“多久听不到算卡住”放宽到 15 秒（手机上是 8 秒，心跳两秒一声）
+    page.add_init_script("try { if (!sessionStorage.getItem('kfs-t')) { localStorage.setItem('kfs-theme', 'heiye'); localStorage.setItem('kfs-mirror-debug', '1'); localStorage.setItem('kfs-mirror-stall', '15000'); sessionStorage.setItem('kfs-t', '1'); } } catch (e) {}")
+    login(page, False)
+    splash = page.locator(".kfs-splash-heiye")
+    splash.wait_for(timeout=30000)
+    for _ in range(300):
+        if splash.get_attribute("data-kfs-mirror-mode") == "live":
+            break
+        time.sleep(0.2)
+    time.sleep(16.0)   # 好好画着的时候过了“卡住”的那个数也不换
+    live_still_live = splash.get_attribute("data-kfs-mirror-mode") == "live"
+    fr = mirror_frame(page)
+    fr.evaluate("() => { window.requestAnimationFrame = () => 0; }")
+    t_stop = time.time()
+    for _ in range(200):
+        if splash.get_attribute("data-kfs-mirror-mode") == "still":
+            break
+        time.sleep(0.2)
+    waited = time.time() - t_stop
+    ok(live_still_live and splash.get_attribute("data-kfs-mirror-mode") == "still" and mirror_frame(page) is None and 4 < waited < 28
+       and page.evaluate("localStorage.getItem('kfs-mirror-try')") is None,
+       f"画着画着卡住了：心跳停了 {waited:.1f} 秒，开屏换成定格图（之前好好画着的那几秒不算卡），记号擦掉")
+    page.mouse.click(196, 300)
+    page.locator(".kfs-motto").wait_for(timeout=15000)
+    ok(True, "卡住以后定格图点一下照样进门")
+    ctx.close()
+
+    # ============ 二之三：上回放到一半整页没了 ============
+    # 记号没擦掉（装成上回放到一半被系统杀掉）：这一回先只摆定格图、不装那一页；擦掉记号，下一回照样放
+    ctx = browser.new_context(**iphone)
+    page = ctx.new_page()
+    page.add_init_script("try { if (!sessionStorage.getItem('kfs-t')) { localStorage.setItem('kfs-theme', 'heiye'); localStorage.setItem('kfs-mirror-try', '1'); localStorage.setItem('kfs-mirror-stall', '120000'); sessionStorage.setItem('kfs-t', '1'); } } catch (e) {}")
+    login(page, False)
+    splash = page.locator(".kfs-splash-heiye")
+    splash.wait_for(timeout=30000)
+    time.sleep(1.0)
+    ok(splash.get_attribute("data-kfs-mirror-mode") == "still" and mirror_frame(page) is None and page.get_by_text("点一下进门").is_visible()
+       and page.evaluate("localStorage.getItem('kfs-mirror-try')") is None,
+       "上回放到一半整页没了：这一回先只摆定格图，记号擦掉")
+    page.mouse.click(196, 300)
+    page.locator(".kfs-motto").wait_for(timeout=15000)
+    page.reload()
+    splash = page.locator(".kfs-splash-heiye")
+    splash.wait_for(timeout=30000)
+    for _ in range(300):
+        if splash.get_attribute("data-kfs-mirror-mode") != "loading":
+            break
+        time.sleep(0.2)
+    ok(splash.get_attribute("data-kfs-mirror-mode") == "live" and mirror_frame(page) is not None, "再打开一回：照样放镜碎入月")
+    ctx.close()
+
+    errors.clear()   # 二那一段是故意让那一页拿不到 WebGL，那边报的错不算
     # ============ 三：别的主题不动 ============
     ctx = browser.new_context(**iphone)
     page = ctx.new_page()
