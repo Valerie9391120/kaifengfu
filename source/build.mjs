@@ -23,6 +23,19 @@ const lotusName = `lotus-${hash(lotus)}.html`;
 fs.writeFileSync(`${OUT}/assets/${lotusName}`, lotus);
 define.__KFS_LOTUS__ = JSON.stringify(`./assets/${lotusName}`);
 
+// 镜碎入月（黑夜主题的开屏，见开发说明“镜碎入月”那节）：也是一整个 HTML（两兆多，镜框模型在里面），开屏用框装着它。
+// 它要的 three.js 是开封府自己带的（npm 里钉死 0.160.0，她那一页就是照这一版写的），同一个目录、名字带指纹；
+// 那一页里写的是占位的 __KFS_THREE__，这里换成真名字，再给那一页算指纹
+const three = fs.readFileSync("node_modules/three/build/three.module.min.js");
+const threeName = `three-${hash(three)}.module.min.js`;
+fs.writeFileSync(`${OUT}/assets/${threeName}`, three);
+const mirrorSrc = fs.readFileSync("static/mirror.html", "utf8");
+if (!mirrorSrc.includes("'./__KFS_THREE__'")) throw new Error("static/mirror.html 里没找到 __KFS_THREE__：用 tools/make_mirror.py 重新生成");
+const mirror = Buffer.from(mirrorSrc.replace("'./__KFS_THREE__'", `'./${threeName}'`));
+const mirrorName = `mirror-${hash(mirror)}.html`;
+fs.writeFileSync(`${OUT}/assets/${mirrorName}`, mirror);
+define.__KFS_MIRROR__ = JSON.stringify(`./assets/${mirrorName}`);
+
 if (TEST_URL) {
   define.__KFS_SUPABASE_URL__ = JSON.stringify(TEST_URL);
   define.__KFS_SUPABASE_KEY__ = JSON.stringify("sb_publishable_test");
@@ -49,7 +62,7 @@ const css = fs.readFileSync(`${OUT}/assets/_app.css`);
 const cssName = `app-${hash(css)}.css`;
 fs.renameSync(`${OUT}/assets/_app.css`, `${OUT}/assets/${cssName}`);
 
-const IMAGES = ["splash.webp", "kite.webp", "wall.webp", "splash-dingxiang.webp", "dx-heart.webp", "dx-blush.webp", "wall-dingxiang.webp", "wall-heiye.webp"];
+const IMAGES = ["splash.webp", "kite.webp", "wall.webp", "splash-dingxiang.webp", "dx-heart.webp", "dx-blush.webp", "wall-dingxiang.webp", "wall-heiye.webp", "splash-heiye.webp"];
 for (const f of IMAGES) fs.copyFileSync(`static/${f}`, `${OUT}/assets/${f}`);
 
 // 两个入口：从哪个入口“添加到主屏幕”，图标就是哪个，头一回进去就是哪个主题（见 src/theme.js）。

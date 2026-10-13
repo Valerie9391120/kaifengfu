@@ -69,7 +69,9 @@ def tour(browser, theme):
     page.clock.install(time=NOW)
     page.clock.resume()
     # 主题记在这台手机的 localStorage 里：头一回打开之前就写好
-    page.add_init_script(f"try {{ if (!sessionStorage.getItem('kfs-look-theme')) {{ localStorage.setItem('kfs-theme', '{theme}'); sessionStorage.setItem('kfs-look-theme', '1'); }} }} catch (e) {{}}")
+    # 黑夜的开屏（镜碎入月）要 WebGL，这里软着画太慢、每回也不一样：只摆定格图（kfs-mirror-still，见 src/SplashHeiye.jsx）。
+    # 真的那一页另有 tests/e2e_mirror.py
+    page.add_init_script(f"try {{ if (!sessionStorage.getItem('kfs-look-theme')) {{ localStorage.setItem('kfs-theme', '{theme}'); localStorage.setItem('kfs-mirror-still', '1'); sessionStorage.setItem('kfs-look-theme', '1'); }} }} catch (e) {{}}")
 
     def shot(name, settle=0.5):
         time.sleep(settle)
