@@ -12,7 +12,7 @@ import { deriveVault, newSalt, seal, unseal, toB64, fromB64, KDF_ITER, CHECK_TEX
 import { createEngine } from "./engine.js";
 import { attachEngine } from "./store.js";
 import { THEMES, useTheme } from "./theme.js";
-import { T, fill, line } from "./ui/style.js";
+import { T, fill, HAIRLINE } from "./ui/style.js";
 
 const PAPER = "rgb(var(--k-paper))";
 const INK = "rgb(var(--k-ink))";
@@ -30,8 +30,8 @@ const card = {
   backgroundColor: fill(0.5),
   backdropFilter: "blur(26px) saturate(160%)",
   WebkitBackdropFilter: "blur(26px) saturate(160%)",
-  border: `1px solid ${line(0.75)}`,
-  boxShadow: `0 18px 50px rgba(var(--k-shade),0.16), inset 0 1px 0 ${line(0.8)}`,
+  border: HAIRLINE,
+  boxShadow: "0 18px 50px rgba(var(--k-shade),0.16)",
 };
 const input = {
   width: "100%",
@@ -40,7 +40,7 @@ const input = {
   fontSize: 16,
   color: INK,
   backgroundColor: fill(0.62),
-  border: `1px solid ${line(0.85)}`,
+  border: HAIRLINE,
   outline: "none",
   marginTop: 6,
 };

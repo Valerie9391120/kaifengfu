@@ -1,4 +1,4 @@
-import { SERIF, T, glass, BUBBLE_GLASS, fill } from "../ui/style.js";
+import { SERIF, T, BUBBLE_GLASS, fill, flat } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { Avatar } from "../ui/Avatar.jsx";
 
@@ -48,7 +48,7 @@ export function ThinkingRow({ msg, open, onToggle }) {
         onClick={onToggle}
         className="kfs-tap flex items-center"
         style={{
-          ...glass(0.38, 14),
+          ...flat(0.38),
           gap: 3,
           borderRadius: 999,
           padding: "4px 10px 4px 12px",
@@ -115,7 +115,7 @@ export function RecapRow({ onOpen }) {
       <button
         onClick={onOpen}
         className="kfs-tap flex items-center"
-        style={{ ...glass(0.38, 14), gap: 3, borderRadius: 999, padding: "4px 10px 4px 12px", fontSize: 12, color: T.inkSoft }}
+        style={{ ...flat(0.38), gap: 3, borderRadius: 999, padding: "4px 10px 4px 12px", fontSize: 12, color: T.inkSoft }}
       >
         <span>这以前的，他抄成了提要</span>
         <Icon name="chevR" size={13} />

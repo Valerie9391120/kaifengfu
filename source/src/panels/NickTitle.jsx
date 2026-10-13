@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { HER_NAME } from "../names.js";
-import { T, fill, line } from "../ui/style.js";
+import { T, fill, HAIRLINE } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { SHEET_TITLE } from "../ui/parts.jsx";
 
@@ -84,7 +84,7 @@ export function NickTitle({ name, onSave }) {
           padding: "0 12px",
           borderRadius: 12,
           backgroundColor: fill(0.6),
-          border: `1px solid ${line(0.85)}`,
+          border: HAIRLINE,
           outline: "none",
           userSelect: "text",
           WebkitUserSelect: "text",

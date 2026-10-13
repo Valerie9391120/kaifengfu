@@ -32,25 +32,36 @@ export const T = {
   motto: "rgb(var(--k-motto))",
 };
 
-// 玻璃的底、玻璃的边（分隔线、边上那道高光也算边）：颜色跟主题走（--k-fill、--k-line，见 input.css），深浅照各处原来的数。
-// 往后新加的东西要底色、要线，用这两个，别再写死白色（见开发说明“收拢”那节）
+// 玻璃的底：颜色跟主题走（--k-fill，见 input.css），深浅照各处原来的数。
+// 往后新加的东西要底色用它，要线用 HAIR，别再写死白色（见开发说明“收拢”那节）
 export const fill = (a) => `rgba(var(--k-fill),${a})`;
-export const line = (a) => `rgba(var(--k-line),${a})`;
+
+// 细线（2026 年 10 月 13 日装修，她定的“全亮线”，见开发说明“细线”那节）。
+// 原来的玻璃是厚的：白色渐变的底、上下两道内高光、外面一圈影子。现在照并蒂莲那个科普小框换成薄的：平的底、一根发丝线。
+// 浮在上面的（顶栏、卡片、面板、钮、输入框）底下垫一层淡影子（照官方 App：浮起来的东西用亮线、带影子）；
+// 贴在底上的（气泡）不垫影子、也不磨砂。线、影子、气泡的底都跟主题走（--k-hair、--k-float-shadow、--k-bubble）
+export const HAIR = "var(--k-hair)";
+export const HAIRLINE = `1px solid ${HAIR}`;
+export const FLOAT_SHADOW = "var(--k-float-shadow)";
 
 export const glass = (a = 0.55, blur = 24) => ({
   backgroundColor: fill(a),
-  backdropFilter: `blur(${blur}px) saturate(165%)`,
-  WebkitBackdropFilter: `blur(${blur}px) saturate(165%)`,
-  border: `1px solid ${line(0.7)}`,
-  boxShadow: `0 10px 30px rgba(var(--k-shade),0.12), inset 0 1px 0 ${line(0.75)}`,
+  backdropFilter: `blur(${blur}px) saturate(var(--k-glass-sat))`,
+  WebkitBackdropFilter: `blur(${blur}px) saturate(var(--k-glass-sat))`,
+  border: HAIRLINE,
+  boxShadow: FLOAT_SHADOW,
+});
+
+// 聊天记录里一条一条跟着滚的小东西（“思考过程”那粒小钮、抄成提要那一行、显示不了的表情包）：和气泡一样不磨砂、不垫影子。
+// 磨砂的东西每一块单独占一层，长对话里成百上千层，拉侧栏那一下 iPhone 会把整页杀掉（见开发说明“长对话里拉侧栏白屏”）
+export const flat = (a = 0.55) => ({
+  backgroundColor: fill(a),
+  border: HAIRLINE,
 });
 
 export const BUBBLE_GLASS = {
-  background: `linear-gradient(150deg, ${fill(0.34)} 0%, ${fill(0.1)} 55%, ${fill(0.2)} 100%)`,
-  backdropFilter: "blur(10px) saturate(150%)",
-  WebkitBackdropFilter: "blur(10px) saturate(150%)",
-  border: `1px solid ${line(0.62)}`,
-  boxShadow: `0 6px 20px rgba(var(--k-shade),0.08), inset 0 1px 1px ${line(0.8)}, inset 0 -1px 1px ${line(0.2)}`,
+  background: "var(--k-bubble)",
+  border: HAIRLINE,
   color: "rgb(var(--k-ink))",
 };
 
@@ -61,10 +72,10 @@ export const DOCK_GLASS = {
   background:
     "linear-gradient(to bottom, rgba(var(--k-base),0) calc(100% - 14px), rgb(var(--k-base)) 100%), " +
     `linear-gradient(to bottom, ${fill(0.44)} 0%, ${fill(0.3)} 52%, rgba(var(--k-base),0.6) 100%)`,
-  backdropFilter: "blur(30px) saturate(140%)",
-  WebkitBackdropFilter: "blur(30px) saturate(140%)",
-  borderTop: `1px solid ${line(0.72)}`,
-  boxShadow: `0 -10px 30px rgba(var(--k-shade),0.1), inset 0 1px 0 ${line(0.7)}`,
+  backdropFilter: "blur(30px) saturate(var(--k-dock-sat))",
+  WebkitBackdropFilter: "blur(30px) saturate(var(--k-dock-sat))",
+  borderTop: HAIRLINE,
+  boxShadow: "0 -10px 30px rgba(var(--k-shade),0.1)",
   borderRadius: "26px 26px 0 0",
 };
 
@@ -90,7 +101,7 @@ export const field = {
   fontSize: 16,
   color: T.ink,
   backgroundColor: fill(0.55),
-  border: `1px solid ${line(0.8)}`,
+  border: HAIRLINE,
   outline: "none",
 };
 
