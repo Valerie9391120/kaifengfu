@@ -80,6 +80,7 @@ with sync_playwright() as p:
         e0 = len(eleven())
         c0 = len(calls())
         queue_reply("想你了\n[SPLIT]\n[CALL]\n[softly] 卿卿。在做什么。")
+        plays0 = pa.evaluate("window.__plays.length")
         say(pa, "在吗")
         rang = wait_js(pa, RINGING, 20000)
         time.sleep(0.8)
@@ -89,8 +90,8 @@ with sync_playwright() as p:
            "他回话里写了 [CALL]：她在开封府里，弹出来电页面（他的名字、接听、挂断）")
         ok(pre == ["[softly] 卿卿。", "在做什么。"], f"响的时候就把他接起来要说的念好了（{pre}）")
         ok("光义来电" in pa.evaluate(MARKS) and pa.get_by_text("想你了").count() >= 1, "聊天里：他前面那句照常摆着，底下一行“光义来电”")
-        tone = pa.evaluate("window.__plays.filter((s) => s.startsWith('blob:')).length")
-        ok(tone >= 1, f"响铃：放了一段铃声（{tone} 回；iPhone 不让的话就只有页面）")
+        tone = pa.evaluate("window.__plays.length") - plays0
+        ok(tone == 0, f"响铃的时候没有铃声（原来那段她 22:58 让撤了），只有来电页面（放了 {tone} 回声音）")
         n_pre = len(spoken(e0))
         pa.locator(".kfs-ring button[aria-label='接听']").click()
         got = wait_phase(pa, "listening", 15000)

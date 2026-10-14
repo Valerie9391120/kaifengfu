@@ -60,7 +60,7 @@ import { createHearer } from "./call/hear.js";
 import { HELLOS, HELLO_KEY, HELLO_LAST, HELLO_WAIT, pickHello } from "./call/hello.js";
 import { createEchoProbe, ECHO_LINE, ECHO_KEY } from "./call/echo.js";
 import { EchoProbe } from "./call/EchoProbe.jsx";
-import { pendingCall, ringLeft, ringWav, CALL_RING_MS } from "./call/incoming.js";
+import { pendingCall, ringLeft, CALL_RING_MS } from "./call/incoming.js";
 import { createBarge, echoOf, ackOnly, cutPlan, cutItems } from "./call/barge.js";
 import { IncomingCall } from "./call/IncomingCall.jsx";
 import { isCallMark } from "./call/marks.js";
@@ -2556,29 +2556,8 @@ export default function App({ account = {} }) {
 
   // ---- 他打来的电话（她 10 月 14 日 17:26、17:35 定的，见 call/incoming.js 和开发说明“他打给她”） ----
   // 他的回话里写了 [CALL]：放进对话以后（一条一条蹦完了、她在眼前），一分钟以内到的就响，过了一分钟记“未接来电”。
-  // 响的时候把他接起来要说的先念好；她点接听：跟她打过去一样开声音、开麦克风，他先开口；挂断、一分钟没接：“未接来电”
-  const ringUrlRef = useRef("");
-  // 来电铃声（自己合成的，见 ringWav）。iPhone 不让网页自己出声的时候放不出来：那就只有来电页面
-  const playRingTone = () => {
-    try {
-      if (!ringUrlRef.current) ringUrlRef.current = URL.createObjectURL(new Blob([ringWav()], { type: "audio/wav" }));
-      const a = new Audio(ringUrlRef.current);
-      a.loop = true;
-      const p = a.play();
-      if (p && p.catch) p.catch(() => {});
-      return a;
-    } catch (e) {
-      return null;
-    }
-  };
-  const stopRingTone = (a) => {
-    try {
-      if (a) {
-        a.pause();
-        a.removeAttribute("src");
-      }
-    } catch (e) {}
-  };
+  // 响的时候把他接起来要说的先念好；她点接听：跟她打过去一样开声音、开麦克风，他先开口；挂断、一分钟没接：“未接来电”。
+  // 没有铃声：原来那段自己合成的“叮——咚”她嫌有灵异感，她手机上本来也放不出来，22:58 她说“虽然放不出来还是先把它撤掉吧”，撤了（见开发说明“来电铃声”）
   // 没接（挂断、一分钟没接、过了一分钟才看到）：在他打电话那一条后面记一行“未接来电”（见 call/marks.js）。
   // 几点没接的：他那一条到了一分钟的时候（过了好久才看到的，不记成看到的那会儿）
   const missCall = (chat, msgId) => {
@@ -2609,14 +2588,13 @@ export default function App({ account = {} }) {
     ringRef.current = null;
     setRing(null);
     clearTimeout(r.timer);
-    stopRingTone(r.tone);
     if (why !== "answer") missCall(r.chat, r.msgId);
   };
   const startRing = (msg, item, left) => {
     if (echoRef.current) closeEcho();
     if (dictating && recRef.current) recRef.current.stop();
     stopVoice(); // 正放着的语音条停下
-    const r = { msgId: msg.id, chat: chatIdRef.current, segs: segmentsOfReply([item]), pre: new Map(), timer: null, tone: null };
+    const r = { msgId: msg.id, chat: chatIdRef.current, segs: segmentsOfReply([item]), pre: new Map(), timer: null };
     ringRef.current = r;
     setRing({ msgId: r.msgId });
     // 他接起来要说的先念好（她一接马上响；没接的话这几个字的额度白扣）
@@ -2625,7 +2603,6 @@ export default function App({ account = {} }) {
       p.catch(() => {});
       r.pre.set(s, p);
     });
-    r.tone = playRingTone();
     r.timer = setTimeout(() => endRing(r, "missed"), left);
   };
   // 接听：在她点的这一下里开声音、开麦克风（startCall 里），他先说
