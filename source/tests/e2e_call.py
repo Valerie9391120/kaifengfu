@@ -137,6 +137,8 @@ with sync_playwright() as p:
         ok(his == ["嗯。", "嗯。我今天也在想你，想了一整天，想着你在干嘛。", "嗯。我今天也在想你，想了一整天，想着你在干嘛。晚安"],
            f"念到哪段出哪段：一段一段接上去（{his}）")
         said = [x["text"] for x in eleven()[e0:]]
+        plays = pa.evaluate("window.__plays.length")
+        ok(plays <= 1, f"他的声音用 Web Audio 放，不经过 <audio>（<audio> 只在打电话那一下放过一回没声音的：{plays} 回）；iPhone 上 <audio> 放过一回，下一回开听写就听不见了（她 12:50 碰上的）")
         ok(spoke and done and said == ["嗯。", "我今天也在想你，想了一整天，想着你在干嘛。", "[whispers] 晚安"],
            f"他的回话一句一句念：动作、表情不念，表情包不念，头一段短（{said}）")
         ok(pa.evaluate(TURNS) == [["her", "喂，你在吗"], ["him", "嗯。我今天也在想你，想了一整天，想着你在干嘛。晚安"]],
@@ -255,6 +257,24 @@ with sync_playwright() as p:
         noted = wait_js(pa, NOTE + ".includes('没送到')", 25000)
         ok(noted and phase(pa) == "listening", f"这一句没送到：通话页上说一声，接着听（{pa.evaluate(NOTE)}）")
         mock("/__debug/claude-fail")
+        pa.locator(".kfs-call button[aria-label='挂断']").click()
+        time.sleep(0.6)
+
+        # ================= 开了听写一个字都没来：八秒提醒一句；点一下屏幕在她点的这一下里重开 =================
+        dial(pa)
+        n0 = pa.evaluate("window.__srCount()")
+        time.sleep(8.6)
+        hint = pa.evaluate(NOTE)
+        pa.locator(".kfs-call").click(position={"x": 200, "y": 300})
+        time.sleep(0.4)
+        n1 = pa.evaluate("window.__srCount()")
+        ok(hint == "说了没出字的话，点一下屏幕" and n1 == n0 + 1 and pa.evaluate("window.__srOpen()") and pa.evaluate(NOTE) == "" and phase(pa) == "listening",
+           f"在听、八秒一个字没来：底下提醒一句；她点一下屏幕，重开听写，那句收掉（{hint}；听写开了 {n0}→{n1} 个）")
+        say_in_call(pa, "嗯")
+        time.sleep(0.3)
+        pa.locator(".kfs-call").click(position={"x": 200, "y": 300})
+        time.sleep(0.4)
+        ok(pa.evaluate("window.__srCount()") == n1 and pa.evaluate(SUBS) == "嗯", "已经听到字了再点屏幕：不重开，她说了一半的不丢")
         pa.locator(".kfs-call button[aria-label='挂断']").click()
         time.sleep(0.6)
 

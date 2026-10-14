@@ -22,7 +22,7 @@ const QUICK_MAX = 5; // 连着一开就停这么多回：这台手机上听不�
 //   onDone(text)   她说完了一句（不是空的）
 //   onFail(kind)   听不了：mic 不给用麦克风（或者 iPhone 要她点一下才肯开）、dead 一开就停、none 这台手机没有听写
 // }
-// 回 { start(), stop(), listening() }：start 开始听新的一句；stop 不听了（挂断、静音、轮到他说），听到一半的不交
+// 回 { start(), stop(), listening(), heard() }：start 开始听新的一句；stop 不听了（挂断、静音、轮到他说），听到一半的不交
 export function createListener(d) {
   const pauseMs = d.pauseMs || PAUSE_MS;
   let rec = null;
@@ -166,5 +166,7 @@ export function createListener(d) {
       drop();
     },
     listening: () => on,
+    // 这一句听到过字没有（她点屏幕的时候：听到了就不重开，免得把她说了一半的丢掉）
+    heard: () => on && !!text.trim(),
   };
 }

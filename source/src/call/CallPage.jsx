@@ -17,6 +17,7 @@ import { Subtitles } from "./Subtitles.jsx";
 //     speaking  他在说
 //     muted     静音（不听她说）
 //     tap       iPhone 不让自己接着听：点一下屏幕再说
+//   在听的时候也能点：一个字还没听到就重开听写（iPhone 有时开起来了却听不见，见 play.js），听到了字不动
 // =====================================================
 const STATUS = {
   ring: "接通中…",
@@ -43,7 +44,7 @@ export function CallPage({ call, avatar, name, onMute, onHangUp, onTap }) {
       role="dialog"
       aria-label="通话中"
       data-phase={phase}
-      onClick={phase === "tap" ? onTap : undefined}
+      onClick={phase === "tap" || phase === "listening" ? onTap : undefined}
       style={{
         zIndex: 70,
         background: "#000",

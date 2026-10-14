@@ -2,6 +2,7 @@
 import { createListener, PAUSE_MS, PAUSES, pauseOf } from "../src/call/listen.js";
 import { cleanForCall, splitForCall, segmentsOfReply, createSayer, subOf } from "../src/call/say.js";
 import { emptySubs, herLive, herDone, hisSay, unitsOf, subWho, subFade, subGap, SUB_KEEP, SUB_TURNS, SUB_COLOR, SUB_OLD } from "../src/call/subs.js";
+import { createCallAudio, bytesOf } from "../src/call/play.js";
 import { isCallMark, callLen, callClock, markText, markNote, markRecap } from "../src/call/marks.js";
 import { buildSystem, CALL_NOTE } from "../src/prompt/system.js";
 import { buildMessages } from "../src/prompt/messages.js";
@@ -152,6 +153,95 @@ function listener(opts = {}) {
   ok(made[0].stopped, "调成 2 秒：过了 2 秒才收尾");
   ok(PAUSES.join() === "1200,1600,2000" && pauseOf(undefined) === 1600 && pauseOf(1200) === 1200 && pauseOf(999) === 1600 && pauseOf("2000") === 2000,
     "停多久算说完：三档 1.2、1.6、2 秒，没挑过、挑的数不认得都是 1.6 秒");
+}
+
+{
+  const { l, made } = listener();
+  l.start();
+  const before = l.heard();
+  made[0].say("嗯");
+  const mid = l.heard();
+  l.stop();
+  ok(before === false && mid === true && l.heard() === false, "听没听到字（她点屏幕的时候看这个：听到了就不重开，免得把她说了一半的丢掉）");
+}
+
+// =====================================================
+// 放他的声音（她 12:50 碰上的：只能说一句。iPhone 上 <audio> 放过一回，下一回开听写就听不见了）
+// =====================================================
+const tick = () => new Promise((r) => setTimeout(r, 0));
+function audioRig({ ac = true, resumable = true, session = true } = {}) {
+  const log = [];
+  const revoked = [];
+  const acs = [];
+  let n = 0;
+  class FakeAC {
+    constructor() { this.state = "suspended"; this.sources = []; acs.push(this); log.push("ac"); }
+    get destination() { return {}; }
+    createBuffer() { return { duration: 0 }; }
+    createBufferSource() {
+      const src = { connect() {}, start: () => log.push("src.start"), stop: () => log.push("src.stop"), onended: null };
+      this.sources.push(src);
+      return src;
+    }
+    resume() { if (resumable) this.state = "running"; return Promise.resolve(); }
+    decodeAudioData(buf, ok2) { const got = { duration: 0.01, bytes: buf.byteLength }; ok2(got); return Promise.resolve(got); }
+    close() { log.push("ac.close"); return Promise.resolve(); }
+  }
+  class FakeAudio {
+    constructor() { this.src = ""; }
+    play() { log.push("el.play:" + this.src); setTimeout(() => this.onended && this.onended(), 0); return Promise.resolve(); }
+    pause() { log.push("el.pause"); }
+    removeAttribute() {}
+  }
+  const win = {
+    Audio: FakeAudio,
+    URL: { createObjectURL: () => "blob:" + ++n, revokeObjectURL: (u) => revoked.push(u) },
+    Blob: class { constructor() {} },
+    navigator: session ? { audioSession: { type: "auto" } } : {},
+  };
+  if (ac) win.AudioContext = FakeAC;
+  return { win, log, revoked, acs, a: createCallAudio(win, new Uint8Array([1, 2, 3])) };
+}
+{
+  ok(Array.from(bytesOf(btoa("abc"))).join() === "97,98,99", "念好的声音（base64）解回字节");
+  const R = audioRig();
+  R.a.unlock();
+  ok(R.win.navigator.audioSession.type === "play-and-record" && R.log[0] === "ac" && R.log.includes("src.start") && R.log.some((x) => x.startsWith("el.play:blob:")),
+    `打电话那一下：告诉 iPhone 这一通是又放又录的；Web Audio 开起来、放一下没声音的；<audio> 也先放一下没声音的（${R.log.join()}）`);
+  const clip = await R.a.decode(btoa("mp3bytes"), "audio/mpeg");
+  ok(clip.buf && clip.buf.bytes === 8 && String(clip.url).startsWith("blob:"), "念好的一段：Web Audio 解码好，再留一个 <audio> 用的地址兜底");
+  R.log.length = 0;
+  let done = false;
+  R.a.play(clip).then(() => { done = true; });
+  await tick();
+  ok(R.log.join() === "src.start" && R.a.kind() === "webaudio" && !done, `放：用 Web Audio，不用 <audio>；还没放完（${R.log.join()}）`);
+  R.acs[0].sources.slice(-1)[0].onended();
+  await tick();
+  ok(done, "Web Audio 那一段报放完了：这一段才算放完（接着放下一段）");
+  R.a.play(clip);
+  await tick();
+  R.a.stop();
+  ok(R.log.includes("src.stop") && R.log.includes("el.pause"), "立刻停：Web Audio 那一段停下，<audio> 也停下");
+  R.a.release(clip);
+  ok(R.revoked.includes(clip.url), "这一段用完了：<audio> 用的地址收回");
+  R.a.close();
+  ok(R.win.navigator.audioSession.type === "auto" && R.log.includes("ac.close"), "挂了：Web Audio 关掉，iPhone 的声音路子换回原来的");
+}
+{
+  const R = audioRig({ resumable: false });
+  R.a.unlock();
+  const clip = await R.a.decode(btoa("x"), "audio/mpeg");
+  R.log.length = 0;
+  await R.a.play(clip);
+  ok(R.log.join() === "el.play:" + clip.url, `Web Audio 醒不过来：这一段改用 <audio> 放（${R.log.join()}）`);
+}
+{
+  const R = audioRig({ ac: false, session: false });
+  R.a.unlock();
+  const clip = await R.a.decode(btoa("x"), "audio/mpeg");
+  R.log.length = 0;
+  await R.a.play(clip);
+  ok(clip.buf === null && R.log.join() === "el.play:" + clip.url && R.a.kind() === "audio", "没有 Web Audio 的浏览器：照原来用 <audio> 放；没有声音路子那个开关的也不碍事");
 }
 
 // =====================================================

@@ -54,6 +54,7 @@ import { CallPage } from "./call/CallPage.jsx";
 import { createListener, pauseOf } from "./call/listen.js";
 import { createSayer, segmentsOfReply } from "./call/say.js";
 import { emptySubs, herLive, herDone, hisSay } from "./call/subs.js";
+import { createCallAudio } from "./call/play.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -1883,13 +1884,35 @@ export default function App({ account = {} }) {
       return;
     }
     // 字幕不清：他刚说的那些留着，等她开口了才换成她的
-    callUi({ phase: "listening", note: c.phase === "tap" ? "" : c.note });
+    callUi({ phase: "listening", note: c.phase === "tap" || c.note === CALL_HINT ? "" : c.note });
     c.listener.start();
+    hintLater(c);
+  };
+  // 开了听写八秒还一个字没听到：底下提醒一句。iPhone 有时开起来了却听不见（见 call/play.js），她点一下屏幕就在她点的那一下里重开
+  const CALL_HINT = "说了没出字的话，点一下屏幕";
+  const hintLater = (c) => {
+    clearTimeout(c.hintTimer);
+    c.hintTimer = setTimeout(() => {
+      if (callRef.current === c && c.phase === "listening" && !c.listener.heard()) callUi({ note: CALL_HINT });
+    }, 8000);
+  };
+  const hintOff = (c) => {
+    clearTimeout(c.hintTimer);
+    c.hintTimer = null;
+    if (c.note === CALL_HINT) callUi({ note: "" });
+  };
+  // 她点了一下屏幕：“点一下屏幕，接着说”的时候接着听；在听、可一个字还没听到的时候，重开听写（在她点的这一下里开，iPhone 认）。
+  // 已经听到字了不动（点到屏幕不把她说了一半的丢掉）
+  const callTap = () => {
+    const c = callRef.current;
+    if (!c) return;
+    if (c.phase === "tap" || (c.phase === "listening" && !c.listener.heard())) callListen();
   };
   // 她说完了一句：当平常的一句话发出去，不等那两秒（电话里等着难受）
   const callSaid = (text) => {
     const c = callRef.current;
     if (!c) return;
+    clearTimeout(c.hintTimer);
     callUi({ phase: "thinking", subs: herDone(c.subs, text), note: "" });
     sendHer({ kind: "text", text, via: "call" }, { now: true });
   };
@@ -1913,14 +1936,10 @@ export default function App({ account = {} }) {
       return;
     }
     if (dictating && recRef.current) recRef.current.stop();
-    // 放他声音的那个东西：在她点的这一下先放一小段没声音的，后面他说话才不会被 iPhone 拦（同“试听一句”）
-    const audio = new Audio();
-    audio.preload = "auto";
-    try {
-      audio.src = URL.createObjectURL(new Blob([silentMp3(3)], { type: "audio/mpeg" }));
-      const p = audio.play();
-      if (p && p.catch) p.catch(() => {});
-    } catch (e) {}
+    // 放他声音的（见 call/play.js）：在她点的这一下里开起来（iPhone 要这一下）；告诉 iPhone 这一通是又放又录的；
+    // 用 Web Audio 放，不用 <audio>（<audio> 放过一回，iPhone 上下一回开听写就听不见了，她 12:50 碰上的）
+    const audio = createCallAudio(window, silentMp3(3));
+    audio.unlock();
     const id = chatIdRef.current;
     const mark = { id: newId(), role: "event", who: "call", kind: "call", phase: "start", ts: Date.now() };
     const next = messagesRef.current.concat([mark]);
@@ -1937,40 +1956,30 @@ export default function App({ account = {} }) {
         return () => clearTimeout(t);
       },
       pauseMs: pauseOf(settingsRef.current.callPause),
-      onText: (t) => callRef.current === c && callUi({ subs: herLive(c.subs, t) }),
+      onText: (t) => {
+        if (callRef.current !== c) return;
+        if (t && t.trim()) hintOff(c);
+        callUi({ subs: herLive(c.subs, t) });
+      },
       onDone: (t) => callRef.current === c && callSaid(t),
       onFail: (kind) => callRef.current === c && callListenFailed(kind),
     });
     c.sayer = createSayer({
+      // 念好的一段：Web Audio 解码好（解不开的留着 <audio> 用的地址兜底），交给念的那头当“地址”排队
       synth: async (text, signal) => {
         const d = await callVoice({ op: "speak", text, stability: stabOf(settingsRef.current.voiceStab) }, { signal });
-        return { url: audioUrl(d.audio, d.mime) };
+        return { url: await audio.decode(d.audio, d.mime) };
       },
-      play: (url) =>
-        new Promise((resolve, reject) => {
-          audio.onended = () => resolve();
-          audio.onerror = () => reject(new Error("放不出来"));
-          audio.src = url;
-          const p = audio.play();
-          if (p && p.catch) p.catch(reject);
-        }),
-      stopPlay: () => {
-        audio.onended = null;
-        audio.onerror = null;
-        try {
-          audio.pause();
-        } catch (e) {}
-      },
+      play: (clip) => audio.play(clip),
+      stopPlay: () => audio.stop(),
       // 这一段放完了、不要了：地址收回（一段几十 K，一通电话下来不收会越攒越多）
-      release: (url) => {
-        try {
-          URL.revokeObjectURL(url);
-        } catch (e) {}
-      },
+      release: (clip) => audio.release(clip),
       onState: (st) => {
         if (callRef.current !== c) return;
-        if (st === "speaking") callUi({ phase: "speaking" });
-        else if (st === "done") callListen();
+        if (st === "speaking") {
+          hintOff(c);
+          callUi({ phase: "speaking" });
+        } else if (st === "done") callListen();
       },
       onError: (e) => callRef.current === c && callUi({ note: `有一句没念出来（${String((e && e.message) || e).slice(0, 60)}），字在聊天里` }),
       // 念到这一段了：字幕出这一段（他开口的头一段把她的字幕换下去）
@@ -1997,13 +2006,10 @@ export default function App({ account = {} }) {
     if (!c) return;
     callRef.current = null;
     setCall(null);
+    clearTimeout(c.hintTimer);
     c.listener.stop();
     c.sayer.cancel();
-    try {
-      c.audio.pause();
-      if (c.audio.src && c.audio.src.startsWith("blob:")) URL.revokeObjectURL(c.audio.src);
-      c.audio.removeAttribute("src");
-    } catch (e) {}
+    c.audio.close();
     if (c.wake) c.wake.release().catch(() => {});
     // 聊天里那两行：说过话的记一行“通话 12 分钟”；一句没说的，“通话开始”那行也拿掉
     const secs = Math.max(1, Math.round((Date.now() - c.start) / 1000));
@@ -2035,7 +2041,8 @@ export default function App({ account = {} }) {
     if (c.muted) {
       if (c.phase === "listening" || c.phase === "tap") {
         c.listener.stop();
-        callUi({ phase: "muted" });
+        clearTimeout(c.hintTimer);
+        callUi({ phase: "muted", note: c.note === CALL_HINT ? "" : c.note });
       } else callUi({});
     } else if (c.phase === "muted") callListen();
     else callUi({});
@@ -4066,7 +4073,7 @@ export default function App({ account = {} }) {
       {lotusOpen && <LotusPage theme={theme} onClose={() => setLotusOpen(false)} />}
 
       {/* 通话页：盖在最上面（见 call/CallPage.jsx）。她点屏幕那一下（iPhone 不让自己接着听的时候）接着听 */}
-      {call && <CallPage call={call} avatar={avatars.him} name={names.him || HIS_NAME} onMute={toggleMute} onHangUp={hangUp} onTap={callListen} />}
+      {call && <CallPage call={call} avatar={avatars.him} name={names.him || HIS_NAME} onMute={toggleMute} onHangUp={hangUp} onTap={callTap} />}
 
       {chatMenu && (
         <ChatMenu
