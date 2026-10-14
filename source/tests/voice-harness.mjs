@@ -46,9 +46,10 @@ export function silentFrames(seconds) {
 // always 一直这样，直到改回来。
 // state.hold：下一回压这么多毫秒再答（念得慢）。state.ttsModels：平常念字的那个接口认哪几个模型（null 是都认）。
 // state.stabilities：念字的那个接口认哪几个“稳不稳”的数（null 是都认；v3 只认 0、0.5、1）
+// 打电话用的听写通行证（/v1/single-use-token/realtime_scribe）：state.stt 是 ok 给、perm 这把 key 没开 Speech to Text（401 missing_permissions）
 export function createFakeEleven() {
   const log = [];
-  const state = { key: "", voice: "", fail: null, failTimes: 0, always: false, hold: 0, ttsModels: null, stabilities: null };
+  const state = { key: "", voice: "", fail: null, failTimes: 0, always: false, hold: 0, ttsModels: null, stabilities: null, stt: "ok", tokens: 0 };
   const reply = (status, data) => new Response(typeof data === "string" ? data : JSON.stringify(data), { status, headers: { "content-type": typeof data === "string" ? "text/plain" : "application/json" } });
   const seconds = (text) => Math.max(1, Array.from(String(text).replace(/\[[A-Za-z][^\]]*\]/g, "").replace(/\s+/g, "")).length * 0.25);
   async function receive(url, init = {}) {
@@ -81,6 +82,14 @@ export function createFakeEleven() {
     if (headers["xi-api-key"] !== state.key || fail === "key") return reply(401, { detail: { status: "invalid_api_key", message: "Invalid API key" } });
     if (fail === "busy") return reply(429, { detail: { status: "too_many_concurrent_requests", message: "Too many concurrent requests" } });
     if (fail === "down") return reply(500, "Internal Server Error");
+    if (u.pathname === "/v1/single-use-token/realtime_scribe") {
+      if (init.method !== "POST") return reply(405, { detail: "Method Not Allowed" });
+      if (state.stt === "perm") return reply(401, { detail: { status: "missing_permissions", message: "The API key you used is missing the permission speech_to_text to execute this operation." } });
+      // 真的 ElevenLabs 这一种怎么写没见过，照它事件表里的 unaccepted_terms 编的
+      if (state.stt === "terms") return reply(403, { detail: { status: "unaccepted_terms", message: "You need to accept the Scribe terms of service in the dashboard before using this feature." } });
+      state.tokens += 1;
+      return reply(200, { token: `sutkn_test_${state.tokens}` });
+    }
     const tts = u.pathname.startsWith("/v1/text-to-speech/");
     const dialogue = u.pathname === "/v1/text-to-dialogue";
     if (!tts && !dialogue) return reply(404, { detail: "Not Found" });

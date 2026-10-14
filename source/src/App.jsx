@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { store } from "./store.js";
 import { callClaude, callReply, callVoice, mailbox, freshToken } from "./cloud.js";
-import { VOICE_KEY, HOLD_MS, WANT_KEY, HEARD_KEY, HEARD_MAX, VOICE_SAMPLE, voiceKeyOf, voicesIn, heardOf, shownOf, stabOf, secondsOf, readHeard, readVoice, collectHisIds, voiceWhere, silentMp3 } from "./voice.js";
+import { VOICE_KEY, HOLD_MS, WANT_KEY, HEARD_KEY, HEARD_MAX, VOICE_SAMPLE, voiceKeyOf, voicesIn, heardOf, shownOf, stabOf, secondsOf, readHeard, readVoice, packVoice, collectHisIds, voiceWhere, silentMp3 } from "./voice.js";
 import { createSpeaker } from "./speaker.js";
 import { MOTTO_KEY, MOTTO_LAST, DEFAULT_MOTTO, parseMotto, pickMotto, poolAt, fillMotto, mottoLines, readMotto, packMotto, describeMotto } from "./motto.js";
 import { MottoPanel } from "./panels/MottoPanel.jsx";
@@ -55,6 +55,9 @@ import { createListener, pauseOf } from "./call/listen.js";
 import { createSayer, segmentsOfReply } from "./call/say.js";
 import { emptySubs, herLive, herDone, hisSay } from "./call/subs.js";
 import { createCallAudio } from "./call/play.js";
+import { createMic } from "./call/mic.js";
+import { createHearer } from "./call/hear.js";
+import { HELLOS, HELLO_KEY, HELLO_LAST, pickHello } from "./call/hello.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -1883,8 +1886,21 @@ export default function App({ account = {} }) {
       callUi({ phase: "muted" });
       return;
     }
+    // 听的那一头还没准备好（通行证、麦克风还在路上）：准备好了再开
+    if (!c.listener) {
+      c.wantListen = true;
+      callUi({ phase: "ring" });
+      return;
+    }
     // 字幕不清：他刚说的那些留着，等她开口了才换成她的
     callUi({ phase: "listening", note: c.phase === "tap" || c.note === CALL_HINT ? "" : c.note });
+    // 麦克风接在放声音的那个 AudioContext 上：它要是被系统停了（来了个提示音之类），叫它醒过来，不然收不到声音。她点屏幕重开的那一下里叫，iPhone 认
+    if (c.mic) {
+      try {
+        const ac = c.audio.ctx();
+        if (ac && ac.state !== "running" && ac.resume) ac.resume().catch(() => {});
+      } catch (e) {}
+    }
     c.listener.start();
     hintLater(c);
   };
@@ -1893,7 +1909,7 @@ export default function App({ account = {} }) {
   const hintLater = (c) => {
     clearTimeout(c.hintTimer);
     c.hintTimer = setTimeout(() => {
-      if (callRef.current === c && c.phase === "listening" && !c.listener.heard()) callUi({ note: CALL_HINT });
+      if (callRef.current === c && c.phase === "listening" && c.listener && !c.listener.heard()) callUi({ note: CALL_HINT });
     }, 8000);
   };
   const hintOff = (c) => {
@@ -1906,7 +1922,7 @@ export default function App({ account = {} }) {
   const callTap = () => {
     const c = callRef.current;
     if (!c) return;
-    if (c.phase === "tap" || (c.phase === "listening" && !c.listener.heard())) callListen();
+    if (c.phase === "tap" || (c.phase === "listening" && c.listener && !c.listener.heard())) callListen();
   };
   // 她说完了一句：当平常的一句话发出去，不等那两秒（电话里等着难受）
   const callSaid = (text) => {
@@ -1923,51 +1939,142 @@ export default function App({ account = {} }) {
       callUi({ phase: "tap", note: "这台手机上没有听写，打不了电话" });
       return;
     }
+    // ElevenLabs 的实时听写那头（hear.js）出的岔子。“点一下屏幕，接着说”最上面那行写着了，这里不再说一遍
+    const eleven = { net: "听写断了", busy: "ElevenLabs 那边太挤", quota: "ElevenLabs 的额度用完了", key: "ElevenLabs 不给听写的通行证了（看看那把 key 的 Speech to Text 权限）", terms: "ElevenLabs 要你先在它网站上同意听写（Speech to Text）的条款" };
+    if (eleven[kind]) {
+      callUi({ phase: "tap", note: eleven[kind] });
+      return;
+    }
     // iPhone 有时不让网页自己接着开听写（要她点一下）；麦克风没给开封府用的话，点了也不行，看看设置。
-    // “点一下屏幕，接着说”最上面那行写着了，这里不再说一遍
     callUi({ phase: "tap", note: kind === "dead" ? "听写老是一开就停。" : "听不了。一直这样的话，看看设置里有没有让开封府用麦克风" });
+  };
+  // 两种听法交回来的都一样：听到的字（字幕）、说完了一句、听不了
+  const earsCbs = (c) => ({
+    onText: (t) => {
+      if (callRef.current !== c) return;
+      if (t && t.trim()) hintOff(c);
+      callUi({ subs: herLive(c.subs, t) });
+    },
+    onDone: (t) => callRef.current === c && callSaid(t),
+    onFail: (kind) => callRef.current === c && callListenFailed(kind),
+  });
+  const callLater = (fn, ms) => {
+    const t = setTimeout(fn, ms);
+    return () => clearTimeout(t);
+  };
+  // 用什么听她说话（她 10 月 14 日 14:26 定的）：ElevenLabs 的实时听写（不响，字边说边出）。先问 voice 函数要一张通行证，
+  // 再开麦克风（整通电话开着）。要不到、开不了：退回手机自带的听写（会滴滴嘟嘟），底下说一句为什么
+  const EARS_WHY = {
+    old: "ElevenLabs 听写还没接上（念语音的那个函数还是旧的），先用手机自带的听写",
+    key: "ElevenLabs 听写没接上：那把 key 没开 Speech to Text，先用手机自带的听写",
+    terms: "ElevenLabs 听写没接上：要先在 ElevenLabs 网站上同意听写（Speech to Text）的条款，先用手机自带的听写",
+    setup: "ElevenLabs 还没接好，先用手机自带的听写",
+    quota: "ElevenLabs 的额度用完了，先用手机自带的听写",
+    net: "连不上 ElevenLabs 的听写，先用手机自带的听写",
+    auth: "登录过期了，先用手机自带的听写",
+    nomic: "这里开不了麦克风，先用手机自带的听写",
+  };
+  const earsWhy = (e) => {
+    const code = e && e.code;
+    const reason = e && e.reason;
+    if (code === "nofn" || (code === "refused" && !reason && /不认识这个动作/.test(String(e.message || "")))) return "old";
+    if (reason === "key" || reason === "setup" || reason === "quota" || reason === "terms") return reason;
+    if (code === "auth") return "auth";
+    return "net";
+  };
+  const systemEars = (c, why) => {
+    if (callRef.current !== c) return;
+    const SR = typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
+    c.ears = "system";
+    if (why === "mic") {
+      // 麦克风没给开封府用：手机自带的听写也用不了
+      c.listener = null;
+      callUi({ phase: "tap", note: "麦克风没给开封府用：看看设置里有没有让开封府用麦克风" });
+      return;
+    }
+    if (!SR) {
+      c.listener = null;
+      callUi({ phase: "tap", note: "这里开不了麦，打不了电话。" });
+      return;
+    }
+    c.listener = createListener({ SR, now: () => Date.now(), later: callLater, pauseMs: pauseOf(settingsRef.current.callPause), ...earsCbs(c) });
+    callUi({ note: EARS_WHY[why] || "" });
+    if (c.wantListen) {
+      c.wantListen = false;
+      callListen();
+    }
+  };
+  const setupEars = (c) => {
+    const hasMic = typeof navigator !== "undefined" && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && typeof WebSocket !== "undefined" && c.audio.ctx();
+    if (!hasMic) {
+      systemEars(c, "nomic");
+      return;
+    }
+    // 要通行证最多等 15 秒（平常一两秒；念语音的那七十秒太久，电话一直“接通中…”）
+    const HEAR_WAIT = 15000;
+    const token = () =>
+      callVoice({ op: "hear" }, { wait: HEAR_WAIT }).catch((e) => {
+        throw Object.assign(new Error(String((e && e.message) || e)), { code: (e && e.reason) || (e && e.code) || "net" });
+      });
+    callVoice({ op: "hear" }, { wait: HEAR_WAIT }).then(
+      async (tk) => {
+        if (callRef.current !== c) return;
+        const mic = createMic(window, c.audio.ctx());
+        try {
+          await mic.open();
+        } catch (e) {
+          mic.close();
+          systemEars(c, e && e.code === "mic" ? "mic" : "nomic");
+          return;
+        }
+        if (callRef.current !== c) {
+          mic.close();
+          return;
+        }
+        c.mic = mic;
+        c.ears = "eleven";
+        c.listener = createHearer({ now: () => Date.now(), later: callLater, pauseMs: pauseOf(settingsRef.current.callPause), token, first: tk, socket: (url) => new WebSocket(url), mic, ...earsCbs(c) });
+        if (c.wantListen) {
+          c.wantListen = false;
+          callListen();
+        }
+      },
+      (e) => systemEars(c, earsWhy(e))
+    );
   };
   const startCall = () => {
     if (callRef.current) return;
-    const SR = typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
-    if (!SR) {
-      // 这个浏览器没有听写（电脑上的火狐之类；她 iPhone 上的开封府有）
-      setVoiceNote("这里开不了麦，打不了电话。");
-      return;
-    }
     if (dictating && recRef.current) recRef.current.stop();
     // 放他声音的（见 call/play.js）：在她点的这一下里开起来（iPhone 要这一下）；告诉 iPhone 这一通是又放又录的；
     // 用 Web Audio 放，不用 <audio>（<audio> 放过一回，iPhone 上下一回开听写就听不见了，她 12:50 碰上的）
     const audio = createCallAudio(window, silentMp3(3));
     audio.unlock();
     const id = chatIdRef.current;
-    const mark = { id: newId(), role: "event", who: "call", kind: "call", phase: "start", ts: Date.now() };
+    // 接起来他先说的那一句（见 call/hello.js）：三句里挑一句，不跟上回一样
+    let lastHi = "";
+    try {
+      lastHi = localStorage.getItem(HELLO_LAST) || "";
+    } catch (e) {}
+    const hi = pickHello(lastHi);
+    try {
+      localStorage.setItem(HELLO_LAST, hi);
+    } catch (e) {}
+    const mark = { id: newId(), role: "event", who: "call", kind: "call", phase: "start", hi, ts: Date.now() };
     const next = messagesRef.current.concat([mark]);
     messagesRef.current = next;
     follow.pin();
     setMessages(next);
     saveChat(id, next);
-    const c = { chat: id, startId: mark.id, start: Date.now(), spoken: new Set(), audio, wake: null, muted: false, phase: "ring", subs: emptySubs(), note: "" };
-    c.listener = createListener({
-      SR,
-      now: () => Date.now(),
-      later: (fn, ms) => {
-        const t = setTimeout(fn, ms);
-        return () => clearTimeout(t);
-      },
-      pauseMs: pauseOf(settingsRef.current.callPause),
-      onText: (t) => {
-        if (callRef.current !== c) return;
-        if (t && t.trim()) hintOff(c);
-        callUi({ subs: herLive(c.subs, t) });
-      },
-      onDone: (t) => callRef.current === c && callSaid(t),
-      onFail: (kind) => callRef.current === c && callListenFailed(kind),
-    });
+    const c = { chat: id, startId: mark.id, start: Date.now(), spoken: new Set(), audio, wake: null, muted: false, phase: "ring", subs: emptySubs(), note: "", hi, listener: null, mic: null, ears: "" };
     c.sayer = createSayer({
-      // 念好的一段：Web Audio 解码好（解不开的留着 <audio> 用的地址兜底），交给念的那头当“地址”排队
+      // 念好的一段：Web Audio 解码好（解不开的留着 <audio> 用的地址兜底），交给念的那头当“地址”排队。
+      // 接起来那一句：存过就直接用存着的（不再花钱）；头一回念好了存起来
       synth: async (text, signal) => {
+        const hello = HELLOS.includes(text);
+        const kept = hello ? readVoice(store.peek(HELLO_KEY + text)) : null;
+        if (kept) return { url: await audio.decode(kept.audio, kept.mime) };
         const d = await callVoice({ op: "speak", text, stability: stabOf(settingsRef.current.voiceStab) }, { signal });
+        if (hello) store.set(HELLO_KEY + text, packVoice(d)).catch(() => {});
         return { url: await audio.decode(d.audio, d.mime) };
       },
       play: (clip) => audio.play(clip),
@@ -1981,7 +2088,8 @@ export default function App({ account = {} }) {
           callUi({ phase: "speaking" });
         } else if (st === "done") callListen();
       },
-      onError: (e) => callRef.current === c && callUi({ note: `有一句没念出来（${String((e && e.message) || e).slice(0, 60)}），字在聊天里` }),
+      // 接起来那一句没念出来不说（字幕上照样有那一句）；别的说一声
+      onError: (e, text) => callRef.current === c && text !== c.hi && callUi({ note: `有一句没念出来（${String((e && e.message) || e).slice(0, 60)}），字在聊天里` }),
       // 念到这一段了：字幕出这一段（他开口的头一段把她的字幕换下去）
       onSegment: (text) => callRef.current === c && callUi({ subs: hisSay(c.subs, text) }),
     });
@@ -1999,7 +2107,10 @@ export default function App({ account = {} }) {
           .catch(() => {});
       }
     } catch (e) {}
-    callListen();
+    // 准备听（ElevenLabs 的通行证、麦克风），同时他先说一句；说完了接着听（听的那头没准备好就等它）
+    setupEars(c);
+    c.sayer.add([hi]);
+    c.sayer.end();
   };
   const hangUp = () => {
     const c = callRef.current;
@@ -2007,8 +2118,9 @@ export default function App({ account = {} }) {
     callRef.current = null;
     setCall(null);
     clearTimeout(c.hintTimer);
-    c.listener.stop();
+    if (c.listener) c.listener.stop();
     c.sayer.cancel();
+    if (c.mic) c.mic.close();
     c.audio.close();
     if (c.wake) c.wake.release().catch(() => {});
     // 聊天里那两行：说过话的记一行“通话 12 分钟”；一句没说的，“通话开始”那行也拿掉
@@ -2040,7 +2152,7 @@ export default function App({ account = {} }) {
     c.muted = !c.muted;
     if (c.muted) {
       if (c.phase === "listening" || c.phase === "tap") {
-        c.listener.stop();
+        if (c.listener) c.listener.stop();
         clearTimeout(c.hintTimer);
         callUi({ phase: "muted", note: c.note === CALL_HINT ? "" : c.note });
       } else callUi({});
@@ -2058,7 +2170,7 @@ export default function App({ account = {} }) {
       const m = messages[i];
       if (m.role !== "him" || c.spoken.has(m.id)) continue;
       c.spoken.add(m.id);
-      c.listener.stop();
+      if (c.listener) c.listener.stop();
       c.sayer.add(segmentsOfReply(m.items));
       c.sayer.end(); // 一条回话是整条到的：没有可念的（只有表情包之类），马上接着听
     }

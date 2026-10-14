@@ -5,6 +5,7 @@
 import http from "node:http";
 import { loadPushFunction, pushEnv, createFakePush, createLedgerTable, createMailTable, makeVapidKeys } from "./push-harness.mjs";
 import { loadVoiceFunction, voiceEnv, createFakeEleven } from "./voice-harness.mjs";
+import { createFakeStt } from "./stt-harness.mjs";
 
 const PORT = Number(process.env.MOCK_PORT || 8787);
 const USERS = { "qing@example.com": { id: "11111111-1111-1111-1111-111111111111", password: "correct-horse" } };
@@ -148,6 +149,8 @@ const pushFn = await loadPushFunction();
 // ---- 念语音 ----
 // voice 函数去敲的 ElevenLabs：接到假的那个上（别的照旧往下走）
 const fakeEleven = createFakeEleven();
+// 打电话的实时听写：网页拿着 voice 函数给的通行证连过来（地址换成这里的 /__stt，见下面 voice 函数那一段）
+const fakeStt = createFakeStt();
 {
   const prev = globalThis.fetch;
   globalThis.fetch = (input, init) => {
@@ -167,7 +170,8 @@ let voiceFnState = "ok"; // ok 部署了；missing 还没建这个函数（网�
 function voiceReset() {
   for (const k of Object.keys(voiceEnv)) delete voiceEnv[k];
   Object.assign(voiceEnv, { SUPABASE_URL: `http://127.0.0.1:${PORT}`, SUPABASE_ANON_KEY: "sb_publishable_test", ALLOWED_EMAIL: "qing@example.com", ELEVENLABS_API_KEY: ELEVEN_KEY, ELEVENLABS_VOICE_ID: ELEVEN_VOICE });
-  Object.assign(fakeEleven.state, { key: ELEVEN_KEY, voice: ELEVEN_VOICE, fail: null, failTimes: 0, always: false, hold: 0, ttsModels: null, stabilities: null });
+  Object.assign(fakeEleven.state, { key: ELEVEN_KEY, voice: ELEVEN_VOICE, fail: null, failTimes: 0, always: false, hold: 0, ttsModels: null, stabilities: null, stt: "ok", tokens: 0 });
+  fakeStt.reset();
   fakeEleven.log.length = 0;
   voiceFnState = "ok";
 }
@@ -271,8 +275,7 @@ const readBody = (req) =>
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
   });
 
-http
-  .createServer(async (req, res) => {
+const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://x");
     // push 函数还没建：网关回 404，浏览器先来打招呼的那一下就过不去
     if (url.pathname === "/functions/v1/push" && (pushFnState === "missing" || pushFnState === "missing-cors")) {
@@ -328,8 +331,17 @@ http
       if (q.has("hold")) fakeEleven.state.hold = Number(q.get("hold") || 0);
       if (q.has("models")) fakeEleven.state.ttsModels = q.get("models") ? q.get("models").split(",") : null;
       if (q.has("stab")) fakeEleven.state.stabilities = q.get("stab") ? q.get("stab").split(",").map(Number) : null;
+      // stt=perm：这把 key 没开 Speech to Text（要听写通行证的时候回 401）；stt=ok 开了
+      if (q.has("stt")) fakeEleven.state.stt = q.get("stt") || "ok";
       return send(res, 200, { ok: true });
     }
+    // ---- 打电话的实时听写（假的 Scribe）----
+    // 看：连上来过的几条（带的参数、送了几块声音、收了几回 commit、断没断）
+    if (url.pathname === "/__debug/stt") return send(res, 200, { conns: fakeStt.view(), tokens: fakeEleven.state.tokens });
+    // 她说了这么一句：眼下连着的那一条回一句听到一半的字
+    if (url.pathname === "/__debug/stt-say") return send(res, 200, { ok: fakeStt.say(url.searchParams.get("text") || "") });
+    // kind=close 眼下这一条那边自己断了；kind=auth 下一回连上来不认通行证
+    if (url.pathname === "/__debug/stt-fail") return send(res, 200, { ok: fakeStt.fail(url.searchParams.get("kind") || "") });
     // 她在 Supabase 做到哪一步了：fn=missing 还没建 voice 函数、fn=template 里面是样板；keys=missing 密钥柜里还没放 ElevenLabs 的两样；
     // model=… 密钥柜里写了 ELEVENLABS_MODEL
     if (url.pathname === "/__debug/voice-setup") {
@@ -552,7 +564,14 @@ http
       const out = await voiceFn.handler(new Request(`http://127.0.0.1:${PORT}${req.url}`, { method: req.method, headers, body, signal: gone.signal }));
       if (res.destroyed) return;
       res.writeHead(out.status, Object.fromEntries(out.headers));
-      return res.end(await out.text());
+      let text = await out.text();
+      // 听写通行证：真的那份代码交回的是 ElevenLabs 的地址，换成这里假的那个
+      if (out.status === 200 && /"type":"token"/.test(text)) {
+        const d = JSON.parse(text);
+        d.url = `ws://127.0.0.1:${PORT}/__stt`;
+        text = JSON.stringify(d);
+      }
+      return res.end(text);
     }
 
     // ---- claude 函数 ----
@@ -565,5 +584,10 @@ http
     }
 
     send(res, 404, { message: "not found: " + url.pathname });
-  })
-  .listen(PORT, () => console.log("假 Supabase 在 " + PORT));
+  });
+// 实时听写的 WebSocket（假的 Scribe，见 stt-harness.mjs）
+server.on("upgrade", (req, socket) => {
+  if (new URL(req.url, "http://x").pathname === "/__stt") fakeStt.accept(req, socket);
+  else socket.destroy();
+});
+server.listen(PORT, () => console.log("假 Supabase 在 " + PORT));

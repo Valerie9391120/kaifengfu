@@ -3,6 +3,8 @@ import { createListener, PAUSE_MS, PAUSES, pauseOf } from "../src/call/listen.js
 import { cleanForCall, splitForCall, segmentsOfReply, createSayer, subOf } from "../src/call/say.js";
 import { emptySubs, herLive, herDone, hisSay, unitsOf, subWho, subFade, subGap, SUB_KEEP, SUB_TURNS, SUB_COLOR, SUB_OLD } from "../src/call/subs.js";
 import { createCallAudio, bytesOf } from "../src/call/play.js";
+import { downsampler, toPcm16, rmsOf, pcmB64, MIC_RATE } from "../src/call/mic.js";
+import { createHearer, sttUrl, joinText, sttTrouble, CHUNK, LOUD, LONG_EXTRA, TEXT_GRACE, FINAL_WAIT } from "../src/call/hear.js";
 import { isCallMark, callLen, callClock, markText, markNote, markRecap } from "../src/call/marks.js";
 import { buildSystem, CALL_NOTE } from "../src/prompt/system.js";
 import { buildMessages } from "../src/prompt/messages.js";
@@ -163,6 +165,224 @@ function listener(opts = {}) {
   const mid = l.heard();
   l.stop();
   ok(before === false && mid === true && l.heard() === false, "听没听到字（她点屏幕的时候看这个：听到了就不重开，免得把她说了一半的丢掉）");
+}
+
+// =====================================================
+// 麦克风那几样零件（她 13:36 说系统听写滴滴嘟嘟，14:26 定了换 ElevenLabs 的实时听写）
+// =====================================================
+{
+  const ramp = Float32Array.from({ length: 48 }, (_, i) => i / 100);
+  const one = downsampler(48000)(ramp);
+  const ds = downsampler(48000);
+  const two = Array.from(ds(ramp.subarray(0, 24))).concat(Array.from(ds(ramp.subarray(24))));
+  ok(one.length === 16 && Math.abs(one[0] - 0) < 1e-6 && Math.abs(one[1] - 0.03) < 1e-6 && Math.abs(one[15] - 0.45) < 1e-6 && two.length === 16 && two.every((v, i) => Math.abs(v - one[i]) < 1e-6),
+    `降采样：48k 变 16k，三个取一个；一块一块来跟一口气来的一样（块和块接得上）（${one.length}、${two.length}）`);
+  const odd = downsampler(44100);
+  const n1 = odd(new Float32Array(4410)).length + odd(new Float32Array(4410)).length;
+  ok(Math.abs(n1 - 3200) <= 1 && MIC_RATE === 16000, `降采样：44.1k 的十分之二秒变成 16k 的三千二百个点上下（${n1}）`);
+  ok(Array.from(toPcm16(Float32Array.from([-1, 0, 1, 0.5, 2]))).join() === "-32768,0,32767,16384,32767", "浮点变 16 位整数：两头卡住");
+  ok(Math.abs(rmsOf(Float32Array.from([0.5, -0.5])) - 0.5) < 1e-9 && rmsOf(new Float32Array(0)) === 0, "多响：均方根");
+  ok(pcmB64(Int16Array.from([1, -1])) === "AQD//w==", "16 位的声音写成 base64：小端（ElevenLabs 要的样子）");
+  const u = new URL(sttUrl({ token: "t1", url: "wss://api.elevenlabs.io/v1/speech-to-text/realtime", model: "scribe_v2_realtime", lang: "zh" }));
+  ok(u.origin + u.pathname === "wss://api.elevenlabs.io/v1/speech-to-text/realtime" && u.searchParams.get("token") === "t1" && u.searchParams.get("model_id") === "scribe_v2_realtime" && u.searchParams.get("audio_format") === "pcm_16000" && u.searchParams.get("language_code") === "zh" && u.searchParams.get("commit_strategy") === "manual",
+    "实时听写的地址：通行证、模型、16k 的 PCM、中文、说完没有我们自己判（manual）");
+  ok(joinText("你好", "世界") === "你好世界" && joinText("hello", "world") === "hello world" && joinText("", "嗯") === "嗯", "两截字接起来：英文中间空一格，中文直接接");
+  ok(sttTrouble({ message_type: "auth_error" }) === "key" && sttTrouble({ message_type: "quota_exceeded" }) === "quota" && sttTrouble({ message_type: "rate_limited" }) === "busy" && sttTrouble({ message_type: "input_error" }) === "net",
+    "那边回来的毛病分得清：通行证不认、额度、太挤、别的");
+  const kinds = ["unaccepted_terms", "commit_throttled", "insufficient_audio_activity", "session_time_limit_exceeded", "queue_overflow", "resource_exhausted", "transcriber_error"].map((t) => sttTrouble({ message_type: t, error: "x" }));
+  ok(kinds.join() === "terms,soft,net,net,busy,busy,net", `事件表里别的几种：没同意条款、commit 太勤（不算毛病）、好一阵没送声音（不是额度不够）、连太久、两种太挤、认不了（${kinds.join()}）`);
+  ok(sttTrouble({ message_type: "error", error: "Insufficient credits" }) === "quota" && sttTrouble({ message_type: "error", error: "Invalid token" }) === "key" && sttTrouble({ message_type: "error", error: "boom" }) === "net",
+    "笼统的 error：照它说的话认（额度、通行证、别的）");
+}
+
+// =====================================================
+// 听：ElevenLabs 的实时听写（一句一条 WebSocket，说完没有我们自己判）
+// =====================================================
+const settle = () => new Promise((r) => setTimeout(r, 0));
+function hearRig(opts = {}) {
+  const clock = fakeClock();
+  const socks = [];
+  class FakeWS {
+    constructor(url) { this.url = url; this.sent = []; this.closed = false; socks.push(this); }
+    send(x) { this.sent.push(JSON.parse(x)); }
+    close() { this.closed = true; }
+    up() { this.onopen && this.onopen(); }
+    msg(m) { this.onmessage && this.onmessage({ data: JSON.stringify(m) }); }
+    drop() { this.onclose && this.onclose(); }
+    commits() { return this.sent.filter((m) => m.commit).length; }
+    audio() { return this.sent.filter((m) => !m.commit).reduce((n, m) => n + Buffer.from(m.audio_base_64, "base64").length / 2, 0); }
+  }
+  let n = 0;
+  const asked = [];
+  const token = opts.token || (() => { n += 1; asked.push(n); return Promise.resolve({ token: "t" + n, url: "wss://x/rt", model: "scribe_v2_realtime", lang: "zh" }); });
+  let micFn = null;
+  const got = { texts: [], done: [], fails: [] };
+  const h = createHearer({
+    now: clock.now, later: clock.later, pauseMs: opts.pauseMs || 1600, token, first: opts.first, socket: (url) => new FakeWS(url),
+    mic: { listen: (f) => { micFn = f; } },
+    onText: (t) => got.texts.push(t), onDone: (t) => got.done.push(t), onFail: (k) => got.fails.push(k),
+  });
+  // 麦克风送 ms 毫秒的声音（每一小段 100 毫秒），rms 是多响；边送边走钟
+  const talk = (ms, rms = 0) => {
+    for (let t = 0; t < ms; t += 100) { micFn({ pcm: new Int16Array(1600), rms }); clock.advance(100); }
+  };
+  return { h, clock, socks, got, talk, asked };
+}
+{
+  const R = hearRig();
+  R.h.start();
+  R.talk(300, 0.05);
+  await settle();
+  const w = R.socks[0];
+  ok(R.socks.length === 1 && new URL(w.url).searchParams.get("token") === "t1" && w.sent.length === 0, "开始听：拿一张通行证连一条；还没连上的时候说的话先攒着");
+  R.talk(200, 0.05);
+  w.up();
+  ok(w.audio() === 1600 * 5, `连上了：攒着的一起送过去，一点不丢（送了 ${w.audio()} 个点）`);
+  await settle();
+  ok(R.asked.length === 2, "用掉一张通行证：马上再要一张备着（下一句一开口就连得上）");
+  w.msg({ message_type: "session_started" });
+  w.msg({ message_type: "partial_transcript", text: "喂" });
+  w.msg({ message_type: "partial_transcript", text: "喂，你在吗" });
+  ok(R.got.texts.slice(-2).join("|") === "喂|喂，你在吗" && R.h.heard(), "字一路回来：字幕跟着出");
+  R.talk(1500, 0);
+  ok(w.commits() === 0 && R.got.done.length === 0, "停了 1.5 秒：还不算说完");
+  R.talk(300, 0);
+  ok(w.commits() === 1, "停够 1.6 秒：送 commit（说完了）");
+  w.msg({ message_type: "committed_transcript", text: "喂，你在吗？" });
+  ok(R.got.done.join() === "喂，你在吗？" && w.closed && !R.h.listening(), "那边回“这一句定了”：交出去，这一条关掉");
+  R.h.start();
+  await settle();
+  ok(R.socks.length === 2 && new URL(R.socks[1].url).searchParams.get("token") === "t2", "下一句：用备着的那张通行证，不用现要");
+  R.h.stop();
+  ok(R.socks[1].closed && !R.h.listening(), "他开口了（stop）：这一条关掉，不交东西");
+}
+{
+  const R = hearRig();
+  R.h.start();
+  await settle();
+  const w = R.socks[0];
+  w.up();
+  for (let i = 1; i <= 18; i++) { w.msg({ message_type: "partial_transcript", text: "说".repeat(i) }); R.talk(500, 0.05); }
+  R.talk(1900, 0);
+  const early = w.commits();
+  R.talk(1000, 0);
+  ok(early === 0 && w.commits() === 1, `已经说了 8 秒往上：喘口气不算，多等 ${LONG_EXTRA / 1000} 秒才算说完（攻略里踩出来的）`);
+}
+{
+  const R = hearRig();
+  R.h.start();
+  await settle();
+  const w = R.socks[0];
+  w.up();
+  w.msg({ message_type: "partial_transcript", text: "这屋里好吵" });
+  R.talk(1600 + TEXT_GRACE - 300, 0.05);
+  const before = w.commits();
+  R.talk(400, 0.05);
+  ok(before === 0 && w.commits() === 1, "屋里一直响：字不变了停够再多等 2.5 秒，也算说完");
+}
+{
+  const R = hearRig();
+  R.h.start();
+  await settle();
+  const w = R.socks[0];
+  w.up();
+  w.msg({ message_type: "partial_transcript", text: "等不到" });
+  R.talk(1700, 0);
+  ok(w.commits() === 1 && R.got.done.length === 0, "送了 commit");
+  R.clock.advance(FINAL_WAIT + 10);
+  ok(R.got.done.join() === "等不到", "送了 commit 等不到“定了”：用听到的那些交出去");
+}
+{
+  const R = hearRig();
+  R.h.start();
+  await settle();
+  const w = R.socks[0];
+  w.up();
+  R.talk(400, 0.08);
+  R.talk(1700, 0);
+  ok(w.commits() === 1, "咳了一声（响了、没出字）：停够了也送一回 commit 看看");
+  w.msg({ message_type: "committed_transcript", text: "" });
+  ok(R.got.done.length === 0 && R.h.listening() && !w.closed, "定下来是空的：当没说，接着听（这一条不关）");
+}
+{
+  const R = hearRig();
+  R.h.start();
+  await settle();
+  R.socks[0].up();
+  R.socks[0].drop();
+  await settle();
+  ok(R.socks.length === 2 && R.got.fails.length === 0, "那边断了、还没出字：再连一回");
+  R.socks[1].up();
+  R.socks[1].drop();
+  await settle();
+  ok(R.got.fails.join() === "net" && !R.h.listening(), "又断了：说听不了（net）");
+}
+{
+  const R = hearRig();
+  R.h.start();
+  await settle();
+  R.socks[0].up();
+  R.socks[0].msg({ message_type: "partial_transcript", text: "说到一半" });
+  R.socks[0].drop();
+  ok(R.got.done.join() === "说到一半", "那边断了、已经出字了：把听到的交出去");
+}
+{
+  const R = hearRig();
+  R.h.start();
+  await settle();
+  R.socks[0].up();
+  R.socks[0].msg({ message_type: "auth_error", error: "Invalid or expired token" });
+  ok(R.got.fails.join() === "key", "通行证不认：说听不了（key）");
+  const B = hearRig({ token: () => Promise.reject(Object.assign(new Error("没开权限"), { code: "key" })) });
+  B.h.start();
+  await settle();
+  await settle();
+  ok(B.got.fails.join() === "key" && B.socks.length === 0, "要不到通行证（key 没开 Speech to Text）：说听不了（key），不去连");
+  const T = hearRig({ token: () => Promise.reject(Object.assign(new Error("没同意条款"), { code: "terms" })) });
+  T.h.start();
+  await settle();
+  await settle();
+  ok(T.got.fails.join() === "terms" && T.socks.length === 0, "要不到通行证（还没同意听写的条款）：说听不了（terms），不去连");
+}
+{
+  // commit 送得太勤（commit_throttled）：不算毛病。有字的等不到“定了”就用听到的；没字的接着听
+  const R = hearRig();
+  R.h.start();
+  await settle();
+  const w = R.socks[0];
+  w.up();
+  w.msg({ message_type: "partial_transcript", text: "太勤了" });
+  R.talk(1700, 0);
+  w.msg({ message_type: "commit_throttled", error: "Commit throttled" });
+  ok(R.got.done.length === 0 && R.got.fails.length === 0 && R.h.listening(), "commit 被那边按下了：不算毛病，先不交");
+  R.clock.advance(FINAL_WAIT + 10);
+  ok(R.got.done.join() === "太勤了", "等不到“定了”：用听到的那些交出去");
+  const S = hearRig();
+  S.h.start();
+  await settle();
+  S.socks[0].up();
+  S.socks[0].msg({ message_type: "commit_throttled", error: "Commit throttled" });
+  ok(S.got.fails.length === 0 && S.h.listening() && !S.socks[0].closed, "没字的时候来一回 commit_throttled：接着听，不报听不了");
+}
+{
+  // 好一阵没送声音（insufficient_audio_activity）：当断了再连一回，不当成额度用完了
+  const R = hearRig();
+  R.h.start();
+  await settle();
+  R.socks[0].up();
+  R.socks[0].msg({ message_type: "insufficient_audio_activity", error: "You haven't sent enough audio activity to maintain the connection." });
+  await settle();
+  ok(R.got.fails.length === 0 && R.socks.length === 2 && R.socks[0].closed, "那边说好一阵没送声音：再连一回，不说额度用完了");
+}
+{
+  const R = hearRig({ first: { token: "early", url: "wss://x/rt" } });
+  R.h.start();
+  await settle();
+  ok(new URL(R.socks[0].url).searchParams.get("token") === "early", "接通的时候已经要好的那张：开头那一句就用它");
+  R.socks[0].up();
+  R.h.stop();
+  R.socks[0].msg({ message_type: "partial_transcript", text: "挂了以后" });
+  ok(R.got.texts.every((t) => t !== "挂了以后") && R.got.done.length === 0, "停了以后那边再来字：不认");
 }
 
 // =====================================================

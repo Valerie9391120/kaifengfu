@@ -1,19 +1,22 @@
 // =====================================================
 // 开封府 · 念语音的小后端（函数名：voice）
-// 只做一件事：确认敲门的是卿卿本人，再把他要念的那一段字交给 ElevenLabs，用他的声音念出来，把声音交回网页。
+// 确认敲门的是卿卿本人，再把他要念的那一段字交给 ElevenLabs，用他的声音念出来，把声音交回网页。
 // 念好的声音这里不留：网页拿到以后加密了存进库房，跟照片一个路子，云端存的还是乱码。
 // 要念的那几句字 ElevenLabs 看得见（它得照着念），念过的会留在她 ElevenLabs 账号的历史记录里；不留的那种只有企业版能开。
+// 打电话的时候还管一样（10 月 14 日加的）：给网页一张一次性的通行证，网页拿着它自己去连 ElevenLabs 的实时听写，
+// 把她说的话一路送过去、字一路收回来。key 不出这里；通行证十五分钟内有效、用一次就作废。她的声音这里不经手。
 //
 // 密钥柜里要有两样：
-//   ELEVENLABS_API_KEY   她在 ElevenLabs 后台 API Keys 里建的那一把（权限只开 Text to Speech 就够；最好设一个额度上限）
+//   ELEVENLABS_API_KEY   她在 ElevenLabs 后台 API Keys 里建的那一把（权限要开 Text to Speech 和 Speech to Text；最好设一个额度上限）
 //   ELEVENLABS_VOICE_ID  他的声音的编号（换声音就改这一格）
 // 可以没有的：
 //   ELEVENLABS_MODEL     用哪个模型念，默认 eleven_v4（v3 念中文带口音，她试过）
 // 和另外两个函数共用的照旧：ALLOWED_EMAIL、ALLOWED_ORIGIN
 //
-// 两个动作：
-//   key    钥匙放好了没有（不去敲 ElevenLabs 的门，不花钱）
+// 三个动作：
+//   key    钥匙放好了没有（不去敲 ElevenLabs 的门，不花钱）；can 写着这份代码会做哪几样
 //   speak  念一段：回 { type: "voice", audio: base64 的 mp3, mime, dur: 几秒, model, via }
+//   hear   打电话用的听写通行证：回 { type: "token", token, url: 实时听写的地址, model, lang }（要通行证不花钱，听的时候按时长扣额度）
 // =====================================================
 
 const ELEVEN = "https://api.elevenlabs.io";
@@ -25,6 +28,10 @@ const SMALL_BODY = 8000; // 寄来的东西最多这么长
 const SPEAK_TIMEOUT = 45_000; // 等 ElevenLabs 念最多等多少毫秒
 const MAX_AUDIO = 4_000_000; // 念回来的声音最多这么大（一分钟的才五十来万字节；再大就是出了岔子）
 const SIMILARITY = 0.8; // 跟她克隆的那个声音像不像：高一点，听着才是他
+const STT_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"; // 实时听写：网页拿着通行证自己连
+const STT_MODEL = "scribe_v2_realtime";
+const STT_LANG = "zh"; // 她说中文（夹着的英文它也认）
+const TOKEN_TIMEOUT = 10_000; // 要通行证最多等多少毫秒
 const STABILITY = 0.5; // 念得稳不稳：没说就放在中间（低了起伏大，一句话里会忽大忽小；高了平）
 
 // 开封府的网页住在这儿（搬了家就在密钥柜里写 ALLOWED_ORIGIN）
@@ -173,7 +180,8 @@ function b64(bytes: Uint8Array): string {
 function tidy(text: string): string {
   return String(text).replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
 }
-function elevenError(status: number, text: string): { code: string; message: string } {
+// what：念（speak）还是听（hear）。key 不认的时候说的不一样：听写要那把 key 开着 Speech to Text 的权限
+function elevenError(status: number, text: string, what0 = "speak"): { code: string; message: string } {
   let detail: unknown = null;
   try {
     detail = (JSON.parse(text) as Rec).detail;
@@ -187,6 +195,13 @@ function elevenError(status: number, text: string): { code: string; message: str
   if (status === 402 || /quota|credit|limit_reached|payment/i.test(what + " " + plain)) {
     return { code: "quota", message: "ElevenLabs 的额度用完了（或者这把 key 设的上限到了）" };
   }
+  // 听写（Scribe）有自己的条款，没在 ElevenLabs 网站上点过同意的，它不给用
+  if (what0 === "hear" && /terms/i.test(what + " " + plain)) {
+    return { code: "terms", message: "ElevenLabs 要先在它网站上同意听写（Speech to Text）的条款" };
+  }
+  if (what0 === "hear" && (status === 401 || status === 403 || /permission|unauthori[sz]ed|invalid_api_key|api_key/i.test(what + " " + plain))) {
+    return { code: "key", message: "ElevenLabs 不给听写的通行证：看看这把 key 的权限开没开 Speech to Text（语音转文字）" };
+  }
   if (status === 401 || /invalid_api_key|api_key|unauthori[sz]ed/i.test(what)) {
     return { code: "key", message: "ElevenLabs 不认这把 key：看看密钥柜里的 ELEVENLABS_API_KEY，还有这把 key 的权限开没开 Text to Speech" };
   }
@@ -195,7 +210,7 @@ function elevenError(status: number, text: string): { code: string; message: str
   }
   if (status === 429) return { code: "busy", message: "ElevenLabs 那边太挤，过一会儿再念" };
   if (status >= 500) return { code: "down", message: `ElevenLabs 一时出岔子了（${status}），过一会儿再念` };
-  return { code: "refused", message: `ElevenLabs 不肯念（${status}${what ? "，" + tidy(what) : ""}）${plain ? "：" + plain : ""}` };
+  return { code: "refused", message: `ElevenLabs ${what0 === "hear" ? "不给听写的通行证" : "不肯念"}（${status}${what ? "，" + tidy(what) : ""}）${plain ? "：" + plain : ""}` };
 }
 
 // 读回来的东西像不像一段 mp3：开头是 ID3 标签，或者一上来就是一帧
@@ -285,6 +300,36 @@ async function speak(keys: Extract<Keys, { ok: true }>, text: string, stability:
   return json(200, { type: "voice", audio: b64(got.bytes), mime: "audio/mpeg", dur: Math.round(dur * 10) / 10, model: keys.model, via, ...(loose ? { loose: true } : {}) });
 }
 
+// 打电话用的听写通行证：问 ElevenLabs 要一张一次性的（十五分钟内有效，用一次就作废），连同实时听写的地址交给网页。
+// 网页拿着它自己去连，她的声音不从这里过
+async function hearToken(keys: Extract<Keys, { ok: true }>): Promise<Response> {
+  let r: Response;
+  try {
+    r = await fetch(`${ELEVEN}/v1/single-use-token/realtime_scribe`, { method: "POST", headers: { "xi-api-key": keys.key }, signal: AbortSignal.timeout(TOKEN_TIMEOUT) });
+  } catch (_) {
+    return fail(502, "连不上 ElevenLabs", "down");
+  }
+  let text = "";
+  try {
+    text = (await r.text()).slice(0, 4000);
+  } catch (_) {
+    // 读不出来就当是空的
+  }
+  if (!r.ok) {
+    const e = elevenError(r.status, text, "hear");
+    return fail(502, e.message, e.code);
+  }
+  let token = "";
+  try {
+    const got = JSON.parse(text);
+    if (isRec(got) && typeof got.token === "string") token = got.token;
+  } catch (_) {
+    // 回来的不是 JSON
+  }
+  if (!token || token.length > 600) return fail(502, "ElevenLabs 没给听写的通行证", "refused");
+  return json(200, { type: "token", token, url: STT_URL, model: STT_MODEL, lang: STT_LANG });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors() });
   if (req.method !== "POST") return fail(405, "只收 POST");
@@ -312,7 +357,7 @@ Deno.serve(async (req: Request) => {
 
   // 问：钥匙放好了没有（不去敲 ElevenLabs 的门，不花钱）。can 是这份代码会做的事
   if (body.op === "key") {
-    const can = ["speak"];
+    const can = ["speak", "hear"];
     return json(200, keys.ok ? { configured: true, model: keys.model, can } : { configured: false, missing: keys.missing, message: keys.message, model: keys.model, can });
   }
 
@@ -324,6 +369,11 @@ Deno.serve(async (req: Request) => {
     const s = Number(body.stability);
     const stability = Number.isFinite(s) && s >= 0 && s <= 1 ? s : STABILITY;
     return await speak(keys, text, stability, req.signal ?? null);
+  }
+
+  if (body.op === "hear") {
+    if (!keys.ok) return fail(400, keys.message, "setup");
+    return await hearToken(keys);
   }
 
   return fail(400, "不认识这个动作");

@@ -179,5 +179,7 @@ export function createCallAudio(win, silent) {
     },
     // 测试、诊断用：眼下用的哪一样放
     kind: () => (ac ? "webaudio" : el ? "audio" : "none"),
+    // 麦克风也接在这个 AudioContext 上（见 mic.js；iPhone 上一个就够，少折腾）
+    ctx: () => ac,
   };
 }
