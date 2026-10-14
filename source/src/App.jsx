@@ -58,6 +58,8 @@ import { createCallAudio } from "./call/play.js";
 import { createMic } from "./call/mic.js";
 import { createHearer } from "./call/hear.js";
 import { HELLOS, HELLO_KEY, HELLO_LAST, HELLO_WAIT, pickHello } from "./call/hello.js";
+import { createEchoProbe, ECHO_LINE, ECHO_KEY } from "./call/echo.js";
+import { EchoProbe } from "./call/EchoProbe.jsx";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -219,6 +221,8 @@ export default function App({ account = {} }) {
   // 正在打电话（见 call/ 和开发说明“通话”那一节）：call 是通话页上摆的样子；callRef 里还有听写、念、放声音的那几样
   const [call, setCall] = useState(null);
   const callRef = useRef(null);
+  const [echo, setEcho] = useState(null); // 量一量回声（见 call/echo.js）：那一页眼下的样子
+  const echoRef = useRef(null);
   const dictBaseRef = useRef("");
   // 他的语音条（见 voice.js、speaker.js）：每一条眼下的样子（念着、念好了、念不成…）、正在放的是哪一条、转过文字的那几条
   const [voices, setVoices] = useState({});
@@ -2183,6 +2187,91 @@ export default function App({ account = {} }) {
     else callUi({});
   };
 
+  // ---- 量一量回声（打断他用；她 10 月 14 日 17:26 定的“得先量回声”，见 call/echo.js） ----
+  // 跟打电话一模一样的样子：她点的这一下里开 Web Audio、设又放又录；麦克风开着回声消除；麦克风开好了才放他那一句。
+  // 他那一句念好存着（kfs2:echoline，加密了跟着云端走），再量不再花钱。
+  // 那根一跳一跳的条不走 App 的 state（一秒十几回，整页跟着重画太费），那一页自己隔一会儿来取（echoLevel）
+  const echoClip = async (audio) => {
+    const kept = readVoice(store.peek(ECHO_KEY));
+    if (kept) return audio.decode(kept.audio, kept.mime);
+    const d = await callVoice({ op: "speak", text: ECHO_LINE, stability: stabOf(settingsRef.current.voiceStab) });
+    store.set(ECHO_KEY, packVoice(d)).catch(() => {});
+    return audio.decode(d.audio, d.mime);
+  };
+  const echoUi = (e, patch) => {
+    if (echoRef.current !== e) return;
+    Object.assign(e.view, patch);
+    setEcho({ ...e.view });
+  };
+  const echoLevel = () => (echoRef.current ? echoRef.current.level : 0);
+  const stopEcho = (e) => {
+    if (!e) return;
+    if (e.probe) e.probe.stop();
+    if (e.mic) e.mic.close();
+    e.mic = null;
+    e.audio.close();
+  };
+  const startEcho = () => {
+    if (echoRef.current || callRef.current) return;
+    const audio = createCallAudio(window, silentMp3(3));
+    audio.unlock();
+    const e = { audio, mic: null, probe: null, level: 0, view: { step: "prep", result: null, error: "" } };
+    echoRef.current = e;
+    setEcho({ ...e.view });
+    const ac = audio.ctx();
+    if (!ac || typeof navigator === "undefined" || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      echoUi(e, { step: "fail", error: "这里开不了麦克风（或者放不了声音），量不了。" });
+      return;
+    }
+    const mic = createMic(window, ac);
+    e.mic = mic;
+    Promise.all([mic.open(), echoClip(audio)]).then(
+      ([, clip]) => {
+        if (echoRef.current !== e) return;
+        const set = mic.settings();
+        e.probe = createEchoProbe({
+          now: () => Date.now(),
+          later: callLater,
+          mic,
+          play: (clip2) => audio.play(clip2),
+          clip,
+          onStep: (step) => echoUi(e, { step }),
+          onLevel: (level) => {
+            e.level = level;
+          },
+          onDone: (result) => {
+            e.level = 0;
+            if (e.mic) e.mic.close();
+            e.mic = null;
+            echoUi(e, { step: "done", result: { ...result, aec: typeof set.echoCancellation === "boolean" ? set.echoCancellation : null, rate: ac.sampleRate } });
+          },
+          onFail: (err) => echoUi(e, { step: "fail", error: `量到一半出岔子了（${String((err && err.message) || err).slice(0, 60)}）` }),
+        });
+        e.probe.start();
+      },
+      (err) => {
+        const code = err && err.code;
+        const why =
+          code === "mic"
+            ? "麦克风没给开封府用：看看设置里有没有让开封府用麦克风。"
+            : code === "none"
+            ? "这里开不了麦克风，量不了。"
+            : `念不出我那一句（${String((err && err.message) || err).slice(0, 60)}），量不了。`;
+        echoUi(e, { step: "fail", error: why });
+      }
+    );
+  };
+  const closeEcho = () => {
+    const e = echoRef.current;
+    echoRef.current = null;
+    setEcho(null);
+    stopEcho(e);
+  };
+  const againEcho = () => {
+    closeEcho();
+    startEcho();
+  };
+
   // 电话里他的回话到了（不管是直接等到的、还是从信箱里取的，放进对话以后都在 messages 里）：一句一句念
   useEffect(() => {
     const c = callRef.current;
@@ -3567,6 +3656,7 @@ export default function App({ account = {} }) {
             onVoiceTest={testVoice}
             voiceTestNote={voiceTestNote}
             voiceTesting={voiceTesting}
+            onEchoProbe={startEcho}
             onTest={testApi}
             testNote={testNote}
             testing={testing}
@@ -4209,6 +4299,7 @@ export default function App({ account = {} }) {
 
       {/* 通话页：盖在最上面（见 call/CallPage.jsx）。她点屏幕那一下（iPhone 不让自己接着听的时候）接着听 */}
       {call && <CallPage call={call} avatar={avatars.him} name={names.him || HIS_NAME} onMute={toggleMute} onHangUp={hangUp} onTap={callTap} />}
+      {echo && <EchoProbe echo={echo} levelOf={echoLevel} onClose={closeEcho} onAgain={againEcho} />}
 
       {chatMenu && (
         <ChatMenu
