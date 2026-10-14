@@ -134,7 +134,7 @@ export function segmentsOfReply(items) {
 //   stopPlay()           立刻停下正在放的
 //   release(url)         这一段用完了（收回地址）
 //   onState(s)           "speaking" 开始出声 / "done" 这一回都念完了（或者念不成的跳过了） / "idle" 停了
-//   onError(e)           某一段念不成（跳过它接着念后面的）
+//   onError(e, text)     某一段念不成（跳过它接着念后面的）；text 是那一段
 //   onSegment(text)      轮到这一段了（开始放；念不成跳过的也报一声）：字幕跟着这个出（可以不给）
 // }
 // 回 { add(texts), end(), cancel(), busy() }：add 加几段；end 这一回没有更多了（念完就报 done）；cancel 全停
@@ -194,7 +194,7 @@ export function createSayer(d, { ahead = 2 } = {}) {
       queue.shift();
       // 没念出来的这一段，字幕上照样摆出来（她看得到他说了什么）
       if (d.onSegment) d.onSegment(head.text);
-      d.onError(head.err);
+      d.onError(head.err, head.text);
       pump();
       return;
     }
@@ -210,7 +210,7 @@ export function createSayer(d, { ahead = 2 } = {}) {
     Promise.resolve()
       .then(() => d.play(head.url))
       .catch((e) => {
-        if (my === run) d.onError(e);
+        if (my === run) d.onError(e, head.text);
       })
       .then(() => {
         if (head.url) d.release(head.url);

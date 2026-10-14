@@ -18,6 +18,10 @@ export function callClock(secs) {
   return `${m < 10 ? "0" : ""}${m}:${s % 60 < 10 ? "0" : ""}${s % 60}`;
 }
 
+// 接起来他先说的那一句（hi，见 hello.js）：寄给他的、抄提要的都带上，他知道自己先说了什么；聊天里那一行照旧只写“通话开始”
+const hiOf = (m) => (typeof m.hi === "string" && m.hi.trim() ? m.hi.trim().slice(0, 40) : "");
 export const markText = (m) => (m.phase === "end" ? `通话 ${callLen(m.secs)}` : "通话开始");
-export const markNote = (m) => (m.phase === "end" ? `[开封府提示：电话挂了，你们打了 ${callLen(m.secs)}]` : "[开封府提示：你们开始打电话了]");
-export const markRecap = (m) => (m.phase === "end" ? `[电话挂了，打了 ${callLen(m.secs)}]` : `[${HER_NAME}和${HIS_NAME}开始打电话]`);
+export const markNote = (m) =>
+  m.phase === "end" ? `[开封府提示：电话挂了，你们打了 ${callLen(m.secs)}]` : hiOf(m) ? `[开封府提示：你们开始打电话了，你接起来先说了一句“${hiOf(m)}”]` : "[开封府提示：你们开始打电话了]";
+export const markRecap = (m) =>
+  m.phase === "end" ? `[电话挂了，打了 ${callLen(m.secs)}]` : hiOf(m) ? `[${HER_NAME}和${HIS_NAME}开始打电话，${HIS_NAME}接起来先说“${hiOf(m)}”]` : `[${HER_NAME}和${HIS_NAME}开始打电话]`;

@@ -311,7 +311,7 @@ export async function callVoice(body, { signal, wait = VOICE_WAIT } = {}) {
     }
     const gone = why();
     if (gone) throw gone;
-    if (res.ok && d && (d.type === "voice" || typeof d.configured === "boolean")) return d;
+    if (res.ok && d && (d.type === "voice" || d.type === "token" || typeof d.configured === "boolean")) return d;
     if (d && d.type === "error" && d.error) {
       if (res.status === 401 || res.status === 403) throw coded("auth", d.error.message || "请先登录开封府");
       throw Object.assign(coded("refused", d.error.message || `念语音的小后端说不行（${res.status}）`), { reason: d.error.code || "", status: res.status });

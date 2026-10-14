@@ -585,7 +585,7 @@ function world(opts = {}) {
 
   // 钥匙
   r = await knock({ op: "key" });
-  ok(r.status === 200 && r.d.configured === true && r.d.model === "eleven_v4" && J(r.d.can) === J(["speak"]) && fake.log.length === 0, "钥匙：放好了；默认用 eleven_v4 念；问这一句不去敲 ElevenLabs 的门（不花钱）");
+  ok(r.status === 200 && r.d.configured === true && r.d.model === "eleven_v4" && J(r.d.can) === J(["speak", "hear"]) && fake.log.length === 0, "钥匙：放好了；默认用 eleven_v4 念；会念、会给听写的通行证；问这一句不去敲 ElevenLabs 的门（不花钱）");
   delete voiceEnv.ELEVENLABS_API_KEY;
   delete voiceEnv.ELEVENLABS_VOICE_ID;
   r = await knock({ op: "key" });
@@ -620,6 +620,36 @@ function world(opts = {}) {
   ok(r.status === 400 && r.d.error.code === "empty", "念：没有字的不念");
   r = await knock({ op: "speak", text: "字".repeat(601) });
   ok(r.status === 400 && r.d.error.code === "long" && fake.log.length === 2, "念：过了六百个字的不念（不去敲门）");
+
+  // 打电话用的听写通行证（10 月 14 日加的）
+  {
+    const n0 = fake.log.length;
+    r = await knock({ op: "hear" });
+    const got = fake.log[n0];
+    ok(r.status === 200 && r.d.type === "token" && /^sutkn_test_\d+$/.test(r.d.token) && r.d.url === "wss://api.elevenlabs.io/v1/speech-to-text/realtime" && r.d.model === "scribe_v2_realtime" && r.d.lang === "zh",
+      `听写通行证：交回一张一次性的通行证，连同实时听写的地址、模型、中文（${J(r.d)}）`);
+    ok(got && got.path === "/v1/single-use-token/realtime_scribe" && got.key === KEY && !JSON.stringify(r.d).includes(KEY), "听写通行证：拿着 key 去 ElevenLabs 要的；交回网页的东西里没有 key");
+    fake.state.stt = "perm";
+    r = await knock({ op: "hear" });
+    ok(r.status === 502 && r.d.error.code === "key" && r.d.error.message.includes("Speech to Text"), `听写通行证：这把 key 没开语音转文字的权限：说清楚去开哪一样（${r.d.error && r.d.error.message}）`);
+    fake.state.stt = "terms";
+    r = await knock({ op: "hear" });
+    ok(r.status === 502 && r.d.error.code === "terms" && r.d.error.message.includes("条款"), `听写通行证：还没在 ElevenLabs 网站上同意听写的条款：说清楚（不说成 key 的权限）（${r.d.error && r.d.error.message}）`);
+    fake.state.stt = "ok";
+    fake.state.fail = "quota";
+    fake.state.failTimes = 1;
+    r = await knock({ op: "hear" });
+    ok(r.d.error.code === "quota", "听写通行证：额度用完了：说额度");
+    fake.state.fail = "offline";
+    fake.state.failTimes = 1;
+    r = await knock({ op: "hear" });
+    ok(r.d.error.code === "down", "听写通行证：连不上 ElevenLabs：说连不上");
+    delete voiceEnv.ELEVENLABS_API_KEY;
+    const n1 = fake.log.length;
+    r = await knock({ op: "hear" });
+    ok(r.status === 400 && r.d.error.code === "setup" && fake.log.length === n1, "听写通行证：钥匙没放好：不去敲门，说缘故（setup）");
+    reset();
+  }
 
   // 念不成
   const failWith = async (kind) => {

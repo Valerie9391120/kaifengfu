@@ -111,7 +111,9 @@ const csp = [
   "img-src 'self' data: blob: https://raw.githubusercontent.com",
   // 他的语音条：念好的声音在手机上变成 blob: 的地址再放（见 App.jsx 的 audioUrl）。不写这一句，声音被 default-src 拦下，放不出来
   "media-src 'self' blob:",
-  `connect-src 'self' ${SUPABASE_URL} https://raw.githubusercontent.com`,
+  // 打电话的实时听写（ElevenLabs 的 WebSocket，见 src/call/hear.js）：不写这一句连不上，电话退回手机自带的听写。
+  // 测试的时候连的是假 Supabase 上的假的（同一个地址，ws:// 开头）
+  `connect-src 'self' ${SUPABASE_URL} ${TEST_URL ? TEST_URL.replace(/^http/, "ws") : "wss://api.elevenlabs.io"} https://raw.githubusercontent.com`,
   "font-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
