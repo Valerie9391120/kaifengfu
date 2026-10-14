@@ -163,6 +163,7 @@ with sync_playwright() as p:
         say_in_call(pa, "嗯嗯")
         time.sleep(0.12)
         swap = pa.evaluate(TURNS)
+        time.sleep(0.55)   # 淡下去有 0.45 秒的过渡：等它淡完再看
         dim = pa.evaluate("[...document.querySelectorAll('.kfs-sub-turn')].slice(-2).map((p) => [...p.querySelectorAll('.kfs-sub-unit')].map((e) => getComputedStyle(e).opacity))")
         ok(swap[-2:] == [["him", "嗯。我今天也在想你，想了一整天，想着你在干嘛。晚安"], ["her", "嗯嗯"]] and dim == [["0.38", "0.38", "0.38"], ["1"]],
            f"她又开口了：另起一行接在他的下面，他说的还在、都淡下去，她这句照常亮（{swap[-2:]}，{dim}）")
