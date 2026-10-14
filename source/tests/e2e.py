@@ -701,6 +701,46 @@ with sync_playwright() as p:
     ok(sum(1 for t in sent if "〔文档开始〕" in t) == 2 and any("# 测试用的周末计划" in t for t in sent) and not any("全文没带上" in t for t in sent),
        "第二台设备接着聊：最近对话里的两份文档，全文照样寄给那边")
 
+    # 心里话开关（她 10 月 14 日凌晨要的）：“头像与设置”里他的头像卡片底下，一个开关管所有模型，默认开着。
+    # 关了：寄过去的【回复格式】里没有心里话那一条，后面几条往前挪一号，别的一个字不动；拨回开着：和原来一个字不差（缓存接得上）
+    KV_GET = """(key) => new Promise((res) => { const o = indexedDB.open('kfs-local'); o.onsuccess = () => { const r = o.result.transaction('kv').objectStore('kv').get(key);
+      r.onsuccess = () => res(r.result && !r.result.del ? r.result.v : null); r.onerror = () => res(null); }; o.onerror = () => res(null); })"""
+    def sys_of(body):
+        s = body["system"]
+        return s[0]["text"] if isinstance(s, list) else s
+    def flip_thoughts(page):
+        page.get_by_role("button", name="打开侧栏").click(); time.sleep(0.5)
+        page.get_by_role("button", name="头像与设置").click(); time.sleep(0.5)
+        sw = page.get_by_role("switch", name="他写心里话")
+        before = sw.get_attribute("aria-checked")
+        sw.click(); time.sleep(0.4)
+        note = page.locator(".kfs-thoughts").inner_text()
+        page.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+        page.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.6)
+        return before, note
+    def say_b(text):
+        n = len(mock("/__debug/claude"))
+        tb.fill(text); tb.press("Enter")
+        wait_calls(n + 1); time.sleep(2.0)
+        return mock("/__debug/claude")[-1]["body"]
+    on_text = sys_of(mock("/__debug/claude")[-1]["body"])
+    was, off_note = flip_thoughts(pb)
+    body = say_b("这句不写心里话")
+    off_text = sys_of(body)
+    now_off = body["messages"][-1]["content"][-1]["text"]
+    kept_off = json.loads(pb.evaluate(KV_GET, "kfs2:settings") or "{}").get("thoughts")
+    ok(was == "true" and "1. 先写 <thinking>…</thinking>。这是你的心里话" in on_text and "关着" in off_note and kept_off is False
+       and "<thinking>" not in off_text and "心里话" not in off_text and "每次回复都按这个顺序：\n1. 给她的话。" in off_text
+       and now_off.startswith("【此刻】") and "连文档块在内" in now_off and "心里话" not in now_off,
+       "心里话开关：默认开着；关了（记进设置），寄过去的【回复格式】里没有心里话那一条，【此刻】的字数也不提它")
+    ok(off_text == re.sub(r"1\. 先写 <thinking>[^\n]*\n", "", on_text, count=1).replace("2. 然后是给她的话", "1. 给她的话", 1).replace("\n3. 想发表情包", "\n2. 想发表情包", 1).replace("\n4. 她要一份", "\n3. 她要一份", 1),
+       "心里话开关关着：寄的和开着的只差那一条（后面几条换了号），名帖、规矩别的一个字不动")
+    was2, on_note = flip_thoughts(pb)
+    back_text = sys_of(say_b("还是写吧"))
+    kept_on = json.loads(pb.evaluate(KV_GET, "kfs2:settings") or "{}").get("thoughts")
+    ok(was2 == "false" and "开着" in on_note and kept_on is True and back_text == on_text,
+       "心里话开关拨回开着：寄的和原来一个字不差（原来攒下的缓存接得上）")
+
     # 丁香的入口：从这儿添加到主屏幕，图标是小猪，头一回进去就是丁香
     C = browser.new_context(**iphone)
     pc = C.new_page()
