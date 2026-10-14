@@ -44,7 +44,7 @@ function Pick({ options, value, onPick, label }) {
 
 // fit：“他记多长”那一档照眼下这个模型算出来的数（屋子小的模型会比那一档写的小，见 recap.js 的 tierOf）
 // voiceCheck、onVoiceTest、voiceTestNote、voiceTesting：语音条那一段（他能发语音、念得稳不稳、试听一句）
-export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage, monthUsage, recapUsage, fit, voiceCheck, onVoiceTest, voiceTestNote, voiceTesting }) {
+export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage, monthUsage, recapUsage, fit, voiceCheck, onVoiceTest, voiceTestNote, voiceTesting, onEchoProbe }) {
   const lengths = [
     { v: 1024, t: "短" },
     { v: 2048, t: "适中" },
@@ -126,6 +126,13 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
       <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>
         打电话的时候，你停这么久就当你说完了，自动发出去。老被半路截断就调长，嫌等得久就调短。他说的每一句都用他的声音念，扣 ElevenLabs 的额度，跟语音条一样。
       </p>
+      {/* 量一量回声（打断他用，她 10 月 14 日 17:26 定的“得先量回声”，见 call/echo.js） */}
+      <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 10, lineHeight: 1.6 }}>
+        打电话的时候打断他用：量一量他说话的声音有多少漏进麦克风。照着屏幕上说的做，量完截个图给我。头一回量要念一句话，扣一点 ElevenLabs 的额度。
+      </p>
+      <button onClick={onEchoProbe} className="kfs-tap kfs-echo-open" style={{ ...chip, marginTop: 8 }}>
+        量一量回声
+      </button>
 
       <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>用量</div>
       <div style={{ ...glass(0.45, 14), borderRadius: 18, padding: "10px 14px" }}>

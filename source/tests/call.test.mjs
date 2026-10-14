@@ -5,6 +5,7 @@ import { emptySubs, herLive, herDone, hisSay, unitsOf, subWho, subFade, subGap, 
 import { createCallAudio, bytesOf } from "../src/call/play.js";
 import { downsampler, toPcm16, rmsOf, pcmB64, MIC_RATE } from "../src/call/mic.js";
 import { createHearer, sttUrl, joinText, sttTrouble, CHUNK, LOUD, LONG_EXTRA, TEXT_GRACE, FINAL_WAIT } from "../src/call/hear.js";
+import { stats, echoResult, createEchoProbe, QUIET_MS, GAP_MS, HEAD_MS, VERDICT_TEXT } from "../src/call/echo.js";
 import { isCallMark, callLen, callClock, markText, markNote, markRecap } from "../src/call/marks.js";
 import { buildSystem, CALL_NOTE } from "../src/prompt/system.js";
 import { buildMessages } from "../src/prompt/messages.js";
@@ -665,6 +666,67 @@ ok(markText(START) === "通话开始" && markText(END) === "通话 13 分钟", "
   ok(texts.includes(markNote(START)) && texts.includes(markNote(END)) && markNote(END) === "[开封府提示：电话挂了，你们打了 13 分钟]" && texts[0].startsWith("【开封府附注】卿卿用的是默认的“卿”字头像"),
     "寄给他的也有这两行（挂了以后他知道你们刚通过电话）；开头的头像附注照旧（这两行不会被当成换头像）");
   ok(markRecap(START) === "[卿卿和光义开始打电话]" && markRecap(END) === "[电话挂了，打了 13 分钟]", "抄提要时写成：[卿卿和光义开始打电话]、[电话挂了，打了 13 分钟]");
+}
+
+// =====================================================
+// 量一量回声（打断他用，她 17:26 定的“得先量回声”）
+// =====================================================
+{
+  const s = stats([0.3, 0.1, 0.2, 0.4, NaN, 0.5]);
+  ok(s.n === 5 && s.med === 0.3 && s.max === 0.5 && stats([]).max === 0, `几个分位：坏的数不算，空的是零（${JSON.stringify(s)}）`);
+  const frames = (n, rms, step = 85) => Array.from({ length: n }, (_, i) => ({ t: i * step, rms: typeof rms === "function" ? rms(i) : rms }));
+  // 回声消除管用：漏进来的很小，她说话大
+  const good = echoResult({ quiet: frames(24, 0.002), echo: frames(50, (i) => (i * 85 < HEAD_MS ? 0.03 : 0.004)), both: frames(50, (i) => (i % 5 ? 0.08 : 0.01)) });
+  ok(good.verdict === "ok" && good.head === 0.03 && good.echo === 0.004 && good.her === 0.08 && Math.round(good.times) === 20,
+    `分得开：她说话是漏进来的二十倍；开头那一会儿漏进来的单算，不拿它比（${JSON.stringify(good)}）`);
+  // 回声消除不管用：漏进来的跟她说话差不多响
+  const bad = echoResult({ quiet: frames(24, 0.002), echo: frames(50, 0.06), both: frames(50, 0.09) });
+  ok(bad.verdict === "no", `分不开：漏进来的跟她说话差不多响（${bad.times.toFixed(2)} 倍）`);
+  const edge = echoResult({ quiet: frames(24, 0.002), echo: frames(50, 0.02), both: frames(50, 0.05) });
+  ok(edge.verdict === "edge", `勉强：两倍半（${edge.times.toFixed(2)} 倍）`);
+  const mute = echoResult({ quiet: frames(24, 0), echo: frames(50, 0), both: frames(50, 0) });
+  const mute2 = echoResult({ quiet: frames(24, 0.002), echo: frames(50, 0.004), both: frames(50, 0.004) });
+  ok(mute.verdict === "mute" && mute2.verdict === "mute" && VERDICT_TEXT.mute.includes("再量一回"), "漏进来的本来就小，第三步也没响出多少：说没听到她说话，再量一回");
+  const masked = echoResult({ quiet: frames(24, 0.002), echo: frames(50, 0.03), both: frames(50, 0.03) });
+  ok(masked.verdict === "no", "漏进来的大，第三步跟它一样响：分不出她说没说，就是分不开（不叫她再量）");
+  // 跑一遍：安静两秒 → 放（别出声）→ 再放（跟着说）→ 结果；每一步记进那一步
+  const clock = fakeClock();
+  let micFn = null;
+  const steps = [];
+  const plays = [];
+  let done = null;
+  let levels = 0;
+  let playing = null;
+  const P = createEchoProbe({
+    now: clock.now, later: clock.later, mic: { listen: (f) => { micFn = f; } }, clip: "那一句",
+    play: (c) => new Promise((r) => { plays.push([c, clock.now()]); playing = r; }),
+    onStep: (st) => steps.push(st), onLevel: () => { levels += 1; }, onDone: (r) => { done = r; }, onFail: () => {},
+  });
+  const feed = (ms, rms) => { for (let t = 0; t < ms; t += 100) { micFn({ rms }); clock.advance(100); } };
+  P.start();
+  feed(QUIET_MS, 0.002);
+  await settle();
+  feed(GAP_MS + 100, 0.05); // 两步之间（不算）
+  await settle();
+  ok(plays.length === 1 && plays[0][0] === "那一句" && steps.slice(0, 2).join() === "quiet,echo", `安静两秒以后放那一句（${steps.join()}）`);
+  feed(3000, 0.005);
+  playing();
+  await settle();
+  feed(GAP_MS + 700, 0.2); // 两步之间（不算）
+  await settle();
+  ok(plays.length === 2 && steps.includes("both"), "放完了：空一会儿，再放一遍，这回她跟着说");
+  feed(3000, 0.09);
+  playing();
+  await settle();
+  ok(done && done.frames.quiet === 20 && done.frames.echo === 30 && done.frames.both === 30 && done.her === 0.09 && done.echo === 0.005 && done.verdict === "ok" && levels > 80,
+    `量完了：每一步收到的记进那一步，两步之间的不算；条一直跟着跳（${JSON.stringify(done)}）`);
+  const Q = createEchoProbe({ now: clock.now, later: clock.later, mic: { listen: () => {} }, clip: "x", play: () => new Promise(() => {}), onStep: () => {}, onLevel: () => {}, onDone: () => { done = "不该来"; }, onFail: () => {} });
+  done = null;
+  Q.start();
+  Q.stop();
+  clock.advance(QUIET_MS + GAP_MS + 100);
+  await settle();
+  ok(done === null, "不量了（关掉）：后面的步子都不走了");
 }
 
 // =====================================================

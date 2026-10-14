@@ -103,6 +103,15 @@ export function createMic(win, ac) {
     listen(f) {
       fn = f;
     },
+    // 麦克风实际开成了什么样（回声消除开没开之类；量回声的时候摆出来）
+    settings() {
+      try {
+        const t = stream && stream.getAudioTracks()[0];
+        return (t && t.getSettings && t.getSettings()) || {};
+      } catch (e) {
+        return {};
+      }
+    },
     close() {
       fn = null;
       try {

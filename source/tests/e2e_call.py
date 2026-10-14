@@ -436,6 +436,37 @@ with sync_playwright() as p:
             two.click(); time.sleep(0.4)
             picked = json.loads(pa.evaluate(KV, "kfs2:settings") or "{}").get("callPause") == 2000
         ok(sheet_ok and picked, "API 面板里能挑“停多久算你说完”，挑了记进设置")
+
+        # ================= 量一量回声（打断他用，她 17:26 定的“得先量回声”） =================
+        # 假麦克风喂的是没声音的，量出来是“没听到你说话”；这里看的是一步一步走得通、跟打电话一个样子（麦克风开好了才放）
+        echo_steps = """(() => { const e = document.querySelector('.kfs-echo'); return e ? e.dataset.step : null; })()"""
+        e_echo = len(eleven())
+        mics0 = pa.evaluate("window.__micAt.length")
+        mark_dial(pa)
+        pa.locator(".kfs-echo-open").click()
+        seen = set()
+        t_end = time.time() + 40
+        while time.time() < t_end:
+            st = pa.evaluate(echo_steps)
+            if st: seen.add(st)
+            if st in ("done", "fail"): break
+            time.sleep(0.1)
+        said_echo = spoken(e_echo)
+        order = pa.evaluate(HELLO_ORDER)
+        verdict = pa.evaluate("(() => { const e = document.querySelector('.kfs-echo-verdict'); return e ? e.dataset.verdict : null; })()")
+        rows = pa.evaluate("[...document.querySelectorAll('.kfs-echo-rows > div')].map((e) => e.textContent)")
+        ok(st == "done" and {"quiet", "echo", "both"} <= seen and verdict == "mute" and "回声消除" in rows and "开着" in rows and len(said_echo) == 1 and said_echo[0].startswith("卿卿，我在量回声"),
+           f"量一量回声：安静、放一句别出声、再放一遍跟着说，一步一步走完，摆出几个数和结论（假麦克风没声音，说没听到你说话）；他那一句念了一回（{st}、{sorted(seen)}、{verdict}）")
+        ok(order["mic"] and order["play"] and order["play"] > order["mic"] and pa.evaluate("window.__micLive()") == 0,
+           "量的时候跟打电话一个样子：麦克风开好了才放他那一句；量完麦克风关了")
+        e_again = len(eleven())
+        pa.get_by_role("button", name="再量一回").click()
+        time.sleep(0.5)
+        again_open = pa.evaluate(echo_steps) in ("prep", "quiet", "echo")
+        pa.get_by_role("button", name="关掉量回声").click()
+        time.sleep(0.4)
+        ok(again_open and pa.evaluate(echo_steps) is None and pa.evaluate("window.__micLive()") == 0 and len(spoken(e_again)) == 0 and pa.evaluate("window.__micAt.length") == mics0 + 2,
+           "再量一回：念过的那一句用存着的，不再敲 ElevenLabs；量到一半点“不量了”，那一页收了、麦克风关了")
     finally:
         print("\n页面报错：" + ("\n".join(errors[:10]) if errors else "无"))
         browser.close()
