@@ -1,12 +1,13 @@
 // 通话（卿卿 10 月 14 日要的，见开发说明“通话”那一节）：听她说完没有、他的话怎么洗怎么切、按顺序念、聊天里那两行小字
 import { createListener, PAUSE_MS, PAUSES, pauseOf } from "../src/call/listen.js";
-import { cleanForCall, splitForCall, segmentsOfReply, createSayer, subOf } from "../src/call/say.js";
+import { cleanForCall, splitForCall, segmentsOfReply, segmentsOfItems, createSayer, subOf } from "../src/call/say.js";
 import { emptySubs, herLive, herDone, hisSay, unitsOf, subWho, subFade, subGap, SUB_KEEP, SUB_TURNS, SUB_COLOR, SUB_OLD } from "../src/call/subs.js";
-import { createCallAudio, bytesOf } from "../src/call/play.js";
+import { createCallAudio, bytesOf, ENV_STEP, DUCK } from "../src/call/play.js";
 import { downsampler, toPcm16, rmsOf, pcmB64, MIC_RATE } from "../src/call/mic.js";
 import { createHearer, sttUrl, joinText, sttTrouble, CHUNK, LOUD, LONG_EXTRA, TEXT_GRACE, FINAL_WAIT } from "../src/call/hear.js";
 import { stats, echoResult, createEchoProbe, QUIET_MS, GAP_MS, HEAD_MS, VERDICT_TEXT } from "../src/call/echo.js";
 import { isCallMark, callLen, callClock, markText, markNote, markRecap } from "../src/call/marks.js";
+import { createBarge, echoOf, ackOnly, cutAt, cutPlan, cutItems, HOLD, K0 } from "../src/call/barge.js";
 import { buildSystem, CALL_NOTE, CALL_RULE } from "../src/prompt/system.js";
 import { parseReply, rawOf } from "../src/reply.js";
 import { pendingCall, ringLeft, ringWav, CALL_RING_MS, RING_MIN_MS } from "../src/call/incoming.js";
@@ -722,6 +723,271 @@ ok(markText(START) === "通话开始" && markText(END) === "通话 13 分钟", "
   const sys = (callable) => buildSystem({ now: new Date(2026, 9, 14, 18, 0), memeList: [], hisAvatarName: "", memDocs: [], callable }).staticText;
   ok(sys(true).includes(CALL_RULE) && !sys(false).includes("[CALL]") && CALL_RULE.includes("单独一行写 [CALL]") && CALL_RULE.includes("一分钟没接"),
     "开着“他能打电话”才教他：单独一行写 [CALL]、下面写接起来先说的；一分钟没接算没接");
+}
+
+// =====================================================
+// 打断他（她 17:26 定的“你一开口就打断”“应声不算”“只留念出来的”“告诉我”“合起来重新想”；18:16 的做法；18:19 拿掉点屏幕打断）
+// =====================================================
+{
+  // 一帧 85 毫秒；out 是他这会儿多响，rms 是麦克风
+  const rig = () => {
+    let now = 0;
+    let out = 0;
+    const b = createBarge({ now: () => now, out: () => out });
+    const run = (ms, o, rms) => {
+      const evs = [];
+      for (let t = 0; t < ms; t += 85) {
+        now += 85;
+        out = o;
+        const ev = b.feed({ rms: typeof rms === "function" ? rms(now) : rms });
+        if (ev) evs.push(`${ev}@${now}`);
+      }
+      return evs;
+    };
+    return { b, run, at: () => now };
+  };
+  const mix = (a, c) => Math.sqrt(a * a + c * c);
+  {
+    const R = rig();
+    const evs = R.run(20000, 0.3, 0.3 * 0.15);
+    ok(evs.length === 0 && R.b.view().k < K0 && R.b.view().k >= 0.149, `他说话漏进麦克风（照他多响成比例的）：一回都不当她开口；漏的比例边放边学，往回落（k=${R.b.view().k.toFixed(3)}）`);
+  }
+  {
+    const R = rig();
+    R.run(3000, 0.3, 0.3 * 0.15);
+    const t0 = R.at();
+    const evs = R.run(HOLD + 85, 0.3, mix(0.3 * 0.15, 0.12));
+    const at = evs.length ? Number(evs[0].split("@")[1]) - t0 : -1;
+    ok(evs[0] && evs[0].startsWith("suspect") && at >= HOLD && at <= HOLD + 85, `她在他说话的时候开口（0.12，她手机上量的那么响）：连着半秒多算她开口（${at} 毫秒）`);
+    const since = R.b.since();
+    ok(since >= t0 - 85 && since <= t0 + 85, `像她在说的头一帧从几点开始（开听写从那会儿往前送一点）：${since - t0}`);
+    ok(R.run(1000, 0.3, mix(0.3 * 0.15, 0.12)).length === 0, "她接着说：不再报（一回只报一次）");
+    const quiet = R.run(1200, 0.3, 0.3 * 0.15);
+    ok(quiet.length === 1 && quiet[0].startsWith("clear"), `她不说了：九百毫秒一帧都不像她，算她没在说（${quiet.join()}）`);
+  }
+  {
+    const R = rig();
+    R.run(2000, 0.3, 0.045);
+    const evs = R.run(340, 0.3, mix(0.045, 0.15));
+    const after = R.run(2000, 0.3, 0.045);
+    ok(evs.length === 0 && after.length === 0, "“嗯”“对”这种短的（三百来毫秒）：不算开口");
+  }
+  {
+    const R = rig();
+    const evs = R.run(1500, 0, 0.06);
+    ok(evs.length === 1 && evs[0].startsWith("suspect"), "他换气、停顿的时候（他没在出声）：她小声说也认得出来");
+  }
+  {
+    const R = rig();
+    const evs = R.run(3000, 0.3, 0.3 * 0.5);
+    ok(evs.length === 1 && evs[0].startsWith("suspect"), "漏得比估的多（声音开得大）：会当成她开口（压小、开听写以后认出来不是她）");
+    const k0 = R.b.view().k;
+    R.b.echoed();
+    const k1 = R.b.view().k;
+    ok(k1 > k0 && k1 <= k0 * 2 + 1e-9, `认出来不是她（echoed）：漏的比例往上调，一回最多翻一倍（${k0.toFixed(3)} → ${k1.toFixed(3)}）`);
+    const again = R.run(10000, 0.3, 0.3 * 0.5);
+    ok(again.length === 0, `调上去以后，同样漏进来的不再当成她（k=${R.b.view().k.toFixed(3)}）`);
+  }
+  {
+    const R = rig();
+    R.run(1500, 0.3, mix(0.045, 0.12));
+    R.b.reset();
+    ok(R.b.since() === 0 && R.b.view().suspect === false, "reset：从头听（他开口的时候、认完了一回）");
+  }
+}
+{
+  const his = "[softly] 卿卿，我今天下午去公园散步了，看到好多银杏叶。";
+  ok(echoOf("今天下午去公园", his) === true && echoOf("我今天下午去了公园散步", his) === true, "听写出来的是他自己那句漏进去的：认得出（不用一字不差）");
+  ok(echoOf("等一下我有话说", his) === false && echoOf("你先停一下", his) === false, "是她说的：不是他那句");
+  ok(echoOf("嗯", his) === null && echoOf("", his) === null && echoOf("，。", his) === null, "不到两个字：还说不准");
+  ok(echoOf("[softly] 银杏叶", his) === true, "她那头的字里带着方括号的也不碍事");
+}
+{
+  ok(["嗯", "嗯嗯", "对", "对对对", "好的", "是的", "哈哈哈", "嗯，好", "哦哦", "OK", "yeah", "嗯哼"].every(ackOnly), "光是应声：嗯、对对对、好的、是的、哈哈哈、OK……");
+  ok(!["对了", "是吗", "好想你", "等一下", "我", "", "  ", "好的我知道了"].some(ackOnly), "带了别的字的不算应声：对了、是吗、好想你、等一下、好的我知道了");
+}
+{
+  ok(cutAt("一二三四五六七八九十", 0.5) === "一二三四五" && cutAt("一二三四", 1) === "一二三四" && cutAt("一二三四", 0) === "" && cutAt("一二三四", 0.1) === "", "照放了几成截字：一半就是前一半；还没出声就是一个字没说");
+  ok(cutAt("[softly] 一二三四", 0.5) === "[softly] 一二" && cutAt("一二[laughs]三四", 0.5) === "一二", "语气标签不算字：前面的跟着留，截在它后面的不留");
+}
+{
+  const segs = segmentsOfItems([{ type: "text", text: "嗯，我在。今天累不累？你先说，我听着呢，慢慢说，不着急。" }, { type: "meme", file: "a.jpg" }, { type: "voice", text: "晚安" }]);
+  ok(segs.length >= 2 && segs.every((s) => typeof s.text === "string") && segs[0].item === 0 && segs[segs.length - 1].item === 2 && segs[segs.length - 1].text === "晚安", `切成要念的几段，每段记着是第几样（${JSON.stringify(segs)}）`);
+  ok(JSON.stringify(segmentsOfReply([{ type: "text", text: "嗯，我在。" }])) === JSON.stringify(segmentsOfItems([{ type: "text", text: "嗯，我在。" }]).map((s) => s.text)), "只要字的那个照旧");
+}
+{
+  // 他这一回：接起来那一句（不在聊天里），一条回话 a 三样（字两段、表情包、字一段、换头像），又一条 b
+  const list = [
+    { msgId: null, item: -1, text: "卿卿？" },
+    { msgId: "a", item: 0, text: "[softly] 嗯，我在。" },
+    { msgId: "a", item: 0, text: "今天去公园散步了，银杏叶都黄了。" },
+    { msgId: "a", item: 2, text: "回头带你去。" },
+    { msgId: "b", item: 0, text: "还有一件事。" },
+  ];
+  const A = { id: "a", items: [{ type: "text", text: "[softly] 嗯，我在。\n今天去公园散步了，银杏叶都黄了。" }, { type: "meme", file: "m.jpg" }, { type: "text", text: "回头带你去。" }, { type: "avatar", file: "fox.jpg" }] };
+  const B = { id: "b", items: [{ type: "text", text: "还有一件事。" }] };
+  // 念到 a 的第二段一半被打断
+  const p1 = cutPlan(list, { playing: { text: list[2].text, frac: 0.5 }, pending: [list[3].text, list[4].text] });
+  ok(p1.length === 2 && p1[0].msgId === "a" && p1[0].stop === 0 && p1[1].msgId === "b" && p1[1].stop === 0, `被打断的是 a（第一样念到一半）和 b（一个字没念）（${JSON.stringify(p1.map((p) => [p.msgId, p.stop]))}）`);
+  const ca = cutItems(A.items, p1[0]);
+  ok(JSON.stringify(ca.items) === JSON.stringify([{ type: "text", text: "[softly] 嗯，我在。今天去公园散步了" }, { type: "avatar", file: "fox.jpg" }]),
+    `a 只留念出来的：念了一半的那一样截到念到的地方，后面没念到的不要了，换头像的留着（${JSON.stringify(ca.items)}）`);
+  ok(ca.said === "嗯，我在。今天去公园散步了", `他说到哪儿（不带语气标签）：${ca.said}`);
+  const cb = cutItems(B.items, p1[1]);
+  ok(JSON.stringify(cb.items) === JSON.stringify([{ type: "text", text: "……" }]) && cb.said === "", "b 一个字没念出来：留一个“……”，他说到哪儿是空的");
+  // a 的第一样念完了、念第三样之前（正在准备，没在放）被打断
+  const p2 = cutPlan(list, { playing: null, pending: [list[3].text, list[4].text] });
+  const c2 = cutItems(A.items, p2[0]);
+  ok(p2[0].stop === 2 && JSON.stringify(c2.items) === JSON.stringify([A.items[0], A.items[1], A.items[3]]),
+    `整样念完了的原样留着（排在前面的表情包也留着），没开口念的那一样不要了（${JSON.stringify(c2.items)}）`);
+  ok(c2.said === "嗯，我在。今天去公园散步了，银杏叶都黄了。".slice(-16), `说到哪儿：念完的那一段末尾（${c2.said}）`);
+  // 接起来那一句就被打断：聊天里没有要截的
+  ok(cutPlan(list, { playing: { text: "卿卿？", frac: 0.3 }, pending: list.slice(1).map((s) => s.text) }).length === 2, "接起来那一句被打断：那一句不管，后面排着的两条照样记“一个字没念”");
+  ok(cutPlan([list[0]], { playing: { text: "卿卿？", frac: 0.3 }, pending: [] }).length === 0, "只有接起来那一句：没有要截的");
+  ok(cutPlan(list, { playing: null, pending: [] }).length === 0, "都念完了（没东西可停）：没有要截的");
+  ok(cutPlan(list, { playing: null, pending: ["多出来的一段"].concat(list.map((s) => s.text)) }).length === 0, "对不上（排着的比记着的还多）：不截");
+  // 英文两段接起来空一格
+  const en = cutItems([{ type: "text", text: "Hello there. How are you?" }], { stop: 0, done: { 0: ["Hello there."] }, part: "How", spoken: ["Hello there.", "How"] });
+  ok(en.items[0].text === "Hello there. How" && en.said === "Hello there. How", `英文两段接起来中间空一格（${en.items[0].text}）`);
+}
+{
+  // 念的那头：她打断他（interrupt）
+  const log = [];
+  const pend = {};
+  const plays = [];
+  const states = [];
+  const s = createSayer({
+    synth: (text) => new Promise((resolve) => { pend[text] = resolve; }),
+    play: (url) => new Promise((resolve) => plays.push({ url, resolve })),
+    stopPlay: () => log.push("stopPlay"),
+    release: (url) => log.push("release:" + url),
+    onState: (st) => states.push(st),
+    onError: () => {},
+    progress: () => ({ elapsed: 1.5, dur: 3 }),
+  });
+  s.add(["一段", "二段", "三段"]);
+  s.end();
+  await flush();
+  pend["一段"]({ url: "u1" });
+  await flush();
+  ok(s.left() === 3 && states.join() === "speaking", "还剩几段没念完（正放着的那段也算）");
+  const got = s.interrupt();
+  ok(got.playing && got.playing.text === "一段" && got.playing.frac === 0.5 && got.pending.join() === "二段,三段", `她打断他：说清楚正放着哪一段、放了几成、还有哪几段没放（${JSON.stringify(got)}）`);
+  ok(log.includes("stopPlay") && states.slice(-1)[0] === "idle" && !s.busy() && s.left() === 0, "跟挂断一样全停（报 idle，不报 done：不当他说完了去开听写）");
+  pend["二段"]({ url: "u2" });
+  plays[0].resolve();
+  await flush();
+  ok(plays.length === 1 && log.includes("release:u2"), "晚到的念好的不放，地址收回");
+  const s2 = createSayer({ synth: () => new Promise(() => {}), play: () => new Promise(() => {}), stopPlay: () => {}, release: () => {}, onState: () => {}, onError: () => {} });
+  s2.add(["还在念"]);
+  s2.end();
+  await flush();
+  const g2 = s2.interrupt();
+  ok(g2.playing === null && g2.pending.join() === "还在念", "还没开口（头一段还在念）就被打断：没有正放着的，排着的都算没念");
+}
+{
+  // 放他的声音：多响（level）、放到哪儿（progress）、压小（duck）
+  const gains = [];
+  class AC2 {
+    constructor() { this.state = "running"; this.currentTime = 10; this.sources = []; }
+    get destination() { return { dest: true }; }
+    createGain() { const g = { gain: { value: 1, setTargetAtTime: (v) => { g.gain.value = v; gains.push(v); } }, connect() {} }; return g; }
+    createBuffer() { return { duration: 0 }; }
+    createBufferSource() { const src = { connect: (to) => { src.to = to; }, start() {}, stop() {}, onended: null }; this.sources.push(src); return src; }
+    resume() { return Promise.resolve(); }
+    decodeAudioData(buf, yes) {
+      // 一秒的声音：前半秒 0.5 响，后半秒 0.1
+      const rate = 1000;
+      const data = new Float32Array(rate).map((_, i) => (i < 500 ? 0.5 : 0.1));
+      const got = { duration: 1, sampleRate: rate, getChannelData: () => data };
+      yes(got);
+      return Promise.resolve(got);
+    }
+    close() { return Promise.resolve(); }
+  }
+  let acRef = null;
+  const win = { AudioContext: function () { acRef = new AC2(); return acRef; }, Audio: class { play() { return Promise.resolve(); } pause() {} }, URL: { createObjectURL: () => "blob:1", revokeObjectURL() {} }, Blob: class {}, navigator: {} };
+  const a = createCallAudio(win, null);
+  a.unlock();
+  const clip = await a.decode(btoa("x"), "audio/mpeg");
+  ok(clip.env && clip.env.length === Math.ceil(1000 / (1000 * ENV_STEP)) && Math.abs(clip.env[0] - 0.5) < 1e-6 && Math.abs(clip.env[clip.env.length - 1] - 0.1) < 1e-6,
+    `解码的时候顺手算好每二十毫秒多响（${clip.env && clip.env.length} 格）`);
+  ok(a.level() === 0 && a.progress() === null, "没在放：多响是 0，放到哪儿是没有");
+  a.play(clip);
+  await flush();
+  acRef.currentTime = 10.2;
+  ok(Math.abs(a.level() - 0.5) < 1e-6 && Math.abs(a.progress().elapsed - 0.2) < 1e-6 && a.progress().dur === 1, `放着：多响、放到哪儿都对（${a.level()}，${JSON.stringify(a.progress())}）`);
+  acRef.currentTime = 10.9;
+  ok(Math.abs(a.level() - 0.1) < 1e-6, `往回看 0.3 秒取最响的：放到后半截（0.1 响的那段）就是 0.1（${a.level()}）`);
+  acRef.currentTime = 10.6;
+  ok(Math.abs(a.level() - 0.5) < 1e-6, "刚过了大声的那段：往回看还算大声（麦克风收到的比放出去的晚一点）");
+  ok(acRef.sources.slice(-1)[0].to && !acRef.sources.slice(-1)[0].to.dest, "他的声音过一道音量（压小、恢复用），不直接接喇叭");
+  a.duck(true);
+  a.duck(false);
+  ok(gains.join() === `${DUCK},1`, `她好像开口了：先压小（${DUCK}），认出不是她就恢复`);
+  a.stop();
+  ok(a.level() === 0 && a.progress() === null, "停了：多响是 0");
+  const R = audioRig();
+  R.a.unlock();
+  R.a.duck(true);
+  const c0 = await R.a.decode(btoa("x"), "audio/mpeg");
+  ok(c0.env === null && R.a.level() === 0, "没法压小、算不出多响的（老浏览器）：不碍事，照常放");
+}
+{
+  // 听写：从她开口那会儿往前一点送过去（她打断他的时候还没在听）
+  const R = hearRig();
+  R.talk(3000, 0.05); // 没在听的时候
+  R.h.start({ preroll: 500 });
+  await settle();
+  R.socks[0].up();
+  const sent = R.socks[0].audio();
+  ok(sent >= 8000 && sent <= 8000 + 1600, `开听写的时候从半秒以前的声音送起（送了 ${sent} 个点），再往前的不送`);
+  R.h.stop();
+  R.talk(500, 0.05);
+  R.h.start();
+  await settle();
+  R.socks[1].up();
+  ok(R.socks[1].audio() === 0, "平常开听写：不送以前的声音");
+  R.h.stop();
+  R.talk(300, 0);
+  R.h.start({ preroll: 500 });
+  await settle();
+  R.socks[2].up();
+  ok(R.socks[2].audio() === 1600 * 3, "上回开听写以后才攒的：只送那些（上一句的声音不混进来）");
+  R.talk(1700, 0);
+  ok(R.socks[2].commits() === 1, "送过去的那一截算她出过声：停够了照样算说完（不用等她再出声）");
+}
+{
+  // 聊天里：被打断那一行不摆，只告诉他
+  const CUT = { id: "x1", role: "event", who: "call", kind: "call", phase: "cut", callOf: "g2", said: "今天去公园散步了，银", ts: 3001 };
+  const CUT0 = { ...CUT, said: "" };
+  ok(markText(CUT) === "被你打断", "认得出被打断那一行");
+  ok(markNote(CUT) === "[开封府提示：你说到“今天去公园散步了，银”的时候被她打断了，后面的没说出来]" && markNote(CUT0) === "[开封府提示：你还没开口就被她打断了，这一条一个字都没说出来]",
+    "告诉他：说到哪儿被打断了；一个字没说出来的另一种说法");
+  ok(markRecap(CUT) === "[卿卿打断了光义，他说到“今天去公园散步了，银”]" && markRecap(CUT0) === "[卿卿打断了光义]", "抄提要时的写法");
+  const msgs = [
+    { id: "h1", role: "her", ts: 500, text: "打个电话" },
+    { id: "g1", role: "him", ts: 600, items: [{ type: "text", text: "好" }], raw: "好" },
+    START,
+    { id: "h2", role: "her", ts: 2000, text: "今天干嘛了", via: "call" },
+    { id: "g2", role: "him", ts: 3000, items: [{ type: "text", text: "[softly] 今天去公园散步了，银" }], raw: "[softly] 今天去公园散步了，银", cut: true },
+    CUT,
+    { id: "h3", role: "her", ts: 4000, text: "等一下，我先说", via: "call" },
+    { id: "g3", role: "him", ts: 5000, items: [{ type: "text", text: "你说" }], raw: "你说" },
+    END,
+  ];
+  const rows = buildRows(msgs, null, "");
+  ok(!rows.some((r) => r.key === "x1") && rows.filter((r) => r.kind === "call").map((r) => r.text).join() === "通话开始,通话 13 分钟", "被打断那一行聊天里不摆（他那一条已经截成只剩念出来的）");
+  const his = rows.filter((r) => r.type === "bubble" && r.role === "him");
+  ok(his.map((r) => !!r.call).join() === "false,true,true", "被打断那一行不打乱“在不在电话里”（后面他那一条照样是电话里的）");
+  ok(makePreview(msgs.slice(0, 6)) === "今天去公园散步了，银" || makePreview(msgs.slice(0, 6)).includes("今天去公园散步了"), `历史对话的预览：最后是被打断那一行的话，摆他截剩下的（${makePreview(msgs.slice(0, 6))}）`);
+  const { messages } = buildMessages(msgs, { her: null, him: null }, () => null);
+  const sent = messages.flatMap((m) => m.content.filter((b) => b.type === "text").map((b) => `${m.role}:${b.text}`));
+  const iCut = sent.indexOf("user:" + markNote(CUT));
+  ok(iCut > sent.indexOf("assistant:[softly] 今天去公园散步了，银") && iCut < sent.indexOf("user:等一下，我先说"), `寄给他的：他截剩下的那一条，后面一句“你说到……被她打断了”，再是她的话（${JSON.stringify(sent.slice(-6))}）`);
+  ok(pendingCall([START, { id: "c", role: "him", ts: 2000, items: [{ type: "call", text: "又写了" }] }, CUT, { id: "c2", role: "him", ts: 3000, items: [{ type: "call", text: "又写了一回" }] }, END]) === null,
+    "被打断那一行不算挂了：打着电话他写的 [CALL] 照样不算来电");
+  ok(needsReply([START, { id: "h", role: "her", ts: 1, text: "喂" }, { id: "g", role: "him", ts: 2, items: [{ type: "text", text: "……" }] }, CUT0]) === false, "被打断那一行不算谁说的话：他那条还算回过了");
 }
 
 // =====================================================

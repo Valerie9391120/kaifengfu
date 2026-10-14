@@ -65,19 +65,20 @@ export function pcmB64(pcm, btoaFn = typeof btoa === "function" ? btoa : null) {
 }
 
 // win：{ navigator.mediaDevices }；ac：放他声音的那个 AudioContext（同一个，iPhone 上少折腾）
-// open() 开麦克风（她第一回会被问能不能用麦克风）；listen(fn) 每收到一小段叫一回 fn({ pcm: Int16Array 16k, rms })；close() 都关掉
+// open() 开麦克风（她第一回会被问能不能用麦克风）；listen(fn) 每收到一小段叫一回 fn({ pcm: Int16Array 16k, rms })，
+// 好几处都能听（听写那头、听她是不是要打断他的那头，见 barge.js），回一个“不听了”的函数；close() 都关掉
 export function createMic(win, ac) {
   let stream = null;
   let src = null;
   let node = null;
   let sink = null;
-  let fn = null;
+  let fns = [];
   let resample = null;
   const handle = (f32) => {
-    if (!fn) return;
+    if (!fns.length) return;
     const rms = rmsOf(f32);
     const pcm = toPcm16(resample(f32));
-    if (pcm.length) fn({ pcm, rms });
+    if (pcm.length) fns.slice().forEach((fn) => fn({ pcm, rms }));
   };
   return {
     async open() {
@@ -101,7 +102,10 @@ export function createMic(win, ac) {
       sink.connect(ac.destination);
     },
     listen(f) {
-      fn = f;
+      fns.push(f);
+      return () => {
+        fns = fns.filter((x) => x !== f);
+      };
     },
     // 麦克风实际开成了什么样（回声消除开没开之类；量回声的时候摆出来）
     settings() {
@@ -113,7 +117,7 @@ export function createMic(win, ac) {
       }
     },
     close() {
-      fn = null;
+      fns = [];
       try {
         if (node) {
           node.onaudioprocess = null;

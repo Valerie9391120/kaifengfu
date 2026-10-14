@@ -12,7 +12,7 @@ import { gapInfo, setFill } from "./gap.js";
 import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
 import { HER_NAME, HIS_NAME, NAME_KEYS, cleanName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, docFmtOf, readDoc, replyRoom } from "./docs.js";
-import { parseReply, settleAvatarItems } from "./reply.js";
+import { parseReply, settleAvatarItems, rawOf } from "./reply.js";
 import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, markStopped, unmarkStopped, stoppedAt, cutReply, stillWaiting } from "./thread.js";
 import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY, HALTED_KEY } from "./mail.js";
 import { disablePush, resyncPush, watchNotices, probeReply, knockList, clearReplyNotices } from "./push.js";
@@ -52,15 +52,16 @@ import { ModelPanel } from "./panels/ModelPanel.jsx";
 import { NanyaPanel, soonToast } from "./panels/NanyaPanel.jsx";
 import { CallPage } from "./call/CallPage.jsx";
 import { createListener, pauseOf } from "./call/listen.js";
-import { createSayer, segmentsOfReply } from "./call/say.js";
+import { createSayer, segmentsOfReply, segmentsOfItems } from "./call/say.js";
 import { emptySubs, herLive, herDone, hisSay } from "./call/subs.js";
-import { createCallAudio } from "./call/play.js";
+import { createCallAudio, DUCK } from "./call/play.js";
 import { createMic } from "./call/mic.js";
 import { createHearer } from "./call/hear.js";
 import { HELLOS, HELLO_KEY, HELLO_LAST, HELLO_WAIT, pickHello } from "./call/hello.js";
 import { createEchoProbe, ECHO_LINE, ECHO_KEY } from "./call/echo.js";
 import { EchoProbe } from "./call/EchoProbe.jsx";
 import { pendingCall, ringLeft, ringWav, CALL_RING_MS } from "./call/incoming.js";
+import { createBarge, echoOf, ackOnly, cutPlan, cutItems } from "./call/barge.js";
 import { IncomingCall } from "./call/IncomingCall.jsx";
 import { isCallMark } from "./call/marks.js";
 
@@ -1290,7 +1291,7 @@ export default function App({ account = {} }) {
     setLoading(true);
     // 底下那句“没送到”是眼前这段对话的：替别的对话在后台回的时候不动它
     if (chatIdRef.current === id) setErrorNote("");
-    const req = { ctl: new AbortController(), stopped: false };
+    const req = { ctl: new AbortController(), stopped: false, chat: id };
     reqRef.current = req;
     try {
       // 回话到手以前她按停：这一句当场以 stopped 收场（作废）。到手以后再按，这里已经过去了，就是“掐断”（见 stopReply）
@@ -1317,9 +1318,10 @@ export default function App({ account = {} }) {
           // （她按了停、把上一条正在蹦的掐断了；她又发了一句），拿存之前的去摆会把这些盖掉
           setMessages(messagesRef.current);
           // 回话放进去的时候这段对话就在眼前：从头一条开始蹦；存的那一下工夫里她按了停的，照“掐断”办，只留头一条。
-          // 放进去的时候不在眼前、存的那一下工夫里她才翻过来的：她看到的已经是整条了，不收回去重蹦
+          // 放进去的时候不在眼前、存的那一下工夫里她才翻过来的：她看到的已经是整条了，不收回去重蹦。
+          // 电话里他在想、她又开口了（dropReply）、可回话前脚已经到手的：照常摆（念不念，看电话那头，见“电话里他的回话到了”）
           if (isCurrent) {
-            if (req.stopped) cutShort(him.id, 1);
+            if (req.stopped && !req.restart) cutShort(him.id, 1);
             else startReveal(him.id);
           }
         }
@@ -1330,8 +1332,9 @@ export default function App({ account = {} }) {
     } catch (e) {
       if (e && e.code === "stopped") {
         // 她按了停，回话还没到：这一回作废（信箱那头 mail.js 已经收拾了），不报错、不重发、过后也不去信箱里找。
-        // 她那句话留着，底下摆一行“停了，点这里让我回”
-        markStoppedIn(id);
+        // 她那句话留着，底下摆一行“停了，点这里让我回”。
+        // 电话里他在想、她又开口了（dropReply）：这一回也作废，可不记“停了”：她说完这一句，两句一起问
+        if (!req.restart) markStoppedIn(id);
       } else if (e && e.code === "answered") {
         // 别的设备已经把这一句的回话取走、放进对话了：把同步下来的那份换上来。
         // 等的工夫里她在这台设备上又说的话（同步下来的那份里没有）接在后面，不能丢
@@ -1940,8 +1943,165 @@ export default function App({ account = {} }) {
     const c = callRef.current;
     if (!c) return;
     clearTimeout(c.hintTimer);
+    c.redo = false; // 他在想的时候她又开口、作废了的那一回（见 dropReply）：这一句一发，两句一起问
+    c.live = "";
     callUi({ phase: "thinking", subs: herDone(c.subs, text), note: "" });
     sendHer({ kind: "text", text, via: "call" }, { now: true });
+    // 他在想的时候接着听（她 17:26 定的：他还没开口、她又接着说了，算她补一句，两句合起来重新想，见 earsCbs）。
+    // 只在 ElevenLabs 那种听法里（手机自带的听写一开一停都响）；静音着不听
+    if (c.ears === "eleven" && c.listener && !c.muted) c.listener.start();
+  };
+  // 电话里他还在想、她又开口了（不光是应声）：这一回不等了（不记“停了”），等她说完，两句一起问（她 17:26 定的“合起来重新想”）。
+  // 她这一句要是终究没说成（静音了、听写断了、挂了），前面那句还欠着回话：照眼下的对话再问一回（redoOwed）
+  const dropReply = (c) => {
+    const req = reqRef.current;
+    if (!req || req.stopped || req.chat !== c.chat) return;
+    req.stopped = true;
+    req.restart = true;
+    req.ctl.abort();
+    c.redo = true;
+  };
+  const redoOwed = (c) => {
+    if (!c.redo) return false;
+    c.redo = false;
+    if (chatIdRef.current !== c.chat || loadingRef.current || timerRef.current || !owes(messagesRef.current)) return false;
+    triggerReply();
+    return true;
+  };
+  // 听写停下：她边说边出的那一截（c.live，认“她是不是正说着”用）跟着清掉
+  const earsStop = (c) => {
+    if (c.listener) c.listener.stop();
+    c.live = "";
+  };
+
+  // ---- 打断他（她 17:26 定的“你一开口就打断”；18:16 列的做法她点了头，18:19 拿掉点屏幕打断，见 call/barge.js） ----
+  // 他说话的时候听着麦克风：像她开口了（比该漏进来的大出一截、连着半秒多），他的声音先压小、开听写（从她开口那会儿往前一点送过去）；
+  // 认出她说的字（不是他自己那句漏进去的，也不光是“嗯”“对”这种应声）：他停下，聊天里他那一条截成只剩念出来的，告诉他说到哪儿被打断了，接着听她说完；
+  // 认不出来（杂音、咳嗽、她不说了）：声音恢复，接着说
+  const BARGE_CONFIRM = 2500; // 压小了以后最多等这么久认她说的字（她又像在说了，从那会儿再算，可一回最多 BARGE_MAX）
+  const BARGE_MAX = 6000;
+  const BARGE_QUIET = 900; // 她好像不说了：再等这么久还没认出来就算了
+  const BARGE_PREROLL = 1500; // 开听写的时候最多从这么久以前送起：从像她在说的头一帧往前 0.4 秒，至少 0.7 秒（少送他自己的声音进去）
+  const BARGE_PREROLL_MIN = 700;
+  // 他刚说的、正说的、下一段（认“是不是他自己那句漏进去的”用）：c.said 里排着这一回所有要念的，眼下念到的是倒数第 left 段
+  const recentSaid = (c) => {
+    const list = c.said || [];
+    const at = Math.max(0, list.length - (c.sayer ? c.sayer.left() : 0));
+    return list
+      .slice(Math.max(0, at - 3), at + 2)
+      .map((s) => s.text)
+      .join(" ");
+  };
+  const bargeFrame = (c, rms) => {
+    if (callRef.current !== c || c.muted || c.phase !== "speaking" || !c.barge) return;
+    const ev = c.barge.feed({ rms });
+    if (ev === "suspect") bargeSuspect(c);
+    else if (ev === "clear") bargeQuiet(c);
+  };
+  const bargeSuspect = (c) => {
+    if (!c.listener || c.ears !== "eleven") return;
+    const b = c.barging;
+    if (b) {
+      // 正认着，她停了一下又像在说了：接着认（从这会儿再等一阵，一回最多 BARGE_MAX）
+      if (b.ok) return;
+      clearTimeout(b.timer);
+      b.timer = setTimeout(() => bargeGiveUp(c), Math.max(0, Math.min(BARGE_CONFIRM, b.at + BARGE_MAX - Date.now())));
+      return;
+    }
+    const since = c.barge ? c.barge.since() : 0;
+    const preroll = since ? Math.min(BARGE_PREROLL, Math.max(BARGE_PREROLL_MIN, Date.now() - since + 400)) : BARGE_PREROLL;
+    c.audio.duck(true);
+    c.barging = { ok: false, echo: false, ack: false, at: Date.now(), timer: setTimeout(() => bargeGiveUp(c), BARGE_CONFIRM) };
+    c.listener.start({ preroll });
+  };
+  const bargeQuiet = (c) => {
+    const b = c.barging;
+    if (!b || b.ok) return;
+    clearTimeout(b.timer);
+    b.timer = setTimeout(() => bargeGiveUp(c), BARGE_QUIET);
+  };
+  const bargeGiveUp = (c) => {
+    const b = c.barging;
+    if (!b || b.ok || callRef.current !== c) return;
+    clearTimeout(b.timer);
+    c.barging = null;
+    earsStop(c);
+    c.audio.duck(false);
+    // 不是她要说话：听写认出来的是他自己那句、一个字没认出来，都当漏进来的比估的多，调上去（见 barge.js 的 echoed；
+    // 不调的话，漏得多的时候隔几秒就白压小一回）。认出来是她应了一声（嗯、对）的不调：那是她的声音
+    if (c.barge) {
+      if (b.ack && !b.echo) c.barge.reset();
+      else c.barge.echoed();
+    }
+  };
+  const bargeConfirm = (c, t) => {
+    const b = c.barging;
+    if (!b || b.ok) return;
+    clearTimeout(b.timer);
+    b.ok = true;
+    c.barging = null;
+    const cut = c.sayer.interrupt();
+    c.audio.duck(false);
+    if (c.barge) c.barge.reset();
+    cutCallReply(c, cut);
+    hintOff(c);
+    callUi({ phase: "listening", subs: herLive(c.subs, t) });
+  };
+  // 正认着她是不是要打断他、他自己已经说完了：用不着打断。开着的听写接着听她说（不重开，她说了一半的不丢）；
+  // 听写认出来的是他自己那句的，那一截不能算她的话：回 false，外头照常重开听写
+  const bargeDone = (c) => {
+    const b = c.barging;
+    if (!b || b.ok) return false;
+    clearTimeout(b.timer);
+    c.barging = null;
+    c.audio.duck(false);
+    if (c.barge) c.barge.reset();
+    if (b.echo || c.muted || !c.listener || !c.listener.listening()) return false;
+    callUi({ phase: "listening", subs: herLive(c.subs, c.live) });
+    hintLater(c);
+    return true;
+  };
+  // 他被打断了：聊天里他那一条（或者几条）截成只剩念出来的（她 17:26 定的“只留念出来的”），后面记一行（聊天里不摆）告诉他说到哪儿被打断了。
+  // cut：sayer.interrupt() 交回来的 { playing, pending }；c.said 是这一回排给他念的那几段，各是哪一条的第几样（怎么截见 barge.js 的 cutPlan、cutItems）。
+  // given：不是从 c.said 来的那几段（回话前脚刚到、她已经又说上了的那一条，见“电话里他的回话到了”）
+  const cutCallReply = (c, cut, given = null) => {
+    const list = given || c.said || [];
+    if (!given) c.said = [];
+    const plans = cutPlan(list, cut);
+    if (!plans.length) return;
+    const gone = [];
+    const put = (base) => {
+      if (!Array.isArray(base)) return null;
+      let next = base;
+      plans.forEach((p) => {
+        const at = next.findIndex((m) => m.id === p.msgId);
+        if (at < 0) return;
+        const m = next[at];
+        const { items, said } = cutItems(m.items, p);
+        // 截掉的那几样里的语音条：不念了（跟掐断一样，见 cutShort）
+        (m.items || []).forEach((it, j) => {
+          if (it && it.type === "voice" && j >= p.stop) gone.push(voiceKeyOf(m.id, j));
+        });
+        const mark = { id: newId(), role: "event", who: "call", kind: "call", phase: "cut", callOf: m.id, said, ts: (m.ts || 0) + 1 };
+        next = next.slice(0, at).concat([{ ...m, items, raw: rawOf(items, m.rename || ""), cut: true }, mark], next.slice(at + 1));
+      });
+      return next;
+    };
+    if (chatIdRef.current === c.chat) {
+      const next = put(messagesRef.current);
+      if (next) {
+        messagesRef.current = next;
+        setMessages(next);
+        saveChat(c.chat, next);
+      }
+      if (gone.length) getSpeaker().drop(gone);
+    } else {
+      store.get("kfs2:chat:" + c.chat).then((text) => {
+        const next = put(safeParse(text, null));
+        if (next) saveChat(c.chat, next);
+        if (gone.length) getSpeaker().drop(gone);
+      });
+    }
   };
   const callListenFailed = (kind) => {
     const c = callRef.current;
@@ -1960,14 +2120,76 @@ export default function App({ account = {} }) {
     callUi({ phase: "tap", note: kind === "dead" ? "听写老是一开就停。" : "听不了。一直这样的话，看看设置里有没有让开封府用麦克风" });
   };
   // 两种听法交回来的都一样：听到的字（字幕）、说完了一句、听不了
+  // 光是应声（嗯、对、好的、哈哈）不算她要说话（她 17:26 定的“应声不算”，见 barge.js 的 ackOnly）：
+  // 他说话的时候不打断他；他在想的时候不作废那一回、也不当一句话发出去
   const earsCbs = (c) => ({
     onText: (t) => {
       if (callRef.current !== c) return;
-      if (t && t.trim()) hintOff(c);
+      const has = !!(t && t.trim());
+      c.live = has ? t : "";
+      const real = has && !ackOnly(t);
+      // 她好像要打断他、还没认准的时候：字先不上字幕；认准是她说的（不是他自己那句漏进去的，也不光是应声）才停他
+      if (c.barging && !c.barging.ok) {
+        if (has && !real) c.barging.ack = true;
+        const echo = real ? echoOf(t, recentSaid(c)) : null;
+        if (echo === true) c.barging.echo = true;
+        if (echo === false) bargeConfirm(c, t);
+        return;
+      }
+      if (c.phase === "thinking") {
+        // 他在想的时候她应了一声：不算，字幕上也不摆
+        if (!real) return;
+        // 他在想的时候她又开口了：这一回不等了，等她说完两句一起问
+        dropReply(c);
+        callUi({ phase: "listening" });
+      }
+      if (has) hintOff(c);
       callUi({ subs: herLive(c.subs, t) });
     },
-    onDone: (t) => callRef.current === c && callSaid(t),
-    onFail: (kind) => callRef.current === c && callListenFailed(kind),
+    onDone: (t) => {
+      if (callRef.current !== c) return;
+      c.live = "";
+      if (c.barging && !c.barging.ok) {
+        // 还没认准她就说完了：是她说的照常发出去；是他自己那句漏进去的、光是应声、认不出的，不算
+        const ack = ackOnly(t);
+        const echo = ack ? null : echoOf(t, recentSaid(c));
+        if (echo === false) {
+          bargeConfirm(c, t);
+          callSaid(t);
+        } else {
+          if (ack) c.barging.ack = true;
+          if (echo === true) c.barging.echo = true;
+          bargeGiveUp(c);
+        }
+        return;
+      }
+      if (c.phase === "thinking") {
+        // 他在想的时候她应了一声（嗯、好的）：不当一句话发出去，接着等他（接着听）
+        if (ackOnly(t)) {
+          if (c.ears === "eleven" && c.listener && !c.muted) c.listener.start();
+          return;
+        }
+        // 字幕上一直光是应声、定下来才有别的字：这会儿才作废那一回，两句一起问
+        dropReply(c);
+      }
+      callSaid(t);
+    },
+    onFail: (kind) => {
+      if (callRef.current !== c) return;
+      c.live = "";
+      if (c.barging && !c.barging.ok) {
+        bargeGiveUp(c);
+        return;
+      }
+      // 他在想的时候接着听的那一条断了：不报（这会儿本来就不是在等她说话），他说完照常接着听
+      if (c.phase === "thinking") return;
+      // 他在想的时候她又开口了、那一回作废了，这一句却没听成：前面那句照眼下的对话再问一回（他说完接着听，听不了到时候再说）
+      if (redoOwed(c)) {
+        callUi({ phase: "thinking" });
+        return;
+      }
+      callListenFailed(kind);
+    },
   });
   const callLater = (fn, ms) => {
     const t = setTimeout(fn, ms);
@@ -2057,6 +2279,10 @@ export default function App({ account = {} }) {
       c.mic = mic;
       c.ears = "eleven";
       c.listener = createHearer({ now: () => Date.now(), later: callLater, pauseMs: pauseOf(settingsRef.current.callPause), token, first: t.tk, socket: (url) => new WebSocket(url), mic, ...earsCbs(c) });
+      // 他说话的时候听她是不是要打断他（见 call/barge.js）：照着他这会儿多响算该漏进来多少
+      // 压小了的时候漏进来的也跟着小（DUCK）
+      c.barge = createBarge({ now: () => Date.now(), out: () => c.audio.level() * (c.barging && !c.barging.ok ? DUCK : 1) });
+      c.bargeOff = mic.listen(({ rms }) => bargeFrame(c, rms));
       c.earsGo();
       if (c.wantListen) {
         c.wantListen = false;
@@ -2099,7 +2325,7 @@ export default function App({ account = {} }) {
     let earsGo = null;
     const earsReady = new Promise((r) => (earsGo = r));
     setTimeout(earsGo, HELLO_WAIT);
-    const c = { chat: id, startId: mark.id, start: Date.now(), spoken: new Set(), audio, wake: null, muted: false, phase: "ring", subs: emptySubs(), note: "", hi, from: him ? "him" : "", pre: (him && him.pre) || null, listener: null, mic: null, ears: "", earsGo };
+    const c = { chat: id, startId: mark.id, start: Date.now(), spoken: new Set(), audio, wake: null, muted: false, phase: "ring", subs: emptySubs(), note: "", hi, from: him ? "him" : "", pre: (him && him.pre) || null, listener: null, mic: null, ears: "", earsGo, said: [], barging: null, barge: null };
     c.sayer = createSayer({
       // 念好的一段：Web Audio 解码好（解不开的留着 <audio> 用的地址兜底），交给念的那头当“地址”排队。
       // 接起来那一句：存过就直接用存着的（不再花钱）；头一回念好了存起来。
@@ -2132,14 +2358,21 @@ export default function App({ account = {} }) {
       },
       play: (clip) => audio.play(clip),
       stopPlay: () => audio.stop(),
+      // 她打断他的时候：正放着的那一段放到哪儿了（截他那一条用）
+      progress: () => audio.progress(),
       // 这一段放完了、不要了：地址收回（一段几十 K，一通电话下来不收会越攒越多）
       release: (clip) => audio.release(clip),
       onState: (st) => {
         if (callRef.current !== c) return;
         if (st === "speaking") {
           hintOff(c);
+          if (c.barge) c.barge.reset();
           callUi({ phase: "speaking" });
-        } else if (st === "done") callListen();
+        } else if (st === "done") {
+          c.said = [];
+          // 正认着她是不是要打断他、他说完了：开着的听写接着听她说（见 bargeDone）
+          if (!bargeDone(c)) callListen();
+        }
       },
       // 接起来那一句没念出来不说（字幕上照样有那一句）；别的说一声
       onError: (e, text) => callRef.current === c && text !== c.hi && callUi({ note: `有一句没念出来（${String((e && e.message) || e).slice(0, 60)}），字在聊天里` }),
@@ -2163,7 +2396,9 @@ export default function App({ account = {} }) {
     // 准备听（ElevenLabs 的通行证、麦克风），同时把他先说的那一句准备好（听的那头好了才放，见上面 earsReady）；说完了接着听。
     // 他打来的那一通：先说的是打电话那一条里写的（没写的话，接通了就听她说）
     setupEars(c);
-    c.sayer.add(him ? him.segs || [] : [hi]);
+    const first = him ? him.segs || [] : [hi];
+    first.forEach((text) => c.said.push({ msgId: null, item: -1, text })); // 接起来那一句不在聊天里：被打断了也不用截
+    c.sayer.add(first);
     c.sayer.end();
   };
   const hangUp = () => {
@@ -2172,7 +2407,11 @@ export default function App({ account = {} }) {
     callRef.current = null;
     setCall(null);
     clearTimeout(c.hintTimer);
-    if (c.listener) c.listener.stop();
+    // 正认着她是不是要打断他的那一下：不认了（声音跟着整个收掉）；不再听她是不是要打断
+    if (c.barging) clearTimeout(c.barging.timer);
+    c.barging = null;
+    if (c.bargeOff) c.bargeOff();
+    earsStop(c);
     c.sayer.cancel();
     if (c.mic) c.mic.close();
     c.audio.close();
@@ -2200,19 +2439,34 @@ export default function App({ account = {} }) {
         if (next) saveChat(c.chat, next);
       });
     }
+    // 他在想的时候她又开口了、那一回作废了，这一句没说完就挂了：前面那句还欠着回话，照眼下的对话再问一回（挂了，他照平常回）
+    redoOwed(c);
   };
   const toggleMute = () => {
     const c = callRef.current;
     if (!c) return;
     c.muted = !c.muted;
     if (c.muted) {
+      // 正压着他的声音、认她是不是要打断：不认了，声音恢复
+      if (c.barging) bargeGiveUp(c);
       if (c.phase === "listening" || c.phase === "tap") {
-        if (c.listener) c.listener.stop();
+        earsStop(c);
         clearTimeout(c.hintTimer);
-        callUi({ phase: "muted", note: c.note === CALL_HINT ? "" : c.note });
-      } else callUi({});
+        const note = c.note === CALL_HINT ? "" : c.note;
+        // 他在想的时候她又开口了、那一回作废了，这一句没说完就静音了：前面那句照眼下的对话再问一回
+        if (redoOwed(c)) callUi({ phase: "thinking", note });
+        else callUi({ phase: "muted", note });
+      } else {
+        // 他在想的时候接着听的那一条（见 callSaid）：静音了不听
+        if (c.phase === "thinking" && c.ears === "eleven") earsStop(c);
+        callUi({});
+      }
     } else if (c.phase === "muted") callListen();
-    else callUi({});
+    else {
+      // 他在想：接着听（她补一句，两句一起问）
+      if (c.phase === "thinking" && c.ears === "eleven" && c.listener && !c.listener.listening()) c.listener.start();
+      callUi({});
+    }
   };
 
   // ---- 量一量回声（打断他用；她 10 月 14 日 17:26 定的“得先量回声”，见 call/echo.js） ----
@@ -2404,7 +2658,8 @@ export default function App({ account = {} }) {
     else startRing(p.msg, p.item, left);
   }, [messages, reveal, seenTick]);
 
-  // 电话里他的回话到了（不管是直接等到的、还是从信箱里取的，放进对话以后都在 messages 里）：一句一句念
+  // 电话里他的回话到了（不管是直接等到的、还是从信箱里取的，放进对话以后都在 messages 里）：一句一句念。
+  // 排给他念的每一段记着是哪一条的第几样（c.said）：她打断他的时候照这个把聊天里那一条截成只剩念出来的（见 cutCallReply）
   useEffect(() => {
     const c = callRef.current;
     if (!c || chatId !== c.chat) return;
@@ -2414,8 +2669,17 @@ export default function App({ account = {} }) {
       const m = messages[i];
       if (m.role !== "him" || c.spoken.has(m.id)) continue;
       c.spoken.add(m.id);
-      if (c.listener) c.listener.stop();
-      c.sayer.add(segmentsOfReply(m.items));
+      const segs = segmentsOfItems(m.items).map((s) => ({ msgId: m.id, item: s.item, text: s.text }));
+      // 回话前脚刚到、她已经又说上了（不光是应声；他在想的时候她又开口了，dropReply 没赶上的那一眨眼）：
+      // 这一条算他还没开口就被她打断了（一个字没念：聊天里留“……”，告诉他），接着听她说完，两句一起问
+      if (!c.barging && c.listener && c.listener.listening() && c.live && !ackOnly(c.live) && !c.sayer.busy()) {
+        if (segs.length) cutCallReply(c, { playing: null, pending: segs.map((s) => s.text) }, segs);
+        continue;
+      }
+      // 正认着她是不是要打断他（压小了、开着听写）：那一头不停，这一条接着排在后面
+      if (!c.barging) earsStop(c);
+      segs.forEach((s) => c.said.push(s));
+      c.sayer.add(segs.map((s) => s.text));
       c.sayer.end(); // 一条回话是整条到的：没有可念的（只有表情包之类），马上接着听
     }
   }, [messages, chatId]);

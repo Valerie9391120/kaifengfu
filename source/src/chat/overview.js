@@ -17,7 +17,10 @@ export function makeTitle(msgs, memeLookup) {
 }
 
 export function makePreview(msgs) {
-  const last = msgs[msgs.length - 1];
+  // 电话里被你打断的那一行聊天里不摆（见 rows.js），这里也跳过它，摆它前面那一条（他截剩下的话）
+  let at = msgs.length - 1;
+  while (at >= 0 && isCallMark(msgs[at]) && msgs[at].phase === "cut") at -= 1;
+  const last = msgs[at];
   if (!last) return "";
   if (isCallMark(last)) return `[${markText(last)}]`;
   if (last.role === "event") return "[换了新头像]";

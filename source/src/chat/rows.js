@@ -14,7 +14,9 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null) {
       rows.push({ type: "sep", key: "sep-" + m.id, ts: m.ts });
     }
     prevTs = m.ts;
-    if (isCallMark(m)) {
+    if (isCallMark(m) && m.phase === "cut") {
+      // 电话里她打断了他（见 call/barge.js）：聊天里不摆（他那一条已经截成只剩念出来的），只告诉他
+    } else if (isCallMark(m)) {
       // 通话开始、挂了（见 call/marks.js）：一行小字，前面一个小电话
       inCall = m.phase === "start";
       rows.push({ type: "notice", key: m.id, msg: m, kind: "call", text: markText(m) });
