@@ -1,7 +1,7 @@
 // 通话（卿卿 10 月 14 日要的，见开发说明“通话”那一节）：听她说完没有、他的话怎么洗怎么切、按顺序念、聊天里那两行小字
 import { createListener, PAUSE_MS, PAUSES, pauseOf } from "../src/call/listen.js";
 import { cleanForCall, splitForCall, segmentsOfReply, createSayer, subOf } from "../src/call/say.js";
-import { emptySubs, herLive, herDone, hisSay, subUnits, subFade, subGap, SUB_KEEP, SUB_COLOR } from "../src/call/subs.js";
+import { emptySubs, herLive, herDone, hisSay, unitsOf, subWho, subFade, subGap, SUB_KEEP, SUB_TURNS, SUB_COLOR, SUB_OLD } from "../src/call/subs.js";
 import { isCallMark, callLen, callClock, markText, markNote, markRecap } from "../src/call/marks.js";
 import { buildSystem, CALL_NOTE } from "../src/prompt/system.js";
 import { buildMessages } from "../src/prompt/messages.js";
@@ -277,35 +277,40 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 }
 
 // =====================================================
-// 字幕（她 11:40 定的：两个人共用一块，谁说是谁的；连着说接在后面；换人从顶上重新出）
+// 字幕（她 11:40 定的五条，12:08 改了：居中；换人另起一行，两个人的都留着）
 // =====================================================
 ok(subOf("[whispers] 晚安") === "晚安" && subOf("嗯 [laughs]，好") === "嗯，好" && subOf("[laughs] 哈哈哈，今天真开心！") === "哈哈哈，今天真开心！" && subOf("[sighs]") === "",
   "他的字幕：语气标签都摘掉，只摆真念出来的话");
 {
+  const look = (s) => s.turns.map((t) => `${t.who}:${unitsOf(t).join("|")}`).join(" / ");
   let s = emptySubs();
-  ok(herLive(s, "") === s && herLive(s, "  ") === s, "开听写那一下报的空字：不算开口，字幕不动");
+  ok(herLive(s, "") === s && herLive(s, "  ") === s && subWho(s) === "", "开听写那一下报的空字：不算开口，字幕不动");
   s = herLive(s, "嗯");
-  ok(s.who === "her" && s.turn === 1 && s.live === "嗯" && subUnits(s).join() === "嗯", "她开口了：字幕是她的，从头出");
-  const t1 = s;
+  ok(look(s) === "her:嗯" && subWho(s) === "her", "她开口了：头一段是她的");
   s = herLive(s, "嗯刚到家");
-  ok(s.turn === 1 && s.live === "嗯刚到家" && herLive(s, "嗯刚到家") === s, "边说边出：同一轮里那一截跟着变（没变就不动）");
+  ok(look(s) === "her:嗯刚到家" && herLive(s, "嗯刚到家") === s, "边说边出：那一截跟着变（没变就不动）");
   s = herDone(s, "嗯刚到家，今天好累");
-  ok(s.turn === t1.turn && s.lines.join() === "嗯刚到家，今天好累" && s.live === "", "她说完一句：收进这一轮，不清空");
+  ok(look(s) === "her:嗯刚到家，今天好累" && s.turns[0].live === "", "她说完一句：收进她这一段，不清空");
   s = herLive(s, "你在吗");
-  ok(s.turn === 1 && subUnits(s).join("|") === "嗯刚到家，今天好累|你在吗", "她接着说（他那回没出声）：接在后面，还是这一轮");
+  ok(look(s) === "her:嗯刚到家，今天好累|你在吗", "她接着说（他那回没出声）：接在她这一段后面");
   s = herDone(s, "你在吗");
+  const herId = s.turns[0].id;
   s = hisSay(s, "[softly] 辛苦了。");
-  ok(s.who === "him" && s.turn === 2 && s.lines.join() === "辛苦了。", "他开口了：换成他的一轮，从头出，她的不混进来");
+  ok(look(s) === "her:嗯刚到家，今天好累|你在吗 / him:辛苦了。" && subWho(s) === "him" && s.turns[0].id === herId && s.turns[1].id !== herId,
+    "他开口了：另起一段接在下面，她那段还在（两个人的都留着）");
   s = hisSay(s, "[laughs] 哈哈哈，今天真开心！");
-  ok(s.turn === 2 && subUnits(s).join("|") === "辛苦了。|哈哈哈，今天真开心！", "他念到下一段：接在后面");
+  ok(look(s) === "her:嗯刚到家，今天好累|你在吗 / him:辛苦了。|哈哈哈，今天真开心！", "他念到下一段：接在他这一段后面");
   ok(hisSay(s, "[sighs]") === s, "光剩个语气标签的一段：字幕不动");
   s = herLive(s, "我");
-  ok(s.who === "her" && s.turn === 3 && subUnits(s).join() === "我", "她又开口了：换回她的一轮，他的不留");
+  ok(look(s) === "her:嗯刚到家，今天好累|你在吗 / him:辛苦了。|哈哈哈，今天真开心！ / her:我" && subWho(s) === "her", "她又开口了：再另起一段");
   let m = emptySubs();
   for (let i = 0; i < 12; i++) m = hisSay(m, `第${i}段。`);
-  ok(m.lines.length === SUB_KEEP && m.lines[0] === `第${12 - SUB_KEEP}段。` && m.turn === 1, `一轮里最多留 ${SUB_KEEP} 截（装不下的早滚上去了）`);
+  ok(m.turns.length === 1 && m.turns[0].lines.length === SUB_KEEP && m.turns[0].lines[0] === `第${12 - SUB_KEEP}段。`, `一段里最多留 ${SUB_KEEP} 截（装不下的早滚上去了）`);
+  let n = emptySubs();
+  for (let i = 0; i < 9; i++) n = i % 2 ? hisSay(n, `他${i}。`) : herDone(n, `她${i}`);
+  ok(n.turns.length === SUB_TURNS && n.turns[0].lines[0] === `他3。` && new Set(n.turns.map((t) => t.id)).size === SUB_TURNS && n.next === 10, `最多留 ${SUB_TURNS} 段，再往前的不留；每段的编号不重`);
 }
-ok(subFade(2, 3) === 1 && subFade(1, 3) === 0.62 && subFade(0, 3) === 0.38 && subFade(0, 1) === 1, "最新的那截照常亮，前一截淡一点，再往前更淡");
+ok(subFade(0) === 1 && subFade(1) === 0.62 && subFade(2) === 0.38 && subFade(5) === 0.38 && subFade(SUB_OLD) === 0.38, "最新的那截照常亮，前一截淡一点，再往前更淡；前面几段的都淡");
 ok(subGap("今天好累") === " " && subGap("今天好累。") === "" && subGap("嗯，") === "" && subGap("") === "", "两截接在一起：前一截没标点收尾的空一格，免得粘成一句");
 ok(SUB_COLOR.her === "#999999" && SUB_COLOR.him === "#F0F0F0", "颜色是她定的：她的 #999999，他的 #F0F0F0");
 
@@ -318,6 +323,18 @@ ok(isCallMark(START) && isCallMark(END) && !isCallMark({ role: "event", who: "he
 ok(callLen(40) === "40 秒" && callLen(754) === "13 分钟" && callLen(0) === "1 秒" && callLen(60) === "1 分钟", "打了多久：一分钟以内说几秒，再长说几分钟");
 ok(callClock(0) === "00:00" && callClock(65.7) === "01:05" && callClock(3600) === "60:00", "通话页上的钟：分:秒");
 ok(markText(START) === "通话开始" && markText(END) === "通话 13 分钟", "聊天里摆的字：通话开始、通话 13 分钟");
+{
+  const msgs = [
+    { id: "a", role: "him", ts: 500, items: [{ type: "text", text: "[softly] 电话前" }] },
+    START,
+    { id: "h", role: "her", ts: 2000, text: "喂" },
+    { id: "b", role: "him", ts: 3000, items: [{ type: "text", text: "[softly] 在呢" }, { type: "meme", file: "x.jpg" }] },
+    END,
+    { id: "c", role: "him", ts: 9500, items: [{ type: "text", text: "[softly] 挂了" }] },
+  ];
+  const his = buildRows(msgs, null).filter((r) => r.type === "bubble" && r.role === "him");
+  ok(his.map((r) => !!r.call).join() === "false,true,true,false", `电话里他那几条记着 call（聊天里不摆语气标签，她 12:21 定的）；电话前后的不算（${his.map((r) => !!r.call).join()}）`);
+}
 {
   const msgs = [
     { id: "h1", role: "her", ts: 500, text: "打个电话？" },

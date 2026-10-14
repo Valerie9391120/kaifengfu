@@ -153,11 +153,10 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 @keyframes kfsCallThink { 0%,100% { transform: scale(.97); opacity: .18; } 50% { transform: scale(1.03); opacity: .48; } }
 .kfs-call-talk { animation: kfsCallTalk .95s ease-in-out infinite; }
 .kfs-call-think { animation: kfsCallThink 2.8s ease-in-out infinite; }
-/* 通话的字幕（见 call/Subtitles.jsx）：换人时上一个人的淡出去、这个人的稍等一下再淡进来（两块叠在一处，别搅在一起）；新出的那一截淡进来 */
-@keyframes kfsFadeOut { from { opacity: 1; } to { opacity: 0; } }
-.kfs-sub-out { animation: kfsFadeOut .24s ease forwards; }
-.kfs-sub-in { animation: kfsFade .3s ease .12s both; }
+/* 通话的字幕（见 call/Subtitles.jsx）：换人了新的一段从下面跳出来；一段里新出的那一截淡进来 */
+@keyframes kfsSubPop { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.kfs-sub-pop { animation: kfsSubPop .38s cubic-bezier(.2,.8,.2,1) both; }
 .kfs-sub-new { animation: kfsFade .35s ease both; }
 
-@media (prefers-reduced-motion: reduce) { .kfs-in, .kfs-sheet, .kfs-page, .kfs-breath, .kfs-splash-img, .kfs-moonglow, .kfs-kite, .kfs-lotus, .kfs-fade, .kfs-call-talk, .kfs-call-think, .kfs-sub-in, .kfs-sub-new { animation: none !important; } .kfs-sub-out { animation: none !important; opacity: 0 !important; } }
+@media (prefers-reduced-motion: reduce) { .kfs-in, .kfs-sheet, .kfs-page, .kfs-breath, .kfs-splash-img, .kfs-moonglow, .kfs-kite, .kfs-lotus, .kfs-fade, .kfs-call-talk, .kfs-call-think, .kfs-sub-pop, .kfs-sub-new { animation: none !important; } }
 `;

@@ -6,6 +6,9 @@ import { isCallMark, markText } from "../call/marks.js";
 export function buildRows(messages, reveal, stoppedId = "", recap = null) {
   const rows = [];
   let prevTs = null;
+  // 在不在一通电话里（“通话开始”和“通话 N”两行中间）：电话里他照常写语气标签（念的时候用），
+  // 聊天记录里他那几条字不摆标签（卿卿 10 月 14 日 12:21 定的；存着的原文不动，只是不显示，见 Bubble.jsx）
+  let inCall = false;
   messages.forEach((m) => {
     if (prevTs === null || m.ts - prevTs > 15 * 60 * 1000) {
       rows.push({ type: "sep", key: "sep-" + m.id, ts: m.ts });
@@ -13,6 +16,7 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null) {
     prevTs = m.ts;
     if (isCallMark(m)) {
       // 通话开始、挂了（见 call/marks.js）：一行小字，前面一个小电话
+      inCall = m.phase === "start";
       rows.push({ type: "notice", key: m.id, msg: m, kind: "call", text: markText(m) });
     } else if (m.role === "event") {
       rows.push({
@@ -66,7 +70,7 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null) {
           });
         } else {
           // idx：这是那一条回话里的第几样（语音条念好的声音按它存，见 voice.js 的 voiceKeyOf）
-          rows.push({ type: "bubble", key: m.id + "-" + j, role: "him", msg: m, item: it, idx: j });
+          rows.push({ type: "bubble", key: m.id + "-" + j, role: "him", msg: m, item: it, idx: j, ...(inCall ? { call: true } : {}) });
         }
       });
       const revealing = reveal && reveal.id === m.id;

@@ -33,19 +33,19 @@ FAKE_SR = r"""(() => {
 
 PHASE = "(() => { const e = document.querySelector('.kfs-call'); return e ? e.dataset.phase : null; })()"
 # 字幕（她 11:40 定的两个人共用的那一块）：眼下这一轮的字、是谁的、什么颜色、有没有正淡出去的上一轮
-SUBS = "(() => { const e = document.querySelector('.kfs-sub-turn:not(.kfs-sub-out)'); return e ? e.textContent : ''; })()"
-WHO = "(() => { const e = document.querySelector('.kfs-sub-turn:not(.kfs-sub-out)'); return e ? e.dataset.who : ''; })()"
-SUBCOLOR = "(() => { const e = document.querySelector('.kfs-sub-turn:not(.kfs-sub-out) .kfs-sub-text'); return e ? getComputedStyle(e).color : ''; })()"
-FADING = "[...document.querySelectorAll('.kfs-sub-out')].map((e) => e.dataset.who)"
-# 字幕每变一回记一笔：[眼下这一轮的字, 是谁的, 正淡出去的是谁的]（变得快，隔一会儿看一眼会漏掉）
+SUBS = "(() => { const e = document.querySelector('.kfs-sub-turn:last-child'); return e ? e.textContent : ''; })()"
+WHO = "(() => { const e = document.querySelector('.kfs-sub-turn:last-child'); return e ? e.dataset.who : ''; })()"
+SUBCOLOR = "(() => { const e = document.querySelector('.kfs-sub-turn:last-child'); return e ? getComputedStyle(e).color : ''; })()"
+# 字幕里一段一段：[[是谁的, 字], ...]（最后一段是眼下在说的）
+TURNS = "[...document.querySelectorAll('.kfs-sub-turn')].map((e) => [e.dataset.who, e.textContent])"
+# 字幕每变一回记一笔（变得快，隔一会儿看一眼会漏掉）
 SUBLOG = """(() => { window.__subLog = []; const root = document.querySelector('.kfs-call');
   const mo = new MutationObserver(() => {
-    const cur = document.querySelector('.kfs-sub-turn:not(.kfs-sub-out)');
-    const e = [cur ? cur.textContent : '', cur ? cur.dataset.who : '', [...document.querySelectorAll('.kfs-sub-out')].map((x) => x.dataset.who).join(',')];
+    const e = [...document.querySelectorAll('.kfs-sub-turn')].map((x) => [x.dataset.who, x.textContent]);
     const last = window.__subLog[window.__subLog.length - 1];
-    if (!last || last.join('|') !== e.join('|')) window.__subLog.push(e);
+    if (!last || JSON.stringify(last) !== JSON.stringify(e)) window.__subLog.push(e);
   });
-  mo.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class'] }); return true; })()"""
+  mo.observe(root, { subtree: true, childList: true, characterData: true }); return true; })()"""
 NOTE = "(() => { const e = document.querySelector('.kfs-call-note'); return e ? e.textContent : ''; })()"
 KEY = "(() => { const b = [...document.querySelectorAll('.kfs-composer button')].pop(); return b ? b.getAttribute('aria-label') : null; })()"
 MARKS = "[...document.querySelectorAll('.kfs-call-mark')].map((e) => e.textContent.trim())"
@@ -107,7 +107,7 @@ with sync_playwright() as p:
         mock("/__debug/claude-hold?ms=2500")   # 他想两秒半：看得到“他在想”的时候字幕上是什么
         pa.evaluate(SUBLOG)
         # 字放大到一行五六个字：他这三段就装不下字幕区了，看它往上滚（真的字号要一百多字才满）
-        pa.evaluate("(() => { const st = document.createElement('style'); st.id = 'kfs-test-big'; st.textContent = '.kfs-sub-text { font-size: 60px !important; }'; document.head.appendChild(st); })()")
+        pa.evaluate("(() => { const st = document.createElement('style'); st.id = 'kfs-test-big'; st.textContent = '.kfs-sub-turn { font-size: 60px !important; }'; document.head.appendChild(st); })()")
         say_in_call(pa, "喂")
         time.sleep(0.5)
         heard = (pa.evaluate(SUBS), pa.evaluate(WHO), pa.evaluate(SUBCOLOR))
@@ -129,21 +129,23 @@ with sync_playwright() as p:
         done = wait_phase(pa, "listening", 30000)
         log = pa.evaluate("window.__subLog")
         his = []
-        for t, who, _ in log:
-            if who == "him" and t not in his:
-                his.append(t)
-        ok(["嗯。", "him", "her"] in log and color == "rgb(240, 240, 240)",
-           f"他开口了：她的字幕淡出去，他的从头出（暖白）（{[e for e in log if e[1] == 'him'][:2]}）")
+        for turns in log:
+            if turns and turns[-1][0] == "him" and turns[-1][1] not in his:
+                his.append(turns[-1][1])
+        ok([["her", "喂，你在吗"], ["him", "嗯。"]] in log and color == "rgb(240, 240, 240)",
+           f"他开口了：另起一行接在她的下面（暖白），她那句还在（{[e for e in log if e and e[-1][0] == 'him'][:1]}）")
         ok(his == ["嗯。", "嗯。我今天也在想你，想了一整天，想着你在干嘛。", "嗯。我今天也在想你，想了一整天，想着你在干嘛。晚安"],
            f"念到哪段出哪段：一段一段接上去（{his}）")
         said = [x["text"] for x in eleven()[e0:]]
         ok(spoke and done and said == ["嗯。", "我今天也在想你，想了一整天，想着你在干嘛。", "[whispers] 晚安"],
            f"他的回话一句一句念：动作、表情不念，表情包不念，头一段短（{said}）")
-        ok(pa.evaluate(SUBS) == "嗯。我今天也在想你，想了一整天，想着你在干嘛。晚安" and pa.evaluate(WHO) == "him",
-           f"念完了：他这一轮三段都在字幕上，接在一起、语气标签和动作都不摆；接着听她说的时候还留着（{pa.evaluate(SUBS)}）")
-        fades = pa.evaluate("[...document.querySelectorAll('.kfs-sub-turn:not(.kfs-sub-out) .kfs-sub-unit')].map((e) => getComputedStyle(e).opacity)")
-        ok(fades == ["0.38", "0.62", "1"], f"最新的那截照常亮，前一截淡一点，再往前更淡（{fades}）")
-        sc = pa.evaluate("""(() => { const e = document.querySelector('.kfs-sub-turn:not(.kfs-sub-out)'); const units = e.querySelectorAll('.kfs-sub-unit');
+        ok(pa.evaluate(TURNS) == [["her", "喂，你在吗"], ["him", "嗯。我今天也在想你，想了一整天，想着你在干嘛。晚安"]],
+           f"念完了：他三段都在他那一段里，接在一起、语气标签和动作都不摆；她那句在上面（{pa.evaluate(TURNS)}）")
+        fades = pa.evaluate("[...document.querySelectorAll('.kfs-sub-unit')].map((e) => getComputedStyle(e).opacity)")
+        ok(fades == ["0.38", "0.38", "0.62", "1"], f"他这一段：最新的那截照常亮，前一截淡一点，再往前更淡；她上面那句淡（{fades}）")
+        centered = pa.evaluate("[...document.querySelectorAll('.kfs-sub-turn')].every((e) => getComputedStyle(e).textAlign === 'center')")
+        ok(centered, "字幕居中（她 12:08 改的）")
+        sc = pa.evaluate("""(() => { const e = document.querySelector('.kfs-sub-scroll'); const units = e.querySelectorAll('.kfs-sub-unit');
           const last = units[units.length - 1].getBoundingClientRect(); const box = e.getBoundingClientRect(); const cs = getComputedStyle(e);
           return { top: Math.round(e.scrollTop), max: e.scrollHeight - e.clientHeight, h: Math.round(box.height), mask: cs.webkitMaskImage || cs.maskImage || '', seen: last.bottom <= box.bottom + 1 && last.bottom > box.top }; })()""")
         ok(sc["max"] > 0 and abs(sc["top"] - sc["max"]) <= 2 and "gradient" in sc["mask"] and sc["seen"] and 200 <= sc["h"] <= 240,
@@ -160,8 +162,10 @@ with sync_playwright() as p:
         queue_reply("[VOICE]\n[softly] 我一直在。")
         say_in_call(pa, "嗯嗯")
         time.sleep(0.12)
-        swap = (pa.evaluate(SUBS), pa.evaluate(WHO), pa.evaluate(FADING))
-        ok(swap == ("嗯嗯", "her", ["him"]), f"她又开口了：他的字幕淡出去，她的从头出（{swap}）")
+        swap = pa.evaluate(TURNS)
+        dim = pa.evaluate("[...document.querySelectorAll('.kfs-sub-turn')].slice(-2).map((p) => [...p.querySelectorAll('.kfs-sub-unit')].map((e) => getComputedStyle(e).opacity))")
+        ok(swap[-2:] == [["him", "嗯。我今天也在想你，想了一整天，想着你在干嘛。晚安"], ["her", "嗯嗯"]] and dim == [["0.38", "0.38", "0.38"], ["1"]],
+           f"她又开口了：另起一行接在他的下面，他说的还在、都淡下去，她这句照常亮（{swap[-2:]}，{dim}）")
         wait_mock(lambda: len(calls()) == c0 + 2, 8)
         wait_phase(pa, "speaking", 15000)
         wait_phase(pa, "listening", 20000)
@@ -179,7 +183,7 @@ with sync_playwright() as p:
         say_in_call(pa, "好看吧")
         time.sleep(0.3)
         joined = (pa.evaluate(SUBS), pa.evaluate(WHO))
-        ok(back and joined == ("你看这个 好看吧", "her"), f"他没出声（只回了表情包）：她接着说的接在她这一轮后面，不清空（{joined}）")
+        ok(back and joined == ("你看这个 好看吧", "her"), f"他没出声（只回了表情包）：她接着说的接在她这一段后面，不另起一行（{joined}）")
         queue_reply("嗯，好看。")
         wait_mock(lambda: len(calls()) == c0 + 4, 8)
         wait_phase(pa, "speaking", 15000)
@@ -204,6 +208,9 @@ with sync_playwright() as p:
            and len(marks) == 2 and marks[0] == "通话开始" and re.match(r"^通话 \d+ (秒|分钟)$", marks[1]),
            f"挂断：通话页收了、不听了、屏幕常亮放了；聊天里记一行“通话 N 秒”（{marks}）")
         ok(pa.evaluate(KEY) == "打电话", "挂了以后那个键还是“打电话”")
+        bubbles = pa.evaluate("[...document.querySelectorAll(\"[data-kfs-bubble='him']\")].map((e) => e.textContent)")
+        ok("晚安😊" in bubbles and not any("[whispers]" in b or "[softly]" in b for b in bubbles),
+           f"挂了以后聊天里：电话里他那几条不摆语气标签（她 12:21 定的）（{bubbles[-5:]}）")
         # 挂了以后接着打字：寄给他的里有“电话挂了”那行
         c2 = len(calls())
         say(pa, "挂了")
