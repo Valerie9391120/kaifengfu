@@ -33,13 +33,20 @@ FAKE = r"""(() => {
   } catch (e) {}
   // 麦克风：记下开过的几回，看挂了以后关没关
   window.__mics = [];
+  window.__micAt = [];   // 麦克风开好的那一刻
   const md = navigator.mediaDevices;
   if (md && md.getUserMedia) {
     const gum = md.getUserMedia.bind(md);
-    md.getUserMedia = async (c) => { const s = await gum(c); window.__mics.push(s); return s; };
+    md.getUserMedia = async (c) => { const s = await gum(c); window.__mics.push(s); window.__micAt.push(performance.now()); return s; };
   }
   window.__micLive = () => window.__mics.filter((s) => s.getTracks().some((t) => t.readyState === 'live')).length;
+  // 用 Web Audio 放出声来的那一刻（打电话那一下放的那一丁点没声音的不算）：看接起来那一句是不是等麦克风开了才放
+  window.__starts = [];
+  const bstart = AudioBufferSourceNode.prototype.start;
+  AudioBufferSourceNode.prototype.start = function () { if (this.buffer && this.buffer.duration > 0.05) window.__starts.push(performance.now()); return bstart.apply(this, arguments); };
 })()"""
+# 这一通电话（点“打电话”以后）：麦克风开好的头一刻、头一回出声的那一刻
+HELLO_ORDER = """(() => { const t0 = window.__dialAt || 0; const m = window.__micAt.filter((t) => t > t0)[0]; const s = window.__starts.filter((t) => t > t0)[0]; return { mic: m || null, play: s || null }; })()"""
 
 PHASE = "(() => { const e = document.querySelector('.kfs-call'); return e ? e.dataset.phase : null; })()"
 # 字幕（两个人共用的那一块）：最后一段的字、是谁的、什么颜色
@@ -108,7 +115,9 @@ def hello_of(page):
     cid, msgs = chat_of(page)
     starts = [m for m in msgs if m.get("kind") == "call" and m.get("phase") == "start"]
     return starts[-1].get("hi") if starts else None
+def mark_dial(page): page.evaluate("window.__dialAt = performance.now()")
 def dial(page):
+    mark_dial(page)
     page.locator(".kfs-composer button[aria-label='打电话']").click()
     return wait_phase(page, "listening", 15000)
 
@@ -132,6 +141,9 @@ with sync_playwright() as p:
         fresh = hi not in hellos_said
         hellos_said.append(hi)
         ok(hi in HELLOS and len(asked) == (1 if fresh else 0), f"{tag}：接起来他先说一句（{hi}）；{'头一回念，念好存起来' if fresh else '念过的，用存着的，不再敲 ElevenLabs'}")
+        order = pa.evaluate(HELLO_ORDER)
+        ok(order["mic"] and order["play"] and order["play"] > order["mic"],
+           f"{tag}：接起来那一句等麦克风开好了才放（iPhone 上麦克风开着才走外放；没开就放，走听筒，她 17:12 报的）（麦克风 {order['mic'] and round(order['mic'])}、出声 {order['play'] and round(order['play'])}）")
         return hi
     try:
         first_time(pa)
@@ -142,6 +154,7 @@ with sync_playwright() as p:
         # ================= 一通电话 =================
         c0 = len(calls())
         e_dial = len(eleven())
+        mark_dial(pa)
         pa.locator(".kfs-composer button[aria-label='打电话']").click()
         pa.locator(".kfs-call").wait_for(timeout=5000)
         pa.evaluate(SUBLOG)

@@ -8,6 +8,9 @@
 export const HELLOS = ["卿卿？", "怎么了？", "你来了"];
 export const HELLO_KEY = "kfs2:callhi:"; // 后面接那一句
 export const HELLO_LAST = "kfs-call-hi"; // 这台设备上上回放的是哪一句（localStorage）
+// 这一句等麦克风开了才放（她 10 月 14 日 17:12 报的：存好的那几句一接通就放，那会儿麦克风还没开，iPhone 只从听筒出声；
+// 麦克风开着的时候放的都走外放）。通行证、麦克风老不来（她还没点“允许”之类），最多等这么久就放
+export const HELLO_WAIT = 6000;
 
 // 挑一句：不跟上回一样（只剩一句可挑的时候除外）
 export function pickHello(last, rand = Math.random) {
