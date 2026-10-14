@@ -40,6 +40,17 @@ export function cleanForCall(text) {
   return WORDY.test(t.replace(new RegExp(TAG_SRC, "g"), "")) ? t : "";
 }
 
+// 字幕上摆的他这一段（她 10 月 14 日定的：字幕只摆真念出来的话，语气标签、动作这些给念的那头看的记号都不摆）。
+// 段是洗过的（动作、表情、记号已经没了），这里再把语气标签摘掉
+export function subOf(seg) {
+  return String(seg || "")
+    .replace(new RegExp(TAG_SRC, "g"), " ")
+    .replace(/[ \t　]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/ ([，。！？、；：,.!?;:])/g, "$1")
+    .trim();
+}
+
 const END = new Set(["。", "！", "？", "!", "?", "；", ";", "\n"]);
 const SOFT = new Set(["，", ",", "、", "：", ":"]);
 
@@ -124,6 +135,7 @@ export function segmentsOfReply(items) {
 //   release(url)         这一段用完了（收回地址）
 //   onState(s)           "speaking" 开始出声 / "done" 这一回都念完了（或者念不成的跳过了） / "idle" 停了
 //   onError(e)           某一段念不成（跳过它接着念后面的）
+//   onSegment(text)      轮到这一段了（开始放；念不成跳过的也报一声）：字幕跟着这个出（可以不给）
 // }
 // 回 { add(texts), end(), cancel(), busy() }：add 加几段；end 这一回没有更多了（念完就报 done）；cancel 全停
 export function createSayer(d, { ahead = 2 } = {}) {
@@ -180,6 +192,8 @@ export function createSayer(d, { ahead = 2 } = {}) {
     }
     if (head.st === "fail") {
       queue.shift();
+      // 没念出来的这一段，字幕上照样摆出来（她看得到他说了什么）
+      if (d.onSegment) d.onSegment(head.text);
       d.onError(head.err);
       pump();
       return;
@@ -192,6 +206,7 @@ export function createSayer(d, { ahead = 2 } = {}) {
       spoke = true;
       d.onState("speaking");
     }
+    if (d.onSegment) d.onSegment(head.text);
     Promise.resolve()
       .then(() => d.play(head.url))
       .catch((e) => {

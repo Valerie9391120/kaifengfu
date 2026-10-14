@@ -3,13 +3,13 @@ import { SERIF } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { Avatar } from "../ui/Avatar.jsx";
 import { callClock } from "./marks.js";
-import { tailOf } from "./listen.js";
+import { Subtitles } from "./Subtitles.jsx";
 
 // =====================================================
 //   通话页（卿卿 2026 年 10 月 14 日定的，见开发说明“通话”那一节）。
 //   全屏，先用纯黑的底（她说以后做一张合适的图给我，现在统一用黑的）；他的头像在中间，
 //   他说话的时候一亮一亮，他在想的时候慢慢呼吸；上面一行写在干什么和通话多久；
-//   头像底下小字是听写听到的她的话（让她知道听见了）；底下两个键：静音、挂断。
+//   头像和名字底下是两个人共用的字幕（她 11:40 定的，见 Subtitles.jsx）；底下两个键：静音、挂断。
 //   phase：
 //     ring      刚点下去，还没开始听
 //     listening 在听她说
@@ -54,7 +54,7 @@ export function CallPage({ call, avatar, name, onMute, onHangUp, onTap }) {
         paddingRight: 24,
       }}
     >
-      <div className="kfs-call-status text-center" style={{ fontSize: 14, letterSpacing: "0.08em", color: "rgba(255,255,255,0.62)" }}>
+      <div className="kfs-call-status text-center" style={{ fontSize: 14, letterSpacing: "0.08em", color: "rgba(255,255,255,0.62)", position: "relative" }}>
         <span>{STATUS[phase] || ""}</span>
         <span style={{ margin: "0 8px", opacity: 0.5 }}>·</span>
         <span className="kfs-call-clock" style={{ fontVariantNumeric: "tabular-nums" }}>
@@ -62,10 +62,14 @@ export function CallPage({ call, avatar, name, onMute, onHangUp, onTap }) {
         </span>
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center w-full" style={{ minHeight: 0 }}>
-        <div className="relative flex items-center justify-center" style={{ width: 200, height: 200 }}>
+      {/* 中间这一块从上往下：头像、名字、字幕。多出来的地方上面分一份、底下分两份（字幕和按钮之间要空得多一些，她定的）；
+          屏幕矮的手机上先让字幕区变矮（最矮 110），再让顶上那点空变小 */}
+      <div className="flex-1 flex flex-col items-center w-full" style={{ minHeight: 0 }}>
+        <div style={{ flex: "1 1 24px", minHeight: 6 }} />
+        <div className="relative flex items-center justify-center flex-shrink-0" style={{ width: 200, height: 176 }}>
           {/* 头像后面那一圈光：比头像大一圈，贴着头像那一圈最亮，往外淡下去。
-              他说话时一亮一亮，他在想时慢慢呼吸，在听时淡淡地亮着（动的那两样见 ui/style.js 的 kfsCallTalk、kfsCallThink） */}
+              他说话时一亮一亮，他在想时慢慢呼吸，在听时淡淡地亮着（动的那两样见 ui/style.js 的 kfsCallTalk、kfsCallThink）。
+              这一块占的地方比光小：光往外溢一点（盖不住字，名字、上面那行都垫在它上面） */}
           <div
             className={`kfs-call-ring ${ring}`}
             aria-hidden="true"
@@ -89,35 +93,26 @@ export function CallPage({ call, avatar, name, onMute, onHangUp, onTap }) {
             <Avatar av={avatar} who="him" size={128} />
           </div>
         </div>
-        <div style={{ fontFamily: SERIF, fontSize: 22, letterSpacing: "0.12em", paddingLeft: "0.12em", marginTop: 12, position: "relative" }}>{name}</div>
-        {/* 听到的字、出了岔子的那句话：占着一块定高的地方，有没有字头像都不挪 */}
-        <div className="flex flex-col items-center w-full" style={{ marginTop: 22, height: 140, overflow: "hidden" }}>
-          <div
-            className="kfs-call-heard text-center"
-            style={{
-              maxWidth: 320,
-              fontSize: 15,
-              lineHeight: 1.5,
-              color: "rgba(255,255,255,0.58)",
-              display: "-webkit-box",
-              WebkitLineClamp: 3,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
-            }}
-          >
-            {phase === "listening" || phase === "thinking" ? tailOf(call.heard) : ""}
-          </div>
+        <div className="flex-shrink-0" style={{ fontFamily: SERIF, fontSize: 22, letterSpacing: "0.12em", paddingLeft: "0.12em", marginTop: 12, position: "relative" }}>
+          {name}
+        </div>
+        {/* 字幕区：两个人共用（见 Subtitles.jsx）。宽照原来那行小字（最宽 320），高 225 上下 */}
+        <div className="relative w-full" style={{ maxWidth: 320, marginTop: 22, flex: "0 1 225px", minHeight: 110 }}>
+          <Subtitles subs={call.subs} />
+          {/* 出了岔子的那一句：摆在字幕区底下，不占字幕的地方 */}
           {call.note ? (
             <div
               className="kfs-call-note text-center"
               style={{
-                marginTop: 10,
-                maxWidth: 320,
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: "calc(100% + 10px)",
                 fontSize: 13,
                 lineHeight: 1.55,
                 color: "rgba(255,190,180,0.85)",
                 display: "-webkit-box",
-                WebkitLineClamp: 3,
+                WebkitLineClamp: 2,
                 WebkitBoxOrient: "vertical",
                 overflow: "hidden",
               }}
@@ -126,6 +121,7 @@ export function CallPage({ call, avatar, name, onMute, onHangUp, onTap }) {
             </div>
           ) : null}
         </div>
+        <div style={{ flex: "2 0 60px" }} />
       </div>
 
       <div className="flex items-start justify-center" style={{ gap: 72 }}>

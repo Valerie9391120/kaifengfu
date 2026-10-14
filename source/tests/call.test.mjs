@@ -1,6 +1,7 @@
 // 通话（卿卿 10 月 14 日要的，见开发说明“通话”那一节）：听她说完没有、他的话怎么洗怎么切、按顺序念、聊天里那两行小字
-import { createListener, PAUSE_MS, PAUSES, pauseOf, tailOf } from "../src/call/listen.js";
-import { cleanForCall, splitForCall, segmentsOfReply, createSayer } from "../src/call/say.js";
+import { createListener, PAUSE_MS, PAUSES, pauseOf } from "../src/call/listen.js";
+import { cleanForCall, splitForCall, segmentsOfReply, createSayer, subOf } from "../src/call/say.js";
+import { emptySubs, herLive, herDone, hisSay, subUnits, subFade, subGap, SUB_KEEP, SUB_COLOR } from "../src/call/subs.js";
 import { isCallMark, callLen, callClock, markText, markNote, markRecap } from "../src/call/marks.js";
 import { buildSystem, CALL_NOTE } from "../src/prompt/system.js";
 import { buildMessages } from "../src/prompt/messages.js";
@@ -142,12 +143,6 @@ function listener(opts = {}) {
   ok(n.got.fails[0] === "none", "这台手机没有听写：报 none");
 }
 {
-  const long = "一二三四五六七八九十".repeat(7) + "最后这几个字😊";
-  const t = tailOf(long);
-  ok(tailOf("短的一句") === "短的一句" && tailOf("") === "" && tailOf(null) === "" && t.startsWith("…") && t.endsWith("最后这几个字😊") && Array.from(t).length === 61,
-    `通话页上听到的字太长：摆最后那一截，刚说的总看得见（${t}）`);
-}
-{
   const { l, clock, made, got } = listener({ pauseMs: 2000 });
   l.start();
   made[0].say("慢慢说");
@@ -219,6 +214,7 @@ function sayerRig(opts = {}) {
   const states = [];
   const errors = [];
   const released = [];
+  const segs = [];
   const s = createSayer({
     synth: (text) => new Promise((resolve, reject) => { log.push("synth:" + text); pending[text] = { resolve, reject }; }),
     play: (url) => new Promise((resolve, reject) => { log.push("play:" + url); plays.push({ url, resolve, reject }); }),
@@ -226,8 +222,9 @@ function sayerRig(opts = {}) {
     release: (url) => released.push(url),
     onState: (st, said) => states.push(said === undefined ? st : `${st}:${said}`),
     onError: (e) => errors.push(String(e && e.message || e)),
+    onSegment: (text) => segs.push(text),
   }, opts);
-  return { s, log, pending, plays, states, errors, released };
+  return { s, log, pending, plays, states, errors, released, segs };
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 {
@@ -246,15 +243,17 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
   R.plays[0].resolve();
   await flush();
   ok(R.log.includes("play:u2") && R.released.includes("u1") && R.log.includes("synth:四"), "第一段放完：地址收回，接着放第二段，再准备第四段");
+  ok(R.segs.join() === "一,二", `字幕跟着放：开始放哪一段才报哪一段（${R.segs.join()}）`);
   R.pending["三"].reject(new Error("念不成"));
   R.plays[1].resolve();
   await flush();
   ok(R.errors[0] === "念不成" && !R.log.includes("play:undefined"), "第三段念不成：说一声，跳过它");
+  ok(R.segs.join() === "一,二,三", "念不成跳过的那一段也报一声（字幕上照样出这段字）");
   R.pending["四"].resolve({ url: "u4" });
   await flush();
   R.plays[2].resolve();
   await flush();
-  ok(R.states.join() === "speaking,done:true" && R.s.busy() === false, `都念完了：报 done（这一回出过声）（${R.states.join()}）`);
+  ok(R.states.join() === "speaking,done:true" && R.s.busy() === false && R.segs.join() === "一,二,三,四", `都念完了：报 done（这一回出过声）（${R.states.join()}）`);
 }
 {
   const R = sayerRig();
@@ -276,6 +275,39 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
   ok(R.log.includes("stopPlay") && R.states.slice(-1)[0] === "idle" && R.released.includes("u2") && !R.log.includes("play:u2") && R.s.busy() === false,
     "挂断（cancel）：正在放的停下，没放的不放，晚到的念好的直接收回，报 idle");
 }
+
+// =====================================================
+// 字幕（她 11:40 定的：两个人共用一块，谁说是谁的；连着说接在后面；换人从顶上重新出）
+// =====================================================
+ok(subOf("[whispers] 晚安") === "晚安" && subOf("嗯 [laughs]，好") === "嗯，好" && subOf("[laughs] 哈哈哈，今天真开心！") === "哈哈哈，今天真开心！" && subOf("[sighs]") === "",
+  "他的字幕：语气标签都摘掉，只摆真念出来的话");
+{
+  let s = emptySubs();
+  ok(herLive(s, "") === s && herLive(s, "  ") === s, "开听写那一下报的空字：不算开口，字幕不动");
+  s = herLive(s, "嗯");
+  ok(s.who === "her" && s.turn === 1 && s.live === "嗯" && subUnits(s).join() === "嗯", "她开口了：字幕是她的，从头出");
+  const t1 = s;
+  s = herLive(s, "嗯刚到家");
+  ok(s.turn === 1 && s.live === "嗯刚到家" && herLive(s, "嗯刚到家") === s, "边说边出：同一轮里那一截跟着变（没变就不动）");
+  s = herDone(s, "嗯刚到家，今天好累");
+  ok(s.turn === t1.turn && s.lines.join() === "嗯刚到家，今天好累" && s.live === "", "她说完一句：收进这一轮，不清空");
+  s = herLive(s, "你在吗");
+  ok(s.turn === 1 && subUnits(s).join("|") === "嗯刚到家，今天好累|你在吗", "她接着说（他那回没出声）：接在后面，还是这一轮");
+  s = herDone(s, "你在吗");
+  s = hisSay(s, "[softly] 辛苦了。");
+  ok(s.who === "him" && s.turn === 2 && s.lines.join() === "辛苦了。", "他开口了：换成他的一轮，从头出，她的不混进来");
+  s = hisSay(s, "[laughs] 哈哈哈，今天真开心！");
+  ok(s.turn === 2 && subUnits(s).join("|") === "辛苦了。|哈哈哈，今天真开心！", "他念到下一段：接在后面");
+  ok(hisSay(s, "[sighs]") === s, "光剩个语气标签的一段：字幕不动");
+  s = herLive(s, "我");
+  ok(s.who === "her" && s.turn === 3 && subUnits(s).join() === "我", "她又开口了：换回她的一轮，他的不留");
+  let m = emptySubs();
+  for (let i = 0; i < 12; i++) m = hisSay(m, `第${i}段。`);
+  ok(m.lines.length === SUB_KEEP && m.lines[0] === `第${12 - SUB_KEEP}段。` && m.turn === 1, `一轮里最多留 ${SUB_KEEP} 截（装不下的早滚上去了）`);
+}
+ok(subFade(2, 3) === 1 && subFade(1, 3) === 0.62 && subFade(0, 3) === 0.38 && subFade(0, 1) === 1, "最新的那截照常亮，前一截淡一点，再往前更淡");
+ok(subGap("今天好累") === " " && subGap("今天好累。") === "" && subGap("嗯，") === "" && subGap("") === "", "两截接在一起：前一截没标点收尾的空一格，免得粘成一句");
+ok(SUB_COLOR.her === "#999999" && SUB_COLOR.him === "#F0F0F0", "颜色是她定的：她的 #999999，他的 #F0F0F0");
 
 // =====================================================
 // 聊天里那两行小字

@@ -9,13 +9,6 @@ export const PAUSE_MS = 1600; // 停多久算说完（那份“小屋”攻略�
 export const PAUSES = [1200, 1600, 2000]; // API 面板里能挑的三档
 export const pauseOf = (v) => (PAUSES.includes(Number(v)) ? Number(v) : PAUSE_MS);
 const TICK_MS = 200; // 多久看一眼字还变不变
-const TAIL = 60; // 通话页上听到的字最多摆这么多个（三行上下）
-
-// 通话页头像底下摆的听到的字：太长了三行放不下，摆最后那一截（前面一个“…”），刚说的那几个字总看得见
-export const tailOf = (text) => {
-  const a = Array.from(String(text || ""));
-  return a.length > TAIL ? "…" + a.slice(-TAIL).join("") : a.join("");
-};
 const FINAL_WAIT = 1200; // 叫听写收尾以后，最多等它把最后那点字交回来这么久
 const QUICK_MS = 1000; // 一开起来不到这么久就自己停了：算“一开就停”
 const QUICK_MAX = 5; // 连着一开就停这么多回：这台手机上听不了，别再空转
