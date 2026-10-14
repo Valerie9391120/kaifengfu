@@ -1,4 +1,5 @@
 import { HIS_NAME } from "../names.js";
+import { isCallMark, markText } from "../call/marks.js";
 
 // stoppedId：底下要摆那行“停了，点这里让我回”的是她的哪一句（没有就是空的，见 thread.js 的 stoppedAt）
 // recap：眼下作数的那一份前情提要（见 recap.js 的 pickRecap；没有就是 null）。在它抄到的那一条后面添一行小字
@@ -10,7 +11,10 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null) {
       rows.push({ type: "sep", key: "sep-" + m.id, ts: m.ts });
     }
     prevTs = m.ts;
-    if (m.role === "event") {
+    if (isCallMark(m)) {
+      // 通话开始、挂了（见 call/marks.js）：一行小字，前面一个小电话
+      rows.push({ type: "notice", key: m.id, msg: m, kind: "call", text: markText(m) });
+    } else if (m.role === "event") {
       rows.push({
         type: "notice",
         key: m.id,

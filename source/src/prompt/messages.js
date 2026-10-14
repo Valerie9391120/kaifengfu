@@ -1,6 +1,7 @@
 import { wrapDocForModel, missingDocNote } from "../docs.js";
 import { MEME_MAP } from "../memes.js";
 import { tierOf, planWindow, staleImages, stamp } from "../recap.js";
+import { isCallMark, markNote } from "../call/marks.js";
 
 function avatarBlock(av, thumbLookup = () => null) {
   if (!av) return null;
@@ -148,6 +149,11 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
   msgs.forEach((m, at) => {
     if (at < from) return;
     const noImg = stale.has(at);
+    // 通话开始、挂了：一行提示（见 call/marks.js），挂了以后他知道你们刚通过电话
+    if (isCallMark(m)) {
+      arr.push({ role: "user", content: [{ type: "text", text: markNote(m) }] });
+      return;
+    }
     // 她在聊天中途换了头像：变成对话里真实发生的一件事，图跟着这一行寄过去
     if (m.role === "event") {
       const img = avatarBlock(m.av, thumbLookup);

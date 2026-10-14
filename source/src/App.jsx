@@ -50,6 +50,9 @@ import { ApiPanel } from "./panels/ApiPanel.jsx";
 import { PushPanel } from "./panels/PushPanel.jsx";
 import { ModelPanel } from "./panels/ModelPanel.jsx";
 import { NanyaPanel, soonToast } from "./panels/NanyaPanel.jsx";
+import { CallPage } from "./call/CallPage.jsx";
+import { createListener, pauseOf } from "./call/listen.js";
+import { createSayer, segmentsOfReply } from "./call/say.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -207,9 +210,10 @@ export default function App({ account = {} }) {
   const photoInputRef = useRef(null);
   const [voiceNote, setVoiceNote] = useState("");
   const [dictating, setDictating] = useState(false);
-  const [recording, setRecording] = useState(null);
-  const recordingRef = useRef(null);
   const recRef = useRef(null);
+  // 正在打电话（见 call/ 和开发说明“通话”那一节）：call 是通话页上摆的样子；callRef 里还有听写、念、放声音的那几样
+  const [call, setCall] = useState(null);
+  const callRef = useRef(null);
   const dictBaseRef = useRef("");
   // 他的语音条（见 voice.js、speaker.js）：每一条眼下的样子（念着、念好了、念不成…）、正在放的是哪一条、转过文字的那几条
   const [voices, setVoices] = useState({});
@@ -241,7 +245,6 @@ export default function App({ account = {} }) {
   const [voiceCheck, setVoiceCheck] = useState(null); // API 面板里：念语音的小后端接上没有（{ state, say, model }）
   const [voiceTestNote, setVoiceTestNote] = useState("");
   const [voiceTesting, setVoiceTesting] = useState(false);
-  const [, setTick] = useState(0);
   const [menu, setMenu] = useState(null);
   const [diaryOpen, setDiaryOpen] = useState(false);
   const [diaryToday, setDiaryToday] = useState({ her: false, him: false });
@@ -1092,6 +1095,7 @@ export default function App({ account = {} }) {
   // 回话放进了 id 那段对话：里头的语音条记下来要念（她开了“他能发语音”才念；没开的时候他发的，气泡上有“点这里念出来”）
   const wantVoices = (id, him) => {
     if (!settingsRef.current.voice || !him) return;
+    if (callRef.current && callRef.current.chat === id) return; // 正在打电话：通话那头一句一句念，这里不再念一遍
     const list = voicesIn(him);
     if (list.length) getSpeaker().want(id, list);
   };
@@ -1172,6 +1176,7 @@ export default function App({ account = {} }) {
       replyCap: replyRoom(st.maxTokens || 2048),
       voice: !!st.voice,
       thoughts: st.thoughts !== false, // 他写不写心里话（“头像与设置”里的开关，默认开着）
+      call: !!(callRef.current && callRef.current.chat === opts.chat), // 正在打电话：【此刻】后面附上通话的规矩（见 call/）
     });
     // 这段对话抄过提要的：前面的不寄原话，换成提要（见 recap.js）
     const recapList = opts.chat ? await readRecaps(opts.chat) : [];
@@ -1686,7 +1691,8 @@ export default function App({ account = {} }) {
     askGuangyi(chatIdRef.current, msgs);
   };
 
-  const sendHer = (payloads) => {
+  // opts.now：马上发，不等她停手那两秒多（电话里她说完一句就是说完了，见 callSaid）
+  const sendHer = (payloads, opts = {}) => {
     const list = Array.isArray(payloads) ? payloads : [payloads];
     if (!list.length) return;
     const id = chatIdRef.current;
@@ -1698,7 +1704,10 @@ export default function App({ account = {} }) {
     setMessages(next);
     setErrorNote("");
     saveChat(id, next);
-    scheduleReply(2200);
+    if (opts.now) {
+      disarm();
+      triggerReply();
+    } else scheduleReply(2200);
   };
 
   const sendText = () => {
@@ -1850,52 +1859,231 @@ export default function App({ account = {} }) {
     }
   };
 
-  // 声波键：发一条语音
-  const finishVoice = () => {
-    const r = recordingRef.current;
-    if (!r || r.done) return;
-    r.done = true;
-    recordingRef.current = null;
-    setRecording(null);
-    recRef.current = null;
-    if (!r.sending) return;
-    const text = (r.text || "").trim();
-    const dur = Math.max(1, Math.round((Date.now() - r.start) / 1000));
-    if (text) sendHer({ kind: "voice", text, dur });
-    else setVoiceNote("没听清，再说一次");
+  // ---- 打电话（卿卿 10 月 14 日要的，见 call/ 和开发说明“通话”那一节） ----
+  // 右下角的声波键原来是“发一条语音”（她那头其实是听写，跟系统自带的语音转文字没两样），她说直接改成通话。
+  // 一通电话：点声波键 → 通话页、屏幕常亮、聊天里记一行“通话开始” → 听她说（手机自带的听写，停 1.6 秒算说完）
+  // → 当平常的一句话马上发出去 → 他回的话一句一句用他的声音念（最多两段一起准备，按顺序放）→ 念完接着听。
+  // 他在电话里的规矩附在【此刻】后面（prompt/system.js 的 CALL_NOTE），名帖一个字不动。
+  // 挂断（点挂断、锁屏、切走都算）：聊天里记一行“通话 12 分钟”；一句话没说就挂了，“通话开始”那行也不留。
+  const callView = (c) => ({ phase: c.phase, heard: c.heard, note: c.note, start: c.start, muted: c.muted });
+  const callUi = (patch) => {
+    const c = callRef.current;
+    if (!c) return;
+    Object.assign(c, patch);
+    setCall(callView(c));
   };
-  const startVoice = () => {
-    const rec = startRec(
-      (txt) => {
-        if (!recordingRef.current) return;
-        recordingRef.current = { ...recordingRef.current, text: txt };
-        setRecording(recordingRef.current);
+  // 接着听她说（静音着就不听）。要在她点的那一下里叫的：头一回开听写、iPhone 不让自己接着听时她点屏幕那一下
+  const callListen = () => {
+    const c = callRef.current;
+    if (!c) return;
+    if (c.muted) {
+      callUi({ phase: "muted", heard: "" });
+      return;
+    }
+    callUi({ phase: "listening", heard: "", note: c.phase === "tap" ? "" : c.note });
+    c.listener.start();
+  };
+  // 她说完了一句：当平常的一句话发出去，不等那两秒（电话里等着难受）
+  const callSaid = (text) => {
+    const c = callRef.current;
+    if (!c) return;
+    callUi({ phase: "thinking", heard: text, note: "" });
+    sendHer({ kind: "text", text, via: "call" }, { now: true });
+  };
+  const callListenFailed = (kind) => {
+    const c = callRef.current;
+    if (!c) return;
+    if (kind === "none") {
+      callUi({ phase: "tap", note: "这台手机上没有听写，打不了电话" });
+      return;
+    }
+    // iPhone 有时不让网页自己接着开听写（要她点一下）；麦克风没给开封府用的话，点了也不行，看看设置。
+    // “点一下屏幕，接着说”最上面那行写着了，这里不再说一遍
+    callUi({ phase: "tap", note: kind === "dead" ? "听写老是一开就停。" : "听不了。一直这样的话，看看设置里有没有让开封府用麦克风" });
+  };
+  const startCall = () => {
+    if (callRef.current) return;
+    const SR = typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
+    if (!SR) {
+      // 这个浏览器没有听写（电脑上的火狐之类；她 iPhone 上的开封府有）
+      setVoiceNote("这里开不了麦，打不了电话。");
+      return;
+    }
+    if (dictating && recRef.current) recRef.current.stop();
+    // 放他声音的那个东西：在她点的这一下先放一小段没声音的，后面他说话才不会被 iPhone 拦（同“试听一句”）
+    const audio = new Audio();
+    audio.preload = "auto";
+    try {
+      audio.src = URL.createObjectURL(new Blob([silentMp3(3)], { type: "audio/mpeg" }));
+      const p = audio.play();
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) {}
+    const id = chatIdRef.current;
+    const mark = { id: newId(), role: "event", who: "call", kind: "call", phase: "start", ts: Date.now() };
+    const next = messagesRef.current.concat([mark]);
+    messagesRef.current = next;
+    follow.pin();
+    setMessages(next);
+    saveChat(id, next);
+    const c = { chat: id, startId: mark.id, start: Date.now(), spoken: new Set(), audio, wake: null, muted: false, phase: "ring", heard: "", note: "" };
+    c.listener = createListener({
+      SR,
+      now: () => Date.now(),
+      later: (fn, ms) => {
+        const t = setTimeout(fn, ms);
+        return () => clearTimeout(t);
       },
-      () => finishVoice()
-    );
-    if (rec) {
-      recRef.current = rec;
-      recordingRef.current = { start: Date.now(), text: "", sending: false, done: false };
-      setRecording(recordingRef.current);
+      pauseMs: pauseOf(settingsRef.current.callPause),
+      onText: (t) => callRef.current === c && callUi({ heard: t }),
+      onDone: (t) => callRef.current === c && callSaid(t),
+      onFail: (kind) => callRef.current === c && callListenFailed(kind),
+    });
+    c.sayer = createSayer({
+      synth: async (text, signal) => {
+        const d = await callVoice({ op: "speak", text, stability: stabOf(settingsRef.current.voiceStab) }, { signal });
+        return { url: audioUrl(d.audio, d.mime) };
+      },
+      play: (url) =>
+        new Promise((resolve, reject) => {
+          audio.onended = () => resolve();
+          audio.onerror = () => reject(new Error("放不出来"));
+          audio.src = url;
+          const p = audio.play();
+          if (p && p.catch) p.catch(reject);
+        }),
+      stopPlay: () => {
+        audio.onended = null;
+        audio.onerror = null;
+        try {
+          audio.pause();
+        } catch (e) {}
+      },
+      // 这一段放完了、不要了：地址收回（一段几十 K，一通电话下来不收会越攒越多）
+      release: (url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (e) {}
+      },
+      onState: (st) => {
+        if (callRef.current !== c) return;
+        if (st === "speaking") callUi({ phase: "speaking", heard: "" });
+        else if (st === "done") callListen();
+      },
+      onError: (e) => callRef.current === c && callUi({ note: `有一句没念出来（${String((e && e.message) || e).slice(0, 60)}），字在聊天里` }),
+    });
+    callRef.current = c;
+    setCall(callView(c));
+    // 屏幕常亮（自己熄了电话就断了；她自己锁屏还是会断，网页管不了）
+    try {
+      if (navigator.wakeLock && navigator.wakeLock.request) {
+        navigator.wakeLock
+          .request("screen")
+          .then((w) => {
+            if (callRef.current === c) c.wake = w;
+            else w.release().catch(() => {});
+          })
+          .catch(() => {});
+      }
+    } catch (e) {}
+    callListen();
+  };
+  const hangUp = () => {
+    const c = callRef.current;
+    if (!c) return;
+    callRef.current = null;
+    setCall(null);
+    c.listener.stop();
+    c.sayer.cancel();
+    try {
+      c.audio.pause();
+      if (c.audio.src && c.audio.src.startsWith("blob:")) URL.revokeObjectURL(c.audio.src);
+      c.audio.removeAttribute("src");
+    } catch (e) {}
+    if (c.wake) c.wake.release().catch(() => {});
+    // 聊天里那两行：说过话的记一行“通话 12 分钟”；一句没说的，“通话开始”那行也拿掉
+    const secs = Math.max(1, Math.round((Date.now() - c.start) / 1000));
+    const put = (base) => {
+      const at = base.findIndex((m) => m.id === c.startId);
+      if (at < 0) return null;
+      const spoke = base.slice(at + 1).some((m) => m.role === "her");
+      return spoke ? base.concat([{ id: newId(), role: "event", who: "call", kind: "call", phase: "end", secs, ts: Date.now() }]) : base.filter((m) => m.id !== c.startId);
+    };
+    if (chatIdRef.current === c.chat) {
+      const next = put(messagesRef.current);
+      if (next) {
+        messagesRef.current = next;
+        setMessages(next);
+        saveChat(c.chat, next);
+      }
+    } else {
+      store.get("kfs2:chat:" + c.chat).then((text) => {
+        const base = safeParse(text, null);
+        const next = Array.isArray(base) ? put(base) : null;
+        if (next) saveChat(c.chat, next);
+      });
     }
   };
-  const sendVoice = () => {
-    if (!recordingRef.current) return;
-    recordingRef.current.sending = true;
-    if (recRef.current) recRef.current.stop();
-    setTimeout(finishVoice, 1500); // 有的浏览器不报结束，兜个底
-  };
-  const cancelVoice = () => {
-    if (recordingRef.current) recordingRef.current.sending = false;
-    if (recRef.current) recRef.current.abort();
-    finishVoice();
+  const toggleMute = () => {
+    const c = callRef.current;
+    if (!c) return;
+    c.muted = !c.muted;
+    if (c.muted) {
+      if (c.phase === "listening" || c.phase === "tap") {
+        c.listener.stop();
+        callUi({ phase: "muted", heard: "" });
+      } else callUi({});
+    } else if (c.phase === "muted") callListen();
+    else callUi({});
   };
 
+  // 电话里他的回话到了（不管是直接等到的、还是从信箱里取的，放进对话以后都在 messages 里）：一句一句念
   useEffect(() => {
-    if (!recording) return;
-    const t = setInterval(() => setTick((n) => n + 1), 500);
-    return () => clearInterval(t);
-  }, [recording]);
+    const c = callRef.current;
+    if (!c || chatId !== c.chat) return;
+    const at = messages.findIndex((m) => m.id === c.startId);
+    if (at < 0) return;
+    for (let i = at + 1; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.role !== "him" || c.spoken.has(m.id)) continue;
+      c.spoken.add(m.id);
+      c.listener.stop();
+      c.sayer.add(segmentsOfReply(m.items));
+      c.sayer.end(); // 一条回话是整条到的：没有可念的（只有表情包之类），马上接着听
+    }
+  }, [messages, chatId]);
+  // 电话里这一句没送到（底下那行红字出来了）：说一声，接着听她说（那一句还在，下一句一起寄过去）
+  useEffect(() => {
+    const c = callRef.current;
+    if (!c || !errorNote || c.phase !== "thinking") return;
+    callUi({ note: "刚才那句没送到，接着说就行" });
+    callListen();
+  }, [errorNote]);
+  // 锁屏、切到别的 app：网页 app 到了后台听不了也念不了，挂断（见开发说明“通话”那一节）。
+  // 藏起来一眨眼就回来的不算（系统弹个框之类）：藏了一秒多才挂。锁了屏定时器会停，所以回来的时候再按钟点算一遍
+  useEffect(() => {
+    let hiddenAt = 0;
+    let timer = null;
+    const off = () => {
+      if (!callRef.current) return;
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        clearTimeout(timer);
+        timer = setTimeout(() => callRef.current && latest.current.hangUp(), 1200);
+      } else {
+        clearTimeout(timer);
+        if (hiddenAt && Date.now() - hiddenAt >= 1200 && callRef.current) latest.current.hangUp();
+        hiddenAt = 0;
+      }
+    };
+    const gone = () => callRef.current && latest.current.hangUp();
+    document.addEventListener("visibilitychange", off);
+    window.addEventListener("pagehide", gone);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", off);
+      window.removeEventListener("pagehide", gone);
+    };
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -2351,7 +2539,7 @@ export default function App({ account = {} }) {
     for (const key of await orphans()) store.del(key);
   };
 
-  latest.current = { checkMail, openFromNotice, leaving, resendSoon, runRecaps, sweepRecaps, stopVoice, freshMotto };
+  latest.current = { checkMail, openFromNotice, leaving, resendSoon, runRecaps, sweepRecaps, stopVoice, freshMotto, hangUp };
 
   // ---- 通知 ----
   // 开过通知的设备，每次打开都悄悄重新登记一遍（见 push.js）；她点通知回来的，记下是哪一条
@@ -3678,26 +3866,6 @@ export default function App({ account = {} }) {
               </button>
             </div>
           )}
-          {recording ? (
-            <div className="flex items-center" style={{ gap: 10, padding: "4px 2px" }}>
-              <button onClick={cancelVoice} className="kfs-tap flex-shrink-0" style={chip}>
-                取消
-              </button>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center" style={{ gap: 6, fontSize: 13, color: T.dai }}>
-                  <Icon name="wave" size={16} />
-                  <span>正在听 {Math.max(0, Math.round((Date.now() - recording.start) / 1000))}″</span>
-                </div>
-                <div className="truncate" style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>
-                  {recording.text || "说吧，我听着"}
-                </div>
-              </div>
-              <button onClick={sendVoice} className="kfs-tap flex-shrink-0" style={{ ...chipPrimary, boxShadow: "0 3px 8px rgba(var(--k-dai-shade),0.28)" }}>
-                发送
-              </button>
-            </div>
-          ) : (
-            <>
               <textarea
                 ref={taRef}
                 className="kfs-field block w-full"
@@ -3799,12 +3967,13 @@ export default function App({ account = {} }) {
                     <Icon name="stop" color={T.onDai} size={19} sw={2} />
                   </button>
                 ) : (
-                  // 声波键。刚从停键变过来的那一小会儿点它不算：她按停的那一下连着点了两下、
-                  // 或者正要按停的时候他正好回完了，不该一下子开始录音
+                  // 声波键：打电话（10 月 14 日起，原来是发一条语音，见开发说明“通话”那一节）。
+                  // 刚从停键变过来的那一小会儿点它不算：她按停的那一下连着点了两下、
+                  // 或者正要按停的时候他正好回完了，不该一下子打出去
                   <button
-                    onClick={() => keySettled("stop") && startVoice()}
+                    onClick={() => keySettled("stop") && startCall()}
                     onMouseDown={(e) => e.preventDefault()}
-                    aria-label="发语音"
+                    aria-label="打电话"
                     className="kfs-tap flex-shrink-0 flex items-center justify-center"
                     style={{
                     width: 38,
@@ -3818,8 +3987,6 @@ export default function App({ account = {} }) {
                   </button>
                 )}
               </div>
-            </>
-          )}
         </div>
         {/* 加号背后的文件框：照片，加上 Word、Markdown、文本。iPhone 的“选取文件”里只有这几种点得动 */}
         <input
@@ -3892,6 +4059,9 @@ export default function App({ account = {} }) {
 
       {/* 并蒂莲：盖在最上面（比照片、提示那几层还高），叉一点就整层拆掉，回到侧栏 */}
       {lotusOpen && <LotusPage theme={theme} onClose={() => setLotusOpen(false)} />}
+
+      {/* 通话页：盖在最上面（见 call/CallPage.jsx）。她点屏幕那一下（iPhone 不让自己接着听的时候）接着听 */}
+      {call && <CallPage call={call} avatar={avatars.him} name={names.him || HIS_NAME} onMute={toggleMute} onHangUp={hangUp} onTap={callListen} />}
 
       {chatMenu && (
         <ChatMenu
