@@ -1184,6 +1184,7 @@ function resetWorld() {
         if (t) lines.push(t);
       } else if (it.type === "meme") lines.push("[表情包]");
       else if (it.type === "voice") lines.push("[语音]");
+      else if (it.type === "call") lines.push("[来电]");
       else if (it.type === "doc") lines.push(`[文档] ${it.name}`);
       else if (it.type === "avatar") avatar = true;
     }
@@ -1308,6 +1309,25 @@ function resetWorld() {
     "[VOICE]\n[VOI[MEME:a.jpg]CE]",
     "[VOICE]\n[VOI[VOICE]CE]",
     "[VOICE]\n[VO[VOI[VOICE]CE]ICE]尾",
+    // 打电话：[CALL] 那一行起是她接起来他先说的话，横幅上写一条 [来电]
+    "[CALL]\n[softly] 卿卿。在做什么。",
+    "想你了\n[SPLIT]\n[CALL]\n卿卿。",
+    "没写 SPLIT 就打\n[CALL]\n是我",
+    "[CALL] 同一行就开始说\n第二行\n[SPLIT]\n还是接起来说的",
+    "[call]\n小写的也认",
+    "  [CALL]  \n前头有空格的也认",
+    "[CALL]",
+    "句子中间的 [CALL] 不算",
+    "[CALL]\n[MEME:a.jpg]\n表情包不发",
+    "[CALL]\n换个头像\n[AVATAR:fox.jpg]",
+    "[CALL]\n改个名\n[NAME:小狐]",
+    "[VOICE]\n先发语音\n[CALL]\n再打电话",
+    "[CALL]\n[VOICE]\n打电话里写了语音",
+    "[CALL]\n两个\n[CALL]\n只认头一个",
+    "[DOC:x.md]\n[CALL]\n文档里的不算\n[/DOC]\n[CALL]\n文档外的算",
+    "[CALL]\n接起来说\n[DOC:x.md]\n正文\n[/DOC]\n文档后面的照常",
+    "[CALL]\r\nWindows 换行",
+    "*摸摸头*\n[CALL]\n*动作* 不念",
   ];
   const diff = corpus.filter((t) => !same(t));
   ok(diff.length === 0, `横幅：${corpus.length} 条各式各样的回话，小后端拆出来的和网页拆出来的一模一样，一个气泡对一条${diff.length ? "（对不上的：" + JSON.stringify(diff.map((t) => [t, fn.bubblesOf(t), expect(t)])) + "）" : ""}`);
@@ -1327,7 +1347,8 @@ function resetWorld() {
     "\u00a0", "\u3000", "\ufeff", "\u000b", "\u2028", "[DOC: x .md ]\n", "[MEME: a.jpg ]",
     "「", "」", "'", "\"", "》", "《", "[DOC:「x」.md]\n", "[DOC:'x'", "]\n", "[NAME:「新名字」」]", "\n[NAME:『新名字』]\n", "[NAME:新名字", "」]\n",
     "# ", "## ", "\n# ", "\n### ", "#", " #", " ##\n", "**", "***", "**粗**", "*斜*", "```", "\n```\n", "   ", "    ",
-    "[VOICE]", "\n[VOICE]\n", "[VOICE] ", "\n[voice]", " [VOICE]", "[whispers] ", "\n\t[VOICE]\t"];
+    "[VOICE]", "\n[VOICE]\n", "[VOICE] ", "\n[voice]", " [VOICE]", "[whispers] ", "\n\t[VOICE]\t",
+    "[CALL]", "\n[CALL]\n", "[CALL] ", "\n[call]", " [CALL]", "\n\t[CALL]\t"];
   const off = [];
   const splitOff = [];
   for (let i = 0; i < 20000; i++) {
@@ -1374,12 +1395,18 @@ function resetWorld() {
     const docClose = () => /^[ \t]*\[\/(?:DOC|Doc|doc)\][ \t]*\r?$/m;
     // 一句话自己就是 [VOICE] 开头的一行（表情包紧贴在它前面写，原来那一行没被认成语音）：单独写回去就成了一条语音
     const voiceLine = () => /^[ \t]*\[(?:VOICE|Voice|voice)\]/m;
+    // 打电话的记号也一样：原来紧贴在表情包、换头像后面写，没被认成打电话（当字显示了），单独写回去就成了真打电话
+    const callLine = () => /^[ \t]*\[(?:CALL|Call|call)\]/m;
     // 学不了的三种，都是他写岔了才有的样子（见 rawOf 上面那段）：
     //   一句话自己长得就像记号（改名的、文档开头的、语音的记号紧贴着别的东西写，原来当字显示了）；
     //   文档的正文里夹着一行结尾的记号（原来那一行后面跟着怪空白，没被认成结尾）；
     //   名字再收拾一遍会变（太长截断以后露出个引号）
+    // 打电话那一样后面紧跟着字、语音、表情包、又一个打电话（中间原来隔着一个空的文档块，空的不算一样）：
+    // 写回去就都并进了接起来说的话里。只有换头像（本来就从接起来说的话里认出来的）、文档（隔得开）能跟在后面
+    const oddCall = (items) => items.some((it, i) => it.type === "call" && i + 1 < items.length && items[i + 1].type !== "avatar" && items[i + 1].type !== "doc");
     const odd = (items, rename) =>
-      items.some((it) => (it.type === "text" && (nameLine().test(it.text) || voiceLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "voice" && (nameLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "doc" && docClose().test(it.text))) ||
+      oddCall(items) ||
+      items.some((it) => (it.type === "text" && (nameLine().test(it.text) || voiceLine().test(it.text) || callLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "voice" && (nameLine().test(it.text) || callLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "call" && (nameLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "doc" && docClose().test(it.text))) ||
       (!!rename && namesjs.cleanMarkName(rename) !== rename);
     const flat = (items) => JSON.stringify(items.map((it) => (it.type === "doc" ? { ...it, name: docsjs.cleanDocName(it.name) } : it)));
     let tried = 0, skipped = 0;

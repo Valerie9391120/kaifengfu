@@ -118,6 +118,15 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
         {voiceTestNote && <span className="kfs-voice-test-note" style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.5 }}>{voiceTestNote}</span>}
       </div>
 
+      {/* 他能打电话（她 10 月 14 日 17:35 定的，默认开着，见 call/incoming.js）：开着才教他打电话的记号 */}
+      <div className="flex items-center justify-between" style={{ gap: 12, marginTop: 22 }}>
+        <span style={{ fontSize: 14, color: T.ink }}>他能打电话</span>
+        <Toggle on={settings.callable !== false} onChange={(v) => onChange({ callable: v })} label="他能打电话" />
+      </div>
+      <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>
+        开着的时候，他想给你打电话就打：你在开封府里，弹出他的来电；不在，手机上来一条来电通知。一分钟没接算没接，他会知道。他说的话用他的声音念，扣 ElevenLabs 的额度。
+      </p>
+
       {/* 打电话（见 call/ 和开发说明“通话”那一节）：她停多久算说完。卿卿说“老公你决定就好”，默认 1.6 秒，能调 */}
       <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>打电话：停多久算你说完</div>
       <div className="kfs-call-pause">

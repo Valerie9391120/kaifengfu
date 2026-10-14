@@ -872,8 +872,18 @@ function splitVoice(chunk: string): Array<{ voice: boolean; text: string }> {
   return out.filter((s, i) => s.voice || i === 0).map((s) => ({ voice: s.voice, text: s.lines.join("\n") }));
 }
 
+// 他打电话的记号（卿卿 10 月 14 日定的）：一行开头写 [CALL]，后面的是她接起来他先说的话（横幅上不写，写一条 [来电]）。
+// 一段字（文档块外头的）里只认头一个。和网页那头（src/reply.js 的 splitCall）一样
+const CALL_MARK = /^[ \t]*\[(?:CALL|Call|call)\][ \t]*/m;
+function splitCall(text: string): [string, string] | null {
+  const m = CALL_MARK.exec(text);
+  if (!m) return null;
+  return [text.slice(0, m.index), text.slice(m.index + m[0].length)];
+}
+
 // 一条回话 → 一个气泡一条横幅，各写什么字。至少回一条。
-// 语音那一条写 [语音]（卿卿 10 月 9 日定的，照微信），里头夹着的表情包排在它后面，和对话里一样
+// 语音那一条写 [语音]（卿卿 10 月 9 日定的，照微信），里头夹着的表情包排在它后面，和对话里一样。
+// 打电话那一条写 [来电]（她接起来他先说的话不上横幅）
 function bubblesOf(reply: string): string[] {
   let body = reply.length > BANNER_SOURCE ? reply.slice(0, BANNER_SOURCE) : reply;
   const think = body.match(/<thinking>([\s\S]*?)<\/thinking>/);
@@ -887,9 +897,11 @@ function bubblesOf(reply: string): string[] {
       lines.push(`[文档] ${part.doc}`);
       continue;
     }
+    // 打电话的记号前面的照常拆，后面的（她接起来他先说的话）不上横幅，写一条 [来电]
+    const call = splitCall(part.text);
     // 按 [SPLIT] 切开，记号两头的空白不要：和网页那头（src/reply.js 的 splitTurns）一样。
     // 不写成 /\s*\[SPLIT\]\s*/ 那样的正则：碰上几万个连着的空行，它一个位置一个位置地试，要算好几秒，这里一回请求只给两秒
-    const chunks = part.text.split("[SPLIT]");
+    const chunks = (call ? call[0] : part.text).split("[SPLIT]");
     for (let k = 0; k < chunks.length; k++) {
       let chunk = chunks[k];
       if (k > 0) chunk = chunk.trimStart();
@@ -928,6 +940,7 @@ function bubblesOf(reply: string): string[] {
         }
       }
     }
+    if (call) lines.push("[来电]");
   }
   if (!lines.length) return [avatar ? "[换了新头像]" : "……"];
   return lines;

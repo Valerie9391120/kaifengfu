@@ -59,7 +59,12 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null) {
         });
       }
       items.forEach((it, j) => {
-        if (it.type === "avatar") {
+        if (it.type === "call") {
+          // 他打电话（见 call/incoming.js）：一行小字“光义来电”，前面一个小电话；接了、没接看后面那一行（“通话开始”“未接来电”）。
+          // 打着电话的时候他又写了 [CALL] 的：那会儿当照常说话念了，摆成他说的一句
+          if (inCall) rows.push({ type: "bubble", key: m.id + "-" + j, role: "him", msg: m, item: { type: "text", text: it.text || "……" }, idx: j, call: true });
+          else rows.push({ type: "notice", key: m.id + "-" + j, msg: m, kind: "call", text: `${HIS_NAME}来电` });
+        } else if (it.type === "avatar") {
           rows.push({
             type: "notice",
             key: m.id + "-" + j,
