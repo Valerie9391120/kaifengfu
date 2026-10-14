@@ -116,10 +116,11 @@ export function splitForCall(text, { first = true, firstMin = 12, endMin = 40, s
 }
 
 // 他这一回的话（回话里的那几样）切成要念的几段：字和语音都念；表情包、文档、换头像不念
+// 打电话那一样（他打来的那一通里接起来先说的话；打着电话他又写了 [CALL] 的，也当照常说话念）也念
 export function segmentsOfReply(items) {
   const out = [];
   (items || []).forEach((it) => {
-    if (!it || (it.type !== "text" && it.type !== "voice")) return;
+    if (!it || (it.type !== "text" && it.type !== "voice" && it.type !== "call")) return;
     const clean = cleanForCall(it.text);
     if (!clean) return;
     splitForCall(clean, { first: out.length === 0 }).forEach((s) => out.push(s));

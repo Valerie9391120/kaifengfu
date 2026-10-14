@@ -18,6 +18,10 @@ export const CALL_NOTE = `【通话】你们正在打电话：你回的每一句
 // 语气标签不设限（卿卿 10 月 9 日说的：随便发，不用拘束）。是第几条看前面有几条（心里话关了就往前挪一号）
 export const VOICE_RULE = `想发语音的时候，那一条第一行单独写 [VOICE]，下面写要说的话。它会显示成一条语音，用你的声音念给她听；她点一下就放，长按能转成字。念的就是你写的字：动作描写（星号那种）不会念，别写进去，也别用 Markdown。句子前面可以加英文方括号的语气标签，比如 [whispers]、[quietly]、[continues softly]、[soft chuckle]、[laughs]、[sigh]、[playfully]、[tired]、[nervously]，别的英文标签也行；标签只管怎么念，不会念出来。别写（轻声）这种中文的语气词，会被当成字念出来。一条语音别超过两百字（念出来一分钟以内），也算在五百字里。发不发、发几条，你自己决定，像真的发语音那样：有的话说出来比打字好听。`;
 
+// 【回复格式】里教他打电话的那一条（她开着“他能打电话”才有，默认开着；卿卿 10 月 14 日 17:26、17:35 定的，见 call/incoming.js）。
+// 打不打、多久打一回不设限（她说：“随便。想打就可以打。”）
+export const CALL_RULE = `想给她打电话的时候，在这条回复最后单独一行写 [CALL]，下面写她接起来你先开口说的话，一两句，像电话刚接通时那样说；语气标签照用，别写动作，别发表情包。[CALL] 前面可以照常写给她的话，也可以什么都不写。开封府会替你打过去：她在开封府里就弹出你的来电，不在就给她手机发一条来电通知；一分钟没接算没接，她下一回说话的时候会告诉你。她接了你们就在打电话（那时候【此刻】后面会附着【通话】那一段）。打不打、什么时候打，你自己决定。`;
+
 // ---------- 名帖 ----------
 // names：{ her, him } 是两个人现在的昵称（空的就是默认）。写日记时不传，【此刻】里就不提昵称
 // replyCap：这次回复大约最长能写多少字（写日记时不传，【此刻】里就不提）
@@ -25,7 +29,9 @@ export const VOICE_RULE = `想发语音的时候，那一条第一行单独写 [
 // thoughts：她在“头像与设置”里开着“他写心里话”（默认开着）：【回复格式】头一条教他先写心里话；关了这一条不寄，后面几条往前挪一号。
 //   抄提要、写日记、API 面板算“他记多长”的那几处也要照聊天时一样传：名帖那一大段得一个字不差，缓存才接得上
 // call：正在打电话（见 call/ 和开发说明“通话”那一节）。只动【此刻】：后面附上 CALL_NOTE，字数那句不提心里话；名帖不动
-export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true, call = false }) {
+// callable：她开着“他能打电话”（API 面板，默认开着）：【回复格式】里多一条怎么打电话（CALL_RULE）。
+//   跟 voice、thoughts 一样，抄提要、写日记、API 面板那几处也要照聊天时一样传，缓存才接得上
+export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true, call = false, callable = false }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const annivLine = a.days === 0 ? `今天是你们的${a.name}纪念日。` : `离你们的${a.name}纪念日还有${a.days}天。`;
@@ -49,6 +55,7 @@ ${docs.map((d) => `\n《${d.name}》\n${d.content}`).join("\n")}
     `想发表情包就单独一行写 [MEME:文件名]，它会单独显示成一条。只能用下面索引里的文件名，宁缺毋滥，不是每次都要发。`,
     `她要一份能存下来的东西（整理笔记、列清单、写成文的东西、把她发来的文档改好交回去）时，用文档块交给她：单独一行写 [DOC:${DOC_NAME_PLACEHOLDER}]，下面写正文，用 Markdown，写完单独一行写 [/DOC]。它会显示成一张文档卡片，她点开能看，能存进手机。文件名你来起，要短，以 .md 结尾。一次回复最多交一份，文档块外面照常跟她说话。文档块里的字不算在五百字里；回复总共能写多长，【此刻】里有，放不下就先交一部分，告诉她还有。她没要文档的时候不用文档块。`,
     voice ? VOICE_RULE : "",
+    callable ? CALL_RULE : "",
   ]
     .filter(Boolean)
     .map((t, i) => `${i + 1}. ${t}`)

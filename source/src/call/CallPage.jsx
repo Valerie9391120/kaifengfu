@@ -154,7 +154,7 @@ export function CallPage({ call, avatar, name, onMute, onHangUp, onTap }) {
   );
 }
 
-function RoundKey({ label, onClick, bg, color, icon, turn = false, pressed }) {
+export function RoundKey({ label, onClick, bg, color, icon, turn = false, pressed }) {
   return (
     <div className="flex flex-col items-center" style={{ gap: 8 }}>
       <button

@@ -44,13 +44,15 @@ function hisLines(m, memeLookup) {
     else if (it.type === "avatar") out.push(`[${HIS_NAME}把自己的头像换成了「${(memeLookup(it.file) || {}).name || it.file}」]`);
     else if (it.type === "doc") out.push(say(HIS_NAME, `[交给她一份文档《${it.name}》，${(it.text || "").length} 字${it.cut ? "，没写完" : ""}。开头是：\n${head(it.text, HIS_DOC_HEAD)}\n]`));
     else if (it.type === "voice") out.push(say(HIS_NAME, `[语音] ${head(heardOf(it.text) || "……", ROW_HEAD)}`));
+    // 他打电话：接没接、接起来说了什么，看后面那一行（“通话开始”“未接来电”，见 call/marks.js 的 markRecap）
+    else if (it.type === "call") out.push(`[${HIS_NAME}给${HER_NAME}打电话]`);
     else out.push(say(HIS_NAME, head(it.text || "……", ROW_HEAD)));
   });
   return out;
 }
 
 const FORMAT = `用第一人称：“我”是你，“她”是${HER_NAME}。平实地写，不抒情，不评价。可以分小标题、用短句，不用星号。`;
-const NO_MARKS = `【回复格式】里的规矩这一回都不作数：不写 <thinking>，不拆成几条消息，不要 [SPLIT]、[MEME]、[AVATAR]、[NAME]、[DOC]、[VOICE] 这些记号。直接从正文写起，别的话不用说。`;
+const NO_MARKS = `【回复格式】里的规矩这一回都不作数：不写 <thinking>，不拆成几条消息，不要 [SPLIT]、[MEME]、[AVATAR]、[NAME]、[DOC]、[VOICE]、[CALL] 这些记号。直接从正文写起，别的话不用说。`;
 
 // 抄一段。回 { rule, content, photos }：
 //   rule     跟在名帖后面的那段规矩

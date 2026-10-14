@@ -7,7 +7,9 @@ import { downsampler, toPcm16, rmsOf, pcmB64, MIC_RATE } from "../src/call/mic.j
 import { createHearer, sttUrl, joinText, sttTrouble, CHUNK, LOUD, LONG_EXTRA, TEXT_GRACE, FINAL_WAIT } from "../src/call/hear.js";
 import { stats, echoResult, createEchoProbe, QUIET_MS, GAP_MS, HEAD_MS, VERDICT_TEXT } from "../src/call/echo.js";
 import { isCallMark, callLen, callClock, markText, markNote, markRecap } from "../src/call/marks.js";
-import { buildSystem, CALL_NOTE } from "../src/prompt/system.js";
+import { buildSystem, CALL_NOTE, CALL_RULE } from "../src/prompt/system.js";
+import { parseReply, rawOf } from "../src/reply.js";
+import { pendingCall, ringLeft, ringWav, CALL_RING_MS, RING_MIN_MS } from "../src/call/incoming.js";
 import { buildMessages } from "../src/prompt/messages.js";
 import { buildRecapAsk } from "../src/prompt/recap.js";
 import { buildRows } from "../src/chat/rows.js";
@@ -666,6 +668,60 @@ ok(markText(START) === "通话开始" && markText(END) === "通话 13 分钟", "
   ok(texts.includes(markNote(START)) && texts.includes(markNote(END)) && markNote(END) === "[开封府提示：电话挂了，你们打了 13 分钟]" && texts[0].startsWith("【开封府附注】卿卿用的是默认的“卿”字头像"),
     "寄给他的也有这两行（挂了以后他知道你们刚通过电话）；开头的头像附注照旧（这两行不会被当成换头像）");
   ok(markRecap(START) === "[卿卿和光义开始打电话]" && markRecap(END) === "[电话挂了，打了 13 分钟]", "抄提要时写成：[卿卿和光义开始打电话]、[电话挂了，打了 13 分钟]");
+}
+
+// =====================================================
+// 他打给她（她 17:26、17:35 定的）：[CALL] 怎么拆、怎么写回去、没着落的那一通、响多久、铃声、聊天里那几行、告诉他的话
+// =====================================================
+{
+  const P = (t) => parseReply(t);
+  const a = P("想你了\n[SPLIT]\n[CALL]\n[softly] 卿卿。在做什么。");
+  ok(JSON.stringify(a.items) === JSON.stringify([{ type: "text", text: "想你了" }, { type: "call", text: "[softly] 卿卿。在做什么。" }]),
+    `拆：[CALL] 前面的照常一条一条，后面的是她接起来他先说的话（${JSON.stringify(a.items)}）`);
+  const b = P("[CALL] 是我\n[SPLIT]\n[MEME:a.jpg]\n在做什么\n[AVATAR:fox.jpg]\n[NAME:小狐]");
+  ok(JSON.stringify(b.items) === JSON.stringify([{ type: "call", text: "是我\n\n在做什么" }, { type: "avatar", file: "fox.jpg" }]) && b.rename === "小狐",
+    `拆：同一行就开始说；[SPLIT] 当换行；表情包不发；换头像、改名字照认（${JSON.stringify(b.items)}）`);
+  const c = P("[CALL]");
+  const d = P("句子中间的 [CALL] 不算");
+  ok(JSON.stringify(c.items) === JSON.stringify([{ type: "call", text: "" }]) && d.items.length === 1 && d.items[0].type === "text", "拆：只写了 [CALL]：照样打（接通了先听她说）；句子中间的不算");
+  ok(rawOf(a.items, "") === "想你了\n[SPLIT]\n[CALL] [softly] 卿卿。在做什么。" && JSON.stringify(P(rawOf(a.items, "")).items) === JSON.stringify(a.items),
+    "写回去：记号和接起来说的头一行写在同一行；再拆还是那几样");
+  ok(segmentsOfReply([a.items[1]]).join("|") === "[softly] 卿卿。|在做什么。", `念：打电话那一样也念（他打来的那一通接起来先说的，头一段短、早点出声）（${segmentsOfReply([a.items[1]]).join("|")}）`);
+
+  const MISSED = { id: "m1", role: "event", who: "call", kind: "call", phase: "missed", callOf: "g", ts: 70000 };
+  const HIM_START = { id: "s1", role: "event", who: "call", kind: "call", phase: "start", from: "him", callOf: "g", ts: 30000 };
+  ok(markText(MISSED) === "未接来电" && markText(HIM_START) === "通话开始" && markNote(MISSED) === "[开封府提示：你打过去的电话她没接]" && markNote(HIM_START) === "[开封府提示：她接了你打过去的电话，你们在打电话]" &&
+      markRecap(MISSED) === "[光义给卿卿打电话，她没接]" && markRecap(HIM_START) === "[卿卿接了光义打来的电话]",
+    "那几行：没接的写“未接来电”；告诉他“你打过去的电话她没接”；接了的告诉他“她接了”；抄提要的写法");
+
+  const her = { id: "h", role: "her", ts: 1000, text: "在吗" };
+  const call = { id: "g", role: "him", ts: 10000, items: a.items, raw: rawOf(a.items, "") };
+  ok(pendingCall([her, call]).msg === call && pendingCall([her, call]).item.text === "[softly] 卿卿。在做什么。", "没着落的那一通：他打了、后面还没有“通话开始”“未接来电”");
+  ok(pendingCall([her, call, MISSED]) === null && pendingCall([her, call, HIM_START]) === null, "记了“未接来电”或者接了：有着落了");
+  const inCall = [START, { id: "x", role: "him", ts: 2000, items: [{ type: "call", text: "打着电话又写了" }] }, END];
+  ok(pendingCall(inCall) === null, "打着电话的时候他写的 [CALL]：不算（那会儿当照常说话念了）");
+  const two = [call, { ...call, id: "g2", ts: 20000 }];
+  ok(pendingCall(two).msg.id === "g" && pendingCall([call, MISSED, { ...call, id: "g2" }]).msg.id === "g2", "好几通没着落的：一通一通办，先办早的");
+  ok(ringLeft(10000, 10000) === CALL_RING_MS && ringLeft(10000, 10000 + 50000) === RING_MIN_MS && ringLeft(10000, 10000 + CALL_RING_MS + 1) === 0 && ringLeft(10000, 5000) === 0,
+    "响多久：到了一分钟就不响（只剩几秒才看到的至少再响 15 秒）；过了一分钟、钟点不对的直接记没接");
+  const w = ringWav(8000);
+  ok(String.fromCharCode(...w.slice(0, 4)) === "RIFF" && String.fromCharCode(...w.slice(8, 12)) === "WAVE" && w.length === 44 + Math.floor(8000 * 3.2) * 2 && w.slice(44).some((x) => x !== 0),
+    "铃声：自己合成的一小段 WAV（有声音）");
+
+  const rows = buildRows([her, call, MISSED], null, "");
+  const lines = rows.filter((r) => r.kind === "call").map((r) => r.text);
+  ok(lines.join() === "光义来电,未接来电" && rows.some((r) => r.type === "bubble" && r.item.text === "想你了") && !rows.some((r) => r.type === "bubble" && r.item.type === "call"),
+    `聊天里：他打电话那一样是一行“光义来电”（不是气泡），没接的后面一行“未接来电”（${lines.join()}）`);
+  const midCall = buildRows(inCall, null, "").filter((r) => r.type === "bubble");
+  ok(midCall.length === 1 && midCall[0].item.text === "打着电话又写了" && midCall[0].call, "打着电话他又写了 [CALL]：摆成他说的一句");
+  ok(makePreview([her, { ...call, items: [{ type: "call", text: "是我" }] }]) === "[来电]" && makePreview([her, call, MISSED]) === "[未接来电]", "历史对话的预览：[来电]、[未接来电]");
+  const { messages } = buildMessages([her, call, MISSED, { id: "h2", role: "her", ts: 80000, text: "刚才在洗澡" }], { her: null, him: null }, () => null);
+  const sent = messages.flatMap((m) => m.content.filter((b) => b.type === "text").map((b) => `${m.role}:${b.text}`));
+  ok(sent.includes("assistant:想你了\n[SPLIT]\n[CALL] [softly] 卿卿。在做什么。") && sent.includes("user:[开封府提示：你打过去的电话她没接]") && sent.indexOf("user:[开封府提示：你打过去的电话她没接]") < sent.indexOf("user:刚才在洗澡"),
+    `寄给他的：他自己那一条照原样（他知道自己打了、要说什么），后面一句“你打过去的电话她没接”，再是她的话（${JSON.stringify(sent.slice(-3))}）`);
+  const sys = (callable) => buildSystem({ now: new Date(2026, 9, 14, 18, 0), memeList: [], hisAvatarName: "", memDocs: [], callable }).staticText;
+  ok(sys(true).includes(CALL_RULE) && !sys(false).includes("[CALL]") && CALL_RULE.includes("单独一行写 [CALL]") && CALL_RULE.includes("一分钟没接"),
+    "开着“他能打电话”才教他：单独一行写 [CALL]、下面写接起来先说的；一分钟没接算没接");
 }
 
 // =====================================================

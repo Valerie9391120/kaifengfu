@@ -33,6 +33,17 @@ export function splitTurns(text) {
   });
 }
 
+// 他打电话的记号（卿卿 10 月 14 日 17:26 定的，见开发说明“他打给她”）：一行开头写 [CALL]，
+// 后面的（同一行跟着的字、下面几行、连着 [SPLIT] 隔开的，到这一段字完为止）是她接起来他先说的话。
+// 一段字（文档块外头的）里只认头一个。回 [记号前面的, 记号后面的]；没有就是 null。
+// 通知的小后端（push_function.ts 的 splitCall）照同一个办法认：改一边要跟着改另一边
+const CALL_MARK = /^[ \t]*\[(?:CALL|Call|call)\][ \t]*/m;
+export function splitCall(text) {
+  const m = CALL_MARK.exec(String(text));
+  if (!m) return null;
+  return [text.slice(0, m.index), text.slice(m.index + m[0].length)];
+}
+
 export function splitMarks(text) {
   const parts = [];
   // 表情包、换头像、改名字三种标记。改名字的要独占一行才算（所以带 m 标志），新名字里可以有空格。
@@ -73,7 +84,9 @@ export function parseReply(text) {
       items.push({ type: "doc", name: part.name, text: part.text, ...(part.cut ? { cut: true } : {}) });
       return;
     }
-    splitTurns(part.value).forEach((chunk) => {
+    // 打电话的记号前面的照常拆；后面的是她接起来他先说的话（见下面）
+    const call = splitCall(part.value);
+    splitTurns(call ? call[0] : part.value).forEach((chunk) => {
       // 一条里 [VOICE] 那一行起是语音（见 voice.js 的 splitVoice）。语音里的字并成一条语音，
       // 里头夹着的表情包、换头像、改名字照认，排在这条语音后面
       splitVoice(chunk).forEach((seg) => {
@@ -93,9 +106,38 @@ export function parseReply(text) {
         marks.forEach((x) => items.push(x)); // 一样一样塞（展开的写法碰上几十万样会撑爆）
       });
     });
+    if (call) {
+      // 打电话：记号后面的是她接起来他先说的话。[SPLIT] 当换行；[VOICE]、[CALL] 这几个字不要；
+      // 表情包不发（电话里看不见）；换头像、改名字照认（换头像排在打电话后面）
+      const said = [];
+      const after = [];
+      splitMarks(uncall(untoken(call[1].split("[SPLIT]").join("\n")))).forEach((p) => {
+        if (p.type === "avatar") after.push({ type: "avatar", file: p.value });
+        else if (p.type === "name") rename = cleanMarkName(p.value) || rename;
+        else if (p.type === "text") said.push(p.value);
+      });
+      const text = said
+        .join("")
+        .replace(/[ \t]*\r?\n[ \t]*/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      items.push({ type: "call", text });
+      after.forEach((x) => items.push(x));
+    }
   });
   if (!items.length) items.push({ type: "text", text: "……" });
   return { thinking, body, items, rename };
+}
+
+// 接起来说的话里不留 [CALL] 这几个字：跟 untoken 一个办法，从头往后收，末尾正好是一个就扔掉（摘掉一个、两头拼起来又成了一个的，也摘得干净）
+const CALL_TOKENS = ["[CALL]", "[Call]", "[call]"];
+function uncall(text) {
+  const out = [];
+  for (let i = 0; i < text.length; i++) {
+    out.push(text[i]);
+    if (text[i] === "]" && out.length >= 6 && CALL_TOKENS.includes(out.slice(-6).join(""))) out.length -= 6;
+  }
+  return out.join("");
 }
 
 // 换头像只认索引里真有的图，多次只留最后一次
@@ -127,6 +169,9 @@ export function rawOf(items, rename) {
     // 语音：记号和头一行写在同一行（拆的时候认得）。头一行原来就是跟在记号后面的，
     // 单独另起一行的话，它要是长得像文档开头的记号（[DOC:…]），再拆就成了一份文档
     if (it.type === "voice") return `[VOICE] ${it.text || ""}`;
+    // 打电话：记号和接起来说的头一行写在同一行（跟语音一个道理：头一行原来就跟在记号后面，
+    // 单独另起一行的话，它要是长得像文档开头的记号，再拆就成了一份文档）
+    if (it.type === "call") return `[CALL] ${it.text || ""}`;
     if (it.type === "doc") {
       // 文件名正好是教写法时占位的那个：照抄会被当成“在讲写法”，套一层书名号（拆的时候会剥掉）
       const name = it.name === DOC_NAME_PLACEHOLDER ? `《${it.name.replace(/\.md$/, "")}》` : it.name;

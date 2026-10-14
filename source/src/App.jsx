@@ -60,6 +60,9 @@ import { createHearer } from "./call/hear.js";
 import { HELLOS, HELLO_KEY, HELLO_LAST, HELLO_WAIT, pickHello } from "./call/hello.js";
 import { createEchoProbe, ECHO_LINE, ECHO_KEY } from "./call/echo.js";
 import { EchoProbe } from "./call/EchoProbe.jsx";
+import { pendingCall, ringLeft, ringWav, CALL_RING_MS } from "./call/incoming.js";
+import { IncomingCall } from "./call/IncomingCall.jsx";
+import { isCallMark } from "./call/marks.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -223,6 +226,9 @@ export default function App({ account = {} }) {
   const callRef = useRef(null);
   const [echo, setEcho] = useState(null); // 量一量回声（见 call/echo.js）：那一页眼下的样子
   const echoRef = useRef(null);
+  const [ring, setRing] = useState(null); // 他打来的电话正在响（见 call/incoming.js）
+  const ringRef = useRef(null);
+  const [seenTick, setSeenTick] = useState(0); // 她回到眼前一回加一（他打来的电话等她在眼前再认）
   const dictBaseRef = useRef("");
   // 他的语音条（见 voice.js、speaker.js）：每一条眼下的样子（念着、念好了、念不成…）、正在放的是哪一条、转过文字的那几条
   const [voices, setVoices] = useState({});
@@ -1185,6 +1191,7 @@ export default function App({ account = {} }) {
       replyCap: replyRoom(st.maxTokens || 2048),
       voice: !!st.voice,
       thoughts: st.thoughts !== false, // 他写不写心里话（“头像与设置”里的开关，默认开着）
+      callable: st.callable !== false, // 他能打电话（API 面板里的开关，默认开着；见 call/incoming.js）
       call: !!(callRef.current && callRef.current.chat === opts.chat), // 正在打电话：【此刻】后面附上通话的规矩（见 call/）
     });
     // 这段对话抄过提要的：前面的不寄原话，换成提要（见 recap.js）
@@ -2057,7 +2064,8 @@ export default function App({ account = {} }) {
       }
     });
   };
-  const startCall = () => {
+  // him：他打来、她接了的那一通（见 call/incoming.js 和下面的 answerRing）：{ callOf 他打电话的那一条, segs 接起来他先说的几段, pre 响铃的时候先念好的 }
+  const startCall = (him = null) => {
     if (callRef.current) return;
     if (dictating && recRef.current) recRef.current.stop();
     // 放他声音的（见 call/play.js）：在她点的这一下里开起来（iPhone 要这一下）；告诉 iPhone 这一通是又放又录的；
@@ -2065,16 +2073,21 @@ export default function App({ account = {} }) {
     const audio = createCallAudio(window, silentMp3(3));
     audio.unlock();
     const id = chatIdRef.current;
-    // 接起来他先说的那一句（见 call/hello.js）：三句里挑一句，不跟上回一样
-    let lastHi = "";
-    try {
-      lastHi = localStorage.getItem(HELLO_LAST) || "";
-    } catch (e) {}
-    const hi = pickHello(lastHi);
-    try {
-      localStorage.setItem(HELLO_LAST, hi);
-    } catch (e) {}
-    const mark = { id: newId(), role: "event", who: "call", kind: "call", phase: "start", hi, ts: Date.now() };
+    // 接起来他先说的那一句（见 call/hello.js）：三句里挑一句，不跟上回一样。他打来的那一通不用：他先说的写在打电话那一条里
+    let hi = null;
+    if (!him) {
+      let lastHi = "";
+      try {
+        lastHi = localStorage.getItem(HELLO_LAST) || "";
+      } catch (e) {}
+      hi = pickHello(lastHi);
+      try {
+        localStorage.setItem(HELLO_LAST, hi);
+      } catch (e) {}
+    }
+    const mark = him
+      ? { id: newId(), role: "event", who: "call", kind: "call", phase: "start", from: "him", callOf: him.callOf, ts: Date.now() }
+      : { id: newId(), role: "event", who: "call", kind: "call", phase: "start", hi, ts: Date.now() };
     const next = messagesRef.current.concat([mark]);
     messagesRef.current = next;
     follow.pin();
@@ -2086,16 +2099,29 @@ export default function App({ account = {} }) {
     let earsGo = null;
     const earsReady = new Promise((r) => (earsGo = r));
     setTimeout(earsGo, HELLO_WAIT);
-    const c = { chat: id, startId: mark.id, start: Date.now(), spoken: new Set(), audio, wake: null, muted: false, phase: "ring", subs: emptySubs(), note: "", hi, listener: null, mic: null, ears: "", earsGo };
+    const c = { chat: id, startId: mark.id, start: Date.now(), spoken: new Set(), audio, wake: null, muted: false, phase: "ring", subs: emptySubs(), note: "", hi, from: him ? "him" : "", pre: (him && him.pre) || null, listener: null, mic: null, ears: "", earsGo };
     c.sayer = createSayer({
       // 念好的一段：Web Audio 解码好（解不开的留着 <audio> 用的地址兜底），交给念的那头当“地址”排队。
       // 接起来那一句：存过就直接用存着的（不再花钱）；头一回念好了存起来。
+      // 他打来的那一通：接起来他先说的，响铃的工夫里已经念好了（c.pre），直接用；没念成的现念。
       // 解码好了等听的那头准备好再交（准备好以后的都不用等）：念好了才算“开口”，字幕、那圈光跟着声音一起出
       synth: async (text, signal) => {
-        const hello = HELLOS.includes(text);
-        const kept = hello ? readVoice(store.peek(HELLO_KEY + text)) : null;
-        let clip;
-        if (kept) clip = await audio.decode(kept.audio, kept.mime);
+        let clip = null;
+        const early = c.pre && c.pre.get(text);
+        if (early) {
+          c.pre.delete(text);
+          try {
+            const d = await early;
+            clip = await audio.decode(d.audio, d.mime);
+          } catch (e) {
+            clip = null;
+          }
+        }
+        const hello = !him && HELLOS.includes(text);
+        const kept = !clip && hello ? readVoice(store.peek(HELLO_KEY + text)) : null;
+        if (clip) {
+          // 响铃的时候念好的
+        } else if (kept) clip = await audio.decode(kept.audio, kept.mime);
         else {
           const d = await callVoice({ op: "speak", text, stability: stabOf(settingsRef.current.voiceStab) }, { signal });
           if (hello) store.set(HELLO_KEY + text, packVoice(d)).catch(() => {});
@@ -2134,9 +2160,10 @@ export default function App({ account = {} }) {
           .catch(() => {});
       }
     } catch (e) {}
-    // 准备听（ElevenLabs 的通行证、麦克风），同时把他先说的那一句准备好（听的那头好了才放，见上面 earsReady）；说完了接着听
+    // 准备听（ElevenLabs 的通行证、麦克风），同时把他先说的那一句准备好（听的那头好了才放，见上面 earsReady）；说完了接着听。
+    // 他打来的那一通：先说的是打电话那一条里写的（没写的话，接通了就听她说）
     setupEars(c);
-    c.sayer.add([hi]);
+    c.sayer.add(him ? him.segs || [] : [hi]);
     c.sayer.end();
   };
   const hangUp = () => {
@@ -2150,12 +2177,13 @@ export default function App({ account = {} }) {
     if (c.mic) c.mic.close();
     c.audio.close();
     if (c.wake) c.wake.release().catch(() => {});
-    // 聊天里那两行：说过话的记一行“通话 12 分钟”；一句没说的，“通话开始”那行也拿掉
+    // 聊天里那两行：说过话的记一行“通话 12 分钟”；一句没说的，“通话开始”那行也拿掉。
+    // 他打来的那一通，她接了就算通过电话（他开口说了），一句没说也留着、记上打了多久（不然他那一通就没着落了）
     const secs = Math.max(1, Math.round((Date.now() - c.start) / 1000));
     const put = (base) => {
       const at = base.findIndex((m) => m.id === c.startId);
       if (at < 0) return null;
-      const spoke = base.slice(at + 1).some((m) => m.role === "her");
+      const spoke = c.from === "him" || base.slice(at + 1).some((m) => m.role === "her");
       return spoke ? base.concat([{ id: newId(), role: "event", who: "call", kind: "call", phase: "end", secs, ts: Date.now() }]) : base.filter((m) => m.id !== c.startId);
     };
     if (chatIdRef.current === c.chat) {
@@ -2271,6 +2299,110 @@ export default function App({ account = {} }) {
     closeEcho();
     startEcho();
   };
+
+  // ---- 他打来的电话（她 10 月 14 日 17:26、17:35 定的，见 call/incoming.js 和开发说明“他打给她”） ----
+  // 他的回话里写了 [CALL]：放进对话以后（一条一条蹦完了、她在眼前），一分钟以内到的就响，过了一分钟记“未接来电”。
+  // 响的时候把他接起来要说的先念好；她点接听：跟她打过去一样开声音、开麦克风，他先开口；挂断、一分钟没接：“未接来电”
+  const ringUrlRef = useRef("");
+  // 来电铃声（自己合成的，见 ringWav）。iPhone 不让网页自己出声的时候放不出来：那就只有来电页面
+  const playRingTone = () => {
+    try {
+      if (!ringUrlRef.current) ringUrlRef.current = URL.createObjectURL(new Blob([ringWav()], { type: "audio/wav" }));
+      const a = new Audio(ringUrlRef.current);
+      a.loop = true;
+      const p = a.play();
+      if (p && p.catch) p.catch(() => {});
+      return a;
+    } catch (e) {
+      return null;
+    }
+  };
+  const stopRingTone = (a) => {
+    try {
+      if (a) {
+        a.pause();
+        a.removeAttribute("src");
+      }
+    } catch (e) {}
+  };
+  // 没接（挂断、一分钟没接、过了一分钟才看到）：在他打电话那一条后面记一行“未接来电”（见 call/marks.js）。
+  // 几点没接的：他那一条到了一分钟的时候（过了好久才看到的，不记成看到的那会儿）
+  const missCall = (chat, msgId) => {
+    const put = (base) => {
+      if (!Array.isArray(base) || base.some((m) => isCallMark(m) && m.callOf === msgId)) return null;
+      const at = base.findIndex((m) => m.id === msgId);
+      if (at < 0) return null;
+      const t0 = base[at].ts || 0;
+      const mark = { id: newId(), role: "event", who: "call", kind: "call", phase: "missed", callOf: msgId, ts: Math.max(t0 + 1, Math.min(Date.now(), t0 + CALL_RING_MS)) };
+      return base.slice(0, at + 1).concat([mark], base.slice(at + 1));
+    };
+    if (chatIdRef.current === chat) {
+      const next = put(messagesRef.current);
+      if (next) {
+        messagesRef.current = next;
+        setMessages(next);
+        saveChat(chat, next);
+      }
+    } else {
+      store.get("kfs2:chat:" + chat).then((text) => {
+        const next = put(safeParse(text, null));
+        if (next) saveChat(chat, next);
+      });
+    }
+  };
+  const endRing = (r, why) => {
+    if (ringRef.current !== r) return;
+    ringRef.current = null;
+    setRing(null);
+    clearTimeout(r.timer);
+    stopRingTone(r.tone);
+    if (why !== "answer") missCall(r.chat, r.msgId);
+  };
+  const startRing = (msg, item, left) => {
+    if (echoRef.current) closeEcho();
+    if (dictating && recRef.current) recRef.current.stop();
+    stopVoice(); // 正放着的语音条停下
+    const r = { msgId: msg.id, chat: chatIdRef.current, segs: segmentsOfReply([item]), pre: new Map(), timer: null, tone: null };
+    ringRef.current = r;
+    setRing({ msgId: r.msgId });
+    // 他接起来要说的先念好（她一接马上响；没接的话这几个字的额度白扣）
+    r.segs.forEach((s) => {
+      const p = callVoice({ op: "speak", text: s, stability: stabOf(settingsRef.current.voiceStab) });
+      p.catch(() => {});
+      r.pre.set(s, p);
+    });
+    r.tone = playRingTone();
+    r.timer = setTimeout(() => endRing(r, "missed"), left);
+  };
+  // 接听：在她点的这一下里开声音、开麦克风（startCall 里），他先说
+  const answerRing = () => {
+    const r = ringRef.current;
+    if (!r) return;
+    endRing(r, "answer");
+    startCall({ callOf: r.msgId, segs: r.segs, pre: r.pre });
+  };
+  const declineRing = () => {
+    const r = ringRef.current;
+    if (r) endRing(r, "declined");
+  };
+  // 她回到眼前的那一下：他那一通要是还没着落，再看一眼（不在眼前的时候不响、也不急着记没接）
+  useEffect(() => {
+    const on = () => {
+      if (document.visibilityState === "visible") setSeenTick((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", on);
+    return () => document.removeEventListener("visibilitychange", on);
+  }, []);
+  useEffect(() => {
+    if (callRef.current || ringRef.current) return;
+    const p = pendingCall(messages);
+    if (!p) return;
+    if (reveal && reveal.id === p.msg.id) return; // 还在一条一条蹦：等他前面的话摆完再响
+    if (document.visibilityState !== "visible") return;
+    const left = settingsRef.current.callable === false ? 0 : ringLeft(p.msg.ts, Date.now());
+    if (!left) missCall(chatIdRef.current, p.msg.id);
+    else startRing(p.msg, p.item, left);
+  }, [messages, reveal, seenTick]);
 
   // 电话里他的回话到了（不管是直接等到的、还是从信箱里取的，放进对话以后都在 messages 里）：一句一句念
   useEffect(() => {
@@ -2681,7 +2813,7 @@ export default function App({ account = {} }) {
     const model = st.model || DEFAULT_MODEL;
     const memDocs = memFilesRef.current.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
     // 名帖那一大段和聊天时寄的一个字不差（缓存接得上）；【此刻】这回用不着
-    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: st.thoughts !== false });
+    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: st.thoughts !== false, callable: st.callable !== false });
     // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
     const photos = {};
     for (const m of msgs) {
@@ -3187,6 +3319,7 @@ export default function App({ account = {} }) {
       mcpNames: [],
       voice: !!st.voice,
       thoughts: st.thoughts !== false, // 他写不写心里话（“头像与设置”里的开关，默认开着）
+      callable: st.callable !== false, // 他能打电话（API 面板里的开关，默认开着；见 call/incoming.js）
     });
     const msgs = dayMsgsRef.current[key] || [];
     const transcript = msgs.length ? dayTranscript(msgs, memeLookup) : "（这天你们没在开封府说话）";
@@ -3663,7 +3796,7 @@ export default function App({ account = {} }) {
             usage={usage}
             monthUsage={monthUsage}
             recapUsage={recapUsage}
-            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false }).staticText)}
+            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false }).staticText)}
           />
         </Sheet>
       );
@@ -4300,6 +4433,7 @@ export default function App({ account = {} }) {
       {/* 通话页：盖在最上面（见 call/CallPage.jsx）。她点屏幕那一下（iPhone 不让自己接着听的时候）接着听 */}
       {call && <CallPage call={call} avatar={avatars.him} name={names.him || HIS_NAME} onMute={toggleMute} onHangUp={hangUp} onTap={callTap} />}
       {echo && <EchoProbe echo={echo} levelOf={echoLevel} onClose={closeEcho} onAgain={againEcho} />}
+      {ring && <IncomingCall avatar={avatars.him} name={names.him || HIS_NAME} onAnswer={answerRing} onDecline={declineRing} />}
 
       {chatMenu && (
         <ChatMenu
