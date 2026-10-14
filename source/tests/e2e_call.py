@@ -60,6 +60,11 @@ NOTE = "(() => { const e = document.querySelector('.kfs-call-note'); return e ? 
 KEY = "(() => { const b = [...document.querySelectorAll('.kfs-composer button')].pop(); return b ? b.getAttribute('aria-label') : null; })()"
 MARKS = "[...document.querySelectorAll('.kfs-call-mark')].map((e) => e.textContent.trim())"
 HELLOS = ["卿卿？", "怎么了？", "你来了"]
+# 通话页上他的头像（图的地址，默认的“炅”字没有图）、他的昵称
+CALLFACE = "(() => { const i = document.querySelector('.kfs-call img'); return i ? i.src : ''; })()"
+CALLNAME = "(() => { const e = document.querySelector('.kfs-call-name'); return e ? e.textContent : ''; })()"
+# 电话里附给他的那一段（她 10 月 14 日 16:27 改的，一个字不差）
+CALL_NOTE_TEXT = "【通话】你们正在打电话：你回的每一句都会用你的声音念给她听，她这会儿看着的是通话页面，只能看到你的头像和昵称，对话界面的东西看不见，所以这时候不写心里话，不发表情包、不交文档、不写星号动作；每一句本来就会念出来，不用写 [VOICE]。语气标签照用。"
 errors = []
 mode = {"ears": "stt"}  # stt：ElevenLabs 的实时听写；sr：退回手机自带的听写
 
@@ -174,8 +179,8 @@ with sync_playwright() as p:
         body = calls()[-1]["body"]
         texts = last_user_texts(body)
         now_note = [t for t in texts if t.startswith("【此刻】")]
-        ok(f"[开封府提示：你们开始打电话了，你接起来先说了一句“{hi1}”]" in texts and "喂，你在吗" in texts and now_note and now_note[0].endswith("不用写 [VOICE]。语气标签照用。") and "【通话】你们正在打电话" in now_note[0],
-           "寄过去的：“开始打电话了，你接起来先说了一句……”那行提示、她说的话；【此刻】后面附着【通话】那一段")
+        ok(f"[开封府提示：你们开始打电话了，你接起来先说了一句“{hi1}”]" in texts and "喂，你在吗" in texts and now_note and now_note[0].endswith("\n\n" + CALL_NOTE_TEXT),
+           "寄过去的：“开始打电话了，你接起来先说了一句……”那行提示、她说的话；【此刻】后面附着【通话】那一段（一个字不差是她 16:27 改的那样）")
         ok(sys_text(body) == sys_text(before), "打电话的时候名帖一个字不动（和打电话之前寄的一样，缓存接得上）")
         spoke = wait_phase(pa, "speaking", 15000)
         color = pa.evaluate(SUBCOLOR)
@@ -242,11 +247,24 @@ with sync_playwright() as p:
         time.sleep(0.3)
         joined = (pa.evaluate(SUBS), pa.evaluate(WHO))
         ok(back and joined == ("你看这个 好看吧", "her"), f"他没出声（只回了表情包）：她接着说的接在她这一段后面，不另起一行（{joined}）")
-        queue_reply("嗯，好看。")
+        # 她 16:27 改的那一段里拿掉了“不换头像”（她看得到的就是头像和昵称）：电话里他换头像、改名字，通话页上马上跟着换；记号不念
+        face0 = pa.evaluate(CALLFACE)
+        e2 = len(eleven())
+        queue_reply("[AVATAR:fox_melancholy.jpg]\n嗯，好看。\n[NAME:狐狐]")
         wait_mock(lambda: len(calls()) == c0 + 4, 8)
         wait_phase(pa, "speaking", 15000)
         wait_phase(pa, "listening", 20000)
         time.sleep(0.5)
+        face1, named, said3 = pa.evaluate(CALLFACE), pa.evaluate(CALLNAME), spoken(e2)
+        ok(face1.startswith("data:image") and face1 != face0 and named == "狐狐" and said3 == ["嗯，好看。"] and pa.evaluate(TURNS)[-1] == ["him", "嗯，好看。"],
+           f"他在电话里换了头像、改了名字：通话页上的头像、名字马上跟着换；记号不念、字幕上也没有（{named}、{said3}）")
+        say_in_call(pa, "名字改回来")
+        queue_reply("[NAME:光义]\n好。")
+        wait_mock(lambda: len(calls()) == c0 + 5, 8)
+        wait_phase(pa, "speaking", 15000)
+        wait_phase(pa, "listening", 20000)
+        time.sleep(0.5)
+        ok(pa.evaluate(CALLNAME) == "光义", "他又把名字改回来：通话页上也改回来")
 
         # 静音：不听；取消静音：接着听
         n_before = len(stt())

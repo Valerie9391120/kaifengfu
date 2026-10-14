@@ -94,7 +94,8 @@ export function CallPage({ call, avatar, name, onMute, onHangUp, onTap }) {
             <Avatar av={avatar} who="him" size={128} />
           </div>
         </div>
-        <div className="flex-shrink-0" style={{ fontFamily: SERIF, fontSize: 22, letterSpacing: "0.12em", paddingLeft: "0.12em", marginTop: 12, position: "relative" }}>
+        {/* 他的昵称：用的是眼下的（电话里他改了名字，这里马上跟着换；头像也是） */}
+        <div className="kfs-call-name flex-shrink-0" style={{ fontFamily: SERIF, fontSize: 22, letterSpacing: "0.12em", paddingLeft: "0.12em", marginTop: 12, position: "relative" }}>
           {name}
         </div>
         {/* 字幕区：两个人共用（见 Subtitles.jsx）。宽照原来那行小字（最宽 320），高 225 上下 */}
