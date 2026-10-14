@@ -53,6 +53,7 @@ import { NanyaPanel, soonToast } from "./panels/NanyaPanel.jsx";
 import { CallPage } from "./call/CallPage.jsx";
 import { createListener, pauseOf } from "./call/listen.js";
 import { createSayer, segmentsOfReply } from "./call/say.js";
+import { emptySubs, herLive, herDone, hisSay } from "./call/subs.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -1865,7 +1866,8 @@ export default function App({ account = {} }) {
   // → 当平常的一句话马上发出去 → 他回的话一句一句用他的声音念（最多两段一起准备，按顺序放）→ 念完接着听。
   // 他在电话里的规矩附在【此刻】后面（prompt/system.js 的 CALL_NOTE），名帖一个字不动。
   // 挂断（点挂断、锁屏、切走都算）：聊天里记一行“通话 12 分钟”；一句话没说就挂了，“通话开始”那行也不留。
-  const callView = (c) => ({ phase: c.phase, heard: c.heard, note: c.note, start: c.start, muted: c.muted });
+  // subs：字幕（她 10 月 14 日 11:40 定的两个人共用的那一块，见 call/subs.js）
+  const callView = (c) => ({ phase: c.phase, subs: c.subs, note: c.note, start: c.start, muted: c.muted });
   const callUi = (patch) => {
     const c = callRef.current;
     if (!c) return;
@@ -1877,17 +1879,18 @@ export default function App({ account = {} }) {
     const c = callRef.current;
     if (!c) return;
     if (c.muted) {
-      callUi({ phase: "muted", heard: "" });
+      callUi({ phase: "muted" });
       return;
     }
-    callUi({ phase: "listening", heard: "", note: c.phase === "tap" ? "" : c.note });
+    // 字幕不清：他刚说的那些留着，等她开口了才换成她的
+    callUi({ phase: "listening", note: c.phase === "tap" ? "" : c.note });
     c.listener.start();
   };
   // 她说完了一句：当平常的一句话发出去，不等那两秒（电话里等着难受）
   const callSaid = (text) => {
     const c = callRef.current;
     if (!c) return;
-    callUi({ phase: "thinking", heard: text, note: "" });
+    callUi({ phase: "thinking", subs: herDone(c.subs, text), note: "" });
     sendHer({ kind: "text", text, via: "call" }, { now: true });
   };
   const callListenFailed = (kind) => {
@@ -1925,7 +1928,7 @@ export default function App({ account = {} }) {
     follow.pin();
     setMessages(next);
     saveChat(id, next);
-    const c = { chat: id, startId: mark.id, start: Date.now(), spoken: new Set(), audio, wake: null, muted: false, phase: "ring", heard: "", note: "" };
+    const c = { chat: id, startId: mark.id, start: Date.now(), spoken: new Set(), audio, wake: null, muted: false, phase: "ring", subs: emptySubs(), note: "" };
     c.listener = createListener({
       SR,
       now: () => Date.now(),
@@ -1934,7 +1937,7 @@ export default function App({ account = {} }) {
         return () => clearTimeout(t);
       },
       pauseMs: pauseOf(settingsRef.current.callPause),
-      onText: (t) => callRef.current === c && callUi({ heard: t }),
+      onText: (t) => callRef.current === c && callUi({ subs: herLive(c.subs, t) }),
       onDone: (t) => callRef.current === c && callSaid(t),
       onFail: (kind) => callRef.current === c && callListenFailed(kind),
     });
@@ -1966,10 +1969,12 @@ export default function App({ account = {} }) {
       },
       onState: (st) => {
         if (callRef.current !== c) return;
-        if (st === "speaking") callUi({ phase: "speaking", heard: "" });
+        if (st === "speaking") callUi({ phase: "speaking" });
         else if (st === "done") callListen();
       },
       onError: (e) => callRef.current === c && callUi({ note: `有一句没念出来（${String((e && e.message) || e).slice(0, 60)}），字在聊天里` }),
+      // 念到这一段了：字幕出这一段（他开口的头一段把她的字幕换下去）
+      onSegment: (text) => callRef.current === c && callUi({ subs: hisSay(c.subs, text) }),
     });
     callRef.current = c;
     setCall(callView(c));
@@ -2030,7 +2035,7 @@ export default function App({ account = {} }) {
     if (c.muted) {
       if (c.phase === "listening" || c.phase === "tap") {
         c.listener.stop();
-        callUi({ phase: "muted", heard: "" });
+        callUi({ phase: "muted" });
       } else callUi({});
     } else if (c.phase === "muted") callListen();
     else callUi({});
