@@ -57,7 +57,7 @@ import { emptySubs, herLive, herDone, hisSay } from "./call/subs.js";
 import { createCallAudio } from "./call/play.js";
 import { createMic } from "./call/mic.js";
 import { createHearer } from "./call/hear.js";
-import { HELLOS, HELLO_KEY, HELLO_LAST, pickHello } from "./call/hello.js";
+import { HELLOS, HELLO_KEY, HELLO_LAST, HELLO_WAIT, pickHello } from "./call/hello.js";
 
 /* =========================================================
    开封府 v5 · 独立版
@@ -1986,6 +1986,8 @@ export default function App({ account = {} }) {
     if (callRef.current !== c) return;
     const SR = typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
     c.ears = "system";
+    // 听的那头定了（退回自带的听写，或者听不了）：接起来那一句可以放了（见 startCall 的 earsReady）
+    c.earsGo();
     if (why === "mic") {
       // 麦克风没给开封府用：手机自带的听写也用不了
       c.listener = null;
@@ -2016,31 +2018,40 @@ export default function App({ account = {} }) {
       callVoice({ op: "hear" }, { wait: HEAR_WAIT }).catch((e) => {
         throw Object.assign(new Error(String((e && e.message) || e)), { code: (e && e.reason) || (e && e.code) || "net" });
       });
-    callVoice({ op: "hear" }, { wait: HEAR_WAIT }).then(
-      async (tk) => {
-        if (callRef.current !== c) return;
-        const mic = createMic(window, c.audio.ctx());
-        try {
-          await mic.open();
-        } catch (e) {
-          mic.close();
-          systemEars(c, e && e.code === "mic" ? "mic" : "nomic");
-          return;
-        }
-        if (callRef.current !== c) {
-          mic.close();
-          return;
-        }
-        c.mic = mic;
-        c.ears = "eleven";
-        c.listener = createHearer({ now: () => Date.now(), later: callLater, pauseMs: pauseOf(settingsRef.current.callPause), token, first: tk, socket: (url) => new WebSocket(url), mic, ...earsCbs(c) });
-        if (c.wantListen) {
-          c.wantListen = false;
-          callListen();
-        }
-      },
-      (e) => systemEars(c, earsWhy(e))
+    // 麦克风和通行证一起要（原来是先要通行证再开麦克风）：接起来那一句要等麦克风开了才放，少等一会儿
+    const mic = createMic(window, c.audio.ctx());
+    const opened = mic.open().then(
+      () => null,
+      (e) => e || new Error("麦克风开不了")
     );
+    const got = callVoice({ op: "hear" }, { wait: HEAR_WAIT }).then(
+      (tk) => ({ tk }),
+      (e) => ({ e })
+    );
+    Promise.all([opened, got]).then(([micErr, t]) => {
+      if (callRef.current !== c) {
+        mic.close();
+        return;
+      }
+      if (micErr) {
+        mic.close();
+        systemEars(c, micErr.code === "mic" ? "mic" : "nomic");
+        return;
+      }
+      if (t.e) {
+        mic.close();
+        systemEars(c, earsWhy(t.e));
+        return;
+      }
+      c.mic = mic;
+      c.ears = "eleven";
+      c.listener = createHearer({ now: () => Date.now(), later: callLater, pauseMs: pauseOf(settingsRef.current.callPause), token, first: t.tk, socket: (url) => new WebSocket(url), mic, ...earsCbs(c) });
+      c.earsGo();
+      if (c.wantListen) {
+        c.wantListen = false;
+        callListen();
+      }
+    });
   };
   const startCall = () => {
     if (callRef.current) return;
@@ -2065,17 +2076,29 @@ export default function App({ account = {} }) {
     follow.pin();
     setMessages(next);
     saveChat(id, next);
-    const c = { chat: id, startId: mark.id, start: Date.now(), spoken: new Set(), audio, wake: null, muted: false, phase: "ring", subs: emptySubs(), note: "", hi, listener: null, mic: null, ears: "" };
+    // 听的那头准备好了没有（麦克风开了、通行证到了；或者定了退回自带的听写）。他的声音等它好了才放：
+    // 她 17:12 报的，存好的那三句一接通就放，那会儿麦克风还没开，iPhone 只从听筒出声；麦克风开着的时候放的都走外放。
+    // 最多等 HELLO_WAIT（通行证、麦克风老不来，也不让她一直干等）
+    let earsGo = null;
+    const earsReady = new Promise((r) => (earsGo = r));
+    setTimeout(earsGo, HELLO_WAIT);
+    const c = { chat: id, startId: mark.id, start: Date.now(), spoken: new Set(), audio, wake: null, muted: false, phase: "ring", subs: emptySubs(), note: "", hi, listener: null, mic: null, ears: "", earsGo };
     c.sayer = createSayer({
       // 念好的一段：Web Audio 解码好（解不开的留着 <audio> 用的地址兜底），交给念的那头当“地址”排队。
-      // 接起来那一句：存过就直接用存着的（不再花钱）；头一回念好了存起来
+      // 接起来那一句：存过就直接用存着的（不再花钱）；头一回念好了存起来。
+      // 解码好了等听的那头准备好再交（准备好以后的都不用等）：念好了才算“开口”，字幕、那圈光跟着声音一起出
       synth: async (text, signal) => {
         const hello = HELLOS.includes(text);
         const kept = hello ? readVoice(store.peek(HELLO_KEY + text)) : null;
-        if (kept) return { url: await audio.decode(kept.audio, kept.mime) };
-        const d = await callVoice({ op: "speak", text, stability: stabOf(settingsRef.current.voiceStab) }, { signal });
-        if (hello) store.set(HELLO_KEY + text, packVoice(d)).catch(() => {});
-        return { url: await audio.decode(d.audio, d.mime) };
+        let clip;
+        if (kept) clip = await audio.decode(kept.audio, kept.mime);
+        else {
+          const d = await callVoice({ op: "speak", text, stability: stabOf(settingsRef.current.voiceStab) }, { signal });
+          if (hello) store.set(HELLO_KEY + text, packVoice(d)).catch(() => {});
+          clip = await audio.decode(d.audio, d.mime);
+        }
+        await earsReady;
+        return { url: clip };
       },
       play: (clip) => audio.play(clip),
       stopPlay: () => audio.stop(),
@@ -2107,7 +2130,7 @@ export default function App({ account = {} }) {
           .catch(() => {});
       }
     } catch (e) {}
-    // 准备听（ElevenLabs 的通行证、麦克风），同时他先说一句；说完了接着听（听的那头没准备好就等它）
+    // 准备听（ElevenLabs 的通行证、麦克风），同时把他先说的那一句准备好（听的那头好了才放，见上面 earsReady）；说完了接着听
     setupEars(c);
     c.sayer.add([hi]);
     c.sayer.end();
