@@ -11,6 +11,27 @@
 
 const RESUME_WAIT = 600; // 叫 Web Audio 醒过来最多等这么久，等不到就改用 <audio> 放这一段
 const END_SLACK = 1500; // 一段放完了它要是忘了报（iPhone 偶尔这样），过了这段该有的长度再多等这么久就算放完
+export const ENV_STEP = 0.02; // 一段声音多响，二十毫秒一格（听她是不是要打断他的时候要知道他这会儿多响，见 barge.js）
+export const DUCK = 0.25; // 她好像开口了：他的声音先压到这么小（认出她说的字才真停）
+
+// 一段声音每二十毫秒多响（均方根）。解不出来（测试里的假东西）就没有
+export function envOf(buf) {
+  try {
+    const ch = buf.getChannelData(0);
+    const n = Math.max(1, Math.round(buf.sampleRate * ENV_STEP));
+    const out = new Float32Array(Math.ceil(ch.length / n));
+    for (let i = 0; i < out.length; i++) {
+      let s = 0;
+      const a = i * n;
+      const b = Math.min(ch.length, a + n);
+      for (let j = a; j < b; j++) s += ch[j] * ch[j];
+      out[i] = Math.sqrt(s / Math.max(1, b - a));
+    }
+    return out;
+  } catch (e) {
+    return null;
+  }
+}
 
 export function bytesOf(b64) {
   const bin = atob(String(b64 || ""));
@@ -28,9 +49,22 @@ export function createCallAudio(win, silent) {
   let ac = null;
   let el = null; // 退回去用的 <audio>
   let src = null; // Web Audio 正在放的那一段
+  let cur = null; // 正在放的那一段：{ clip, at 开始放的时候（Web Audio 的钟） }，<audio> 放的：{ clip, el: true }
+  let master = null; // 他的声音都过这一道（压小、恢复）
   let endTimer = null;
   let sess = null;
   let sessWas = null;
+  const outlet = () => {
+    if (!master && ac && ac.createGain) {
+      try {
+        master = ac.createGain();
+        master.connect(ac.destination);
+      } catch (e) {
+        master = null;
+      }
+    }
+    return master || ac.destination;
+  };
 
   const elOf = () => {
     if (!el && win.Audio) {
@@ -90,7 +124,7 @@ export function createCallAudio(win, silent) {
           buf = null;
         }
       }
-      return { buf, url };
+      return { buf, url, env: buf ? envOf(buf) : null };
     },
     // 放一段，放完了 resolve。Web Audio 醒不过来就用 <audio> 放这一段
     async play(clip) {
@@ -105,16 +139,20 @@ export function createCallAudio(win, silent) {
             try {
               const s = ac.createBufferSource();
               s.buffer = clip.buf;
-              s.connect(ac.destination);
+              s.connect(outlet());
               const done = () => {
                 cancel(endTimer);
                 endTimer = null;
-                if (src === s) src = null;
+                if (src === s) {
+                  src = null;
+                  cur = null;
+                }
                 resolve();
               };
               s.onended = done;
               src = s;
               s.start(0);
+              cur = { clip, at: ac.currentTime || 0 };
               endTimer = later(done, (clip.buf.duration || 0) * 1000 + END_SLACK);
             } catch (e) {
               reject(e);
@@ -125,17 +163,60 @@ export function createCallAudio(win, silent) {
       const a = elOf();
       if (!a || !clip || !clip.url) throw new Error("放不出来");
       return new Promise((resolve, reject) => {
-        a.onended = () => resolve();
-        a.onerror = () => reject(new Error("放不出来"));
+        const over = () => {
+          if (cur && cur.el) cur = null;
+        };
+        a.onended = () => {
+          over();
+          resolve();
+        };
+        a.onerror = () => {
+          over();
+          reject(new Error("放不出来"));
+        };
         a.src = clip.url;
+        cur = { clip, el: true };
         const p = a.play();
         if (p && p.catch) p.catch(reject);
       });
+    },
+    // 他这会儿多响（最近 look 秒里最响的那一格；麦克风收到的比放出去的晚一点，往回多看一点）。没在放、<audio> 放的：0
+    level(look = 0.3) {
+      if (!cur || cur.el || !cur.clip.env || !ac) return 0;
+      const t = (ac.currentTime || 0) - cur.at;
+      const env = cur.clip.env;
+      const i1 = Math.min(env.length - 1, Math.floor(t / ENV_STEP));
+      if (i1 < 0) return 0;
+      const i0 = Math.max(0, Math.floor((t - look) / ENV_STEP));
+      let m = 0;
+      for (let i = i0; i <= i1; i++) if (env[i] > m) m = env[i];
+      return m;
+    },
+    // 正在放的那一段放到哪儿了：{ elapsed 秒, dur 秒 }；没在放：null
+    progress() {
+      if (!cur) return null;
+      if (cur.el) {
+        const a = el;
+        return a && a.duration ? { elapsed: a.currentTime || 0, dur: a.duration } : null;
+      }
+      return { elapsed: Math.max(0, (ac && ac.currentTime ? ac.currentTime : 0) - cur.at), dur: (cur.clip.buf && cur.clip.buf.duration) || 0 };
+    },
+    // 她好像开口了：他的声音压小（on）、恢复（off）。<audio> 放的压不了（iPhone 上改不了它的音量）
+    duck(on) {
+      if (!master || !ac) return;
+      const v = on ? DUCK : 1;
+      try {
+        if (master.gain.setTargetAtTime) master.gain.setTargetAtTime(v, ac.currentTime || 0, 0.04);
+        else master.gain.value = v;
+      } catch (e) {
+        master.gain.value = v;
+      }
     },
     // 立刻停下正在放的
     stop() {
       cancel(endTimer);
       endTimer = null;
+      cur = null;
       if (src) {
         const s = src;
         src = null;
@@ -165,6 +246,7 @@ export function createCallAudio(win, silent) {
         if (ac && ac.close) ac.close().catch(() => {});
       } catch (e) {}
       ac = null;
+      master = null;
       try {
         if (el) {
           if (el.src && String(el.src).startsWith("blob:")) win.URL.revokeObjectURL(el.src);

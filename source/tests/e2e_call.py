@@ -185,8 +185,10 @@ with sync_playwright() as p:
         held = wait_mock(lambda: mock("/__debug/claude-held")["held"], 8)   # 那一问到了假 Anthropic（压着没答）
         took = time.time() - t0
         ok(heard == ("喂", "her", "rgb(153, 153, 153)") and held and 1.3 <= took <= 3.8, f"字幕是她的（浅灰）、边说边出；停 1.6 秒左右就当说完了、马上发出去，不等那两秒（{heard}，{took:.1f} 秒）")
-        conn = stt()[-1]
-        ok(conn["commits"] == 1 and conn["closed"], f"说完了：送了一回 commit，这一条关了（{conn['commits']} 回）")
+        wait_mock(lambda: len(stt()) == 2 and stt_open(), 4)
+        conn = stt()[0]
+        ok(conn["commits"] == 1 and conn["closed"] and len(stt()) == 2 and stt_open(),
+           f"说完了：送了一回 commit，这一条关了；他在想的时候接着听（又连了一条：她补一句的话两句一起问，见 e2e_barge.py）（{conn['commits']} 回）")
         ok(phase(pa) == "thinking" and pa.evaluate(SUBS) == "喂，你在吗" and pa.evaluate(WHO) == "her", f"他在想的时候：她那句还摆在字幕上（{phase(pa)}、{pa.evaluate(SUBS)}）")
         sent = wait_mock(lambda: len(calls()) == c0 + 1, 10)
         body = calls()[-1]["body"]
@@ -226,7 +228,7 @@ with sync_playwright() as p:
         ok(sc["max"] > 0 and abs(sc["top"] - sc["max"]) <= 2 and "gradient" in sc["mask"] and sc["seen"] and 200 <= sc["h"] <= 240,
            f"字幕满了：往上滚到最底下，刚念的那截看得见，顶上那截慢慢淡没；字幕区 225 高上下（{sc}）")
         pa.evaluate("document.getElementById('kfs-test-big').remove()")
-        ok(wait_mock(stt_open, 5) and len(stt()) == 2, "念完了：接着听她说（又连了一条，用的是备着的通行证）")
+        ok(wait_mock(stt_open, 5) and len(stt()) == 3, "念完了：接着听她说（又连了一条，用的是备着的通行证）")
         cid, msgs = chat_of(pa)
         her = [m for m in msgs if m.get("role") == "her"]
         ok(her[-1].get("text") == "喂，你在吗" and her[-1].get("via") == "call" and msgs[-1]["role"] == "him",

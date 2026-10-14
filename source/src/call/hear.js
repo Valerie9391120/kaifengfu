@@ -27,6 +27,7 @@ export const FINAL_WAIT = 2500; // 送了 commit 等它回定下来的字最多�
 export const CONNECT_WAIT = 8000; // 连 WebSocket 最多等这么久
 export const QUEUE_MAX = 16000 * 12; // 还没连上的时候最多攒这么多个点（十二秒）
 export const TOKEN_AGE = 13 * 60 * 1000; // 备着的通行证放了这么久就不用了（ElevenLabs 那边十五分钟作废）
+export const PREROLL_MAX = 16000 * 2; // 没在听的时候留着最近这么多个点（两秒）
 const TICK = 200;
 
 // 实时听写的地址：通行证、模型、16k 的 PCM、中文、我们自己判说完
@@ -349,8 +350,16 @@ export function createHearer(d) {
   };
 
   // 麦克风来的一小段：在听才要；响的算她在出声；攒够一块送一块（没连上就先攒着）
+  // 没在听的时候也留着最近一小段（PREROLL_MAX）：她打断他的时候，从她开口那会儿往前一点送过去，头几个字不丢（见 barge.js）
+  let recent = [];
+  let recentN = 0;
   d.mic.listen(({ pcm, rms }) => {
-    if (!on) return;
+    if (!on) {
+      recent.push(pcm);
+      recentN += pcm.length;
+      while (recent.length > 1 && recentN - recent[0].length >= PREROLL_MAX) recentN -= recent.shift().length;
+      return;
+    }
     if (rms >= LOUD) {
       activityAt = d.now();
       if (!firstAt) firstAt = activityAt;
@@ -370,12 +379,31 @@ export function createHearer(d) {
   });
 
   return {
-    start() {
+    // preroll：从多少毫秒以前的声音开始送（她打断他的时候用：她开口那会儿还没在听）
+    start({ preroll = 0 } = {}) {
       end();
       on = true;
       gen += 1;
       retried = false;
       reset();
+      const want = Math.min(PREROLL_MAX, Math.round((Number(preroll) || 0) * 16));
+      if (want > 0 && recentN) {
+        let n = 0;
+        const take = [];
+        for (let i = recent.length - 1; i >= 0 && n < want; i--) {
+          take.unshift(recent[i]);
+          n += recent[i].length;
+        }
+        take.forEach((p) => {
+          queue.push(p);
+          queued += p.length;
+        });
+        // 她已经在说了：算响过、从那会儿算起说了多久
+        voiced = true;
+        firstAt = d.now() - Math.round(n / 16);
+      }
+      recent = [];
+      recentN = 0;
       d.onText("");
       timers.tick = d.later(tick, TICK);
       connect();

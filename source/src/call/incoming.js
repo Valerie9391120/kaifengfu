@@ -22,7 +22,7 @@ export function pendingCall(msgs) {
   let inCall = false;
   for (const m of msgs || []) {
     if (isCallMark(m)) {
-      inCall = m.phase === "start";
+      if (m.phase !== "cut") inCall = m.phase === "start";
       continue;
     }
     if (!m || m.role !== "him" || inCall || done.has(m.id)) continue;

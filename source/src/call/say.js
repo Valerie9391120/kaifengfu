@@ -117,16 +117,18 @@ export function splitForCall(text, { first = true, firstMin = 12, endMin = 40, s
 
 // 他这一回的话（回话里的那几样）切成要念的几段：字和语音都念；表情包、文档、换头像不念
 // 打电话那一样（他打来的那一通里接起来先说的话；打着电话他又写了 [CALL] 的，也当照常说话念）也念
-export function segmentsOfReply(items) {
+// 回 [{ item 是那几样里的第几样, text }]（她打断他的时候照这个截，见 barge.js 的 cutPlan）
+export function segmentsOfItems(items) {
   const out = [];
-  (items || []).forEach((it) => {
+  (items || []).forEach((it, item) => {
     if (!it || (it.type !== "text" && it.type !== "voice" && it.type !== "call")) return;
     const clean = cleanForCall(it.text);
     if (!clean) return;
-    splitForCall(clean, { first: out.length === 0 }).forEach((s) => out.push(s));
+    splitForCall(clean, { first: out.length === 0 }).forEach((text) => out.push({ item, text }));
   });
   return out;
 }
+export const segmentsOfReply = (items) => segmentsOfItems(items).map((s) => s.text);
 
 // ---------- 念：最多两段一起准备，按顺序放 ----------
 // d：{
@@ -137,8 +139,10 @@ export function segmentsOfReply(items) {
 //   onState(s)           "speaking" 开始出声 / "done" 这一回都念完了（或者念不成的跳过了） / "idle" 停了
 //   onError(e, text)     某一段念不成（跳过它接着念后面的）；text 是那一段
 //   onSegment(text)      轮到这一段了（开始放；念不成跳过的也报一声）：字幕跟着这个出（可以不给）
+//   progress()           正放着的那一段放到哪儿了：{ elapsed, dur }（可以不给；她打断他的时候要知道截在哪儿）
 // }
-// 回 { add(texts), end(), cancel(), busy() }：add 加几段；end 这一回没有更多了（念完就报 done）；cancel 全停
+// 回 { add(texts), end(), cancel(), interrupt(), busy(), left() }：add 加几段；end 这一回没有更多了（念完就报 done）；cancel 全停；
+// interrupt 她打断了他：全停，说清楚放到哪儿了；left 还剩几段没念完
 export function createSayer(d, { ahead = 2 } = {}) {
   let queue = []; // { text, st: wait|load|ready|fail, url, ctl }
   let closed = false;
@@ -222,6 +226,22 @@ export function createSayer(d, { ahead = 2 } = {}) {
       });
   };
 
+  const cancel = () => {
+    run += 1;
+    queue.forEach((q) => {
+      if (q.ctl) q.ctl.abort();
+      if (q.url && q.st === "ready") d.release(q.url);
+    });
+    queue = [];
+    closed = false;
+    spoke = false;
+    if (playing) {
+      playing = false;
+      d.stopPlay();
+    }
+    d.onState("idle");
+  };
+
   return {
     add(texts) {
       (texts || []).forEach((text) => text && queue.push({ text, st: "wait" }));
@@ -231,21 +251,22 @@ export function createSayer(d, { ahead = 2 } = {}) {
       closed = true;
       pump();
     },
-    cancel() {
-      run += 1;
-      queue.forEach((q) => {
-        if (q.ctl) q.ctl.abort();
-        if (q.url && q.st === "ready") d.release(q.url);
-      });
-      queue = [];
-      closed = false;
-      spoke = false;
-      if (playing) {
-        playing = false;
-        d.stopPlay();
+    cancel,
+    // 她打断了他（见 barge.js）：跟 cancel 一样全停。回 { playing: 正放着的那一段 { text, frac 放了几成 } 或 null, pending: 还没开始放的那几段 }，
+    // 外头照着这个把聊天里他那一条截成只剩念出来的（她 17:26 定的）
+    interrupt() {
+      const head = playing ? queue[0] : null;
+      let frac = 0;
+      if (head && d.progress) {
+        const p = d.progress();
+        if (p && p.dur > 0) frac = Math.max(0, Math.min(1, p.elapsed / p.dur));
       }
-      d.onState("idle");
+      const out = { playing: head ? { text: head.text, frac } : null, pending: queue.slice(head ? 1 : 0).map((q) => q.text) };
+      cancel();
+      return out;
     },
     busy: () => playing || queue.length > 0,
+    // 还剩几段没念完（正放着的那段也算）：外头照这个认出眼下念到第几段了
+    left: () => queue.length,
   };
 }
