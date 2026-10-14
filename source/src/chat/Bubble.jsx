@@ -327,7 +327,8 @@ export function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, voices 
             className="whitespace-pre-wrap break-words"
             style={{ padding: "10px 15px", fontSize: 15.5, lineHeight: 1.55, borderRadius: radius, userSelect: "none", WebkitUserSelect: "none", ...skin }}
           >
-            {renderRich(it.text || "")}
+            {/* 电话里他说的（row.call，见 rows.js）：语气标签不摆，跟字幕一样只留话 */}
+            {renderRich(row.call && !her ? shownOf(it.text || "") || "……" : it.text || "")}
           </div>
         )}
       </div>

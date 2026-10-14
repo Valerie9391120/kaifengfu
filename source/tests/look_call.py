@@ -1,11 +1,11 @@
-# 通话页拍照（不是测试，不判对错）：你在说（字幕是你的）、他在想、他在说（一段一段出）、字幕满了往上滚、你又开口（换回你的）、
-# 静音、点一下屏幕、挂了以后的聊天；再录一小段视频看字幕怎么淡出、怎么滚。拍给她看样子用；字都是编的。
+# 通话页拍照（不是测试，不判对错）：你在说（字幕是你的）、他在想、他在说（另起一行，一段一段出）、字幕满了往上滚、
+# 你又开口（再另起一行）、静音、点一下屏幕、挂了以后的聊天；再录一小段视频看字幕怎么跳出来、怎么滚。拍给她看样子用；字都是编的。
 #
 # 先在 source/ 里：npm run build:test，再开两个服务（同 tests/e2e.py）：
 #   npm run mock                         （假 Supabase，8787）
 #   cd dist-test && python3 -m http.server 8080
 # 然后：python3 tests/look_call.py 输出目录 [主题]      主题不写是 heiye（通话页本身是黑的，主题只管挂了以后那张聊天）
-# 不要视频：KFS_VIDEO=0。视频要 ffmpeg（webm 转成 iPhone 放得了的 mp4）。
+# 不要视频：KFS_VIDEO=0；只要视频：KFS_PHOTOS=0。视频要 ffmpeg（webm 转成 iPhone 放得了的 mp4）。
 #
 # 通话页照她的手机留出状态栏和底下横条的地方（KFS_SAFE="上,下"，默认 59,34：屏幕 852 高、有灵动岛的 iPhone）：
 # 浏览器里 env(safe-area-inset-*) 是 0，不留的话拍出来比她手机上宽松，字幕和按钮之间的空看着比实际多。
@@ -21,6 +21,7 @@ theme = sys.argv[2] if len(sys.argv) > 2 else "heiye"
 os.makedirs(out, exist_ok=True)
 SAFE_TOP, SAFE_BOTTOM = [int(x) for x in os.environ.get("KFS_SAFE", "59,34").split(",")]
 VIDEO = os.environ.get("KFS_VIDEO", "1") != "0"
+PHOTOS = os.environ.get("KFS_PHOTOS", "1") != "0"   # 只要视频：KFS_PHOTOS=0
 
 # 手机自带的听写装不出来：换成能遥控的假听写（同 tests/e2e_call.py）；屏幕常亮也装一个
 FAKE_SR = r"""(() => {
@@ -39,8 +40,8 @@ FAKE_SR = r"""(() => {
 FREEZE = r""".kfs-call-talk { animation-delay: -0.475s !important; animation-play-state: paused !important; }
 .kfs-call-think { animation-delay: -1.4s !important; animation-play-state: paused !important; }"""
 PHASE = "(() => { const e = document.querySelector('.kfs-call'); return e ? e.dataset.phase : null; })()"
-UNITS = "document.querySelectorAll('.kfs-sub-turn:not(.kfs-sub-out) .kfs-sub-unit').length"
-SCROLLED = "(() => { const e = document.querySelector('.kfs-sub-turn:not(.kfs-sub-out)'); return !!e && e.scrollTop > 0; })()"
+UNITS = "document.querySelectorAll('.kfs-sub-turn:last-child .kfs-sub-unit').length"
+SCROLLED = "(() => { const e = document.querySelector('.kfs-sub-scroll'); return !!e && e.scrollTop > 0; })()"
 
 
 def style(css):
@@ -203,7 +204,8 @@ def film(browser):
     mock("/__debug/reset")
     vdir = os.path.join(out, "_video")
     os.makedirs(vdir, exist_ok=True)
-    ctx = phone(browser, record_video_dir=vdir, record_video_size={"width": 786, "height": 1704})
+    # 录的是 CSS 像素那么大（393×852）：设大了不会更清楚，只会把页面摆在左上角、别处一片灰
+    ctx = phone(browser, record_video_dir=vdir, record_video_size={"width": 393, "height": 852})
     page = ctx.new_page()
     born = time.time()
     enter(page)
@@ -230,14 +232,15 @@ def film(browser):
     ctx.close()
     mp4 = os.path.join(out, "09_打一通电话.mp4")
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{max(0, begin - 0.6):.2f}", "-to", f"{end:.2f}", "-i", raw,
-                    "-vf", "scale=590:-2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "23", "-movflags", "+faststart", "-an", mp4], check=True)
+                    "-vf", "crop=393:852:0:0,scale=590:-2:flags=lanczos", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "23", "-movflags", "+faststart", "-an", mp4], check=True)
     print("录了", os.path.basename(mp4), f"{end - begin:.0f} 秒")
 
 
 with sync_playwright() as p:
     args = ["--no-sandbox", "--autoplay-policy=no-user-gesture-required"]
     browser = p.chromium.launch(executable_path=CHROME, args=args) if CHROME else p.chromium.launch(args=args)
-    photos(browser)
+    if PHOTOS:
+        photos(browser)
     if VIDEO:
         film(browser)
     browser.close()
