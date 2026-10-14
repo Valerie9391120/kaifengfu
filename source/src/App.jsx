@@ -1171,6 +1171,7 @@ export default function App({ account = {} }) {
       names: namesRef.current,
       replyCap: replyRoom(st.maxTokens || 2048),
       voice: !!st.voice,
+      thoughts: st.thoughts !== false, // 他写不写心里话（“头像与设置”里的开关，默认开着）
     });
     // 这段对话抄过提要的：前面的不寄原话，换成提要（见 recap.js）
     const recapList = opts.chat ? await readRecaps(opts.chat) : [];
@@ -2256,7 +2257,7 @@ export default function App({ account = {} }) {
     const model = st.model || DEFAULT_MODEL;
     const memDocs = memFilesRef.current.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
     // 名帖那一大段和聊天时寄的一个字不差（缓存接得上）；【此刻】这回用不着
-    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice });
+    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: st.thoughts !== false });
     // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
     const photos = {};
     for (const m of msgs) {
@@ -2761,6 +2762,7 @@ export default function App({ account = {} }) {
       memDocs: docs,
       mcpNames: [],
       voice: !!st.voice,
+      thoughts: st.thoughts !== false, // 他写不写心里话（“头像与设置”里的开关，默认开着）
     });
     const msgs = dayMsgsRef.current[key] || [];
     const transcript = msgs.length ? dayTranscript(msgs, memeLookup) : "（这天你们没在开封府说话）";
@@ -3054,6 +3056,18 @@ export default function App({ account = {} }) {
         >
           <AvatarSection av={avatars.her} onChange={changeHerAvatar} />
           <HisAvatarCard av={avatars.him} name={avatarName(avatars.him, false) || "炅"} />
+          {/* 他写不写心里话：卿卿 10 月 14 日凌晨要的开关，放在他的头像卡片底下；一个开关管所有模型，默认开着。
+              关了，寄过去的【回复格式】里就没有心里话那一条（见 prompt/system.js 的 THOUGHT_RULE）。存在设置里，跟着云端走 */}
+          <div className="kfs-thoughts flex items-center justify-between" style={{ ...glass(0.5, 16), borderRadius: 16, padding: "10px 14px", marginTop: 10, gap: 12 }}>
+            <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.5 }}>
+              他写心里话
+              <div style={{ fontSize: 11.5, color: T.inkSoft }}>
+                {settings.thoughts !== false ? "开着：先写几句心里话，点“思考过程”能看" : "关着：不写心里话，直接回你"}
+              </div>
+            </div>
+            <Toggle on={settings.thoughts !== false} onChange={(v) => updateSettings({ thoughts: v })} label="他写心里话" />
+          </div>
+          <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>所有模型一起管。拨了以后，下一句话那段对话的缓存得重新攒一回，那一句贵一些，之后照常。</p>
           <div style={{ height: 1, background: HAIR, margin: "22px 0 18px" }} />
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>主题色</div>
           <div className="flex items-center flex-wrap" style={{ gap: 8, marginBottom: theme === entranceTheme() ? 22 : 10 }}>
@@ -3224,7 +3238,7 @@ export default function App({ account = {} }) {
             usage={usage}
             monthUsage={monthUsage}
             recapUsage={recapUsage}
-            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice }).staticText)}
+            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false }).staticText)}
           />
         </Sheet>
       );
