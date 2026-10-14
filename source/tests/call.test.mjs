@@ -10,7 +10,8 @@ import { isCallMark, callLen, callClock, markText, markNote, markRecap } from ".
 import { createBarge, echoOf, ackOnly, cutAt, cutPlan, cutItems, HOLD, K0 } from "../src/call/barge.js";
 import { buildSystem, CALL_NOTE, CALL_RULE } from "../src/prompt/system.js";
 import { parseReply, rawOf } from "../src/reply.js";
-import { pendingCall, ringLeft, ringWav, CALL_RING_MS, RING_MIN_MS } from "../src/call/incoming.js";
+import * as incoming from "../src/call/incoming.js";
+const { pendingCall, ringLeft, CALL_RING_MS, RING_MIN_MS } = incoming;
 import { buildMessages } from "../src/prompt/messages.js";
 import { buildRecapAsk } from "../src/prompt/recap.js";
 import { buildRows } from "../src/chat/rows.js";
@@ -672,7 +673,7 @@ ok(markText(START) === "通话开始" && markText(END) === "通话 13 分钟", "
 }
 
 // =====================================================
-// 他打给她（她 17:26、17:35 定的）：[CALL] 怎么拆、怎么写回去、没着落的那一通、响多久、铃声、聊天里那几行、告诉他的话
+// 他打给她（她 17:26、17:35 定的）：[CALL] 怎么拆、怎么写回去、没着落的那一通、响多久、没有铃声、聊天里那几行、告诉他的话
 // =====================================================
 {
   const P = (t) => parseReply(t);
@@ -705,9 +706,7 @@ ok(markText(START) === "通话开始" && markText(END) === "通话 13 分钟", "
   ok(pendingCall(two).msg.id === "g" && pendingCall([call, MISSED, { ...call, id: "g2" }]).msg.id === "g2", "好几通没着落的：一通一通办，先办早的");
   ok(ringLeft(10000, 10000) === CALL_RING_MS && ringLeft(10000, 10000 + 50000) === RING_MIN_MS && ringLeft(10000, 10000 + CALL_RING_MS + 1) === 0 && ringLeft(10000, 5000) === 0,
     "响多久：到了一分钟就不响（只剩几秒才看到的至少再响 15 秒）；过了一分钟、钟点不对的直接记没接");
-  const w = ringWav(8000);
-  ok(String.fromCharCode(...w.slice(0, 4)) === "RIFF" && String.fromCharCode(...w.slice(8, 12)) === "WAVE" && w.length === 44 + Math.floor(8000 * 3.2) * 2 && w.slice(44).some((x) => x !== 0),
-    "铃声：自己合成的一小段 WAV（有声音）");
+  ok(!("ringWav" in incoming) && !Object.keys(incoming).some((k) => /tone|wav/i.test(k)), "没有铃声了（原来那段“叮——咚”她嫌有灵异感，22:58 让撤了）：来电只有页面");
 
   const rows = buildRows([her, call, MISSED], null, "");
   const lines = rows.filter((r) => r.kind === "call").map((r) => r.text);
