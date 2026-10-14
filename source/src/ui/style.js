@@ -148,6 +148,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 @keyframes kfsFade { from { opacity: 0; } to { opacity: 1; } }
 .kfs-lotus { animation: kfsFade .32s ease both; }
 .kfs-fade { animation: kfsFade .3s ease both; }
+/* 通话页（见 call/CallPage.jsx）：头像后面那一圈光。他说话时一亮一亮，他在想时慢慢呼吸 */
+@keyframes kfsCallTalk { 0%,100% { transform: scale(.94); opacity: .4; } 50% { transform: scale(1.08); opacity: .95; } }
+@keyframes kfsCallThink { 0%,100% { transform: scale(.97); opacity: .18; } 50% { transform: scale(1.03); opacity: .48; } }
+.kfs-call-talk { animation: kfsCallTalk .95s ease-in-out infinite; }
+.kfs-call-think { animation: kfsCallThink 2.8s ease-in-out infinite; }
 
-@media (prefers-reduced-motion: reduce) { .kfs-in, .kfs-sheet, .kfs-page, .kfs-breath, .kfs-splash-img, .kfs-moonglow, .kfs-kite, .kfs-lotus, .kfs-fade { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .kfs-in, .kfs-sheet, .kfs-page, .kfs-breath, .kfs-splash-img, .kfs-moonglow, .kfs-kite, .kfs-lotus, .kfs-fade, .kfs-call-talk, .kfs-call-think { animation: none !important; } }
 `;

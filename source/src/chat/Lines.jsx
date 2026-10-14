@@ -86,10 +86,17 @@ export function ThinkingRow({ msg, open, onToggle }) {
 export function NoticeRow({ row, animate }) {
   return (
     <div
-      className={`flex items-center justify-center ${animate ? "kfs-in" : ""}`}
+      className={`flex items-center justify-center ${animate ? "kfs-in" : ""} ${row.kind === "call" ? "kfs-call-mark" : ""}`}
       style={{ gap: 7, margin: "16px 0 6px" }}
     >
-      <Avatar av={row.av} who={row.who} size={22} />
+      {/* 通话开始、挂了（见 call/marks.js）：前面是个小电话，不是头像 */}
+      {row.kind === "call" ? (
+        <span style={{ color: T.inkFaint, display: "inline-flex" }}>
+          <Icon name="phone" size={14} />
+        </span>
+      ) : (
+        <Avatar av={row.av} who={row.who} size={22} />
+      )}
       <span style={{ fontSize: 11.5, color: T.inkFaint }}>{row.text}</span>
     </div>
   );

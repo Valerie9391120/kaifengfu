@@ -1,6 +1,7 @@
 import { modelLabel, money, usageKey } from "../models.js";
 import { RECALL, DEFAULT_RECALL } from "../recap.js";
 import { VOICE_STAB, DEFAULT_STAB } from "../voice.js";
+import { PAUSES, pauseOf } from "../call/listen.js";
 import { fmtChars } from "../util.js";
 import { T, glass, chip } from "../ui/style.js";
 import { Toggle } from "../ui/parts.jsx";
@@ -116,6 +117,15 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
         </button>
         {voiceTestNote && <span className="kfs-voice-test-note" style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.5 }}>{voiceTestNote}</span>}
       </div>
+
+      {/* 打电话（见 call/ 和开发说明“通话”那一节）：她停多久算说完。卿卿说“老公你决定就好”，默认 1.6 秒，能调 */}
+      <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>打电话：停多久算你说完</div>
+      <div className="kfs-call-pause">
+        <Pick options={PAUSES.map((v) => ({ v, t: `${v / 1000} 秒` }))} value={pauseOf(settings.callPause)} onPick={(v) => onChange({ callPause: v })} label="停多久算你说完" />
+      </div>
+      <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>
+        打电话的时候，你停这么久就当你说完了，自动发出去。老被半路截断就调长，嫌等得久就调短。他说的每一句都用他的声音念，扣 ElevenLabs 的额度，跟语音条一样。
+      </p>
 
       <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>用量</div>
       <div style={{ ...glass(0.45, 14), borderRadius: 18, padding: "10px 14px" }}>

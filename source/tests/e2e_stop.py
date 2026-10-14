@@ -27,7 +27,7 @@ def phone(browser, notify=False):
 NOTE = "停了，点这里让我回"
 NOTE_UP = "document.body.innerText.includes(" + json.dumps(NOTE) + ")"   # 那行小字摆出来了
 SETTLE = 0.5                                 # 那个键刚换了样子的 0.4 秒里点它不算（见 App.jsx 的 KEY_SETTLE）：等过了再点
-# 输入框最右边那个键眼下是哪一样（发送、停、发语音）
+# 输入框最右边那个键眼下是哪一样（发送、停、打电话）
 KEY = "(() => { const b = [...document.querySelectorAll('.kfs-composer button')].pop(); return b ? b.getAttribute('aria-label') : null; })()"
 key = lambda page: page.evaluate(KEY)
 wait_key = lambda page, want, timeout=8000: wait_js(page, KEY + " === " + json.dumps(want), timeout)
@@ -59,10 +59,10 @@ def open_history(page, nth):
 def open_named(page, text):
     page.get_by_role("button", name="打开侧栏").click(); page.wait_for_timeout(700)
     page.locator(".kfs-history button.text-left", has_text=text).first.click(); page.wait_for_timeout(1000)
-# 声波键点了有没有动静（这个浏览器里开不了麦，会说一句；开得了的会出“正在听”）
-MIC = "document.body.innerText.includes('开不了麦') || document.body.innerText.includes('正在听')"
+# 声波键（打电话）点了有没有动静：这个浏览器有听写的话通话页出来；没有的话说一句“开不了麦”
+MIC = "!!document.querySelector('.kfs-call') || document.body.innerText.includes('开不了麦')"
 def quiet_mic(page):
-    page.evaluate("(() => { const b = [...document.querySelectorAll('.kfs-composer button')].find((x) => x.textContent === '取消'); if (b) b.click(); })()")   # 要是真开始听了，收掉
+    page.evaluate("(() => { const b = document.querySelector('.kfs-call button[aria-label=\\'挂断\\']'); if (b) b.click(); })()")   # 要是真打起来了，挂掉（一句没说，聊天里不留东西）
     wait_js(page, "!(" + MIC + ")", 9000)       # 那句提示自己收（六秒）
 
 
@@ -75,7 +75,7 @@ def keys(browser):
     idle = key(pa)
     ta.fill("有字"); typed = key(pa)
     ta.fill(""); cleared = key(pa)
-    ok(idle == "发语音" and typed == "发送" and cleared == "发语音", f"没在回：没字是声波，有字是发送，字删光了又是声波（{idle}、{typed}、{cleared}）")
+    ok(idle == "打电话" and typed == "发送" and cleared == "打电话", f"没在回：没字是声波，有字是发送，字删光了又是声波（{idle}、{typed}、{cleared}）")
     parts = [LONG("头一条"), LONG("第二条")]
     mock("/__debug/claude-hold?ms=2500")
     say(pa, "原样回：" + "\n[SPLIT]\n".join(parts))
@@ -92,7 +92,7 @@ def keys(browser):
     revealing = (key(pa), pa.evaluate(shown(parts[1])))
     ok(first and revealing == ("停", False), f"回话正一条一条蹦：还是停键（{revealing}）")
     last = wait_js(pa, shown(parts[1]), 6000)
-    done = wait_key(pa, "发语音", 3000)
+    done = wait_key(pa, "打电话", 3000)
     ok(last and done and not typing(pa) and notes(pa) == 0, "全蹦完了：变回声波（回完没有，看它就知道）")
     A.close()
 
@@ -110,7 +110,7 @@ def queued(browser):
     click_stop(pa)
     pa.wait_for_timeout(250)
     at_once = (key(pa), notes(pa))           # 当场就停：那个键马上变回声波、小字马上出来，不是等原来排的那两秒多走完
-    stopped = at_once == ("发语音", 1)
+    stopped = at_once == ("打电话", 1)
     pa.wait_for_timeout(3500)                # 原来排的那两秒多早过了
     cid, msgs = chat_of(pa)
     ok(ready and stopped and notes(pa) == 1 and note_count(pa) == 0 and not typing(pa) and len(calls()) == c0 and box()["rows"] == [] and halted(pa) == [],
@@ -123,12 +123,12 @@ def queued(browser):
     hidden = notes(pa) == 0 and key(pa) == "停"
     got = wait_js(pa, shown("收到：这句不用回 / 接着说"), 20000)
     pa.get_by_text("第二条").last.wait_for(timeout=10000); pa.wait_for_timeout(1500)
-    ok(hidden and got and len(calls()) == c0 + 1 and notes(pa) == 0 and key(pa) == "发语音", "停了以后马上接着发：照常回（停掉的那句和新的这句一起寄过去，只问了一回），小字不再摆")
+    ok(hidden and got and len(calls()) == c0 + 1 and notes(pa) == 0 and key(pa) == "打电话", "停了以后马上接着发：照常回（停掉的那句和新的这句一起寄过去，只问了一回），小字不再摆")
     A.close()
 
 
 # 发话的那一下手指连着点了两下：第二下落在刚换上来的停键上，不算数，不把自己刚发的这一句停掉。
-# 按停的那一下连着点了两下：第二下落在刚换上来的声波键上，也不算数，不一下子开始录音
+# 按停的那一下连着点了两下：第二下落在刚换上来的声波键上，也不算数，不一下子打起电话来
 def double(browser):
     A = phone(browser)
     pa = page_of(A, "double")
@@ -168,7 +168,7 @@ def double(browser):
     pa.wait_for_timeout(120)
     pa.touchscreen.tap(x, y)                 # 手指又点了一下：这时候已经是声波键了
     pa.wait_for_timeout(700)
-    ok(alive and key(pa) == "发语音" and notes(pa) == 1 and not pa.evaluate(MIC), "按停的那一下连着点了两下：停是停了，第二下落在刚换上来的声波键上，不算数（没有一下子开始录音）")
+    ok(alive and key(pa) == "打电话" and notes(pa) == 1 and not pa.evaluate(MIC), "按停的那一下连着点了两下：停是停了，第二下落在刚换上来的声波键上，不算数（没有一下子打起电话来）")
     A.close()
 
 
@@ -187,7 +187,7 @@ def cutoff(browser):
     t0 = time.time()
     pa.wait_for_timeout(int(SETTLE * 1000))
     click_stop(pa)
-    stopped = wait_key(pa, "发语音", 3000)
+    stopped = wait_key(pa, "打电话", 3000)
     asked = wait_mock(lambda: len(calls()) == c0 + 1, 14)
     took = time.time() - t0
     last = calls()[-1] if asked else {}
@@ -218,7 +218,7 @@ def waiting(browser):
     pa.wait_for_timeout(int(SETTLE * 1000))
     pa.get_by_role("button", name="停", exact=True).tap()      # 这一段用真的手指点
     t0 = time.time()
-    stopped = wait_key(pa, "发语音", 3000)
+    stopped = wait_key(pa, "打电话", 3000)
     took = time.time() - t0
     emptied = wait_mock(lambda: box()["rows"] == [], 3)
     ok(stopped and took < 1.0 and not typing(pa) and notes(pa) == 1 and note_count(pa) == 0,
@@ -239,7 +239,7 @@ def waiting(browser):
     back = wait_js(pa, TYPING, 4000) and notes(pa) == 0
     got = wait_js(pa, shown("收到：这句停掉"), 20000)
     pa.get_by_text("第二条").last.wait_for(timeout=10000); pa.wait_for_timeout(1500)
-    ok(back and got and len(calls()) == c0 + 2 and notes(pa) == 0 and key(pa) == "发语音" and wait_mock(lambda: box()["rows"] == [], 3),
+    ok(back and got and len(calls()) == c0 + 2 and notes(pa) == 0 and key(pa) == "打电话" and wait_mock(lambda: box()["rows"] == [], 3),
        "点“停了，点这里让我回”：他照眼下的对话回这一句（另问了一回），小字收了")
     A.close()
 
@@ -259,7 +259,7 @@ def oldpath(browser):
     ok(old and wait_js(pa, TYPING, 6000), "老路上按停·准备：走的是老路，他正在回")
     pa.wait_for_timeout(int(SETTLE * 1000) + 300)
     click_stop(pa)
-    stopped = wait_key(pa, "发语音", 2000)
+    stopped = wait_key(pa, "打电话", 2000)
     pa.wait_for_timeout(6000)                # 那边压着的那一回早答完了
     ok(stopped and notes(pa) == 1 and note_count(pa) == 0 and count_text(pa, "收到：老路上停") == 0 and not typing(pa) and cut == ["claude"],
        f"老路上等着的时候按停：一样作废，不出回话；不报“消息没送到”；等着的那头连接掐掉了（断掉的连接：{cut}）")
@@ -285,7 +285,7 @@ def reveal(browser):
     pa.wait_for_timeout(4500)                # 后两条本该在这工夫里蹦出来
     cid, msgs = chat_of(pa)
     m = msgs[-1]
-    ok(two and now == ("发语音", False) and pa.evaluate(shown(parts[1])) and not pa.evaluate(shown(parts[2])) and not pa.evaluate(shown(parts[3])) and notes(pa) == 0,
+    ok(two and now == ("打电话", False) and pa.evaluate(shown(parts[1])) and not pa.evaluate(shown(parts[2])) and not pa.evaluate(shown(parts[3])) and notes(pa) == 0,
        f"蹦到一半按停：蹦出来的两条留着，后两条不再出来；“正在输入”收了，那个键变回声波（{now}）")
     ok(m["role"] == "him" and [it.get("text") for it in m["items"]] == parts[:2] and m.get("cut") is True and m["raw"] == parts[0] + "\n[SPLIT]\n" + parts[1] and "照着说" in (m.get("thinking") or ""),
        "蹦到一半按停：存档里他那一条只剩前两条，他“自己说过的话”也改成只有这两条；心里话照旧留着")
@@ -338,7 +338,7 @@ def regen(browser):
     back = wait_js(pa, shown("收到：老公在吗"), 2000)
     pa.wait_for_timeout(600)
     cid, msgs = chat_of(pa)
-    ok(hidden and back and count_text(pa, "第二条") == 1 and key(pa) == "发语音" and not typing(pa) and notes(pa) == 0 and note_count(pa) == 0,
+    ok(hidden and back and count_text(pa, "第二条") == 1 and key(pa) == "打电话" and not typing(pa) and notes(pa) == 0 and note_count(pa) == 0,
        "重新回答时按停：旧回答原样回来；不报“重新回答没成功”，也不摆“停了”那行小字")
     asked = wait_mock(lambda: len(calls()) == c0 + 1, 10)
     pa.wait_for_timeout(2500)
@@ -389,7 +389,7 @@ def reopen(browser):
     pa.reload(); kite(pa)
     back_to_last(pa)   # 重新打开是新的一页：回到那段对话
     pa.wait_for_timeout(4000)
-    ok(notes(pa) == 1 and key(pa) == "发语音" and not typing(pa) and len(calls()) == c0, "开封府重开以后：那行小字还在；他没有自己去回停掉的那一句")
+    ok(notes(pa) == 1 and key(pa) == "打电话" and not typing(pa) and len(calls()) == c0, "开封府重开以后：那行小字还在；他没有自己去回停掉的那一句")
     pa.get_by_text(NOTE, exact=True).tap()
     got = wait_js(pa, shown("收到：不用回"), 20000)
     ok(got and len(calls()) == c0 + 1, "重开以后点小字：照常回")
@@ -410,9 +410,9 @@ def pending(browser):
     pa.wait_for_timeout(2700)                # 她停手两秒多：这一句记成“等这一回完了接着回”
     click_stop(pa)
     pa.wait_for_timeout(300)
-    stopped = (key(pa), notes(pa)) == ("发语音", 1)       # 当场就停，不会过一秒多又冒出停键来
+    stopped = (key(pa), notes(pa)) == ("打电话", 1)       # 当场就停，不会过一秒多又冒出停键来
     pa.wait_for_timeout(1500)
-    stopped = stopped and (key(pa), notes(pa)) == ("发语音", 1)
+    stopped = stopped and (key(pa), notes(pa)) == ("打电话", 1)
     wait_mock(lambda: len(calls()) == c0 + 1, 10)
     pa.wait_for_timeout(4000)
     cid, msgs = chat_of(pa)
@@ -431,7 +431,7 @@ def pending(browser):
     wait_mock(lambda: len(calls()) == c1 + 1, 10)
     pa.wait_for_timeout(4500)
     cid, msgs = chat_of(pa)
-    ok(len(calls()) == c1 + 1 and notes(pa) == 1 and msgs[-1]["text"] == "第四句" and msgs[-1].get("stopped") is True and not typing(pa) and key(pa) == "发语音",
+    ok(len(calls()) == c1 + 1 and notes(pa) == 1 and msgs[-1]["text"] == "第四句" and msgs[-1].get("stopped") is True and not typing(pa) and key(pa) == "打电话",
        "他正回着、她新发的那句还排着队的时候按停：正等着的那一回作废，排着队的那句也不发了")
     A.close()
 
@@ -451,7 +451,7 @@ def other(browser):
        "翻到别的对话·准备：新对话里空着，顶上“正在输入”，那个键是停")
     pa.wait_for_timeout(int(SETTLE * 1000))
     click_stop(pa)
-    stopped = wait_key(pa, "发语音", 2000)
+    stopped = wait_key(pa, "打电话", 2000)
     pa.wait_for_timeout(500)
     here = (typing(pa), notes(pa))
     pa.get_by_role("button", name="打开侧栏").click(); pa.wait_for_timeout(600)
@@ -486,7 +486,7 @@ def hung(browser):
     pa.wait_for_timeout(int(SETTLE * 1000))
     click_stop(pa)
     t0 = time.time()
-    stopped = wait_key(pa, "发语音", 3000)
+    stopped = wait_key(pa, "打电话", 3000)
     took = time.time() - t0
     ok(stopped and took < 1.0 and not typing(pa) and notes(pa) == 1 and note_count(pa) == 0, f"话还没出手机（换登录凭证的那一下悬着）的时候按停：马上停下（{took:.2f} 秒），不等那一下有着落")
     st["hang"] = False                       # 那一下有着落了
@@ -522,7 +522,7 @@ def landed(browser):
     pa.wait_for_timeout(2600)                # 第二条本该在这工夫里蹦出来
     cid, msgs = chat_of(pa)
     m = msgs[-1]
-    ok(answered and mid == ("停", True, False) and pa.evaluate(shown(parts[0])) and not pa.evaluate(shown(parts[1])) and m["role"] == "him" and len(m["items"]) == 1 and m.get("cut") is True and m["raw"] == parts[0] and key(pa) == "发语音" and not typing(pa) and notes(pa) == 0,
+    ok(answered and mid == ("停", True, False) and pa.evaluate(shown(parts[0])) and not pa.evaluate(shown(parts[1])) and m["role"] == "him" and len(m["items"]) == 1 and m.get("cut") is True and m["raw"] == parts[0] and key(pa) == "打电话" and not typing(pa) and notes(pa) == 0,
        f"回话已经到手、正往对话里放的那一下按停：照“掐断”办，只留头一条（按的时候 {mid}）")
     # 存的那一下工夫里她又发了一句：等存完，她这一句不能从画面上掉下去，也不能过后从存档里掉出去，照常得回
     mock("/__debug/claude-hold?ms=2000")
@@ -641,7 +641,7 @@ def fresh(browser):
     cid, msgs = chat_of(pa)
     m = msgs[-1]
     av = json.loads(pa.evaluate(KV, "kfs2:avatar:guangyi") or "null")
-    ok(fired and pa.evaluate("window.__bubbleAtTap") is False and m["role"] == "him" and len(m["items"]) == 1 and m.get("cut") is True and m["raw"] == parts[0] and key(pa) == "发语音" and not typing(pa)
+    ok(fired and pa.evaluate("window.__bubbleAtTap") is False and m["role"] == "him" and len(m["items"]) == 1 and m.get("cut") is True and m["raw"] == parts[0] and key(pa) == "打电话" and not typing(pa)
        and (av or {}).get("file") == "fox_reading_book.jpg" and pa.evaluate(shown(parts[0])) and not pa.evaluate(shown(parts[1])),
        "回话刚摆出来、画面还没重画的那一眨眼按停（按的时候一条都还没画出来）：只留头一条，他自己说过的话跟着改，没蹦到的换头像换回去；不会整条一下子全摆出来")
     A.close()
@@ -702,7 +702,7 @@ def regen_old(browser):
     back = wait_js(pa, shown("收到：老公在吗"), 2000)
     pa.wait_for_timeout(7000)
     cid, msgs = chat_of(pa)
-    ok(back and key(pa) == "发语音" and not typing(pa) and notes(pa) == 0 and note_count(pa) == 0 and len(msgs) == 2 and "alts" not in msgs[1],
+    ok(back and key(pa) == "打电话" and not typing(pa) and notes(pa) == 0 and note_count(pa) == 0 and len(msgs) == 2 and "alts" not in msgs[1],
        "老路上重新回答的时候按停：旧回答原样回来，不报“重新回答没成功”，不多出一个版本")
     A.close()
 
@@ -724,7 +724,7 @@ def reveal_more(browser):
     pa.wait_for_timeout(8000)
     cid, msgs = chat_of(pa)
     him = [m for m in msgs if m["role"] == "him"][-1]
-    ok(len(him["items"]) < 4 and him.get("cut") is True and msgs[-1]["role"] == "her" and msgs[-1].get("stopped") is True and len(calls()) == c0 + 1 and notes(pa) == 1 and key(pa) == "发语音" and not typing(pa),
+    ok(len(him["items"]) < 4 and him.get("cut") is True and msgs[-1]["role"] == "her" and msgs[-1].get("stopped") is True and len(calls()) == c0 + 1 and notes(pa) == 1 and key(pa) == "打电话" and not typing(pa),
        f"他蹦着、她新发的那句还排着队的时候按停：蹦着的掐断（留了 {len(him['items'])} 条），排着队的那句不发了，底下一行小字")
     # 她那句已经交出去了（上一条还没蹦完）
     pa.get_by_text(NOTE, exact=True).tap()
@@ -745,7 +745,7 @@ def reveal_more(browser):
     pa.wait_for_timeout(5000)
     cid, msgs = chat_of(pa)
     him = [m for m in msgs if m["role"] == "him"][-1]
-    ok(not whole and len(him["items"]) < 5 and him.get("cut") is True and msgs[-1]["role"] == "her" and msgs[-1].get("stopped") is True and notes(pa) == 1 and key(pa) == "发语音" and box()["rows"] == [] and len(calls()) == c1 + 2 and count_text(pa, "收到：再插一句") == 0,
+    ok(not whole and len(him["items"]) < 5 and him.get("cut") is True and msgs[-1]["role"] == "her" and msgs[-1].get("stopped") is True and notes(pa) == 1 and key(pa) == "打电话" and box()["rows"] == [] and len(calls()) == c1 + 2 and count_text(pa, "收到：再插一句") == 0,
        f"他蹦着、她后一句已经在等回话的时候按停：蹦着的掐断（留了 {len(him['items'])} 条），等着的那一回作废")
     A.close()
 
@@ -765,14 +765,14 @@ def unstuck(browser):
     pa.evaluate("window.__away(false)")
     got = wait_js(pa, shown("收到：我先走了"), 15000)
     pa.wait_for_timeout(4000)
-    ok(got and key(pa) == "发语音" and not typing(pa), "话排着队的时候切走、回来：回完了那个键是声波")
+    ok(got and key(pa) == "打电话" and not typing(pa), "话排着队的时候切走、回来：回完了那个键是声波")
     # 话排着队的时候点重新回答
     say(pa, "排着队的一句")
     pa.wait_for_timeout(300)
     retry_last(pa)
     wait_js(pa, TYPING, 5000)
     wait_js(pa, "!(" + TYPING + ")", 20000); pa.wait_for_timeout(2500)
-    ok(key(pa) == "发语音" and pa.get_by_text("2/2").count() == 1, "话排着队的时候点了重新回答：回完了那个键是声波")
+    ok(key(pa) == "打电话" and pa.get_by_text("2/2").count() == 1, "话排着队的时候点了重新回答：回完了那个键是声波")
     # 话排着队的时候改以前的一句话
     say(pa, "又排着队的一句")
     bubble = pa.locator(".items-end span").filter(has_text=re.compile("^老公在吗$")).first
@@ -782,7 +782,7 @@ def unstuck(browser):
     ta.fill("老公在不在"); ta.press("Enter")
     got = wait_js(pa, shown("收到：老公在不在"), 20000)
     wait_js(pa, "!(" + TYPING + ")", 20000); pa.wait_for_timeout(2500)
-    ok(got and key(pa) == "发语音", "话排着队的时候改了以前的一句话：回完了那个键是声波")
+    ok(got and key(pa) == "打电话", "话排着队的时候改了以前的一句话：回完了那个键是声波")
     # 话排着队的时候把这段对话删了（账户面板里那个钮）：那一句不发了，新对话里那个键是声波
     open_panel(pa)
     c1 = len(calls())
@@ -794,7 +794,7 @@ def unstuck(browser):
     pa.get_by_role("button", name="删掉当前这段对话").click()
     pa.get_by_role("button", name="再点一次，删掉这段对话").click()
     pa.wait_for_timeout(4000)
-    ok(sent and key(pa) == "发语音" and len(calls()) == c1 and not typing(pa) and not pa.evaluate(shown("要删掉的一句")), "话排着队的时候把这段对话删了：那一句不发了，那个键是声波")
+    ok(sent and key(pa) == "打电话" and len(calls()) == c1 and not typing(pa) and not pa.evaluate(shown("要删掉的一句")), "话排着队的时候把这段对话删了：那一句不发了，那个键是声波")
     A.close()
 
 
@@ -853,7 +853,7 @@ def flushed(browser):
     pa.wait_for_timeout(5000)
     index = json.loads(pa.evaluate(KV, "kfs2:index") or "[]")
     msgs = chat_by(pa, index[0]["id"])
-    ok(asked and len(calls()) == c0 + 2 and msgs[-1]["role"] == "him" and msgs[-1]["items"][0].get("text") == "收到：丙二" and wait_key(pa, "发语音", 3000) and not typing(pa),
+    ok(asked and len(calls()) == c0 + 2 and msgs[-1]["role"] == "him" and msgs[-1]["items"][0].get("text") == "收到：丙二" and wait_key(pa, "打电话", 3000) and not typing(pa),
        "他正回着上一句、她新发的那句还排着队就翻到了别的对话：那一句没丢，上一句回完以后在后台回上了")
     A.close()
 
@@ -880,7 +880,7 @@ def both(browser):
     cid, msgs = chat_of(pa)
     index = json.loads(pa.evaluate(KV, "kfs2:index") or "[]")
     jia = chat_by(pa, [c["id"] for c in index if c["id"] != cid][0])
-    ok(here == ("发语音", False, 1, 0) and len(calls()) == c0 + 1 and notes(pa) == 1 and msgs[-1].get("text") == "乙一" and msgs[-1].get("stopped") is True and jia[-1].get("text") == "甲一" and jia[-1].get("stopped") is True,
+    ok(here == ("打电话", False, 1, 0) and len(calls()) == c0 + 1 and notes(pa) == 1 and msgs[-1].get("text") == "乙一" and msgs[-1].get("stopped") is True and jia[-1].get("text") == "甲一" and jia[-1].get("stopped") is True,
        f"等着的是别的对话的那一回、眼前这句在排后头：按停，两头都不回了，两句底下都记着“停了”（按完 {here}）")
     A.close()
 
@@ -906,7 +906,7 @@ def regen_save(browser):
     soon = (key(pa), notes(pa))               # 存完的那一下：那个键是声波、小字在，不会又冒出停键来
     pa.wait_for_timeout(6500)
     cid, msgs = chat_of(pa)
-    ok(soon == ("发语音", 1) and len(calls()) == c0 + 1 and msgs[-1].get("text") == "新说的" and msgs[-1].get("stopped") is True and notes(pa) == 1 and key(pa) == "发语音" and not typing(pa),
+    ok(soon == ("打电话", 1) and len(calls()) == c0 + 1 and msgs[-1].get("text") == "新说的" and msgs[-1].get("stopped") is True and notes(pa) == 1 and key(pa) == "打电话" and not typing(pa),
        "重新回答的新回答到手、正存着的那一下按停：她这工夫里新说的那句不接着回，底下一行小字")
     A.close()
 
@@ -925,7 +925,7 @@ def regen_more(browser):
     got = wait_js(pa, shown("收到：顺便再说一句"), 30000)
     pa.get_by_text("第二条").last.wait_for(timeout=10000); pa.wait_for_timeout(1500)
     cid, msgs = chat_of(pa)
-    ok(got and len(calls()) == c0 + 2 and [m["role"] for m in msgs] == ["her", "him", "her", "him"] and len(msgs[1].get("alts") or []) == 2 and notes(pa) == 0 and key(pa) == "发语音",
+    ok(got and len(calls()) == c0 + 2 and [m["role"] for m in msgs] == ["her", "him", "her", "him"] and len(msgs[1].get("alts") or []) == 2 and notes(pa) == 0 and key(pa) == "打电话",
        "重新回答的工夫里她又说了一句、没按停：新回答开成第二个版本，接着回了她那一句")
     A.close()
 
@@ -945,7 +945,7 @@ def regen_away(browser):
     pa.locator("button[aria-label='新对话']").tap(); pa.wait_for_timeout(600)
     ok(key(pa) == "停" and typing(pa) and pa.evaluate("document.querySelectorAll('.kfs-chat-rows .whitespace-pre-wrap').length") == 0, "重新回答、翻走、按停·准备：她到了新对话，那个键是停")
     click_stop(pa)
-    stopped = wait_key(pa, "发语音", 2000)
+    stopped = wait_key(pa, "打电话", 2000)
     pa.wait_for_timeout(600)
     open_history(pa, 0)
     wait_mock(lambda: len(calls()) == c0 + 1, 14)
@@ -1127,8 +1127,8 @@ def resend_stop(browser):
     cid, others = other_chats(pa)
     yi = chat_by(pa, cid); jia = chat_by(pa, others[0])
     asked = asked_since(c0)
-    ok(quiet == (0, 0, 2) and (k, pressed) == ("停", True) and soon == ("发语音", 1), f"两段都等着补发、她回来半秒多按停：那个键是停，按了马上变回声波，眼前这句底下一行小字（她不在的时候 {quiet}，按的时候 {(k, pressed, busy)}，按完 {soon}）")
-    ok("甲二" not in asked and (busy or asked == []) and [m.get("text") for m in (jia[-1], yi[-1])] == ["甲二", "乙二"] and jia[-1].get("stopped") is True and yi[-1].get("stopped") is True and jobs(pa) == [] and not typing(pa) and key(pa) == "发语音",
+    ok(quiet == (0, 0, 2) and (k, pressed) == ("停", True) and soon == ("打电话", 1), f"两段都等着补发、她回来半秒多按停：那个键是停，按了马上变回声波，眼前这句底下一行小字（她不在的时候 {quiet}，按的时候 {(k, pressed, busy)}，按完 {soon}）")
+    ok("甲二" not in asked and (busy or asked == []) and [m.get("text") for m in (jia[-1], yi[-1])] == ["甲二", "乙二"] and jia[-1].get("stopped") is True and yi[-1].get("stopped") is True and jobs(pa) == [] and not typing(pa) and key(pa) == "打电话",
        f"按停以后：两段都不发了（另一段的补发本该 0.2 秒以后轮到，也不发），两句上都记着“停了”，记着的那两回都不再记着（按停以后问过的：{asked}）")
     A.close()
 
@@ -1158,7 +1158,7 @@ def two_back(browser):
     yi = chat_by(pa, cid); jia = chat_by(pa, others[0])
     asked = sorted(asked_since(c0))
     ok(quiet == (0, 0, 2) and both and seen and asked == ["乙二", "甲二"] and jia[-1]["role"] == "him" and jia[-1]["items"][0].get("text") == "收到：甲二" and yi[-1]["role"] == "him" and yi[-1]["items"][0].get("text") == "收到：乙二"
-       and note_count(pa) == 0 and notes(pa) == 0 and jobs(pa) == [] and key(pa) == "发语音" and not typing(pa),
+       and note_count(pa) == 0 and notes(pa) == 0 and jobs(pa) == [] and key(pa) == "打电话" and not typing(pa),
        f"两段对话各有一句没送成、她回来以后什么都没按：两段都补发了，各回各的、各问一回，什么都没剩下（问过的：{asked}）")
     A.close()
 
@@ -1188,7 +1188,7 @@ def back_open(browser):
     cid, others = other_chats(pa)
     jia = chat_by(pa, cid); yi = chat_by(pa, others[0])
     ok(quiet == (0, 0) and went and asked and seen and asked_since(c0) == ["甲二"] and jia[-1]["role"] == "him" and sum(1 for m in jia if m["role"] == "him") == 2 and sum(1 for m in yi if m["role"] == "him") == 1
-       and notes(pa) == 0 and note_count(pa) == 0 and jobs(pa) == [] and key(pa) == "发语音",
+       and notes(pa) == 0 and note_count(pa) == 0 and jobs(pa) == [] and key(pa) == "打电话",
        f"等着补发的那一句在别的对话里、她回来 0.25 秒就翻了过去：只补发一回，回在那段对话里、就在眼前；乙段没动（问过的：{asked_since(c0)}）")
     A.close()
 
@@ -1230,7 +1230,7 @@ def orphan(browser):
         cid, others = other_chats(pa)
         yi = chat_by(pa, cid); jia = chat_by(pa, others[0])
         state = (started, away, k, pressed, jia[-1].get("text"), jia[-1].get("stopped"), yi[-1].get("text"), yi[-1].get("stopped"), notes(pa), key(pa), typing(pa))
-        ok(state == (True, (2, ["working"] if reach else []), "停", True, "甲二", True, "乙二", True, 1, "发语音", False), f"乙二{tag}、等着轮到，甲二正补发着：按停，两句上都记了“停了”（{state}）")
+        ok(state == (True, (2, ["working"] if reach else []), "停", True, "甲二", True, "乙二", True, 1, "打电话", False), f"乙二{tag}、等着轮到，甲二正补发着：按停，两句上都记了“停了”（{state}）")
         ok(jobs(pa) == [] and emptied, f"乙二{tag}：按停以后，记着的那两回都不再记着（原来记着 {away[0]} 回，现在 {len(jobs(pa))} 回），信箱里的格子都收掉了")
         done = wait_turning(pa, lambda: len(calls()) == c0 + (2 if reach else 1), 40)     # 那边到此为止（他还没想完的，小后端摸信箱的时候发现那一格没了，掐了；正好想完了的，回话没处放）
         pa.wait_for_timeout(5000)
@@ -1272,7 +1272,7 @@ def back_stop(browser):
     pa.wait_for_timeout(1000)
     soon = (key(pa), notes(pa), typing(pa))
     emptied = wait_turning(pa, lambda: box()["rows"] == [], 3)
-    ok(away == (0, 1, ["working"]) and (k, pressed) == ("停", True) and soon == ("发语音", 1, False) and jobs(pa) == [] and emptied,
+    ok(away == (0, 1, ["working"]) and (k, pressed) == ("停", True) and soon == ("打电话", 1, False) and jobs(pa) == [] and emptied,
        f"回来半秒多按停（补发{'已经发出去了' if busy else '还排着队'}）：马上停下，小字出来；记着的那一回不再记着，信箱里那一格收掉（她不在的时候 {away}，按完 {soon}）")
     done = wait_turning(pa, lambda: len(calls()) == c0 + 1, 20)                           # 那边到此为止（掐了，或者正好想完了）
     pa.wait_for_timeout(5000)
@@ -1321,7 +1321,7 @@ def lost_more(browser):
     pa.wait_for_timeout(1000)
     soon = (key(pa), notes(pa), typing(pa))
     emptied = wait_turning(pa, lambda: box()["rows"] == [], 3)
-    ok(rec0 == 1 and at == ("停", False) and pressed and soon == ("发语音", 1, False) and jobs(pa) == [] and emptied,
+    ok(rec0 == 1 and at == ("停", False) and pressed and soon == ("打电话", 1, False) and jobs(pa) == [] and emptied,
        f"头一句那一回还记着、她又说了一句（还排着队）就按停：记着的那一回不再记着，信箱里那一格收掉（按的时候 {at}，按完 {soon}，还记着 {len(jobs(pa))} 回）")
     done = wait_turning(pa, lambda: len(calls()) == c0 + 1, 25)                           # 头一句那一回到此为止（掐了，或者正好想完了）
     pa.wait_for_timeout(5000)
@@ -1383,7 +1383,7 @@ def two(browser):
     chats = {c["title"]: chat_by(pa, c["id"]) for c in index}
     a = [m for t, m in chats.items() if t.startswith("甲")][0]; b = [m for t, m in chats.items() if t.startswith("乙")][0]
     ok(asked and len(calls()) == c0 + 3 and a[-1]["role"] == "him" and a[-1]["items"][0].get("text") == "收到：甲二" and b[-1]["role"] == "him" and b[-1]["items"][0].get("text") == "收到：乙二"
-       and sum(1 for m in a if m["role"] == "him") == 2 and sum(1 for m in b if m["role"] == "him") == 3 and key(pa) == "发语音" and not typing(pa),
+       and sum(1 for m in a if m["role"] == "him") == 2 and sum(1 for m in b if m["role"] == "him") == 3 and key(pa) == "打电话" and not typing(pa),
        "两段对话里都有话等着轮到、她在第三段：两段都在后台回上了，各回各的、各一回")
     A.close()
 
@@ -1459,7 +1459,7 @@ def skipped(browser):
     index = json.loads(pa.evaluate(KV, "kfs2:index") or "[]")
     chats = {c["title"]: chat_by(pa, c["id"]) for c in index}
     b = [m for t, m in chats.items() if t.startswith("乙")]
-    ok(ready and asked and len(calls()) == c0 + 2 and sorted(t[0] for t in chats) == ["丙", "乙"] and b and b[0][-1]["role"] == "him" and b[0][-1]["items"][0].get("text") == "收到：乙二" and wait_key(pa, "发语音", 3000),
+    ok(ready and asked and len(calls()) == c0 + 2 and sorted(t[0] for t in chats) == ["丙", "乙"] and b and b[0][-1]["role"] == "him" and b[0][-1]["items"][0].get("text") == "收到：乙二" and wait_key(pa, "打电话", 3000),
        f"等着轮到的两段里，排前头的那一段被她删了：跳过它，后头那一段照样在后台回上（一共问了 {len(calls()) - c0} 回，剩下的对话：{sorted(chats)}）")
     A.close()
 
@@ -1489,7 +1489,7 @@ def peek(browser):
     after = (pa.evaluate(shown(parts[0])), pa.evaluate(shown(parts[2])), key(pa), typing(pa))
     pa.wait_for_timeout(3000)
     cid, msgs = chat_of(pa)
-    ok(during == (True, True) and after == (True, True, "发语音", False) and len(msgs[-1]["items"]) == 3 and len(calls()) == c0 + 2,
+    ok(during == (True, True) and after == (True, True, "打电话", False) and len(msgs[-1]["items"]) == 3 and len(calls()) == c0 + 2,
        f"后台的回话正存着的时候她翻到了那段对话：看到的是整条，存完也不收回去重蹦（存的时候 {during}，刚存完 {after}）")
     A.close()
 
@@ -1526,7 +1526,7 @@ def signout(browser):
     say(pa, "这句停掉")
     wait_js(pa, TYPING, 6000); wait_mock(working, 8); pa.wait_for_timeout(int(SETTLE * 1000))
     click_stop(pa)
-    wait_key(pa, "发语音", 2000)
+    wait_key(pa, "打电话", 2000)
     had = len(halted(pa)) == 1
     open_panel(pa)
     pa.get_by_role("button", name="退出登录", exact=True).click(); pa.wait_for_timeout(1500)
@@ -1553,7 +1553,7 @@ def resume(browser):
     job = box()["rows"][0]["job"]
     pb.wait_for_timeout(int(SETTLE * 1000))
     click_stop(pb)
-    stopped = wait_key(pb, "发语音", 2000)
+    stopped = wait_key(pb, "打电话", 2000)
     emptied = wait_mock(lambda: box()["rows"] == [], 3)
     cut = wait_mock(lambda: len(calls()) == c0 + 1, 22) and calls()[-1].get("cut") is True
     time.sleep(GRACE + 2.5)
@@ -1581,7 +1581,7 @@ def failed(browser):
     told = wait_js(pa, "document.body.innerText.includes('点这里重发')", 25000)
     pa.wait_for_timeout(500)
     cid, msgs = chat_of(pa)
-    ok(marked and told and notes(pa) == 0 and note_count(pa, "点这里重发") == 1 and key(pa) == "发语音" and msgs[-1].get("text") == "这句先停" and "stopped" not in msgs[-1],
+    ok(marked and told and notes(pa) == 0 and note_count(pa, "点这里重发") == 1 and key(pa) == "打电话" and msgs[-1].get("text") == "这句先停" and "stopped" not in msgs[-1],
        f"点小字让他回、这一回没回成：底下是“消息没送到…点这里重发”；那行“停了”不再摆（点的那一下，那一笔就擦掉了，存档里也擦了：{'stopped' not in msgs[-1]}）")
     mock("/__debug/claude-fail?kind=")
     pa.get_by_text(re.compile("点这里重发")).first.click()

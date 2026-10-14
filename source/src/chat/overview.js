@@ -1,4 +1,5 @@
 import { plainOf } from "../rich.js";
+import { isCallMark, markText } from "../call/marks.js";
 
 export function makeTitle(msgs, memeLookup) {
   const first = msgs.find((m) => m.role === "her");
@@ -18,6 +19,7 @@ export function makeTitle(msgs, memeLookup) {
 export function makePreview(msgs) {
   const last = msgs[msgs.length - 1];
   if (!last) return "";
+  if (isCallMark(last)) return `[${markText(last)}]`;
   if (last.role === "event") return "[换了新头像]";
   if (last.role === "her") {
     if (last.kind === "meme") return "[表情包]";

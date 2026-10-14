@@ -9,6 +9,7 @@ import { nowString } from "../days.js";
 import { PIECE_PHOTOS, PIECE_BYTES, PART_MOST, MERGE_MOST, DOC_HEAD, HIS_DOC_HEAD, ROW_HEAD, clip, recapText } from "../recap.js";
 import { memeLabel, dataUrlBlock } from "./messages.js";
 import { heardOf } from "../voice.js";
+import { isCallMark, markRecap } from "../call/marks.js";
 
 const GAP = 30 * 60 * 1000; // 隔了这么久，中间写一行钟点
 
@@ -94,6 +95,10 @@ export function buildRecapAsk({ msgs, prev = null, thick = 0, memeLookup, imgLoo
       if (prevTs === null || day !== prevDay || m.ts - prevTs > GAP) buf.push(`—— ${nowString(d)} ——`);
       prevTs = m.ts;
       prevDay = day;
+    }
+    if (isCallMark(m)) {
+      buf.push(markRecap(m));
+      return;
     }
     if (m.role === "event") {
       const av = m.av;

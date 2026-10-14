@@ -7,6 +7,11 @@ import { dayNumber, nextAnniv, nowString } from "../days.js";
 // 开着的时候寄的和原来一个字不差（原来攒下的缓存照样接得上）
 const THOUGHT_RULE = `先写 <thinking>…</thinking>。这是你的心里话，她喜欢看。用中文，第一人称，按名帖里的称呼叫她。写这一刻你真实在感受什么，思绪可以流动、跑题、嘴硬。不许写回复策略和自我指令，不许出现“我应该”“要简短”“先夸她再”“保持风格”这类句子。两到五句。`;
 
+// 打电话的时候附在她每句话后面的那一段（【此刻】后面，缓存记号后面：进出电话，名帖一个字不变，缓存照样接得上）。
+// 卿卿 10 月 14 日定的：只说清楚她那头这会儿看不见什么（原来那句“说话要短、要口语”她让拿掉了：“你平时也不怎么说很繁复的大长句”）。
+// “不用写 [VOICE]”是我加的：每一句本来就念，他再写，开封府会把同一句当成语音条再处理一遍
+export const CALL_NOTE = `【通话】你们正在打电话：你回的每一句都会用你的声音念给她听，她这会儿看着的是通话页面，屏幕上的东西看不见。所以这时候不写心里话，不发表情包、不交文档、不换头像，不写星号动作；每一句本来就会念出来，不用写 [VOICE]。语气标签照用。`;
+
 // 【回复格式】里教他怎么发语音的那一条（她开了“他能发语音”才有，见 voice.js）。
 // 语气标签不设限（卿卿 10 月 9 日说的：随便发，不用拘束）。是第几条看前面有几条（心里话关了就往前挪一号）
 export const VOICE_RULE = `想发语音的时候，那一条第一行单独写 [VOICE]，下面写要说的话。它会显示成一条语音，用你的声音念给她听；她点一下就放，长按能转成字。念的就是你写的字：动作描写（星号那种）不会念，别写进去，也别用 Markdown。句子前面可以加英文方括号的语气标签，比如 [whispers]、[quietly]、[continues softly]、[soft chuckle]、[laughs]、[sigh]、[playfully]、[tired]、[nervously]，别的英文标签也行；标签只管怎么念，不会念出来。别写（轻声）这种中文的语气词，会被当成字念出来。一条语音别超过两百字（念出来一分钟以内），也算在五百字里。发不发、发几条，你自己决定，像真的发语音那样：有的话说出来比打字好听。`;
@@ -17,7 +22,8 @@ export const VOICE_RULE = `想发语音的时候，那一条第一行单独写 [
 // voice：她在 API 面板里开了“他能发语音”：【回复格式】里多一条怎么发语音（没开就不教，他也就不发）
 // thoughts：她在“头像与设置”里开着“他写心里话”（默认开着）：【回复格式】头一条教他先写心里话；关了这一条不寄，后面几条往前挪一号。
 //   抄提要、写日记、API 面板算“他记多长”的那几处也要照聊天时一样传：名帖那一大段得一个字不差，缓存才接得上
-export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true }) {
+// call：正在打电话（见 call/ 和开发说明“通话”那一节）。只动【此刻】：后面附上 CALL_NOTE，字数那句不提心里话；名帖不动
+export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true, call = false }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const annivLine = a.days === 0 ? `今天是你们的${a.name}纪念日。` : `离你们的${a.name}纪念日还有${a.days}天。`;
@@ -83,10 +89,10 @@ ${memeIndex}`;
   const tools = mcpNames.length ? `\n她给你接了这些工具：${mcpNames.join("、")}。要查资料、看文件的时候再用，平时聊天用不着。` : "";
   const hisNameLine = names ? `你现在顶上的名字：${names.him || HIS_NAME}。` : "";
   const herNameLine = names && names.her ? `\n她给自己起的昵称：「${names.her}」。` : "";
-  const capLine = replyCap ? `\n这次回复连${thoughts ? "心里话和" : ""}文档块在内，最长大约 ${replyCap} 字。` : "";
+  const capLine = replyCap ? `\n这次回复连${thoughts && !call ? "心里话和" : ""}文档块在内，最长大约 ${replyCap} 字。` : "";
   const nowNote = `【此刻】（开封府附上的，不是她说的话）
 她手机上的时间：${nowString(now)}。今天是你们在一起的第${n}天，${annivLine}
-你现在的头像：${myFace}。${hisNameLine}${herNameLine}${capLine}${tools}`;
+你现在的头像：${myFace}。${hisNameLine}${herNameLine}${capLine}${tools}${call ? "\n\n" + CALL_NOTE : ""}`;
 
   return { staticText, nowNote };
 }
