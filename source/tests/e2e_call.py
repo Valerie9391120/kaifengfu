@@ -85,6 +85,22 @@ def queue_reply(text): mock("/__debug/reply-queue?text=" + urllib.parse.quote(te
 def sys_text(body):
     s = body["system"]
     return s[0]["text"] if isinstance(s, list) else s
+# 名帖拆成三截：【回复格式】前面、那几条（去掉编号）、后面。心里话那一条有没有，看中间那截
+def rules_of(text):
+    head, rest = text.split("每次回复都按这个顺序：\n", 1)
+    block, tail = rest.split("\n\n表情包索引", 1)
+    return head, [re.sub(r"^\d+\. ", "", l) for l in block.split("\n")], tail
+# 拨“头像与设置”里的“他写心里话”：回拨之前开没开、开关底下那行小字
+def flip_thoughts(page):
+    page.get_by_role("button", name="打开侧栏").click(); time.sleep(0.5)
+    page.get_by_role("button", name="头像与设置").click(); time.sleep(0.5)
+    sw = page.get_by_role("switch", name="他写心里话")
+    was = sw.get_attribute("aria-checked")
+    sw.click(); time.sleep(0.4)
+    cap = page.locator(".kfs-thoughts + p").inner_text()
+    page.get_by_role("button", name="关闭").click(); time.sleep(0.4)
+    page.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.6)
+    return was, cap
 def last_user_texts(body):
     last = [m for m in body["messages"] if m["role"] == "user"][-1]
     return [b["text"] for b in last["content"] if b.get("type") == "text"]
@@ -196,7 +212,14 @@ with sync_playwright() as p:
         now_note = [t for t in texts if t.startswith("【此刻】")]
         ok(f"[开封府提示：你们开始打电话了，你接起来先说了一句“{hi1}”]" in texts and "喂，你在吗" in texts and now_note and now_note[0].endswith("\n\n" + CALL_NOTE_TEXT),
            "寄过去的：“开始打电话了，你接起来先说了一句……”那行提示、她说的话；【此刻】后面附着【通话】那一段（一个字不差是她 16:27 改的那样）")
-        ok(sys_text(body) == sys_text(before), "打电话的时候名帖一个字不动（和打电话之前寄的一样，缓存接得上）")
+        # 心里话开着（默认）：打电话的时候名帖照关着拼（她 10 月 15 日要的：等于开关自动拨到关着），开关本身不动
+        call_sys = sys_text(body)
+        h_on, r_on, t_on = rules_of(sys_text(before))
+        h_call, r_call, t_call = rules_of(call_sys)
+        ok(r_on[0].startswith("先写 <thinking>") and "<thinking>" not in call_sys and h_call == h_on and t_call == t_on
+           and r_call == [r_on[1].replace("然后是给她的话", "给她的话", 1)] + r_on[2:]
+           and json.loads(pa.evaluate(KV, "kfs2:settings") or "{}").get("thoughts") is not False,
+           "心里话开着的时候打电话：寄的名帖照关着拼，只少心里话那一条（后面几条往前挪一号），别的一个字不动；设置里的开关不动")
         spoke = wait_phase(pa, "speaking", 15000)
         color = pa.evaluate(SUBCOLOR)
         closed_while_talking = not stt_open()
@@ -312,8 +335,34 @@ with sync_playwright() as p:
         wait_js(pa, "!(" + TYPING + ")", 20000); time.sleep(1.0)
         texts = [b["text"] for m in calls()[-1]["body"]["messages"] if m["role"] == "user" for b in m["content"] if b.get("type") == "text"]
         ok(any(t.startswith("[开封府提示：电话挂了，你们打了 ") for t in texts) and not any("【通话】" in t for t in texts), "挂了以后打字：寄给他的有“电话挂了，打了多久”那行，【通话】那一段不再附")
+        ok(sys_text(calls()[-1]["body"]) == sys_text(before), "挂了以后打字：名帖照开关（开着），心里话那一条回来了，和打电话之前寄的一个字不差（原来攒下的缓存接得上）")
         index = json.loads(pa.evaluate(KV, "kfs2:index") or "[]")
         ok(any(c.get("preview") for c in index), "历史对话照常")
+
+        # ================= 心里话关着的时候打电话：进出电话名帖一个字不动 =================
+        flipped, cap = flip_thoughts(pa)
+        c4 = len(calls())
+        say(pa, "关着心里话打字")
+        wait_mock(lambda: len(calls()) == c4 + 1, 10)
+        wait_js(pa, "!(" + TYPING + ")", 20000); time.sleep(1.0)
+        text_off = sys_text(calls()[-1]["body"])
+        e_dial = len(eleven())
+        dial(pa)
+        check_hello("心里话关着打一回", e_dial)
+        queue_reply("嗯，一样。")
+        c5 = len(calls())
+        say_in_call(pa, "关着也一样吗")
+        wait_mock(lambda: len(calls()) == c5 + 1, 10)
+        call_off = sys_text(calls()[-1]["body"])
+        wait_phase(pa, "speaking", 15000)
+        wait_phase(pa, "listening", 20000)
+        pa.locator(".kfs-call button[aria-label='挂断']").click()
+        time.sleep(0.8)
+        kept = json.loads(pa.evaluate(KV, "kfs2:settings") or "{}").get("thoughts")
+        ok(flipped == "true" and kept is False and "<thinking>" not in text_off and call_off == text_off and call_off == call_sys,
+           "心里话关着：打字、打电话寄的名帖一个字不差（进出电话不用重新攒缓存），和开着时电话里寄的也一样")
+        ok("打电话的时候自动关着" in cap, f"开关底下那行小字写着“打电话的时候自动关着”（{cap}）")
+        flip_thoughts(pa)   # 拨回开着，后面照原样
 
         # ================= 一句没说就挂了：那两行都不留 =================
         n_before = len(chat_of(pa)[1])
