@@ -225,6 +225,10 @@ export default function App({ account = {} }) {
   // 正在打电话（见 call/ 和开发说明“通话”那一节）：call 是通话页上摆的样子；callRef 里还有听写、念、放声音的那几样
   const [call, setCall] = useState(null);
   const callRef = useRef(null);
+  // 他写不写心里话：照“头像与设置”里的开关（默认开着）；正在打电话的那段对话照关着算（她 10 月 15 日要的，
+  // 见开发说明“电话里心里话自动关着”）。开关本身不动：挂了就照开关，打到一半开封府被系统收掉，回来开关也不会卡在关着。
+  // 聊天、抄提要拼名帖都照这个：同一段对话两处的名帖一个字不差，缓存才接得上
+  const thoughtsFor = (chatId) => settingsRef.current.thoughts !== false && !(callRef.current && callRef.current.chat === chatId);
   const [echo, setEcho] = useState(null); // 量一量回声（见 call/echo.js）：那一页眼下的样子
   const echoRef = useRef(null);
   const [ring, setRing] = useState(null); // 他打来的电话正在响（见 call/incoming.js）
@@ -1191,7 +1195,7 @@ export default function App({ account = {} }) {
       names: namesRef.current,
       replyCap: replyRoom(st.maxTokens || 2048),
       voice: !!st.voice,
-      thoughts: st.thoughts !== false, // 他写不写心里话（“头像与设置”里的开关，默认开着）
+      thoughts: thoughtsFor(opts.chat), // 他写不写心里话：照开关，正在打电话的这段对话照关着算（见上面 thoughtsFor）
       callable: st.callable !== false, // 他能打电话（API 面板里的开关，默认开着；见 call/incoming.js）
       call: !!(callRef.current && callRef.current.chat === opts.chat), // 正在打电话：【此刻】后面附上通话的规矩（见 call/）
     });
@@ -3053,8 +3057,8 @@ export default function App({ account = {} }) {
     const st = settingsRef.current;
     const model = st.model || DEFAULT_MODEL;
     const memDocs = memFilesRef.current.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
-    // 名帖那一大段和聊天时寄的一个字不差（缓存接得上）；【此刻】这回用不着
-    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: st.thoughts !== false, callable: st.callable !== false });
+    // 名帖那一大段和聊天时寄的一个字不差（缓存接得上；正在打电话的这段对话，心里话那一条照关着算，见 thoughtsFor）；【此刻】这回用不着
+    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false });
     // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
     const photos = {};
     for (const m of msgs) {
@@ -3855,7 +3859,8 @@ export default function App({ account = {} }) {
           <AvatarSection av={avatars.her} onChange={changeHerAvatar} />
           <HisAvatarCard av={avatars.him} name={avatarName(avatars.him, false) || "炅"} />
           {/* 他写不写心里话：卿卿 10 月 14 日凌晨要的开关，放在他的头像卡片底下；一个开关管所有模型，默认开着。
-              关了，寄过去的【回复格式】里就没有心里话那一条（见 prompt/system.js 的 THOUGHT_RULE）。存在设置里，跟着云端走 */}
+              关了，寄过去的【回复格式】里就没有心里话那一条（见 prompt/system.js 的 THOUGHT_RULE）。存在设置里，跟着云端走。
+              打电话的时候自动照关着寄（10 月 15 日，见 thoughtsFor），这里的开关不跟着动 */}
           <div className="kfs-thoughts flex items-center justify-between" style={{ ...glass(0.5, 16), borderRadius: 16, padding: "10px 14px", marginTop: 10, gap: 12 }}>
             <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.5 }}>
               他写心里话
@@ -3865,7 +3870,7 @@ export default function App({ account = {} }) {
             </div>
             <Toggle on={settings.thoughts !== false} onChange={(v) => updateSettings({ thoughts: v })} label="他写心里话" />
           </div>
-          <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>所有模型一起管。拨了以后，下一句话那段对话的缓存得重新攒一回，那一句贵一些，之后照常。</p>
+          <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>所有模型一起管，打电话的时候自动关着。拨了以后，下一句话那段对话的缓存得重新攒一回，那一句贵一些，之后照常。</p>
           <div style={{ height: 1, background: HAIR, margin: "22px 0 18px" }} />
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>主题色</div>
           <div className="flex items-center flex-wrap" style={{ gap: 8, marginBottom: theme === entranceTheme() ? 22 : 10 }}>
