@@ -109,19 +109,20 @@ def run(browser):
     if not opened:
         ctx.close(); return                 # 菜单都没出来，后面的没法走
     rs = rows(pg)
-    ok([(r["name"], r["sub"]) for r in rs] == [("闲笔集", "今天还没写"), ("藏音匣", "营造中"), ("网易云", "营造中")],
-       f"菜单三行：闲笔集、藏音匣、网易云；闲笔集那行的小字和格子上的是同一句（{[(r['name'], r['sub']) for r in rs]}）")
-    ok([r["soon"] for r in rs] == ["", "1", "1"] and [r["svgs"] for r in rs] == [2, 1, 1] and [r["dim"] for r in rs] == ["1", "0.55", "0.55"] and [r["chip"] for r in rs] == ["1", "0.55", "0.55"],
+    # 10 月 15 日闲笔集后面添了一行“江湖棋局”（见 tests/e2e_jianghu.py），四行
+    ok([(r["name"], r["sub"]) for r in rs] == [("闲笔集", "今天还没写"), ("江湖棋局", "还没开局"), ("藏音匣", "营造中"), ("网易云", "营造中")],
+       f"菜单四行：闲笔集、江湖棋局、藏音匣、网易云；闲笔集那行的小字和格子上的是同一句（{[(r['name'], r['sub']) for r in rs]}）")
+    ok([r["soon"] for r in rs] == ["", "", "1", "1"] and [r["svgs"] for r in rs] == [2, 2, 1, 1] and [r["dim"] for r in rs] == ["1", "1", "0.55", "0.55"] and [r["chip"] for r in rs] == ["1", "1", "0.55", "0.55"],
        f"能进去的那行右边带箭头；还没盖的两行淡一档、没有箭头（箭头 {[r['svgs'] - 1 for r in rs]}，名字的浓淡 {[r['dim'] for r in rs]}）")
 
     # ---- 还没盖的两行：点了只冒一句话 ----
     c0 = len(calls())
-    pg.locator(".kfs-nanya-row").nth(1).click()
+    pg.locator(".kfs-nanya-row").nth(2).click()
     said = wait_has(pg, "藏音匣还在营造")
     ok(said and pg.locator(".kfs-nanya").count() == 1 and pg.locator(".kfs-page").count() == 0,
        "点藏音匣：冒一句“藏音匣还在营造”，菜单还开着，没进到别的页")
     gone = wait_has(pg, "藏音匣还在营造", want=False)
-    pg.locator(".kfs-nanya-row").nth(2).click()
+    pg.locator(".kfs-nanya-row").nth(3).click()
     said = wait_has(pg, "网易云还在营造")
     still = pg.locator(".kfs-nanya").count() == 1 and pg.locator(".kfs-page").count() == 0
     gone2 = wait_has(pg, "网易云还在营造", want=False)

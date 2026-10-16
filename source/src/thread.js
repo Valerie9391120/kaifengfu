@@ -30,11 +30,15 @@ export function switchAlt(msgs, i, t) {
   return msgs.slice(0, i).concat([{ ...alts[t].node, alts, altIdx: t }], alts[t].after);
 }
 
-// 最后一条（不算换头像提示）是她的话，就说明还欠她一个回复
+// 他这一条说到一半：伸手跟开封府要了东西（江湖棋局里掷骰子、买东西，见 game/jianghu.js），回话停在 tool_use 上，
+// 结果已经记在这一条上（calls），等着递回去让他接着说。他说完的那一条不记 stop
+export const midTurn = (m) => !!(m && m.role === "him" && m.stop === "tool_use" && m.calls && m.calls.length);
+
+// 最后一条（不算换头像提示）是她的话，就说明还欠她一个回复；是他说到一半的那一步（midTurn），也算欠着（欠的是后半截）
 export function needsReply(msgs) {
   for (let i = msgs.length - 1; i >= 0; i--) {
     if (msgs[i].role === "event") continue;
-    return msgs[i].role === "her";
+    return msgs[i].role === "her" || midTurn(msgs[i]);
   }
   return false;
 }
@@ -43,11 +47,13 @@ export function needsReply(msgs) {
 // 回话还没到的时候按的：那一回作废，她那句话留着，上面记一笔 stopped，底下摆一行“停了，点这里让我回”。
 // 回话正在一条一条蹦的时候按的：掐断，蹦出来的留着，没蹦出来的不要了。
 
-// 在最后一句（不算换头像提示）她的话上记一笔“停了”。最后一句不是她的、已经记过了：原样交回（同一个数组）
+// 在最后一句（不算换头像提示）她的话上记一笔“停了”。最后一句是他说到一半的那一步（midTurn）也记在它上面：
+// 后半截不要了，底下照样摆“停了，点这里让我回”，点了接着说。
+// 最后一句不是这两种、已经记过了：原样交回（同一个数组）
 export function markStopped(msgs) {
   for (let i = msgs.length - 1; i >= 0; i--) {
     if (msgs[i].role === "event") continue;
-    if (msgs[i].role !== "her" || msgs[i].stopped) return msgs;
+    if ((msgs[i].role !== "her" && !midTurn(msgs[i])) || msgs[i].stopped) return msgs;
     return msgs.slice(0, i).concat([{ ...msgs[i], stopped: true }], msgs.slice(i + 1));
   }
   return msgs;
@@ -69,7 +75,7 @@ export function unmarkStopped(msgs) {
 export function stoppedAt(msgs) {
   for (let i = msgs.length - 1; i >= 0; i--) {
     if (msgs[i].role === "event") continue;
-    return msgs[i].stopped ? msgs[i].id : ""; // 这一笔只往她的话上记（见 markStopped）
+    return msgs[i].stopped ? msgs[i].id : ""; // 这一笔只往她的话、他说到一半的那一步上记（见 markStopped）
   }
   return "";
 }
@@ -137,6 +143,15 @@ function forkTarget(msgs, info) {
   if (!info.fork) return -1;
   const j = msgs.findIndex((m) => m.id === info.fork || (m.alts || []).some((a) => a.node && a.node.id === info.fork));
   return j >= 0 && msgs[j].role === "him" ? j : -1;
+}
+
+// 这一封回话放进去以后，排在它前面的是哪几条（江湖棋局：棋盘照这几条里最后一步之后的样子接着下，见 game/jianghu.js）。
+// 重新回答：要换掉的那一条前面的；平常的：接的那一句连同它前面的
+export function mailBefore(msgs, info) {
+  const j = forkTarget(msgs, info);
+  if (j >= 0) return msgs.slice(0, j);
+  const pos = msgs.findIndex((m) => m.id === info.last);
+  return pos >= 0 ? msgs.slice(0, pos + 1) : msgs;
 }
 
 // 放进去（先用 mailFit 看过是 ok 的）。him 是整理好的那一条回话

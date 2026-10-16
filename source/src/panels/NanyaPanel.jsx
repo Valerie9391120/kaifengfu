@@ -9,6 +9,8 @@ import { Icon } from "../ui/Icon.jsx";
 // 哪天盖好了：把那一行的 soon 去掉，在 App.jsx 给这块面板的 open、subs 里接上它（见最底下）。
 const ROWS = [
   { key: "diary", icon: "calendar", name: "闲笔集" },
+  // 江湖棋局：卿卿和恩师做的双人武侠桌游，10 月 15 日烤进来的（见 game/jianghu.js）。小字写最近那一局下到哪了
+  { key: "jianghu", icon: "dice", name: "江湖棋局" },
   // 藏音匣：卿卿说“之后再完善，现在留一个交互按键在那儿就行”
   { key: "voicebox", icon: "wave", name: "藏音匣", soon: true },
   // 网易云：2026 年 10 月 1 日看过一个现成的播放器，打算照它的思路自己写，还没动手（见开发说明“南衙”那一节）

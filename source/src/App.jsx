@@ -13,7 +13,9 @@ import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.
 import { HER_NAME, HIS_NAME, NAME_KEYS, cleanName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, docFmtOf, readDoc, replyRoom } from "./docs.js";
 import { parseReply, settleAvatarItems, rawOf } from "./reply.js";
-import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, markStopped, unmarkStopped, stoppedAt, cutReply, stillWaiting } from "./thread.js";
+import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, mailBefore, markStopped, unmarkStopped, stoppedAt, cutReply, stillWaiting, midTurn } from "./thread.js";
+import { GAME_PREFIX, SNAP_KEY, TOOLS as GAME_TOOLS, isGameChat, callsOf, needsRun, lastStep, boardIn, collectStepIds, runCalls, nanyaSub } from "./game/jianghu.js";
+import { GameStrip, GameCardRow, JianghuPanel } from "./game/GameParts.jsx";
 import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY, HALTED_KEY } from "./mail.js";
 import { disablePush, resyncPush, watchNotices, probeReply, knockList, clearReplyNotices } from "./push.js";
 import { WEEK, sepLabel, timeAgo } from "./days.js";
@@ -69,6 +71,38 @@ import { isCallMark } from "./call/marks.js";
    开封府 v5 · 独立版
    代码里不写私事：人设和记忆在加密的记忆库里。
    ========================================================= */
+
+// 江湖棋局的引擎（见 game/engine.js）：单独一包，build.mjs 打成 assets/jianghu-<指纹>.js，名字写进 __KFS_JIANGHU__。
+// 开封府开门不碰它，头一回要替他调引擎的时候才取；取不到（网不好）这一回不记，下回再取
+/* global __KFS_JIANGHU__ */
+const JIANGHU_URL = typeof __KFS_JIANGHU__ !== "undefined" ? __KFS_JIANGHU__ : "./jianghu.js";
+let enginePromise = null;
+const loadEngine = () => {
+  // 照这一包自己的地址找（两个入口都一样：它和这一包在同一个目录）；写成 new URL(...) 是不让打包的时候把它当成要一起打进来的东西
+  if (!enginePromise) enginePromise = import(new URL(JIANGHU_URL, import.meta.url).href).catch((e) => {
+    enginePromise = null;
+    throw e;
+  });
+  return enginePromise;
+};
+
+const MAX_STEPS = 12; // 江湖棋局里他一口气连着调引擎、还没说完的，接到这么多步就不自己接了（见 afterStep）
+// 这台设备的编号：只记在这台设备上，不同步。江湖棋局里要回话的时候写进条子（info.extra.dev），
+// 回来的要是一步棋，先让发那一回的设备替他调（见 applyMail）。存不住的（无痕模式）这一趟用一个
+const DEVICE_ID = (() => {
+  try {
+    const had = localStorage.getItem("kfs-dev");
+    if (had) return had;
+    const id = "d" + newId();
+    localStorage.setItem("kfs-dev", id);
+    return id;
+  } catch (e) {
+    return "d" + newId();
+  }
+})();
+const STEP_GRACE = 2 * 60 * 1000; // 别的设备发的那一回、回来的是一步棋：先等发的那台放这么久，它还没放（多半关着），这台再替它放
+// 他调了引擎、回话却没停在 tool_use 上（写到长度上限被截断了）：调的那几样多半没写完整，一样不调，递回去的是这一句
+const CUT_CALL = "没执行：这一回的回话没写完整（多半是写到长度上限被截断了），这一步没下。要下的话重新调一次。";
 
 const OPENED_AT = Date.now(); // 这次打开开封府是几点（认“上回打开时发出去、没送到的那一句”用，见 checkMail）
 const ORPHAN_AGE = 10 * 1000; // 记下不到这么久的那一回先不当它没送到：也许正在路上（同一台设备上另开着一页，刚发出去，大包还没传完）
@@ -180,6 +214,20 @@ export default function App({ account = {} }) {
   const reqRef = useRef(null);
   const keyWas = useRef({ now: "", from: "", at: -Infinity }); // 最右边那个键眼下是哪一样、从哪一样变来的、什么时候变的（见 KEY_SETTLE）
   const freshRef = useRef(null); // 刚摆出来、开始蹦的那一条回话：{ id, at }（见 stopReply）
+  // 江湖棋局里他说到一半（掷了骰子、等结果）、这台设备刚替他调完引擎的那一段对话：那一条蹦完就接着要后半截（见“接着说”那一段）。
+  // 只记这台设备这一回放进去的：别的设备同步过来的、上回打开时留下的，不自己接（底下摆一行“还没说完，点这里让我接着说”）
+  const [cont, setCont] = useState("");
+  const contRef = useRef("");
+  // 回话到手了、正在替他调引擎、还没放进对话的那几回（askGuangyi 里，记的是 job）：信箱那头看到同一回先别放（见 applyMail）
+  const settlingRef = useRef(new Set());
+  const armCont = (id) => {
+    contRef.current = id;
+    setCont(id);
+  };
+  const disarmCont = () => {
+    contRef.current = "";
+    setCont("");
+  };
   const flagsRef = useRef({ noCacheAt: -Infinity }); // 上一回记下“先不带缓存记号”是什么时候（见 NO_CACHE_MS）
   const [reveal, setReveal] = useState(null);
   const [errorNote, setErrorNote] = useState("");
@@ -620,7 +668,8 @@ export default function App({ account = {} }) {
     const old = prev.find((c) => c.id === id);
     const entry = {
       id,
-      title: old && old.title ? old.title : makeTitle(msgs, memeLookup),
+      // 江湖棋局的那一段（编号 jh 开头）：名字就叫“江湖棋局”，不照她头一句话起（她可以长按改名）
+      title: old && old.title ? old.title : isGameChat(id) ? "江湖棋局" : makeTitle(msgs, memeLookup),
       preview: makePreview(msgs),
       updatedAt: Date.now(),
     };
@@ -702,12 +751,13 @@ export default function App({ account = {} }) {
   };
   const docLookup = (id) => docsRef.current[id] || null;
 
-  const newChat = () => {
+  // game：开的是一局江湖棋局（编号以 jh 开头，见 game/jianghu.js；南衙里“开新的一局”）
+  const newChat = (game = false) => {
     flushPending();
     stopVoice();
     setEditing(null);
     setMenu(null);
-    const id = newId();
+    const id = (game === true ? GAME_PREFIX : "") + newId();
     chatIdRef.current = id;
     listMount.current = Date.now();
     messagesRef.current = [];
@@ -731,6 +781,9 @@ export default function App({ account = {} }) {
     const said = collectHisIds(old).flatMap((hid) => store.keys(VOICE_KEY + hid + ".")).map((k) => k.slice(VOICE_KEY.length));
     if (said.length) getSpeaker().drop(said);
     getSpeaker().dropChat(id);
+    // 江湖棋局：每一步另存着的棋盘（连同翻过去的那些版本里的），一起删
+    collectStepIds(old).forEach((sid) => store.del(SNAP_KEY + sid));
+    if (contRef.current === id) disarmCont();
     const next = indexRef.current.filter((c) => c.id !== id);
     indexRef.current = next;
     setIndex(next);
@@ -743,6 +796,14 @@ export default function App({ account = {} }) {
       saveBad();
     }
     if (id === chatIdRef.current) newChat();
+  };
+
+  // 江湖棋局：最近那一局（历史对话里编号 jh 开头、最新的那一段）和它的棋盘。南衙里那一行的小字、点开那一张用。没有回 null
+  const latestGame = () => {
+    const g = indexRef.current.find((c) => isGameChat(c.id));
+    if (!g) return null;
+    const msgs = g.id === chatIdRef.current ? messagesRef.current : safeParse(store.peek("kfs2:chat:" + g.id), []) || [];
+    return { id: g.id, board: boardIn(msgs) };
   };
 
   // 改名：只改目录里的名字，聊天内容不动；以后再存这段对话也沿用新名字
@@ -1158,6 +1219,19 @@ export default function App({ account = {} }) {
       toolNote: ctx && ctx.withMcp && !(used && used.mcp) ? "这次MCP没连上，先不用工具回你" : "",
     };
     if (job) him.job = job;
+    // 江湖棋局里他调了引擎（掷骰子、买东西，见 game/jianghu.js）：记下调了哪几样，放进对话之前替他调（settleCalls）。
+    // 停在 tool_use 上的：他还没说完，等结果递回去接着说（thread.js 的 midTurn）。
+    // 只调了引擎、一个字没说的那一步：不摆“……”（拆回话那一下没字就补一个，这一步不要），聊天里只有卡片
+    // 回话没停在 tool_use 上、里头却有他调的（写到长度上限被截断了）：一样不调，记成没调成（CUT_CALL）。
+    // 这样的一条不算说到一半，也照常摆字（一个字没有的摆“……”，不然她看着像他什么都没回）
+    const calls = callsOf(data.content);
+    if (calls.length) {
+      if (data.stop_reason === "tool_use") {
+        him.calls = calls;
+        him.stop = "tool_use";
+        if (!String(parsed.body || "").trim() && !parsed.rename && !settled.avatarFile) him.items = [];
+      } else him.calls = calls.map((c) => ({ ...c, out: CUT_CALL, err: true, card: [] }));
+    }
     if (settled.avatarFile) changeHisAvatar({ type: "meme", file: settled.avatarFile });
     // 他给自己改了名字：顶栏马上换；回复上记一笔，对话里留一行提示（和现在一样的不算改）
     if (parsed.rename && parsed.rename !== (namesRef.current.him || HIS_NAME)) {
@@ -1165,6 +1239,62 @@ export default function App({ account = {} }) {
       changeHisName(parsed.rename);
     }
     return him;
+  };
+
+  // ---- 江湖棋局：替他调引擎（见 game/jianghu.js） ----
+  // 他这一步调了引擎：放进对话之前先替他调完，结果、小卡片记在这一条上（him.calls、him.board），
+  // 调完以后的整份存档另存一条（SNAP_KEY + 这一条的 id），下一步从它接着下。
+  // before：放进去以后排在它前面的那几条。棋盘照它们里最后一步之后的样子接着下：
+  // 重新回答的那一步，前面就是它原来前面的那几条，棋盘自然退回那一步之前（她 10 月 15 日点过头的“能悔棋”）。
+  // 调过的不再调（别的设备调好、同步过来的）。没调成的（存档没同步过来、引擎取不到）：每一样记上缘故、标成出错，
+  // 这一条不算下过棋（不记 board，下一步照旧从前一步接着下）；他看到缘故自己会跟她说。
+  // strict：这一回是别的设备发的、这台替它放（见 applyMail）：没调成的不记出错，回 false（信留着，等同步下来再放）。调成了（或者用不着调）回 true
+  const settleCalls = async (him, before, strict = false) => {
+    if (!needsRun(him)) return true;
+    const prev = lastStep(before);
+    let state = null;
+    let why = "";
+    if (prev && prev.board) {
+      state = safeParse(await store.get(SNAP_KEY + prev.id), null);
+      if (!state) why = "这台手机上还没有上一步的棋盘（多半是别的设备下的，还没同步过来），这一步没下成。跟她说一声，等一会儿再试。";
+    }
+    let eng = null;
+    if (!why) {
+      try {
+        eng = await loadEngine();
+      } catch (e) {
+        why = "开封府这会儿取不到棋局的引擎（多半是网不好），这一步没下成。跟她说一声，过一会儿再试。";
+      }
+    }
+    if (why) {
+      if (strict) return false;
+      him.calls = him.calls.map((c) => ({ ...c, out: why, err: true, card: [] }));
+      return true;
+    }
+    const r = await runCalls(eng, state, him.calls);
+    him.calls = r.calls;
+    him.board = r.board;
+    if (r.state) {
+      const ok = await store.set(SNAP_KEY + him.id, JSON.stringify(r.state));
+      if (!ok) markStorageFail();
+    }
+    return true;
+  };
+
+  // 他这一条放进去以后，是不是正停在“说到一半、等着接着说”上：是这段对话的最后一句（不算换头像提示），又是说到一半的那一步。
+  // 是的话：眼前这一段，等它蹦完接着要后半截（armCont，见“接着说”那一段）；别的对话，记进 pendingRef 替它在后台接着要。
+  // 她按了停的那一回（那一步上记着“停了”）：不接
+  const afterStep = (id, msgs, him) => {
+    if (!midTurn(him) || him.stopped) return;
+    const said = msgs.filter((m) => m.role !== "event");
+    const last = said[said.length - 1];
+    if (!last || last.id !== him.id) return; // 他这一步后面她又说了话：回她那一句就是接着说，不用另接
+    // 一口气连着调了好些步还没说完（多半是转不出来了）：不自己接了，底下摆“还没说完，点这里让我接着说”，她点了再接
+    let run = 0;
+    for (let i = said.length - 1; i >= 0 && midTurn(said[i]); i--) run++;
+    if (run >= MAX_STEPS) return;
+    if (chatIdRef.current === id) armCont(id);
+    else pendingRef.current.add(id);
   };
 
   // 向那边要一条回复。成了回 { him, settle }：him 是整理好的回复；settle 是走新路时要在“放进对话、存好”以后叫的。失败抛错。
@@ -1186,6 +1316,9 @@ export default function App({ account = {} }) {
     const docs = memFilesRef.current
       .filter((f) => f.enabled)
       .map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
+    const inCall = !!(callRef.current && callRef.current.chat === opts.chat);
+    // 江湖棋局的那一段：名帖里多一段【江湖棋局】，【此刻】里多一行棋盘，带着四样工具（见 game/jianghu.js）
+    const game = isGameChat(opts.chat) ? { board: boardIn(msgs) } : null;
     const { staticText, nowNote } = buildSystem({
       now: new Date(),
       memeList: allMemes,
@@ -1197,7 +1330,8 @@ export default function App({ account = {} }) {
       voice: !!st.voice,
       thoughts: thoughtsFor(opts.chat), // 他写不写心里话：照开关，正在打电话的这段对话照关着算（见上面 thoughtsFor）
       callable: st.callable !== false, // 他能打电话（API 面板里的开关，默认开着；见 call/incoming.js）
-      call: !!(callRef.current && callRef.current.chat === opts.chat), // 正在打电话：【此刻】后面附上通话的规矩（见 call/）
+      call: inCall, // 正在打电话：【此刻】后面附上通话的规矩（见 call/）
+      game,
     });
     // 这段对话抄过提要的：前面的不寄原话，换成提要（见 recap.js）
     const recapList = opts.chat ? await readRecaps(opts.chat) : [];
@@ -1218,14 +1352,19 @@ export default function App({ account = {} }) {
         system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
         messages: withNowNote(apiMessages, nowNote, at.cache, tail),
       };
+      // 江湖棋局的四样工具排在最前头（三种写法都带：摘掉 MCP 的那一种也带着，对话里有他调过的，不带那边不认）
+      const tools = game ? GAME_TOOLS.slice() : [];
       if (at.mcp) {
         body.mcp_servers = mcps.map((m, i) => {
           const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
           if (m.token) s.authorization_token = m.token;
           return s;
         });
-        body.tools = body.mcp_servers.map((s) => ({ type: "mcp_toolset", mcp_server_name: s.name }));
+        tools.push(...body.mcp_servers.map((s) => ({ type: "mcp_toolset", mcp_server_name: s.name })));
       }
+      if (tools.length) body.tools = tools;
+      // 打电话的时候不下棋（卿卿 10 月 15 日定的）：工具照带（对话里有他调过的），只是这一回不许调
+      if (game && inCall) body.tool_choice = { type: "none" };
       return body;
     };
     const betaFor = (at) => (at.mcp ? "mcp-client-2025-11-20" : "");
@@ -1248,7 +1387,8 @@ export default function App({ account = {} }) {
           last: msgs.length ? msgs[msgs.length - 1].id : "",
           fork: opts.fork || "",
           title: namesRef.current.him || HIS_NAME,
-          extra: ctx,
+          // 江湖棋局：条子里记上是哪台设备发的（回来的要是一步棋，先让这台替他调，见 applyMail）
+          extra: game ? { ...(ctx || {}), dev: DEVICE_ID } : ctx,
           recheck: !!opts.recheck,
           signal,
         });
@@ -1297,6 +1437,7 @@ export default function App({ account = {} }) {
     if (chatIdRef.current === id) setErrorNote("");
     const req = { ctl: new AbortController(), stopped: false, chat: id };
     reqRef.current = req;
+    let settling = ""; // 正在替他调引擎的那一回（见下面 settlingRef）
     try {
       // 回话到手以前她按停：这一句当场以 stopped 收场（作废）。到手以后再按，这里已经过去了，就是“掐断”（见 stopReply）
       const { him, settle } = await unlessStopped(
@@ -1305,6 +1446,16 @@ export default function App({ account = {} }) {
       );
       // 回复插在这次请求的最后一条后面；等回复时她又发的几条排在后面
       const anchor = resume ? resume.info.last : msgs.length ? msgs[msgs.length - 1].id : null;
+      // 江湖棋局：他这一步调了引擎，放进对话之前先替他调完（见 settleCalls）。已经在对话里了的（别的设备放进去的）不调。
+      // 调的工夫里（头一回要取引擎，网慢能有一两秒）信箱那头会看到同一封：记进 settlingRef，它先不放（见 applyMail），放好了才勾掉
+      if (needsRun(him) && him.job) {
+        settling = him.job;
+        settlingRef.current.add(settling);
+      }
+      if (needsRun(him)) {
+        const pre = chatIdRef.current === id ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + id), null) || msgs;
+        if (!(him.job && hasJob(pre, him.job))) await settleCalls(him, anchor ? mailBefore(pre, { last: anchor }) : pre);
+      }
       const isCurrent = chatIdRef.current === id;
       // 她已经翻到别的对话去了：以存档里的为准（等的工夫里她在这段对话里又说的话都在存档里，拿发话那一刻的旧样子去存会把它们盖掉）
       const base = isCurrent ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + id), null) || msgs;
@@ -1313,10 +1464,14 @@ export default function App({ account = {} }) {
       if (said && him.ts <= said.ts) him.ts = said.ts + 1;
       // 这一回的回话已经在对话里了（信箱那头先放进去的）：不放第二遍
       if (!(him.job && hasJob(base, him.job))) {
+        // 江湖棋局里他说到一半、回话到手以后她才按的停：后半截不要了，这一步上记一笔“停了”（底下摆“停了，点这里让我回”）
+        if (req.stopped && !req.restart && midTurn(him)) him.stopped = true;
         const next = insertReply(base, anchor, him);
         if (isCurrent) messagesRef.current = next;
         await saveChat(id, next);
+        settlingRef.current.delete(settling);
         wantVoices(id, him); // 里头有语音条的：记下来要念（存好以后再记：念之前要在存档里认得出这一条）
+        afterStep(id, next, him); // 江湖棋局里他说到一半：等这一条蹦完接着要后半截
         if (chatIdRef.current === id) {
           // 摆的是眼下的那一份（messagesRef），不是存之前的 next：存的那一下工夫里对话可能又变了
           // （她按了停、把上一条正在蹦的掐断了；她又发了一句），拿存之前的去摆会把这些盖掉
@@ -1370,6 +1525,7 @@ export default function App({ account = {} }) {
         mailTimer.current = setTimeout(() => latest.current.checkMail(), 4000);
       }
     }
+    if (settling) settlingRef.current.delete(settling); // 已经在对话里了没放、她按了停、出岔子了：一样勾掉
     if (reqRef.current === req) reqRef.current = null;
     loadingRef.current = false;
     setLoading(false);
@@ -1426,6 +1582,9 @@ export default function App({ account = {} }) {
     };
     try {
       const { him, settle } = await unlessStopped(requestReply(base, { chat: id, fork: msgId, signal: req.ctl.signal }), req.ctl.signal);
+      // 江湖棋局：重新回答的这一步，棋盘从它原来前面的那几条接着下（等于退回那一步之前，见 settleCalls）
+      await settleCalls(him, base);
+      if (req.stopped && midTurn(him)) him.stopped = true;
       const extra = await added();
       const next = forkAt(full, j, him).concat(extra);
       forkRef.current = null;
@@ -1440,6 +1599,7 @@ export default function App({ account = {} }) {
       }
       await saveChat(id, next);
       if (!here) wantVoices(id, him); // 她翻到别的对话去了：存好以后再记（念之前要在存档里认得出这一条）
+      afterStep(id, next, him); // 江湖棋局里他说到一半：等这一条蹦完接着要后半截
       if (settle) settle();
       lapseSoon(id);
       recapSoon(id);
@@ -1646,6 +1806,10 @@ export default function App({ account = {} }) {
     setReveal(null);
     if (waited) markStoppedIn(chatIdRef.current);
     waiting.forEach(markStoppedIn);
+    // 江湖棋局里他说到一半（掷了骰子、这一步正蹦着，或者蹦完了正要接着说）：后半截不要了，那一步上记一笔“停了”。
+    // 后半截已经在要了的（req 还在）：那一头按停作废以后自己会记（askGuangyi 接 stopped 的那一段）
+    if (contRef.current) disarmCont();
+    if (!req && midTurn(messagesRef.current.filter((m) => m.role !== "event").pop())) markStoppedIn(chatIdRef.current);
   };
 
   // 回话摆出来了：从头一条开始一条一条蹦（见下面“分条”那一段）。
@@ -2707,7 +2871,8 @@ export default function App({ account = {} }) {
   // ---- 信箱：她不在的时候到的回话（那条新路见 mail.js） ----
   // 信箱里的一封回话放进它那段对话。回 applied 放进去了；dup 早放过了；gone 用不着了；failed 那一回没回成（已经告诉她了）；
   // later 这台设备上的那段对话还没跟上（等同步下来再放，信先留着）；keep 没回成、她眼前又不是那段对话（信先留着）；
-  // busy 那段对话正在重新回答（等它完了再看，信先留着）
+  // busy 那段对话正在重新回答、这一回正在替他调引擎（等它完了再看，信先留着）；
+  // wait 江湖棋局里别的设备发的一步棋，先等发的那台放（过一会儿再看，信先留着）
   const applyMail = async ({ job, info, row, result }) => {
     const id = info.chat;
     const here = () => chatIdRef.current === id;
@@ -2729,14 +2894,34 @@ export default function App({ account = {} }) {
       }
       return "failed";
     }
+    // 江湖棋局：这一封里他调了引擎（见 settleCalls）。
+    //   这台设备正在替这一回调（守着的那条路先拿到了）：等它放好再看（到时候就是 dup）
+    //   别的设备发的：先让发的那台放，信留着（它放好了，对话同步过来，这里再看就是 dup）。
+    //   过了 STEP_GRACE 它还没放（多半关着了）：这台替它放。骰子照他调的那一样的编号掷（见 game/jianghu.js 的 seededRng），
+    //   两台各放一遍也掷得一样；上一步的棋盘还没同步过来、引擎取不到的，不记成出错，信留着等同步下来（later）
+    const steps = callsOf(result.data.content).length > 0; // 上面 resultOk 看过：data 是一封正常的回话
+    const ours = !!(info.extra && info.extra.dev === DEVICE_ID);
+    if (steps && settlingRef.current.has(job)) return "busy";
+    if (steps && !ours && Date.now() - (Date.parse(row.done_at) || 0) < STEP_GRACE) return "wait";
     // 这条算几点到的：小后端放进信箱的时候（不比她那一句早，不比现在晚）
     const anchor = msgs.find((m) => m.id === info.last);
     const stamp = Math.max(((anchor && anchor.ts) || 0) + 1, Math.min(Date.now(), Date.parse(row.done_at) || Date.now()));
     const him = digestReply(result.data, result.used, info.extra || null, job, stamp);
-    const next = mailPut(msgs, info, him);
+    let base = msgs;
+    if (steps) {
+      if (!(await settleCalls(him, mailBefore(msgs, info), !ours))) return "later";
+      // 调引擎的那一下工夫里对话可能又变了（她发了一句、别处同步下来一段、她翻过来了）：照眼下的放
+      base = here() ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + id), null) || msgs;
+      const fit2 = mailFit(base, info, job);
+      if (fit2 !== "ok") return fit2;
+    }
+    const next = mailPut(base, info, him);
     if (here()) messagesRef.current = next;
     await saveChat(id, next);
     wantVoices(id, him);
+    // 江湖棋局里他说到一半：接着要后半截（眼前这一段等它摆好；别的对话在后台接，眼下没在回话就马上轮）
+    afterStep(id, next, him);
+    if (midTurn(him) && !here() && !loadingRef.current) nextPending();
     // 存的那一下工夫里对话又变了（她发了一句、点了重新回答）：画面已经是更新的那份，不拿这一份旧的去盖
     if (here() && messagesRef.current === next) {
       setMessages(next);
@@ -2801,12 +2986,14 @@ export default function App({ account = {} }) {
           continue;
         }
         if (m.state === "working") {
-          if (mine && !m.info.fork && mailFit(messagesRef.current, m.info, m.job) === "ok") askGuangyi(m.info.chat, messagesRef.current, { job: m.job, info: m.info });
+          // 江湖棋局里别的设备发的那一回：这台不守（回来的要是一步棋，先让发的那台替他调，见 applyMail），过几秒再看
+          const theirs = !!(m.info.extra && m.info.extra.dev && m.info.extra.dev !== DEVICE_ID);
+          if (mine && !m.info.fork && !theirs && mailFit(messagesRef.current, m.info, m.job) === "ok") askGuangyi(m.info.chat, messagesRef.current, { job: m.job, info: m.info });
           else again = true;
           continue;
         }
         const out = await applyMail(m);
-        if (out === "busy") {
+        if (out === "busy" || out === "wait") {
           again = true;
           continue;
         }
@@ -3057,8 +3244,10 @@ export default function App({ account = {} }) {
     const st = settingsRef.current;
     const model = st.model || DEFAULT_MODEL;
     const memDocs = memFilesRef.current.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
-    // 名帖那一大段和聊天时寄的一个字不差（缓存接得上；正在打电话的这段对话，心里话那一条照关着算，见 thoughtsFor）；【此刻】这回用不着
-    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false });
+    // 名帖那一大段和聊天时寄的一个字不差（缓存接得上；正在打电话的这段对话，心里话那一条照关着算，见 thoughtsFor；
+    // 江湖棋局那一段带着【江湖棋局】那一段，见 game/jianghu.js）；【此刻】这回用不着
+    const game = isGameChat(id) ? { board: null } : null;
+    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game });
     // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
     const photos = {};
     for (const m of msgs) {
@@ -3080,7 +3269,7 @@ export default function App({ account = {} }) {
       }
       ask = buildRecapAsk({ msgs: piece, prev: due.prev, thick: due.thick, memeLookup, imgLookup: (k) => photos[k] || null, docLookup: (k) => docTexts[k] || null });
     }
-    const data = await askRecap({
+    const recapBody = {
       model,
       max_tokens: thinksFirst(model) ? RECAP_ROOM_THINK : RECAP_ROOM,
       system: [
@@ -3088,7 +3277,13 @@ export default function App({ account = {} }) {
         { type: "text", text: ask.rule },
       ],
       messages: [{ role: "user", content: ask.content }],
-    });
+    };
+    // 江湖棋局那一段：工具照聊天时一样带着（排在名帖前头，带着才接得上聊天时写下的缓存），只是这一回不许调
+    if (game) {
+      recapBody.tools = GAME_TOOLS;
+      recapBody.tool_choice = { type: "none" };
+    }
+    const data = await askRecap(recapBody);
     recordUsage(data, true);
     // 没写完的不要（写到上限被截断、屋子满了、那边不肯写）：断掉的正是最后那几样（还没聊完的话头）
     if (data.stop_reason && data.stop_reason !== "end_turn" && data.stop_reason !== "stop_sequence") throw new Error("没写完");
@@ -3152,7 +3347,7 @@ export default function App({ account = {} }) {
     for (const key of await orphans()) store.del(key);
   };
 
-  latest.current = { checkMail, openFromNotice, leaving, resendSoon, runRecaps, sweepRecaps, stopVoice, freshMotto, hangUp };
+  latest.current = { checkMail, openFromNotice, leaving, resendSoon, runRecaps, sweepRecaps, stopVoice, freshMotto, hangUp, triggerReply };
 
   // ---- 通知 ----
   // 开过通知的设备，每次打开都悄悄重新登记一遍（见 push.js）；她点通知回来的，记下是哪一条
@@ -3266,6 +3461,25 @@ export default function App({ account = {} }) {
     const msgs = messagesRef.current;
     if (!loadingRef.current && needsReply(msgs)) askGuangyi(chatIdRef.current, msgs, null, { recheck: true });
   };
+
+  // 翻到（开了）一局江湖棋局：引擎那一包先取着（他头一回掷骰子的时候就不用再等它下）。取不到不要紧，要用的时候再取
+  useEffect(() => {
+    if (isGameChat(chatId)) loadEngine().catch(() => {});
+  }, [chatId]);
+
+  // ---- 接着说：江湖棋局里他说到一半（见 game/jianghu.js） ----
+  // 这一步放进去了、引擎的结果也记上了（afterStep 记的 cont）：等它蹦完（没在回话、没在蹦、没排着队），接着要后半截。
+  // 她翻到别的对话去了：先不接，翻回来再接。她按了停：stopReply 已经撤了。
+  // 歇一下再要：这一步最后一样刚摆出来，卡片跟着冒，让她看一眼
+  useEffect(() => {
+    if (!cont || cont !== chatId || loading || reveal || queued) return;
+    const t = setTimeout(() => {
+      if (contRef.current !== chatIdRef.current || loadingRef.current || timerRef.current) return;
+      disarmCont();
+      latest.current.triggerReply();
+    }, 450);
+    return () => clearTimeout(t);
+  }, [cont, chatId, loading, reveal, queued]);
 
   // ---- 分条：一条一条冒出来 ----
   // 下一条要冒出来的是语音条：它眼下什么样子（还不知道是 "?"；不是语音条是 ""）
@@ -3768,14 +3982,19 @@ export default function App({ account = {} }) {
   useEffect(() => {
     if (!drawerOpen) setLotusArmed(false);
   }, [drawerOpen]);
-  const typing = loading || reveal !== null;
+  // 江湖棋局里他说到一半、这一步蹦完正要接着说的那一下（cont）也算在回：顶上照旧“正在输入…”，停键照旧在
+  const typing = loading || reveal !== null || (!!cont && cont === chatId);
   // 那边的我在回：她一发完话就算（话还排着队），到回话全蹦完为止。停键认的是这个
   const replying = queued || typing;
-  // 那行“停了，点这里让我回”摆在她哪一句底下：他没在回的时候才摆
+  // 那行“停了，点这里让我回”摆在她哪一句底下（江湖棋局里也可能是他说到一半的那一步）：他没在回的时候才摆
   const stoppedId = !replying ? stoppedAt(messages) : "";
+  // 江湖棋局里他说到一半、却没人接着要的那一步（上回打开时留下的、别的设备同步过来的、接着要的那一回没送到的）：
+  // 底下摆一行“还没说完，点这里让我接着说”。他在回、停了、底下已经有“没送到，点这里重发”的时候不摆
+  const lastSaid = messages.filter((m) => m.role !== "event").pop();
+  const moreId = !replying && !errorNote && !stoppedId && midTurn(lastSaid) ? lastSaid.id : "";
   // 聊天记录里那行“抄成了提要”的小字：只摆眼下作数的那一份（单子里更早的几份不摆，它们已经被这一份接过去了）
   const liveRecap = useMemo(() => pickRecap(messages, recaps).recap, [messages, recaps]);
-  const rows = useMemo(() => buildRows(messages, reveal, stoppedId, liveRecap), [messages, reveal, stoppedId, liveRecap]);
+  const rows = useMemo(() => buildRows(messages, reveal, stoppedId, liveRecap, moreId), [messages, reveal, stoppedId, liveRecap, moreId]);
   rowListRef.current = rows;
   // 打开 API 面板：看一眼念语音的小后端接上没有
   useEffect(() => {
@@ -4053,14 +4272,37 @@ export default function App({ account = {} }) {
       return (
         <Sheet title="南衙" onClose={() => setSheet(null)}>
           <NanyaPanel
-            subs={{ diary: diarySub }}
+            subs={{ diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board) }}
             open={{
               diary: () => {
                 setSheet(null);
                 setDiaryOpen(true);
               },
+              // 江湖棋局：这张菜单换成棋局那一张（接着上一局、开新的一局）
+              jianghu: () => setSheet("jianghu"),
             }}
             onSoon={(name) => setToast(soonToast(name))}
+          />
+        </Sheet>
+      );
+    }
+    if (sheet === "jianghu") {
+      // 江湖棋局（见 game/GameParts.jsx 的 JianghuPanel）：接着上一局，就是翻到最近那一局的那段对话；
+      // 开新的一局，就是开一段编号 jh 开头的新对话（她说一声“开局”，他问身份、讲开场）
+      const g = latestGame();
+      return (
+        <Sheet title="江湖棋局" onClose={() => setSheet(null)}>
+          <JianghuPanel
+            last={g ? g.board : null}
+            hasGame={!!g}
+            onContinue={() => {
+              setSheet(null);
+              if (g) openChat(g.id);
+            }}
+            onNew={() => {
+              setSheet(null);
+              newChat(true);
+            }}
           />
         </Sheet>
       );
@@ -4229,6 +4471,9 @@ export default function App({ account = {} }) {
           </IconBtn>
         </div>
 
+        {/* 江湖棋局那一段：顶栏底下一条，写第几章、各在第几格、各有几两（见 game/GameParts.jsx） */}
+        {isGameChat(chatId) && <GameStrip board={boardIn(messages)} />}
+
         {storageBanner && (
           <div
             className="relative z-10 flex items-center justify-between flex-shrink-0"
@@ -4252,7 +4497,18 @@ export default function App({ account = {} }) {
           className="kfs-chat-scroll relative z-10 flex-1 overflow-y-auto"
           style={{ padding: "8px 14px 12px" }}
         >
-          {messages.length === 0 && !loading && (
+          {/* 江湖棋局那一段还空着：中间写“江湖棋局”，底下一句怎么开局（她说一声，他问身份、讲开场） */}
+          {messages.length === 0 && !loading && isGameChat(chatId) && (
+            <div className="kfs-game-empty h-full flex flex-col items-center justify-center" style={{ gap: 14 }}>
+              <p className="kfs-game-title" style={{ fontFamily: SERIF, fontSize: 17, letterSpacing: "0.4em", paddingLeft: "0.4em", color: T.motto }}>
+                江湖棋局
+              </p>
+              <p style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.7, textAlign: "center", ...glass(0.36, 16), borderRadius: 14, padding: "6px 14px" }}>
+                跟小晋说一声“开局”就开
+              </p>
+            </div>
+          )}
+          {messages.length === 0 && !loading && !isGameChat(chatId) && (
             <div className="h-full flex flex-col items-center justify-center" style={{ gap: 18 }}>
               {/* 题字的颜色跟主题走（--k-motto，见 input.css），都是实色，不带透明。
                   青绿的背景里它正压在那方深青上，原来的淡墨（inkSoft）叠上去只有 3 比 1，看不清；
@@ -4311,12 +4567,18 @@ export default function App({ account = {} }) {
                 </div>
               );
             }
-            if (row.type === "stopped") {
-              // 她按停作废的那一句底下：一行小字，点了照眼下的对话让那边的我回（样子照原来他回话底下那颗“重新回答”，那一颗 10 月 13 日夜里拿掉了）
+            if (row.type === "game") {
+              // 江湖棋局：他这一步下了什么（掷了几点、走到哪、花了几两，见 game/jianghu.js 的 cardsOf）
+              return <GameCardRow key={row.key} text={row.text} animate={row.msg.ts >= listMount.current} />;
+            }
+            if (row.type === "stopped" || row.type === "more") {
+              // 她按停作废的那一句底下：一行小字，点了照眼下的对话让那边的我回（样子照原来他回话底下那颗“重新回答”，那一颗 10 月 13 日夜里拿掉了）。
+              // 江湖棋局里他说到一半的那一步（停了的、没人接着要的）：摆在他那一边，点了他接着说
+              const his = row.msg.role === "him";
               return (
-                <div key={row.key} className="kfs-in flex justify-end" style={{ marginTop: 2, marginRight: 36 }}>
-                  <button onClick={askAgain} className="kfs-tap kfs-stopped" style={{ padding: "6px 6px", fontSize: 12, color: T.inkSoft }}>
-                    停了，点这里让我回
+                <div key={row.key} className={`kfs-in flex ${his ? "justify-start" : "justify-end"}`} style={{ marginTop: 2, [his ? "marginLeft" : "marginRight"]: 36 }}>
+                  <button onClick={askAgain} className={`kfs-tap ${row.type === "more" ? "kfs-more" : "kfs-stopped"}`} style={{ padding: "6px 6px", fontSize: 12, color: T.inkSoft }}>
+                    {row.type === "more" ? "还没说完，点这里让我接着说" : "停了，点这里让我回"}
                   </button>
                 </div>
               );

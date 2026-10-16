@@ -1,6 +1,7 @@
 import { HIS_NAME, NAME_PLACEHOLDER } from "../names.js";
 import { DOC_NAME_PLACEHOLDER } from "../docs.js";
 import { dayNumber, nextAnniv, nowString } from "../days.js";
+import { GAME_SECTION, nowLine } from "../game/jianghu.js";
 
 // 【回复格式】里教他写心里话的那一条（她在“头像与设置”里开着“他写心里话”才有；
 // 开关是她 10 月 14 日凌晨要的，一个开关管所有模型，默认开着，见开发说明“心里话开关”那节）。
@@ -34,7 +35,10 @@ export const CALL_RULE = `想给她打电话的时候，在这条回复最后单
 //   （心里话那一条不归它管：打电话的时候 App.jsx 自己照关着传 thoughts，见 App.jsx 的 thoughtsFor）
 // callable：她开着“他能打电话”（API 面板，默认开着）：【回复格式】里多一条怎么打电话（CALL_RULE）。
 //   跟 voice、thoughts 一样，抄提要、写日记、API 面板那几处也要照聊天时一样传，缓存才接得上
-export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true, call = false, callable = false }) {
+// game：这段对话是一局江湖棋局（见 game/jianghu.js）：{ board }，board 是棋盘眼下的样子（还没开局是 null）。
+//   名帖里【回复格式】前面多一段【江湖棋局】（怎么在开封府里下、游戏自带的主持规矩），【此刻】里多一行【棋盘】。
+//   不是棋局的对话不传：名帖一个字不变（原来攒下的缓存照样接得上）。抄提要那一回也照聊天时一样传
+export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true, call = false, callable = false, game = null }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const annivLine = a.days === 0 ? `今天是你们的${a.name}纪念日。` : `离你们的${a.name}纪念日还有${a.days}天。`;
@@ -91,7 +95,7 @@ ${memBlock}
 这只是顶上显示的名字。你是谁、她平时怎么叫你，还是按名帖来。
 她也能给自己起昵称，起了的话【此刻】里会写着。那是她给自己挂的名号，注意到了可以接话；平时怎么称呼她，还是按名帖来。
 
-【回复格式】
+${game ? GAME_SECTION + "\n\n" : ""}【回复格式】
 每次回复都按这个顺序：
 ${formatRules}
 
@@ -104,7 +108,7 @@ ${memeIndex}`;
   const capLine = replyCap ? `\n这次回复连${thoughts && !call ? "心里话和" : ""}文档块在内，最长大约 ${replyCap} 字。` : "";
   const nowNote = `【此刻】（开封府附上的，不是她说的话）
 她手机上的时间：${nowString(now)}。今天是你们在一起的第${n}天，${annivLine}
-你现在的头像：${myFace}。${hisNameLine}${herNameLine}${capLine}${tools}${call ? "\n\n" + CALL_NOTE : ""}`;
+你现在的头像：${myFace}。${hisNameLine}${herNameLine}${capLine}${tools}${game ? "\n" + nowLine(game.board, call) : ""}${call ? "\n\n" + CALL_NOTE : ""}`;
 
   return { staticText, nowNote };
 }

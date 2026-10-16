@@ -2,6 +2,7 @@ import { wrapDocForModel, missingDocNote } from "../docs.js";
 import { MEME_MAP } from "../memes.js";
 import { tierOf, planWindow, staleImages, stamp } from "../recap.js";
 import { isCallMark, markNote } from "../call/marks.js";
+import { apiBlocks } from "../game/jianghu.js";
 
 function avatarBlock(av, thumbLookup = () => null) {
   if (!av) return null;
@@ -227,12 +228,14 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
       });
       return;
     }
-    arr.push({
-      role: "assistant",
-      content: [
-        { type: "text", text: m.raw && m.raw.trim() ? m.raw.trim() : "……" },
-      ],
-    });
+    // 江湖棋局里下过棋的那一步（见 game/jianghu.js）：他的字后面跟着他调的那几样（tool_use），
+    // 紧跟着的下一句最前面是引擎回的结果（tool_result）。只调了东西、一个字没说的那一步，不补“……”
+    const steps = m.calls && m.calls.length ? apiBlocks(m) : null;
+    const said = m.raw && m.raw.trim() ? m.raw.trim() : "";
+    const content = said || !steps ? [{ type: "text", text: said || "……" }] : [];
+    if (steps) content.push(...steps.uses);
+    arr.push({ role: "assistant", content });
+    if (steps) arr.push({ role: "user", content: steps.results });
     // 光义自己换了头像：下一轮让他亲眼看到新头像的样子
     const av = (m.items || []).filter((it) => it.type === "avatar").pop();
     if (av) {

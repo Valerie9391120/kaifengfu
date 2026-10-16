@@ -26,6 +26,62 @@ const replyQueue = [];
 // 是不是叫他抄前情提要的那两种（抄一段、并几段，见 src/prompt/recap.js）：跟在名帖后面的那段规矩是这两个标题开头的
 const recapRuleOf = (body) => (Array.isArray(body.system) ? body.system.map((x) => x.text || "").find((t) => t.startsWith("【抄提要】") || t.startsWith("【并提要】")) : "") || "";
 
+// 江湖棋局的假主持人（tests/e2e_jianghu.py 用）。照她最后说的那句话、和这一回合里已经调过几回：
+//   “开局”：先说一句，再调 new_game（她是商贾、他是镖师：不用挑伪装，测试里走得稳）；“随机开局”：两个都随机
+//   “帮我扔”“扔吧”：先说一句，再调 roll
+//   “连扔两回”：调 roll，结果递回来以后再调一回 roll，再递回来才说完
+//   “只调不说”：一个字不说，只调 game_info
+//   “查棋盘”：调 game_info，再递回来照引擎回的字头一行说
+//   “写到一半”：说“写着写着”、调了 roll，可回话停在 max_tokens 上（写到长度上限被截断了）：开封府不该替他调
+//   结果递回来（最后一句最前面是 tool_result）：照头一样结果的头一行说一句，说完（排好了话的照排好的说，截图用）
+//   打电话的时候（tool_choice 是 none）、别的话：不调，回 null（照平常的样子回）
+// 5 字头的模型：和真的一样，前面先来一块“想的”（空的，带签名）——测寄回去的时候不带它
+let toolSeq = 0;
+function fakeHost(body) {
+  if (body.tool_choice && body.tool_choice.type === "none") return null;
+  const msgs = body.messages || [];
+  const blocksOf = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || []);
+  const lastUser = msgs[msgs.length - 1];
+  const results = lastUser && lastUser.role === "user" ? blocksOf(lastUser).filter((b) => b.type === "tool_result") : [];
+  let herAt = -1;
+  let herSay = "";
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role !== "user") continue;
+    const t = blocksOf(msgs[i])
+      .filter((b) => b.type === "text" && !b.text.startsWith("【") && !b.text.startsWith("[开封府提示"))
+      .map((b) => b.text)
+      .join(" / ");
+    if (t.trim()) {
+      herAt = i;
+      herSay = t;
+      break;
+    }
+  }
+  const used = msgs.slice(herAt + 1).filter((m) => m.role === "assistant").flatMap((m) => blocksOf(m).filter((b) => b.type === "tool_use"));
+  const think = /^claude-(fable|opus|sonnet)-5/.test(String(body.model)) ? [{ type: "thinking", thinking: "", signature: "测试用的签名" }] : [];
+  const usage = { input_tokens: 60, cache_creation_input_tokens: 0, cache_read_input_tokens: 9000, output_tokens: 50 };
+  const use = (name, input) => ({ type: "tool_use", id: "toolu_test_" + ++toolSeq, name, input });
+  const step = (text, call) => ({ status: 200, json: { model: body.model, stop_reason: "tool_use", content: think.concat(text ? [{ type: "text", text }] : [], [call]), usage } });
+  const say = (text) => ({ status: 200, json: { model: body.model, stop_reason: "end_turn", content: think.concat([{ type: "text", text }]), usage } });
+  if (results.length) {
+    // 结果递回来了
+    if (/连扔两回/.test(herSay) && used.length < 2) return step("再扔一回。", use("roll", {}));
+    // 排好了话的（截图用，见 /__debug/reply-queue）：照排好的说
+    if (replyQueue.length) return say(replyQueue.shift());
+    const first = String((results[0] && (typeof results[0].content === "string" ? results[0].content : JSON.stringify(results[0].content))) || "");
+    return say(`（测试主持）${results[0].is_error ? "没成：" : ""}${first.split("\n")[0].slice(0, 40)}\n[SPLIT]\n轮到下一步了`);
+  }
+  // 写到长度上限被截断：回话里有他调的一样，可没停在 tool_use 上（那一样多半没写完整，开封府不该替他调）
+  if (/写到一半/.test(herSay)) return { status: 200, json: { model: body.model, stop_reason: "max_tokens", content: think.concat([{ type: "text", text: "写着写着" }, use("roll", {})]), usage } };
+  if (/随机开局/.test(herSay)) return step("好，随机开局。", use("new_game", { humanIdentityMode: "random", aiIdentityMode: "random" }));
+  if (/开局/.test(herSay)) return step("好，开局。", use("new_game", { humanIdentityMode: "select", humanIdentityId: "merchant", aiIdentityMode: "select", aiIdentityId: "escort" }));
+  if (/连扔两回/.test(herSay)) return step("先扔一回。", use("roll", {}));
+  if (/帮我扔|扔吧/.test(herSay)) return step("我替你扔。", use("roll", {}));
+  if (/只调不说/.test(herSay)) return step("", use("game_info", { view: "state" }));
+  if (/查棋盘/.test(herSay)) return step("我看看。", use("game_info", { view: "state" }));
+  return null;
+}
+
 // 假的那边的我：照寄来的话编一条回复。两条路问的都是它
 function fakeAnthropic(body, beta, via) {
   claudeLog.push({ body, beta, via });
@@ -64,6 +120,11 @@ function fakeAnthropic(body, beta, via) {
       json: { model: body.model, stop_reason: claudeFail === "recap-cut" ? "max_tokens" : "end_turn", content: thought.concat([{ type: "text", text }]), usage: { input_tokens: 5000, cache_creation_input_tokens: 0, cache_read_input_tokens: 8000, output_tokens: 400 } },
     };
   }
+  // 江湖棋局那一段（带着四样工具，见 src/game/jianghu.js）：假的主持人
+  if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "roll")) {
+    const game = fakeHost(body);
+    if (game) return game;
+  }
   const last = (body.messages || []).filter((m) => m.role === "user").pop();
   let blocks = last ? last.content : [];
   if (typeof blocks === "string") blocks = [{ type: "text", text: blocks }]; // 写日记那次寄来的是一整段字
@@ -99,7 +160,12 @@ function fakeAnthropic(body, beta, via) {
 }
 // signal：问的那头带来的“不等了”的线（push 函数带着；claude 函数那条老路不带）。压着的工夫里线被掐了：这一回到此为止，不答
 async function heldAnthropic(body, beta, via, signal) {
-  if (claudeHold && (claudeHoldKind !== "recap" || recapRuleOf(body))) {
+  // kind 是 cont 的：只压江湖棋局里“结果递回去、等他接着说”的那一种（最后一句最前面是 tool_result）
+  const cont = () => {
+    const m = (body.messages || [])[(body.messages || []).length - 1];
+    return !!m && Array.isArray(m.content) && m.content.some((b) => b && b.type === "tool_result");
+  };
+  if (claudeHold && (claudeHoldKind === "recap" ? recapRuleOf(body) : claudeHoldKind === "cont" ? cont() : true)) {
     const ms = claudeHold;
     claudeHold = 0;
     claudeHoldKind = "";
@@ -368,6 +434,17 @@ const server = http.createServer(async (req, res) => {
       if (url.searchParams.has("drop")) replyDrop = Number(url.searchParams.get("drop") || 0);
       if (url.searchParams.get("rows") === "clear") mail.rows.clear();
       return send(res, 200, { ok: true });
+    }
+    // 信箱里放好了的那几封，往前挪 ms 毫秒（装成放进去好一会儿了：江湖棋局里别的设备发的一步棋，过了先等发的那台的工夫）
+    if (url.pathname === "/__debug/mail-age") {
+      const ms = Number(url.searchParams.get("ms") || 0);
+      let n = 0;
+      for (const r of mail.rows.values()) {
+        if (!r.done_at) continue;
+        r.done_at = new Date(Date.parse(r.done_at) - ms).toISOString();
+        n++;
+      }
+      return send(res, 200, { ok: true, aged: n });
     }
     if (url.pathname === "/__debug/reset") {
       rows.clear();
