@@ -4,7 +4,7 @@
 import * as E from "../src/game/engine.js";
 import {
   TOOLS, GAME_SECTION, HER, HIM, SNAP_KEY, isGameChat, nowLine, apiBlocks, callsOf, midTurn, needsRun, lastStep, collectStepIds,
-  boardOf, stripLines, nanyaSub, runCalls, stepLines, seededRng,
+  boardOf, stripLines, nanyaSub, runCalls, stepLines, seededRng, gameSection, OFF_LINE, ON_KEY, readOn, gameOn, hasSteps, namesOf,
 } from "../src/game/jianghu.js";
 import { HOST_RULES } from "../vendor/jianghu/host_rules.js";
 import { needsReply, markStopped, stoppedAt, unmarkStopped, mailBefore } from "../src/thread.js";
@@ -202,6 +202,24 @@ const line = nowLine(masked.board);
 ok(line.includes(`你在这一局里的身份：千岁仙人，伪装成${merchant}`) && !stripLines(masked.board).join("").includes("千岁") && !nanyaSub(masked.board).includes("千岁") && !nowLine(r1.board).includes("千岁仙人，"),
   "【此刻】里那一行带着他的身份（只写给他看）；顶上那条、南衙那一行都不带");
 
+// ---- 名字：开局时她起的，不起照默认（卿卿 10 月 16 日要的） ----
+const named = await runCalls(E, null, [call("new_game", { humanName: "  阿卿 ", aiName: "晋哥", humanIdentityMode: "select", humanIdentityId: "merchant", aiIdentityMode: "select", aiIdentityId: "escort" })]);
+ok(named.state.players.human.name === "阿卿" && named.state.players.ai.name === "晋哥" && String(named.board.names) === "阿卿,晋哥" && named.calls[0].card[0] === "〔局〕开局 · 阿卿选了商贾",
+  "开局时起了名字：引擎里、棋盘上、卡片上都是这一局的名字");
+ok(stripLines(named.board)[1] === "阿卿 第1格 45两 ｜ 晋哥 第1格 45两" && nowLine(named.board).startsWith("【棋盘】第一章：中原风起；阿卿第1格、45两；晋哥第1格、45两；轮到阿卿"), "顶上那条、【此刻】那一行也照这一局的名字写");
+const namedRoll = await runCalls(E, named.state, [call("roll")]);
+ok(!namedRoll.calls[0].err && namedRoll.calls[0].card[0].startsWith("〔骰〕阿卿掷出"), `掷骰子的卡片也是（${namedRoll.calls[0].card[0]}）`);
+const half = await runCalls(E, null, [call("new_game", { aiName: "晋哥", humanIdentityMode: "random", aiIdentityMode: "random" })]);
+ok(String(half.board.names) === "卿卿,晋哥" && String(r1.board.names) === "卿卿,小晋" && namesOf({ ch: "x" }).join() === "卿卿,小晋", "只起了一个：另一个照默认；什么都没起：卿卿、小晋；老存档里没记名字的也照默认");
+
+// ---- 在平常对话里摆开棋盘、收棋（卿卿 10 月 16 日要的） ----
+const onSet = readOn(JSON.stringify(["mgplain", 3, "", null]));
+ok(ON_KEY === "kfs2:jhon" && onSet.size === 1 && onSet.has("mgplain") && readOn("坏了").size === 0 && readOn(null).size === 0, "摆着棋盘的那份单子：只认对话编号，读不出来当空的");
+ok(gameOn("jhabc", null) && gameOn("jhabc", new Set()) && gameOn("mgplain", onSet) && !gameOn("mgother", onSet) && !gameOn("", onSet), "摆没摆着棋盘：专门下棋的那种一直摆着，平常对话看单子");
+ok(hasSteps([{ role: "her" }, { role: "him", calls: [{ id: "x" }] }]) && !hasSteps([{ role: "him", calls: [] }, { role: "her", calls: [{ id: "x" }] }]) && !hasSteps(null), "对话里他调过引擎没有");
+ok(GAME_SECTION === gameSection(false) && gameSection(true) !== GAME_SECTION && gameSection(true).includes("这段对话原来是你们平常聊天，她在这里摆开了《江湖棋局》") && gameSection(true).includes("她收棋以后") && gameSection(true).endsWith(HOST_RULES) && !GAME_SECTION.includes("平常聊天"),
+  "平常对话里摆开的：【江湖棋局】那一段开头换个说法、多一条收棋的，后面照样跟着主持规矩；专门下棋的那一段不变");
+
 // ---- 寄回去的样子 ----
 const m = { id: "m1", role: "him", raw: "我替你扔。", calls: [{ id: "toolu_a", name: "roll", input: {}, out: "卿卿掷出了 3 点。", card: ["〔骰〕卿卿掷出 3 点"] }, { id: "toolu_b", name: "game_info", input: { view: "state" } }], stop: "tool_use" };
 const { uses, results } = apiBlocks(m);
@@ -247,6 +265,10 @@ const plain = buildSystem(sysArgs);
 const gamed = buildSystem({ ...sysArgs, game: { board: stepA.board } });
 ok(plain.staticText === buildSystem({ ...sysArgs, game: null }).staticText && !plain.staticText.includes("【江湖棋局】") && !plain.nowNote.includes("【棋盘】"), "不是棋局的对话：名帖、【此刻】一个字不变");
 ok(gamed.staticText === plain.staticText.replace("【回复格式】", GAME_SECTION + "\n\n【回复格式】") && gamed.nowNote.includes("\n【棋盘】第一章：中原风起；卿卿第4格、45两；小晋第1格、45两；轮到小晋"), "棋局那一段：名帖里【回复格式】前面多一段【江湖棋局】，【此刻】里多一行棋盘");
+const mixedSys = buildSystem({ ...sysArgs, game: { board: null, mixed: true } });
+const offSys = buildSystem({ ...sysArgs, game: { off: true } });
+ok(mixedSys.staticText === plain.staticText.replace("【回复格式】", gameSection(true) + "\n\n【回复格式】") && mixedSys.nowNote.includes("\n【棋盘】还没开局"), "平常对话里摆开的：名帖里多的是换了说法的那一段，【此刻】里照样一行棋盘");
+ok(offSys.staticText === plain.staticText && offSys.nowNote.includes("\n" + OFF_LINE) && !offSys.nowNote.includes("还没开局"), "收了棋的：名帖跟平常一样，【此刻】里写一句收起来了");
 const ask = buildRecapAsk({ msgs: [her1, stepA, doneA, silent], memeLookup: () => null });
 const asked = ask.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
 ok(asked.includes("光义：我替你扔。\n[棋局] 卿卿掷出 3 点 → 第4格【洛阳西市】") && !/光义：……/.test(asked), "叫他抄提要的记录里：一步写成他的话加“[棋局] …”，只调不说的那一步不写“……”");

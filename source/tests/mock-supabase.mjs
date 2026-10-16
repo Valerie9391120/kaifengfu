@@ -27,7 +27,8 @@ const replyQueue = [];
 const recapRuleOf = (body) => (Array.isArray(body.system) ? body.system.map((x) => x.text || "").find((t) => t.startsWith("【抄提要】") || t.startsWith("【并提要】")) : "") || "";
 
 // 江湖棋局的假主持人（tests/e2e_jianghu.py 用）。照她最后说的那句话、和这一回合里已经调过几回：
-//   “开局”：先说一句，再调 new_game（她是商贾、他是镖师：不用挑伪装，测试里走得稳）；“随机开局”：两个都随机
+//   “开局”：先说一句，再调 new_game（她是商贾、他是镖师：不用挑伪装，测试里走得稳）；“随机开局”：两个都随机；
+//   “改名开局”（截图里写成“……我叫阿卿……”）：同“开局”，名字照她起的（她叫阿卿、他叫晋哥）
 //   “帮我扔”“扔吧”：先说一句，再调 roll
 //   “连扔两回”：调 roll，结果递回来以后再调一回 roll，再递回来才说完
 //   “只调不说”：一个字不说，只调 game_info
@@ -74,6 +75,7 @@ function fakeHost(body) {
   // 写到长度上限被截断：回话里有他调的一样，可没停在 tool_use 上（那一样多半没写完整，开封府不该替他调）
   if (/写到一半/.test(herSay)) return { status: 200, json: { model: body.model, stop_reason: "max_tokens", content: think.concat([{ type: "text", text: "写着写着" }, use("roll", {})]), usage } };
   if (/随机开局/.test(herSay)) return step("好，随机开局。", use("new_game", { humanIdentityMode: "random", aiIdentityMode: "random" }));
+  if (/改名开局|我叫阿卿/.test(herSay)) return step("好，这一局照你起的名字。", use("new_game", { humanName: "阿卿", aiName: "晋哥", humanIdentityMode: "select", humanIdentityId: "merchant", aiIdentityMode: "select", aiIdentityId: "escort" }));
   if (/开局/.test(herSay)) return step("好，开局。", use("new_game", { humanIdentityMode: "select", humanIdentityId: "merchant", aiIdentityMode: "select", aiIdentityId: "escort" }));
   if (/连扔两回/.test(herSay)) return step("先扔一回。", use("roll", {}));
   if (/帮我扔|扔吧/.test(herSay)) return step("我替你扔。", use("roll", {}));

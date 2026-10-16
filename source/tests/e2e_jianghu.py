@@ -57,10 +57,11 @@ with sync_playwright() as p:
         ok(rows[:2] == ["闲笔集 | 今天还没写", "江湖棋局 | 还没开局"] and len(rows) == 4, f"南衙里多一行“江湖棋局”，排在闲笔集后面，还没开局（{rows}）")
         pa.locator(".kfs-nanya-row", has_text="江湖棋局").click(); time.sleep(0.6)
         sheet = pa.locator(".kfs-jianghu").inner_text()
-        ok(pa.locator(".kfs-jianghu-go").count() == 0 and pa.locator(".kfs-jianghu-new").count() == 1 and "跟小晋说一声“开局”就开" in sheet, "点开：还没下过，只有“开新的一局”，底下一句怎么开")
+        ok(pa.locator(".kfs-jianghu-go").count() == 0 and pa.locator(".kfs-jianghu-new").count() == 1 and pa.locator(".kfs-jianghu-here").count() == 0 and "开新的一局会另开一段对话" in sheet and "开局”就开" not in sheet,
+           "点开：还没下过，只有“开新的一局”（眼下是还空着的新对话，没有“就在这段对话里下”）；底下的小字里没有“跟小晋说一声开局就开”")
         pa.locator(".kfs-jianghu-new").click(); time.sleep(0.8)
-        ok(pa.locator(".kfs-game-title").inner_text() == "江湖棋局" and "跟小晋说一声“开局”就开" in pa.locator(".kfs-game-empty").inner_text() and pa.evaluate(STRIP) == "江湖棋局 | 还没开局",
-           "开新的一局：开了一段空对话，中间写“江湖棋局”，顶栏底下一条“还没开局”")
+        ok(pa.locator(".kfs-game-title").inner_text() == "江湖棋局" and pa.locator(".kfs-game-empty").inner_text().strip() == "江湖棋局" and pa.evaluate(STRIP) == "江湖棋局 | 还没开局",
+           "开新的一局：开了一段空对话，中间只写“江湖棋局”（底下那句提示和气泡拿掉了），顶栏底下一条“还没开局”")
 
         # ================= 开局 =================
         n0 = say_and_wait(pa, "开局", 2)
@@ -199,6 +200,7 @@ with sync_playwright() as p:
         bd = [m for m in msgs if m["role"] == "him" and m.get("board")][-1]["board"]
         pa.locator("button[aria-label='新对话']").tap(); time.sleep(0.6)
         n7 = say_and_wait(pa, "你好", 1)
+        plain_id = last_chat(pa)
         # （照她说的那一句认：前面按停掐掉的那一回压着的工夫到了才记上，可能排在这一回后面）
         said = lambda c: any(b.get("type") == "text" and b.get("text") == "你好" for b in (c["body"]["messages"][-1]["content"] if isinstance(c["body"]["messages"][-1]["content"], list) else []))
         nb = [c for c in calls()[n7:] if said(c)][-1]["body"]
@@ -211,6 +213,54 @@ with sync_playwright() as p:
         ok(pa.locator(".kfs-jianghu-go").count() == 1 and "上一局" in pa.locator(".kfs-jianghu").inner_text(), "点开：有“上一局”那一块和“接着上一局”")
         pa.locator(".kfs-jianghu-go").click(); time.sleep(0.8)
         ok(last_chat(pa) == cid and pa.evaluate(STRIP) == strip_of(bd), "接着上一局：翻回那一局的对话，顶上那条是它的棋盘")
+
+        # ================= 在平常对话里摆开棋盘、收棋（10 月 16 日）=================
+        def jianghu_sheet(page):
+            page.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
+            page.get_by_role("button", name="南衙").click(); time.sleep(0.6)
+            page.locator(".kfs-nanya-row", has_text="江湖棋局").click(); time.sleep(0.6)
+        def ons(page):
+            return json.loads(page.evaluate(KV, "kfs2:jhon") or "[]")
+        def said_by(text, start):
+            return [c for c in calls()[start:] if any(b.get("type") == "text" and b.get("text") == text for b in (c["body"]["messages"][-1]["content"] if isinstance(c["body"]["messages"][-1]["content"], list) else []))]
+        pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
+        pa.locator(".kfs-history button", has_text="你好").first.click(); time.sleep(0.8)
+        ok(last_chat(pa) == plain_id and pa.evaluate(STRIP) is None, "翻回那段平常对话（“你好”）：顶上没有那一条")
+        jianghu_sheet(pa)
+        ok(pa.locator(".kfs-jianghu-here").count() == 1 and pa.locator(".kfs-jianghu-stop").count() == 0 and "也可以就在眼下这段对话里下" in pa.locator(".kfs-jianghu").inner_text(),
+           "在平常对话里点开那一张：多一颗“就在这段对话里下”")
+        pa.locator(".kfs-jianghu-here").click(); time.sleep(0.8)
+        ok(pa.evaluate(STRIP) == "江湖棋局 | 还没开局" and plain_id in ons(pa) and "收到：你好" in pa.evaluate(HIS) and pa.locator(".kfs-jianghu").count() == 0,
+           "摆开了：那一张收起来，顶上一条“还没开局”，前面聊的都在，单子里记上了这段对话")
+        n8 = say_and_wait(pa, "改名开局", 2)
+        b8 = said_by("改名开局", n8)[0]["body"]
+        ok([t.get("name") for t in b8.get("tools", [])] == ["new_game", "roll", "game_action", "game_info"] and "这段对话原来是你们平常聊天" in sys_text(b8) and board_line(b8) == ["【棋盘】还没开局（还没调 new_game）。"] and "tool_choice" not in b8
+           and any(blk.get("type") == "text" and blk.get("text") == "你好" for m in b8["messages"] if m["role"] == "user" and isinstance(m["content"], list) for blk in m["content"]),
+           "摆开以后寄的：带着四样工具，名帖里是换了说法的那一段（原来是平常聊天），【此刻】里一行棋盘，前面聊的照样寄")
+        ok(last_chat(pa) == plain_id and pa.evaluate(CARDS)[-1:] == ["〔局〕开局 · 阿卿选了商贾"] and pa.evaluate(STRIP) == "第一章 · 中原风起 | 阿卿 第1格 45两 ｜ 晋哥 第1格 45两",
+           f"开局时起了名字（她叫阿卿、他叫晋哥）：卡片、顶上那条照这一局的名字写（{pa.evaluate(STRIP)}）")
+        index = json.loads(pa.evaluate(KV, "kfs2:index") or "[]")
+        ok(any(x["id"] == plain_id and x["title"] == "你好" for x in index), "这段对话的名字没变（还叫“你好”，不改成“江湖棋局”）")
+        jianghu_sheet(pa)
+        sheet2 = pa.locator(".kfs-jianghu").inner_text()
+        ok(pa.locator(".kfs-jianghu-stop").count() == 1 and pa.locator(".kfs-jianghu-here").count() == 0 and "阿卿 第1格 45两" in sheet2 and "正摆着棋盘" in sheet2,
+           "再点开那一张：“上一局”是这段对话里的这一局，换成一颗“收棋”")
+        pa.locator(".kfs-jianghu-stop").click(); time.sleep(0.8)
+        ok(pa.evaluate(STRIP) is None and plain_id not in ons(pa) and pa.evaluate(CARDS)[-1:] == ["〔局〕开局 · 阿卿选了商贾"], "收棋：顶上那条没了，单子里拿掉了，下过的卡片还在")
+        n9 = say_and_wait(pa, "收棋以后", 1)
+        b9 = said_by("收棋以后", n9)[0]["body"]
+        ok([t.get("name") for t in b9.get("tools", [])] == ["new_game", "roll", "game_action", "game_info"] and b9.get("tool_choice") == {"type": "none"} and "【江湖棋局】" not in sys_text(b9) and board_line(b9) and board_line(b9)[0].startswith("【棋盘】收起来了"),
+           "收了棋再说话：四样工具照带（对话里有他调过的）、这一回不许调；名帖里没有【江湖棋局】，【此刻】里写着收起来了")
+        ok("收到：收棋以后" in pa.evaluate(HIS) and pa.evaluate(STRIP) is None, "他照平常聊天回")
+        jianghu_sheet(pa)
+        pa.locator(".kfs-jianghu-here").click(); time.sleep(0.8)
+        ok(pa.evaluate(STRIP) == "第一章 · 中原风起 | 阿卿 第1格 45两 ｜ 晋哥 第1格 45两" and plain_id in ons(pa), "再摆开：接着原来那一局（顶上那条还是那一局）")
+        # 收起来：后面几段照旧用专门下棋的那一局
+        jianghu_sheet(pa)
+        pa.locator(".kfs-jianghu-stop").click(); time.sleep(0.8)
+        pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
+        pa.locator(".kfs-history button", has_text="江湖棋局").first.click(); time.sleep(0.8)
+        ok(last_chat(pa) == cid and plain_id not in ons(pa), "收起来，翻回专门下棋的那一局")
 
         # ================= 两台设备：一步棋只让发那一回的设备替他调 =================
         if not os.environ.get("KFS_OLD_PATH"):

@@ -40,9 +40,11 @@ export function GameCardRow({ text, animate }) {
   );
 }
 
-// 南衙里点“江湖棋局”冒出来的那一张：接着上一局（有局在下才有）、开新的一局。
+// 南衙里点“江湖棋局”冒出来的那一张：接着上一局（有局在下才有）、开新的一局、就在这段对话里下 / 收棋（10 月 16 日添的）。
 // last：最近那一局的棋盘（还没开局是 null）；hasGame：有没有下过的那一局（对话还在）
-export function JianghuPanel({ last, hasGame, onContinue, onNew }) {
+// here：眼下这段对话是平常对话（说过话的）的时候，"off" 还没摆棋盘（摆“就在这段对话里下”）、"on" 摆着（摆“收棋”）；
+// 别的时候（专门下棋的那一段、还空着的新对话）是空的，两颗都不摆
+export function JianghuPanel({ last, hasGame, here = "", onContinue, onNew, onHere, onStop }) {
   const [a, b] = stripLines(last);
   return (
     <div className="kfs-jianghu flex flex-col" style={{ gap: 12 }}>
@@ -56,13 +58,25 @@ export function JianghuPanel({ last, hasGame, onContinue, onNew }) {
           </button>
         </div>
       )}
-      <div>
+      <div className="flex flex-wrap" style={{ gap: 8 }}>
         <button onClick={onNew} className="kfs-tap kfs-jianghu-new" style={hasGame ? chip : chipPrimary}>
           开新的一局
         </button>
+        {here === "off" && (
+          <button onClick={onHere} className="kfs-tap kfs-jianghu-here" style={chip}>
+            就在这段对话里下
+          </button>
+        )}
+        {here === "on" && (
+          <button onClick={onStop} className="kfs-tap kfs-jianghu-stop" style={chip}>
+            收棋
+          </button>
+        )}
       </div>
       <p style={{ fontSize: 12, color: T.inkSoft, lineHeight: 1.7 }}>
-        开新的一局会另开一段对话，跟小晋说一声“开局”就开。{hasGame ? "上一局留在历史对话里，翻回去还能接着下。" : ""}掷骰子跟他说一声，他替你扔。
+        开新的一局会另开一段对话。
+        {here === "off" ? "也可以就在眼下这段对话里下，前面聊的都留着。" : here === "on" ? "这段对话里正摆着棋盘：收了棋就跟平常聊天一样，再摆开接着这一局。" : ""}
+        {hasGame ? "上一局留在历史对话里，翻回去还能接着下。" : ""}掷骰子跟他说一声，他替你扔。
       </p>
     </div>
   );
