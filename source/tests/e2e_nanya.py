@@ -109,25 +109,33 @@ def run(browser):
     if not opened:
         ctx.close(); return                 # 菜单都没出来，后面的没法走
     rs = rows(pg)
-    # 10 月 15 日闲笔集后面添了一行“江湖棋局”（见 tests/e2e_jianghu.py），四行
-    ok([(r["name"], r["sub"]) for r in rs] == [("闲笔集", "今天还没写"), ("江湖棋局", "还没开局"), ("藏音匣", "营造中"), ("网易云", "营造中")],
+    # 10 月 15 日闲笔集后面添了一行“江湖棋局”（见 tests/e2e_jianghu.py），四行；10 月 17 日藏音匣盖好了（见 tests/e2e_cangyin.py）
+    ok([(r["name"], r["sub"]) for r in rs] == [("闲笔集", "今天还没写"), ("江湖棋局", "还没开局"), ("藏音匣", "还空着"), ("网易云", "营造中")],
        f"菜单四行：闲笔集、江湖棋局、藏音匣、网易云；闲笔集那行的小字和格子上的是同一句（{[(r['name'], r['sub']) for r in rs]}）")
-    ok([r["soon"] for r in rs] == ["", "", "1", "1"] and [r["svgs"] for r in rs] == [2, 2, 1, 1] and [r["dim"] for r in rs] == ["1", "1", "0.55", "0.55"] and [r["chip"] for r in rs] == ["1", "1", "0.55", "0.55"],
-       f"能进去的那行右边带箭头；还没盖的两行淡一档、没有箭头（箭头 {[r['svgs'] - 1 for r in rs]}，名字的浓淡 {[r['dim'] for r in rs]}）")
+    ok([r["soon"] for r in rs] == ["", "", "", "1"] and [r["svgs"] for r in rs] == [2, 2, 2, 1] and [r["dim"] for r in rs] == ["1", "1", "1", "0.55"] and [r["chip"] for r in rs] == ["1", "1", "1", "0.55"],
+       f"能进去的那几行右边带箭头；还没盖的网易云淡一档、没有箭头（箭头 {[r['svgs'] - 1 for r in rs]}，名字的浓淡 {[r['dim'] for r in rs]}）")
 
-    # ---- 还没盖的两行：点了只冒一句话 ----
+    # ---- 藏音匣：点了进那一页（里面的见 tests/e2e_cangyin.py），左上角返回回到侧栏 ----
     c0 = len(calls())
     pg.locator(".kfs-nanya-row").nth(2).click()
-    said = wait_has(pg, "藏音匣还在营造")
-    ok(said and pg.locator(".kfs-nanya").count() == 1 and pg.locator(".kfs-page").count() == 0,
-       "点藏音匣：冒一句“藏音匣还在营造”，菜单还开着，没进到别的页")
-    gone = wait_has(pg, "藏音匣还在营造", want=False)
+    try:
+        pg.locator(".kfs-cangyin").wait_for(timeout=8000)
+        inbox = True
+    except Exception:
+        inbox = False
+    ok(inbox and pg.locator(".kfs-nanya").count() == 0, "点藏音匣：菜单收起，藏音匣那一页滑进来")
+    if inbox:
+        pg.wait_for_timeout(600)
+        pg.locator(".cy-back").click(); pg.wait_for_timeout(600)
+    ok(pg.locator(".kfs-cangyin").count() == 0 and pg.locator(".kfs-nanya").count() == 0 and pg.evaluate(TILE_ON_TOP), "藏音匣左上角返回：回到侧栏，不回菜单")
+    open_menu(pg)
+    # ---- 还没盖的网易云：点了只冒一句话 ----
     pg.locator(".kfs-nanya-row").nth(3).click()
     said = wait_has(pg, "网易云还在营造")
     still = pg.locator(".kfs-nanya").count() == 1 and pg.locator(".kfs-page").count() == 0
     gone2 = wait_has(pg, "网易云还在营造", want=False)
-    ok(gone and said and still and gone2 and len(calls()) == c0,
-       "那句话一会儿自己消失；点网易云：冒一句“网易云还在营造”，菜单还开着，前后也没往那边发什么")
+    ok(said and still and gone2 and len(calls()) == c0,
+       "点网易云：冒一句“网易云还在营造”，菜单还开着，那句话一会儿自己消失；前后也没往那边发什么")
 
     # ---- 点暗的地方、点叉：收起，回到侧栏 ----
     closed = lambda: pg.locator(".kfs-sheet-box").count() == 0 and pg.locator(".kfs-page").count() == 0 and pg.evaluate(TILE_ON_TOP)
