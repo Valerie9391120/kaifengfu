@@ -186,7 +186,8 @@ with sync_playwright() as p:
 
     # ---- 长按：转文字、取消转文字 ----
     labels = menu_of(pa)
-    ok(labels == ["转文字", "复制", "重新回答"], f"长按语音条：转文字、复制、重新回答（{labels}）")
+    # 10 月 17 日转文字后面添了一项“存入藏音匣”（念好了的语音条才有，见 tests/e2e_cangyin.py）
+    ok(labels == ["转文字", "存入藏音匣", "复制", "重新回答"], f"长按语音条：转文字、存入藏音匣、复制、重新回答（{labels}）")
     tap_menu(pa, "转文字")
     ok(pa.evaluate(HEARD) == ["卿卿，我在这里。"], f"转文字：字摆在语音条底下的白框里，标签摘干净（{pa.evaluate(HEARD)}）")
     labels = menu_of(pa)

@@ -55,6 +55,71 @@ const jianghuName = `jianghu-${hash(jianghuJs)}.js`;
 fs.writeFileSync(`${OUT}/assets/${jianghuName}`, jianghuJs);
 define.__KFS_JIANGHU__ = JSON.stringify(`./${jianghuName}`);
 
+// 藏音匣（见开发说明“藏音匣”那节）：那一页单独一包、转繁体单独一包，都是点进藏音匣的时候才取；
+// 图（纸的纹理、花、五张锦灰堆残纸）名字带指纹；刻本体切成一块一块的（static/jinhui/，tools/make_jinhui.py 生成的），
+// 放进 assets/jinhui-<指纹>/，另写一张样式表（一块一个 @font-face，unicode-range 写着这一块管哪些字），页面上用到哪些字才取哪几块
+const cyAsset = (src, name) => {
+  const buf = fs.readFileSync(src);
+  const out = `cy-${name}-${hash(buf)}.webp`;
+  fs.writeFileSync(`${OUT}/assets/${out}`, buf);
+  return `./assets/${out}`;
+};
+const jinhui = JSON.parse(fs.readFileSync("static/jinhui/slices.json", "utf8"));
+const jinhuiBufs = jinhui.slices.map((sl) => fs.readFileSync(`static/jinhui/${sl.f}`));
+const jinhuiDir = `jinhui-${hash(Buffer.concat([Buffer.from(JSON.stringify(jinhui)), ...jinhuiBufs]))}`;
+fs.mkdirSync(`${OUT}/assets/${jinhuiDir}`, { recursive: true });
+jinhui.slices.forEach((sl, i) => fs.writeFileSync(`${OUT}/assets/${jinhuiDir}/${sl.f}`, jinhuiBufs[i]));
+fs.copyFileSync("static/jinhui/OFL.txt", `${OUT}/assets/${jinhuiDir}/OFL.txt`);
+// 一块管哪些字：连着的码位并成一段（U+4E00-4E05）
+const ranges = (text) => {
+  const cps = [...new Set([...text].map((c) => c.codePointAt(0)))].sort((a, b) => a - b);
+  const out = [];
+  for (let i = 0; i < cps.length; ) {
+    let j = i;
+    while (j + 1 < cps.length && cps[j + 1] === cps[j] + 1) j++;
+    const h = (n) => n.toString(16).toUpperCase();
+    out.push(i === j ? `U+${h(cps[i])}` : `U+${h(cps[i])}-${h(cps[j])}`);
+    i = j + 1;
+  }
+  return out.join(",");
+};
+const jinhuiCss = Buffer.from(
+  `/* KFS Jinhui：齊伋體（Qiji, Lingdong Huang, SIL OFL 1.1, Reserved Font Name QIJI）截出来、改了名的；授权见 ${jinhuiDir}/OFL.txt */\n` +
+    jinhui.slices.map((sl) => `@font-face{font-family:"KFS Jinhui";src:url("${jinhuiDir}/${sl.f}") format("woff2");font-display:block;unicode-range:${ranges(sl.c)}}`).join("\n") +
+    "\n"
+);
+const jinhuiCssName = `jinhui-${hash(jinhuiCss)}.css`;
+fs.writeFileSync(`${OUT}/assets/${jinhuiCssName}`, jinhuiCss);
+const cyAssets = {
+  tex: cyAsset("static/cangyin/paper.webp", "paper"),
+  flower: cyAsset("static/cangyin/flower.webp", "flower"),
+  strips: [1, 2, 3, 4, 5].map((i) => cyAsset(`static/cangyin/strip${i}.webp`, `strip${i}`)),
+  font: `./assets/${jinhuiCssName}`,
+};
+const side = async (entry, name, extra = {}) => {
+  const r = await build({
+    entryPoints: [entry],
+    bundle: true,
+    minify: true,
+    format: "esm",
+    platform: "browser",
+    target: ["es2020", "safari14"],
+    write: false,
+    legalComments: "eof",
+    logLevel: "warning",
+    ...extra,
+  });
+  const buf = r.outputFiles[0].contents;
+  const out = `${name}-${hash(buf)}.js`;
+  fs.writeFileSync(`${OUT}/assets/${out}`, buf);
+  return out;
+};
+const cangyinName = await side("src/cangyin/page.js", "cangyin", { define: { "process.env.NODE_ENV": '"production"', __KFS_CANGYIN_ASSETS__: JSON.stringify(cyAssets) } });
+define.__KFS_CANGYIN__ = JSON.stringify(`./${cangyinName}`);
+// 词典里全是汉字：照 UTF-8 原样写（esbuild 默认写成 \\uXXXX，大一倍）
+const s2tName = await side("src/cangyin/s2t.js", "s2t", { charset: "utf8" });
+define.__KFS_S2T__ = JSON.stringify(`./${s2tName}`);
+
 if (TEST_URL) {
   define.__KFS_SUPABASE_URL__ = JSON.stringify(TEST_URL);
   define.__KFS_SUPABASE_KEY__ = JSON.stringify("sb_publishable_test");
@@ -190,4 +255,7 @@ console.log(`  ${cssName}  ${size(`${OUT}/assets/${cssName}`)}`);
 console.log(`  sw.js  ${size(`${OUT}/sw.js`)}`);
 console.log(`  ${lotusName}  ${size(`${OUT}/assets/${lotusName}`)}`);
 console.log(`  ${jianghuName}  ${size(`${OUT}/assets/${jianghuName}`)}`);
+console.log(`  ${cangyinName}  ${size(`${OUT}/assets/${cangyinName}`)}`);
+console.log(`  ${s2tName}  ${size(`${OUT}/assets/${s2tName}`)}`);
+console.log(`  ${jinhuiCssName} + ${jinhuiDir}/（${jinhui.slices.length} 块，${(jinhuiBufs.reduce((n, b) => n + b.length, 0) / 1024).toFixed(0)} KB）`);
 console.log(`  连接：${SUPABASE_URL}`);

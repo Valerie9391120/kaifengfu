@@ -4,14 +4,17 @@ import { Icon } from "../ui/Icon.jsx";
 import { safeTopPx } from "../ui/parts.jsx";
 
 // heard：长按的是他的语音条的话，它眼下转没转文字（菜单里那一项写“转文字”还是“取消转文字”）；
-// hearable：给不给“转文字”（念不成、没人念的那种，气泡上已经把字摆出来了，不给）
-export function MsgMenu({ menu, now, busy, heard = false, hearable = true, onClose, onCopy, onEdit, onRetry, onHeard }) {
+// hearable：给不给“转文字”（念不成、没人念的那种，气泡上已经把字摆出来了，不给）；
+// kept：这一条存进藏音匣了没有（写“存入藏音匣”还是“移出藏音匣”）；keepable：存不存得进去（念好了的才行，声音要拷一份）
+export function MsgMenu({ menu, now, busy, heard = false, hearable = true, kept = false, keepable = false, onClose, onCopy, onEdit, onRetry, onHeard, onKeep }) {
   const { row, rect } = menu;
   const her = row.role === "her";
   const it = row.item;
   const acts = [];
   // 他的语音条：头一项是转文字（照微信），转了以后变成“取消转文字”
   if (!her && it.type === "voice" && hearable) acts.push({ k: "heard", label: heard ? "取消转文字" : "转文字", icon: heard ? "unheard" : "heard" });
+  // 藏音匣（卿卿 10 月 15 日定的）：念好了的他的语音条能存进去；存过的写“移出藏音匣”
+  if (!her && it.type === "voice" && (kept || keepable)) acts.push({ k: "keep", label: kept ? "移出藏音匣" : "存入藏音匣", icon: "wave" });
   if (it.type === "text" || it.type === "voice") acts.push({ k: "copy", label: "复制", icon: "copy" });
   if (it.type === "doc") acts.push({ k: "copy", label: "复制全文", icon: "copy" });
   if (her && it.type === "text") acts.push({ k: "edit", label: "编辑", icon: "pen" });
@@ -34,12 +37,12 @@ export function MsgMenu({ menu, now, busy, heard = false, hearable = true, onClo
       >
         <div style={{ padding: "10px 18px 6px", fontSize: 12, color: T.inkSoft }}>{sepLabel(row.msg.ts, now)}</div>
         {acts.map((a) => {
-          const off = busy && a.k !== "copy" && a.k !== "heard";
+          const off = busy && a.k !== "copy" && a.k !== "heard" && a.k !== "keep";
           return (
             <button
               key={a.k}
               disabled={off}
-              onClick={() => (a.k === "copy" ? onCopy(row) : a.k === "edit" ? onEdit(row) : a.k === "heard" ? onHeard(row) : onRetry(row))}
+              onClick={() => (a.k === "copy" ? onCopy(row) : a.k === "edit" ? onEdit(row) : a.k === "heard" ? onHeard(row) : a.k === "keep" ? onKeep(row) : onRetry(row))}
               className="w-full flex items-center text-left"
               style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: T.ink, opacity: off ? 0.4 : 1 }}
             >

@@ -52,6 +52,8 @@ import { ApiPanel } from "./panels/ApiPanel.jsx";
 import { PushPanel } from "./panels/PushPanel.jsx";
 import { ModelPanel } from "./panels/ModelPanel.jsx";
 import { NanyaPanel, soonToast } from "./panels/NanyaPanel.jsx";
+import { BOX_KEY, BOX_AUDIO, packEntry, readEntry, listEntries, findBySrc, boxSub } from "./cangyin/parts.js";
+import { CangyinPage, loadS2T } from "./cangyin/CangyinPage.jsx";
 import { CallPage } from "./call/CallPage.jsx";
 import { createListener, pauseOf } from "./call/listen.js";
 import { createSayer, segmentsOfReply, segmentsOfItems } from "./call/say.js";
@@ -333,6 +335,11 @@ export default function App({ account = {} }) {
   const [voiceTesting, setVoiceTesting] = useState(false);
   const [menu, setMenu] = useState(null);
   const [diaryOpen, setDiaryOpen] = useState(false);
+  // 藏音匣（见 cangyin/）：开着没有；里面那几条（从新到旧，parts.js 的 listEntries）
+  const [boxOpen, setBoxOpen] = useState(false);
+  const [boxList, setBoxList] = useState([]);
+  const boxRef = useRef([]);
+  const boxTried = useRef(new Set()); // 转过繁体（不管成没成）的那几条：存不住的不来回转
   const [diaryToday, setDiaryToday] = useState({ her: false, him: false });
   const diaryCache = useRef({});
   const dayMsgsRef = useRef({});
@@ -550,6 +557,7 @@ export default function App({ account = {} }) {
         })
         .catch(() => {});
 
+      refreshBox();
       setBooted(true);
     })();
   }, []);
@@ -591,6 +599,8 @@ export default function App({ account = {} }) {
       }
       if (has("kfs2:name:")) await loadNames();
       if (has(RECAP_KEY)) showRecaps(chatIdRef.current);
+      // 藏音匣：别的设备存了、移出了
+      if (has(BOX_KEY)) refreshBox();
       // 别的设备念好的语音同步下来了（这台设备上要念的那一条就不用再念了）
       if (has(VOICE_KEY) && speakerRef.current) speakerRef.current.synced(keys.filter((k) => k.startsWith(VOICE_KEY)));
       if (has("kfs2:memindex") || has("kfs2:mem:")) {
@@ -655,6 +665,35 @@ export default function App({ account = {} }) {
       offStatus();
     };
   }, []);
+
+  // ---- 藏音匣：纸条上用刻本体，字要繁体。存进来的那一下不转（转字的那一包一兆多，不让聊天背着），
+  // 点开藏音匣的时候把还没转过的那几条转了存回去（一条只转一回；存不住的这一趟不再转）----
+  useEffect(() => {
+    if (!boxOpen) return;
+    const todo = boxList.filter((e) => !e.trad && !boxTried.current.has(e.id));
+    if (!todo.length) return;
+    let gone = false;
+    loadS2T().then(
+      async (m) => {
+        for (const e of todo) {
+          if (gone) return;
+          boxTried.current.add(e.id);
+          const cur = readEntry(e.id, store.peek(BOX_KEY + e.id));
+          if (!cur || cur.trad) continue;
+          let trad = "";
+          try {
+            trad = m.toTrad(cur.text);
+          } catch (er) {}
+          if (trad) await store.set(BOX_KEY + e.id, packEntry({ ...cur, trad }));
+        }
+        if (!gone) refreshBox();
+      },
+      () => {}
+    );
+    return () => {
+      gone = true;
+    };
+  }, [boxOpen, boxList]);
 
   // ---- 前情提要（规矩见 recap.js） ----
   // 一段对话抄过的那几份（另存一条，不在对话里）
@@ -1131,6 +1170,57 @@ export default function App({ account = {} }) {
       } catch (e) {}
       return next;
     });
+  };
+
+  // ---- 藏音匣（见开发说明“藏音匣”那节、cangyin/）----
+  // 存档里那几条（引擎手里本来就是现成的，同步取）
+  const refreshBox = () => {
+    const list = listEntries(store.keys(BOX_KEY).map((k) => [k, store.peek(k)]));
+    boxRef.current = list;
+    setBoxList(list);
+    return list;
+  };
+  // 长按他的语音条“存入藏音匣”：念好的声音整份拷一份（删了对话也还在），字是转出来的那些（标签摘干净）；
+  // 存过的那一条，同一个地方写“移出藏音匣”
+  const keepVoice = async (r) => {
+    setMenu(null);
+    const src = voiceKeyOf(r.msg.id, r.idx);
+    const had = findBySrc(boxRef.current, src);
+    if (had) {
+      await dropKept(had.id);
+      setToast("已移出藏音匣");
+      return;
+    }
+    const raw = store.peek(VOICE_KEY + src);
+    const rec = readVoice(raw);
+    if (!rec) {
+      setToast("这条语音还没念好，存不进去");
+      return;
+    }
+    const id = newId();
+    await store.set(BOX_AUDIO + id, raw);
+    await store.set(BOX_KEY + id, packEntry({ src, chat: chatIdRef.current, at: r.msg.ts || Date.now(), text: heardOf(r.item.text), dur: rec.dur, saved: Date.now() }));
+    refreshBox();
+    setToast("已存入藏音匣");
+  };
+  const dropKept = async (id) => {
+    await store.del(BOX_KEY + id);
+    await store.del(BOX_AUDIO + id);
+    refreshBox();
+  };
+  // 藏音匣那一页放声音：用聊天里那一个放声音的东西（iPhone 上被她点过一回，接着放才不拦）
+  const boxAudio = {
+    el: player,
+    load: loadAudio,
+    urlOf: (id) => {
+      const rec = readVoice(store.peek(BOX_AUDIO + id));
+      try {
+        return rec ? audioUrl(rec.audio, rec.mime) : "";
+      } catch (e) {
+        return "";
+      }
+    },
+    claim: stopVoice,
   };
 
   // API 面板里：念语音的小后端接上没有（打开面板的时候看一眼，不花钱）
@@ -3941,7 +4031,7 @@ export default function App({ account = {} }) {
   // 只认一根手指。落下了第二根，这一回就不算划侧栏了（拖到一半的弹回去），等手指全抬起来再从头认：
   // 整页不许捏以后，两根手指往里一捏，头一根正好是往右走的，原来会被当成右划、把侧栏带出来
   const onTouchStart = (e) => {
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView || recapView || lotusOpen) return;
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen) return;
     if (e.touches.length > 1) {
       touch.current = null;
       setDragX(null);
@@ -3954,7 +4044,7 @@ export default function App({ account = {} }) {
     const s = touch.current;
     if (!s) return;
     // 手指还按着的工夫里冒出了菜单、面板（长按气泡就是）：底下的侧栏不跟着这根手指走，这一回也不算了
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || docView || recapView || lotusOpen) {
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen) {
       touch.current = null;
       setDragX(null);
       return;
@@ -4064,7 +4154,7 @@ export default function App({ account = {} }) {
   // 对话页（或侧栏）在最上面时，底边自己接得上那条色块，告诉 main.jsx 别再盖淡出
   // 并蒂莲那一层不算在里头：那层淡出（main.jsx 的 BottomMist）在外壳外头、层高 60，会盖到并蒂莲上面；
   // 那一层开着的时候网页底色是黑的，本来也不该淡进浅色（见 panels/LotusPage.jsx）
-  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming && !docView && !recapView;
+  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !boxOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming && !docView && !recapView;
   useEffect(() => {
     const r = document.documentElement;
     if (chatOnTop) r.setAttribute("data-kfs-chat", "");
@@ -4295,7 +4385,7 @@ export default function App({ account = {} }) {
       return (
         <Sheet title="南衙" onClose={() => setSheet(null)}>
           <NanyaPanel
-            subs={{ diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board) }}
+            subs={{ diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length) }}
             open={{
               diary: () => {
                 setSheet(null);
@@ -4303,6 +4393,12 @@ export default function App({ account = {} }) {
               },
               // 江湖棋局：这张菜单换成棋局那一张（接着上一局、开新的一局）
               jianghu: () => setSheet("jianghu"),
+              // 藏音匣：菜单收起，那一页滑进来；左上角返回回到侧栏（跟闲笔集一样）。聊天里正放着的语音停下
+              voicebox: () => {
+                stopVoice();
+                setSheet(null);
+                setBoxOpen(true);
+              },
             }}
             onSoon={(name) => setToast(soonToast(name))}
           />
@@ -4930,6 +5026,20 @@ export default function App({ account = {} }) {
         />
       )}
 
+      {boxOpen && (
+        <CangyinPage
+          entries={boxList}
+          audio={boxAudio}
+          toast={setToast}
+          onBack={() => setBoxOpen(false)}
+          onRemove={(id) => dropKept(id)}
+          onFail={() => {
+            setBoxOpen(false);
+            setToast("藏音匣没打开，可能是网不好，过一会儿再试");
+          }}
+        />
+      )}
+
       {historyOpen && (
         <HistoryPage
           index={index}
@@ -4950,6 +5060,10 @@ export default function App({ account = {} }) {
           heard={menu.row.role === "him" && menu.row.item.type === "voice" && heard.has(voiceKeyOf(menu.row.msg.id, menu.row.idx))}
           // 念不成、没人念的那种气泡上已经把字摆出来了：不给“转文字”
           hearable={!(menu.row.role === "him" && menu.row.item.type === "voice" && voiceAsText(menu.row))}
+          // 藏音匣：念好了的才存得进去（声音要拷一份）；存过的写“移出藏音匣”
+          kept={menu.row.role === "him" && menu.row.item.type === "voice" && !!findBySrc(boxList, voiceKeyOf(menu.row.msg.id, menu.row.idx))}
+          keepable={menu.row.role === "him" && menu.row.item.type === "voice" && !!voices[voiceKeyOf(menu.row.msg.id, menu.row.idx)] && voices[voiceKeyOf(menu.row.msg.id, menu.row.idx)].s === "ready"}
+          onKeep={keepVoice}
           onClose={() => setMenu(null)}
           onHeard={(r) => toggleHeard(voiceKeyOf(r.msg.id, r.idx))}
           // 他的语音条复制的是转出来的字（语气标签不带）；字摆在气泡上的那种，复制摆着的那些

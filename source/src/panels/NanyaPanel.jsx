@@ -11,8 +11,8 @@ const ROWS = [
   { key: "diary", icon: "calendar", name: "闲笔集" },
   // 江湖棋局：卿卿和恩师做的双人武侠桌游，10 月 15 日烤进来的（见 game/jianghu.js）。小字写最近那一局下到哪了
   { key: "jianghu", icon: "dice", name: "江湖棋局" },
-  // 藏音匣：卿卿说“之后再完善，现在留一个交互按键在那儿就行”
-  { key: "voicebox", icon: "wave", name: "藏音匣", soon: true },
+  // 藏音匣：聊天里存进来的他的语音（10 月 17 日盖好的，见 cangyin/）。小字写藏了几条
+  { key: "voicebox", icon: "wave", name: "藏音匣" },
   // 网易云：2026 年 10 月 1 日看过一个现成的播放器，打算照它的思路自己写，还没动手（见开发说明“南衙”那一节）
   { key: "music", icon: "music", name: "网易云", soon: true },
 ];
