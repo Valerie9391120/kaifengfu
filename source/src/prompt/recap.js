@@ -10,6 +10,7 @@ import { PIECE_PHOTOS, PIECE_BYTES, PART_MOST, MERGE_MOST, DOC_HEAD, HIS_DOC_HEA
 import { memeLabel, dataUrlBlock } from "./messages.js";
 import { heardOf } from "../voice.js";
 import { isCallMark, markRecap } from "../call/marks.js";
+import { stepLines } from "../game/jianghu.js";
 
 const GAP = 30 * 60 * 1000; // 隔了这么久，中间写一行钟点
 
@@ -37,7 +38,9 @@ const say = (who, text) => hang(`${who}：`, text);
 function hisLines(m, memeLookup) {
   const out = [];
   if (m.rename) out.push(`[${HIS_NAME}把顶上显示的名字改成了“${m.rename}”]`);
-  const items = Array.isArray(m.items) && m.items.length ? m.items : [{ type: "text", text: m.raw || "……" }];
+  // 江湖棋局里只调了引擎、一个字没说的那一步：不补“……”，只记棋盘上发生了什么（见下面）
+  const steps = stepLines(m);
+  const items = Array.isArray(m.items) && m.items.length ? m.items : m.calls && m.calls.length ? [] : [{ type: "text", text: m.raw || "……" }];
   items.forEach((it) => {
     if (!it) return;
     if (it.type === "meme") out.push(`${HIS_NAME}：[表情包：${memeLabel(memeLookup(it.file))}]`);
@@ -48,6 +51,8 @@ function hisLines(m, memeLookup) {
     else if (it.type === "call") out.push(`[${HIS_NAME}给${HER_NAME}打电话]`);
     else out.push(say(HIS_NAME, head(it.text || "……", ROW_HEAD)));
   });
+  // 江湖棋局里这一步下了什么（聊天里那几张小卡片，见 game/jianghu.js）：掷了几点、走到哪、花了几两
+  out.push(...steps);
   return out;
 }
 

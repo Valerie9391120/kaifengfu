@@ -108,9 +108,11 @@ export function thick(m) {
     if (m.kind === "voice") return THICK.row + 30 + len(m.text);
     return THICK.row + len(m.text);
   }
-  // 他的：寄回去的是 raw（心里话不寄）。他换了头像的，后面跟一行提示带着图
+  // 他的：寄回去的是 raw（心里话不寄）。他换了头像的，后面跟一行提示带着图。
+  // 江湖棋局里下过棋的那一步（见 game/jianghu.js）：他调的那几样、引擎回的字也跟着寄（tool_use、tool_result）
   const changed = (m.items || []).some((it) => it && it.type === "avatar");
-  return THICK.row + len(m.raw) + (changed ? 60 + THICK.meme : 0);
+  const calls = (m.calls || []).reduce((a, c) => a + 60 + len(JSON.stringify(c.input || {})) + len(c.out), 0);
+  return THICK.row + len(m.raw) + (changed ? 60 + THICK.meme : 0) + calls;
 }
 
 // 叫他抄提要的时候，这一条有多厚：太长的东西只带开头，表情包只写名字（见 prompt/recap.js）
@@ -124,8 +126,10 @@ export function askThick(m) {
     return THICK.row + Math.min(ROW_HEAD, len(m.text)) + (m.kind === "voice" ? 12 : 0);
   }
   const items = Array.isArray(m.items) && m.items.length ? m.items : null;
-  if (!items) return THICK.row + Math.min(ROW_HEAD, len(m.raw));
-  return items.reduce((a, it) => a + (it && it.type === "doc" ? 60 + Math.min(HIS_DOC_HEAD, len(it.text)) : it && it.type === "text" ? Math.min(ROW_HEAD, len(it.text)) + 4 : 30), THICK.row);
+  // 江湖棋局里的一步：记录里每张小卡片一行（见 prompt/recap.js 的 hisLines）
+  const cards = (m.calls || []).reduce((a, c) => a + (c.card || []).reduce((b, line) => b + 10 + len(line), 0), 0);
+  if (!items) return THICK.row + Math.min(ROW_HEAD, len(m.raw)) + cards;
+  return items.reduce((a, it) => a + (it && it.type === "doc" ? 60 + Math.min(HIS_DOC_HEAD, len(it.text)) : it && it.type === "text" ? Math.min(ROW_HEAD, len(it.text)) + 4 : 30), THICK.row) + cards;
 }
 
 const isPhoto = (m) => !!m && m.role === "her" && m.kind === "photo";

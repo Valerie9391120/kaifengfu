@@ -36,6 +36,25 @@ const mirrorName = `mirror-${hash(mirror)}.html`;
 fs.writeFileSync(`${OUT}/assets/${mirrorName}`, mirror);
 define.__KFS_MIRROR__ = JSON.stringify(`./assets/${mirrorName}`);
 
+// 江湖棋局的引擎（她仓库里拷来的那一份，见 vendor/jianghu/、src/game/engine.js）：单独打一包，名字带指纹。
+// 开封府开门不碰它，头一回要替他调引擎的时候才取（App.jsx 的 loadEngine，照包自己的地址找：两个都在 assets/ 里）。
+// 照浏览器打：引擎里要是又混进了只有电脑上才有的东西（node: 开头的），这里就打不成，不会等到她手机上才坏
+const jianghu = await build({
+  entryPoints: ["src/game/engine.js"],
+  bundle: true,
+  minify: true,
+  format: "esm",
+  platform: "browser",
+  target: ["es2020", "safari14"],
+  write: false,
+  legalComments: "none",
+  logLevel: "warning",
+});
+const jianghuJs = jianghu.outputFiles[0].contents;
+const jianghuName = `jianghu-${hash(jianghuJs)}.js`;
+fs.writeFileSync(`${OUT}/assets/${jianghuName}`, jianghuJs);
+define.__KFS_JIANGHU__ = JSON.stringify(`./${jianghuName}`);
+
 if (TEST_URL) {
   define.__KFS_SUPABASE_URL__ = JSON.stringify(TEST_URL);
   define.__KFS_SUPABASE_KEY__ = JSON.stringify("sb_publishable_test");
@@ -170,4 +189,5 @@ console.log(`  ${jsName}  ${size(`${OUT}/assets/${jsName}`)}`);
 console.log(`  ${cssName}  ${size(`${OUT}/assets/${cssName}`)}`);
 console.log(`  sw.js  ${size(`${OUT}/sw.js`)}`);
 console.log(`  ${lotusName}  ${size(`${OUT}/assets/${lotusName}`)}`);
+console.log(`  ${jianghuName}  ${size(`${OUT}/assets/${jianghuName}`)}`);
 console.log(`  连接：${SUPABASE_URL}`);

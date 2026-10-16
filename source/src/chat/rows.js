@@ -1,9 +1,10 @@
 import { HIS_NAME } from "../names.js";
 import { isCallMark, markText } from "../call/marks.js";
 
-// stoppedId：底下要摆那行“停了，点这里让我回”的是她的哪一句（没有就是空的，见 thread.js 的 stoppedAt）
+// stoppedId：底下要摆那行“停了，点这里让我回”的是哪一句（她的话；江湖棋局里也可能是他说到一半的那一步。没有就是空的，见 thread.js 的 stoppedAt）
 // recap：眼下作数的那一份前情提要（见 recap.js 的 pickRecap；没有就是 null）。在它抄到的那一条后面添一行小字
-export function buildRows(messages, reveal, stoppedId = "", recap = null) {
+// moreId：江湖棋局里他说到一半、没人接着要的那一步（底下摆“还没说完，点这里让我接着说”；没有就是空的）
+export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId = "") {
   const rows = [];
   let prevTs = null;
   // 在不在一通电话里（“通话开始”和“通话 N”两行中间）：电话里他照常写语气标签（念的时候用），
@@ -92,11 +93,20 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null) {
           text: m.rename === HIS_NAME ? "光义把名字改回来了" : "光义改了名字",
         });
       }
+      // 江湖棋局里这一步下了什么（见 game/jianghu.js）：一张卡片一行，跟在他这一步的话后面（掷了几点、走到哪、花了几两）。
+      // 这一步正一条一条蹦的时候不摆，蹦完了才冒出来
+      if (!revealing && m.calls) {
+        m.calls.forEach((c, k) => (c.card || []).forEach((line, n) => rows.push({ type: "game", key: `${m.id}-g${k}-${n}`, msg: m, text: line })));
+      }
       // 翻版本的那一小行：有好几个版本才摆。原来他最后那条底下总跟着一颗“重新回答”，
       // 卿卿 10 月 13 日夜里说老误触，拿掉了，重新回答只在长按菜单里（见 Lines.jsx 的 CtrlRow）
       if (!revealing && m.alts && m.alts.length > 1) {
         rows.push({ type: "ctrl", key: "ct-" + m.id, msg: m, role: "him" });
       }
+      // 江湖棋局里他说到一半、她按了停：底下照样摆“停了，点这里让我回”（见 thread.js 的 markStopped）
+      if (stoppedId && m.id === stoppedId) rows.push({ type: "stopped", key: "sp-" + m.id, msg: m });
+      // 说到一半、没人接着要（上回打开时留下的、别的设备同步过来的）：底下摆“还没说完，点这里让我接着说”
+      if (moreId && m.id === moreId) rows.push({ type: "more", key: "mo-" + m.id, msg: m });
     }
     if (recap && recap.upto === m.id) rows.push({ type: "recap", key: "rc-" + m.id, msg: m, recap });
   });

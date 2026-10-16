@@ -2,6 +2,7 @@ import { NAME_MARK } from "./names.js";
 import { docBlocksToNote } from "./docs.js";
 import { pad } from "./days.js";
 import { unvoice } from "./voice.js";
+import { stepLines } from "./game/jianghu.js";
 
 // ---------- 日记本 ----------
 export const dayKeyOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -65,8 +66,13 @@ export function dayTranscript(msgs, memeLookup, maxChars = 9000) {
         .replace(NAME_RE(), "")
         .replace(/\s*\[SPLIT\]\s*/g, " ")
         .trim();
+      // 江湖棋局里这一步下了什么（聊天里那几张小卡片，见 game/jianghu.js）：写在他这一句后面；只调了引擎没说话的，只写这个
+      const board = stepLines(m).join(" ");
+      if (board) return raw ? `光义：${raw} ${board}` : board;
+      if (!raw && m.calls && m.calls.length) return ""; // 只调了引擎（查看棋盘）、一个字没说的那一步：不写
       return `光义：${raw || "……"}`;
-    });
+    })
+    .filter(Boolean);
   let text = lines.join("\n");
   if (text.length > maxChars) text = "……（前面的省略）\n" + text.slice(text.length - maxChars);
   return text;
