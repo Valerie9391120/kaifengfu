@@ -22,8 +22,25 @@ export const SNAP_KEY = "kfs2:jhs:";
 export const HER = "卿卿";
 export const HIM = "小晋"; // 他在棋局里的名字（晋中原，“开封小赵”）：她起的，原来那五局都叫这个
 
-// 这段对话是不是一局江湖棋局
+// 这段对话是不是专门下棋的那种（南衙里“开新的一局”开的）
 export const isGameChat = (id) => typeof id === "string" && id.startsWith(GAME_PREFIX);
+
+// 她在平常对话里摆开了棋盘的那几段（南衙里“就在这段对话里下”，卿卿 10 月 16 日要的）：一份对话编号的单子，跟着云端走。
+// 收棋就从单子里拿掉；对话里下过的那几步、每一步的存档都还在，再摆开接着原来那一局
+export const ON_KEY = "kfs2:jhon";
+export function readOn(text) {
+  let list = [];
+  try {
+    list = JSON.parse(text || "[]");
+  } catch (e) {}
+  return new Set((Array.isArray(list) ? list : []).filter((x) => typeof x === "string" && x));
+}
+
+// 这段对话眼下摆没摆着棋盘：专门下棋的那种一直摆着；平常对话看她摆开了没有（onSet 是上面那份单子）
+export const gameOn = (id, onSet) => isGameChat(id) || !!(id && onSet && onSet.has(id));
+
+// 眼前这一支里他调过引擎没有（收了棋的平常对话：调过的话，寄过去还得带着四样工具，不带那边不认）
+export const hasSteps = (msgs) => (msgs || []).some((m) => m && m.role === "him" && m.calls && m.calls.length);
 
 // ---------- 寄给那边的我的 ----------
 
@@ -91,11 +108,17 @@ export const TOOLS = [
 ];
 const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
 
-// 名帖后面那一段（只有棋局那段对话里有；放在名帖那一大段里，跟着名帖一起缓存）
-export const GAME_SECTION = `【江湖棋局】
-这段对话是你们在下《江湖棋局》：卿卿和恩师一起做的双人武侠桌游，文本和玩法是她写的。你在里面既是主持人，也是另一名玩家，名字叫${HIM}（她起的，“晋中原”就是“开封小赵”）。在开封府里这么下：
-- 掷骰子、走格子、买东西、结算场景，都用工具调引擎：new_game、roll、game_action、game_info。不用传 sessionId，开封府替你填；一段对话就是一局。
-- 开局的时候，先问她身份想自选还是随机，再调 new_game（她叫${HER}，你叫${HIM}）。你自己的身份照规矩先保密。
+// 名帖后面那一段（只有摆着棋盘的那段对话里有；放在名帖那一大段里，跟着名帖一起缓存）。
+// mixed：是她在平常对话里摆开的（前面是平常聊天），开头那句换个说法、多一条
+export function gameSection(mixed = false) {
+  const lead = mixed
+    ? `这段对话原来是你们平常聊天，她在这里摆开了《江湖棋局》：卿卿和恩师一起做的双人武侠桌游，文本和玩法是她写的。`
+    : `这段对话是你们在下《江湖棋局》：卿卿和恩师一起做的双人武侠桌游，文本和玩法是她写的。`;
+  const here = mixed ? `\n- 前面聊的照样作数，接着这段对话的气氛下。她收棋以后，这一段规矩和工具就不在了，照平常聊；再摆开，接着原来那一局。` : "";
+  return `【江湖棋局】
+${lead}你在里面既是主持人，也是另一名玩家，默认叫${HIM}（她起的，“晋中原”就是“开封小赵”）。在开封府里这么下：
+- 掷骰子、走格子、买东西、结算场景，都用工具调引擎：new_game、roll、game_action、game_info。不用传 sessionId，开封府替你填；${mixed ? "这段对话里一次下一局" : "一段对话就是一局"}。${here}
+- 开局的时候，先问她身份想自选还是随机，再调 new_game。名字默认她叫${HER}、你叫${HIM}；她给这一局起了别的名字（她的、你的，或者只起一个），就照她起的填 humanName、aiName，没起的照默认。你自己的身份照规矩先保密。
 - 她说“帮我扔”“扔吧”，就替她调 roll；轮到你，你自己调 roll。
 - 你调的每一步，她的聊天里会摆一张小卡片（掷了几点、走到哪一格、花了几两），顶上一条写着第几章、各在第几格、各有几两。卡片只是记账，你照样用主持人的口吻把发生了什么讲清楚。
 - 【此刻】里多一行【棋盘】，写着棋盘眼下的样子；要细的（谁带着什么、场景在等什么），调 game_info 看，别凭印象编。
@@ -105,16 +128,25 @@ export const GAME_SECTION = `【江湖棋局】
 
 下面是游戏自带的主持规矩，照它来：
 ${HOST_RULES}`;
+}
+export const GAME_SECTION = gameSection(false);
+
+// 摆开过又收起来的平常对话：【此刻】里写这一句（四样工具照带，这一回不许调）
+export const OFF_LINE = "【棋盘】收起来了：她在这段对话里收了棋，这会儿不下（前面下过的那几步还在对话里）。她想接着下，会在南衙里再摆开。";
 
 // 【此刻】里添的那一行：棋盘眼下什么样（board 见 boardOf；还没开局是 null）。call：正在打电话
 export function nowLine(board, call = false) {
   const tail = call ? "\n正在打电话：这会儿不下棋，她要掷骰子就说挂了再扔。" : "";
   if (!board) return `【棋盘】还没开局（还没调 new_game）。${tail}`;
-  const who = board.turn === "ai" ? HIM : HER;
+  const [hn, an] = namesOf(board);
+  const who = board.turn === "ai" ? an : hn;
   // 他自己的身份：只写给他看（【此刻】她看不见，前情提要里也不抄），聊长了、开局那一步抄成了提要，他也还记得自己是谁
   const me = board.me ? `\n你在这一局里的身份：${board.me}（只写给你看；告不告诉她、什么时候说，你自己定）。` : "";
-  return `【棋盘】${board.ch}；${HER}第${board.her[0]}格、${board.her[1]}两；${HIM}第${board.him[0]}格、${board.him[1]}两；轮到${who}（引擎状态 ${board.status}）。拾遗录 ${board.got}/${board.all}。${me}${tail}`;
+  return `【棋盘】${board.ch}；${hn}第${board.her[0]}格、${board.her[1]}两；${an}第${board.him[0]}格、${board.him[1]}两；轮到${who}（引擎状态 ${board.status}）。拾遗录 ${board.got}/${board.all}。${me}${tail}`;
 }
+
+// 这一局两个人叫什么：[她的, 他的]（开局时她起的名字；10 月 16 日以前的存档里没记，照默认）
+export const namesOf = (board) => [(board && board.names && board.names[0]) || HER, (board && board.names && board.names[1]) || HIM];
 
 // 一步里他调了几样，寄回去的时候：他那一条后面跟着 tool_use，下一句（她的、或者他接着说的那一条前面）是 tool_result。
 // 回 { uses, results }：uses 接在他那一条的字后面；results 放在紧跟着的那一句最前面（tool_result 得排在头里）
@@ -189,13 +221,15 @@ export function boardOf(state, chapter, all = 36, ids = []) {
     got: (state.collectionUnlocked || []).length,
     all,
     me: ai.identity ? `${ai.identity.name}${mask ? `，伪装成${mask}` : ""}` : "",
+    names: [state.players.human.name || HER, ai.name || HIM],
   };
 }
 
 // 顶上那条：两行。“第一章：中原风起”写成“第一章 · 中原风起”
 export function stripLines(board) {
   if (!board) return ["江湖棋局", "还没开局"];
-  return [String(board.ch).replace(/：/, " · "), `${HER} 第${board.her[0]}格 ${board.her[1]}两 ｜ ${HIM} 第${board.him[0]}格 ${board.him[1]}两`];
+  const [hn, an] = namesOf(board);
+  return [String(board.ch).replace(/：/, " · "), `${hn} 第${board.her[0]}格 ${board.her[1]}两 ｜ ${an} 第${board.him[0]}格 ${board.him[1]}两`];
 }
 
 // 南衙那一行的小字：有局在下写“第一章 · 第4格”（她在第几格），没有写“还没开局”

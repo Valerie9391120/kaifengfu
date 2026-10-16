@@ -14,7 +14,7 @@ import { HER_NAME, HIS_NAME, NAME_KEYS, cleanName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, docFmtOf, readDoc, replyRoom } from "./docs.js";
 import { parseReply, settleAvatarItems, rawOf } from "./reply.js";
 import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, mailBefore, markStopped, unmarkStopped, stoppedAt, cutReply, stillWaiting, midTurn } from "./thread.js";
-import { GAME_PREFIX, SNAP_KEY, TOOLS as GAME_TOOLS, isGameChat, callsOf, needsRun, lastStep, boardIn, collectStepIds, runCalls, nanyaSub } from "./game/jianghu.js";
+import { GAME_PREFIX, SNAP_KEY, ON_KEY, TOOLS as GAME_TOOLS, isGameChat, gameOn, readOn, hasSteps, callsOf, needsRun, lastStep, boardIn, collectStepIds, runCalls, nanyaSub } from "./game/jianghu.js";
 import { GameStrip, GameCardRow, JianghuPanel } from "./game/GameParts.jsx";
 import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY, HALTED_KEY } from "./mail.js";
 import { disablePush, resyncPush, watchNotices, probeReply, knockList, clearReplyNotices } from "./push.js";
@@ -220,6 +220,24 @@ export default function App({ account = {} }) {
   const contRef = useRef("");
   // 回话到手了、正在替他调引擎、还没放进对话的那几回（askGuangyi 里，记的是 job）：信箱那头看到同一回先别放（见 applyMail）
   const settlingRef = useRef(new Set());
+  // 她在哪几段平常对话里摆开了江湖棋局的棋盘（南衙里“就在这段对话里下”；ON_KEY 那一条，跟着云端走，见 game/jianghu.js）
+  const [onSet, setOnSet] = useState(() => new Set());
+  const onSetRef = useRef(new Set());
+  const isOn = (id) => gameOn(id, onSetRef.current);
+  const applyOnSet = (next) => {
+    onSetRef.current = next;
+    setOnSet(next);
+  };
+  // 摆开、收棋：改单子、存（存不进去的照旧挂那一条“写不进去”）
+  const setBoardOn = (id, on) => {
+    const next = new Set(onSetRef.current);
+    if (on) next.add(id);
+    else next.delete(id);
+    applyOnSet(next);
+    store.set(ON_KEY, JSON.stringify([...next])).then((ok) => {
+      if (!ok) markStorageFail();
+    });
+  };
   const armCont = (id) => {
     contRef.current = id;
     setCont(id);
@@ -440,6 +458,7 @@ export default function App({ account = {} }) {
       const list = safeParse(await store.get("kfs2:index"), []) || [];
       indexRef.current = list;
       setIndex(list);
+      applyOnSet(readOn(await store.get(ON_KEY)));
 
       const st = safeParse(await store.get("kfs2:settings"), null) || {};
       const merged = { ...DEFAULT_SETTINGS, ...st };
@@ -552,6 +571,7 @@ export default function App({ account = {} }) {
         setIndex(merged);
       }
       if (keys.includes(MOTTO_KEY)) setMottoText(readMotto(await store.get(MOTTO_KEY)));
+      if (keys.includes(ON_KEY)) applyOnSet(readOn(await store.get(ON_KEY)));
       if (keys.includes("kfs2:settings")) {
         const st = safeParse(await store.get("kfs2:settings"), null);
         if (st) {
@@ -781,8 +801,9 @@ export default function App({ account = {} }) {
     const said = collectHisIds(old).flatMap((hid) => store.keys(VOICE_KEY + hid + ".")).map((k) => k.slice(VOICE_KEY.length));
     if (said.length) getSpeaker().drop(said);
     getSpeaker().dropChat(id);
-    // 江湖棋局：每一步另存着的棋盘（连同翻过去的那些版本里的），一起删
+    // 江湖棋局：每一步另存着的棋盘（连同翻过去的那些版本里的），一起删；摆着棋盘的平常对话，单子里也拿掉
     collectStepIds(old).forEach((sid) => store.del(SNAP_KEY + sid));
+    if (onSetRef.current.has(id)) setBoardOn(id, false);
     if (contRef.current === id) disarmCont();
     const next = indexRef.current.filter((c) => c.id !== id);
     indexRef.current = next;
@@ -798,9 +819,10 @@ export default function App({ account = {} }) {
     if (id === chatIdRef.current) newChat();
   };
 
-  // 江湖棋局：最近那一局（历史对话里编号 jh 开头、最新的那一段）和它的棋盘。南衙里那一行的小字、点开那一张用。没有回 null
+  // 江湖棋局：最近那一局（历史对话里摆着棋盘的、最新的那一段：编号 jh 开头的，或者她在平常对话里摆开、还没收的）和它的棋盘。
+  // 南衙里那一行的小字、点开那一张用。没有回 null
   const latestGame = () => {
-    const g = indexRef.current.find((c) => isGameChat(c.id));
+    const g = indexRef.current.find((c) => isOn(c.id));
     if (!g) return null;
     const msgs = g.id === chatIdRef.current ? messagesRef.current : safeParse(store.peek("kfs2:chat:" + g.id), []) || [];
     return { id: g.id, board: boardIn(msgs) };
@@ -1317,8 +1339,9 @@ export default function App({ account = {} }) {
       .filter((f) => f.enabled)
       .map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
     const inCall = !!(callRef.current && callRef.current.chat === opts.chat);
-    // 江湖棋局的那一段：名帖里多一段【江湖棋局】，【此刻】里多一行棋盘，带着四样工具（见 game/jianghu.js）
-    const game = isGameChat(opts.chat) ? { board: boardIn(msgs) } : null;
+    // 江湖棋局：摆着棋盘的那一段（jh 开头的，或者她在平常对话里摆开的）名帖里多一段【江湖棋局】，【此刻】里多一行棋盘，带着四样工具；
+    // 摆开过又收了棋的平常对话，对话里有他调过的：四样工具照带（不带那边不认），这一回不许调，【此刻】里写一句收起来了（见 game/jianghu.js）
+    const game = isOn(opts.chat) ? { board: boardIn(msgs), mixed: !isGameChat(opts.chat) } : hasSteps(msgs) ? { off: true } : null;
     const { staticText, nowNote } = buildSystem({
       now: new Date(),
       memeList: allMemes,
@@ -1363,8 +1386,8 @@ export default function App({ account = {} }) {
         tools.push(...body.mcp_servers.map((s) => ({ type: "mcp_toolset", mcp_server_name: s.name })));
       }
       if (tools.length) body.tools = tools;
-      // 打电话的时候不下棋（卿卿 10 月 15 日定的）：工具照带（对话里有他调过的），只是这一回不许调
-      if (game && inCall) body.tool_choice = { type: "none" };
+      // 打电话的时候不下棋（卿卿 10 月 15 日定的）、收了棋：工具照带（对话里有他调过的），只是这一回不许调
+      if (game && (inCall || game.off)) body.tool_choice = { type: "none" };
       return body;
     };
     const betaFor = (at) => (at.mcp ? "mcp-client-2025-11-20" : "");
@@ -1388,7 +1411,7 @@ export default function App({ account = {} }) {
           fork: opts.fork || "",
           title: namesRef.current.him || HIS_NAME,
           // 江湖棋局：条子里记上是哪台设备发的（回来的要是一步棋，先让这台替他调，见 applyMail）
-          extra: game ? { ...(ctx || {}), dev: DEVICE_ID } : ctx,
+          extra: game && !game.off ? { ...(ctx || {}), dev: DEVICE_ID } : ctx,
           recheck: !!opts.recheck,
           signal,
         });
@@ -3246,7 +3269,7 @@ export default function App({ account = {} }) {
     const memDocs = memFilesRef.current.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
     // 名帖那一大段和聊天时寄的一个字不差（缓存接得上；正在打电话的这段对话，心里话那一条照关着算，见 thoughtsFor；
     // 江湖棋局那一段带着【江湖棋局】那一段，见 game/jianghu.js）；【此刻】这回用不着
-    const game = isGameChat(id) ? { board: null } : null;
+    const game = isOn(id) ? { board: null, mixed: !isGameChat(id) } : hasSteps(msgs) ? { off: true } : null;
     const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game });
     // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
     const photos = {};
@@ -3464,8 +3487,8 @@ export default function App({ account = {} }) {
 
   // 翻到（开了）一局江湖棋局：引擎那一包先取着（他头一回掷骰子的时候就不用再等它下）。取不到不要紧，要用的时候再取
   useEffect(() => {
-    if (isGameChat(chatId)) loadEngine().catch(() => {});
-  }, [chatId]);
+    if (gameOn(chatId, onSet)) loadEngine().catch(() => {});
+  }, [chatId, onSet]);
 
   // ---- 接着说：江湖棋局里他说到一半（见 game/jianghu.js） ----
   // 这一步放进去了、引擎的结果也记上了（afterStep 记的 cont）：等它蹦完（没在回话、没在蹦、没排着队），接着要后半截。
@@ -4288,13 +4311,22 @@ export default function App({ account = {} }) {
     }
     if (sheet === "jianghu") {
       // 江湖棋局（见 game/GameParts.jsx 的 JianghuPanel）：接着上一局，就是翻到最近那一局的那段对话；
-      // 开新的一局，就是开一段编号 jh 开头的新对话（她说一声“开局”，他问身份、讲开场）
+      // 开新的一局，就是开一段编号 jh 开头的新对话（她说一声“开局”，他问身份、讲开场）；
+      // 就在这段对话里下：眼下这段平常对话（说过话的、在历史对话里的）摆开棋盘；收棋：摆开过的这一段收起来（卿卿 10 月 16 日要的）
       const g = latestGame();
+      const cur = chatId;
+      const plain = !isGameChat(cur) && messages.length > 0 && index.some((c) => c.id === cur);
+      const shut = () => {
+        setSheet(null);
+        setHistoryOpen(false);
+        setDrawerOpen(false);
+      };
       return (
         <Sheet title="江湖棋局" onClose={() => setSheet(null)}>
           <JianghuPanel
             last={g ? g.board : null}
             hasGame={!!g}
+            here={plain ? (gameOn(cur, onSet) ? "on" : "off") : ""}
             onContinue={() => {
               setSheet(null);
               if (g) openChat(g.id);
@@ -4302,6 +4334,14 @@ export default function App({ account = {} }) {
             onNew={() => {
               setSheet(null);
               newChat(true);
+            }}
+            onHere={() => {
+              shut();
+              setBoardOn(cur, true);
+            }}
+            onStop={() => {
+              shut();
+              setBoardOn(cur, false);
             }}
           />
         </Sheet>
@@ -4472,7 +4512,7 @@ export default function App({ account = {} }) {
         </div>
 
         {/* 江湖棋局那一段：顶栏底下一条，写第几章、各在第几格、各有几两（见 game/GameParts.jsx） */}
-        {isGameChat(chatId) && <GameStrip board={boardIn(messages)} />}
+        {gameOn(chatId, onSet) && <GameStrip board={boardIn(messages)} />}
 
         {storageBanner && (
           <div
@@ -4497,14 +4537,11 @@ export default function App({ account = {} }) {
           className="kfs-chat-scroll relative z-10 flex-1 overflow-y-auto"
           style={{ padding: "8px 14px 12px" }}
         >
-          {/* 江湖棋局那一段还空着：中间写“江湖棋局”，底下一句怎么开局（她说一声，他问身份、讲开场） */}
+          {/* 江湖棋局那一段还空着：中间写“江湖棋局”（底下原来有一句怎么开局的提示，卿卿 10 月 16 日说连同气泡拿掉） */}
           {messages.length === 0 && !loading && isGameChat(chatId) && (
-            <div className="kfs-game-empty h-full flex flex-col items-center justify-center" style={{ gap: 14 }}>
+            <div className="kfs-game-empty h-full flex flex-col items-center justify-center">
               <p className="kfs-game-title" style={{ fontFamily: SERIF, fontSize: 17, letterSpacing: "0.4em", paddingLeft: "0.4em", color: T.motto }}>
                 江湖棋局
-              </p>
-              <p style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.7, textAlign: "center", ...glass(0.36, 16), borderRadius: 14, padding: "6px 14px" }}>
-                跟小晋说一声“开局”就开
               </p>
             </div>
           )}
