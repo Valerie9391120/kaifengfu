@@ -176,3 +176,20 @@ export function cutQuote(text, width, max) {
   }
   return "“" + chars.slice(0, lo).join("").replace(/[，。、；：,.;:！？!?…\s]+$/u, "") + "…”";
 }
+
+// ---------- 刻本体的那几块管哪些字 ----------
+// 样式表、document.fonts 里写的 unicode-range（"U+4E58, U+4EA6-4EAB, U+4E??"）→ [[0x4e58, 0x4e58], [0x4ea6, 0x4eab], [0x4e00, 0x4eff]]
+export function rangesOf(s) {
+  const out = [];
+  for (const part of String(s || "").split(",")) {
+    const m = /U\+([0-9a-f?]+)(?:-([0-9a-f]+))?/i.exec(part.trim());
+    if (!m) continue;
+    const lo = parseInt(m[1].replace(/\?/g, "0"), 16);
+    const hi = m[2] ? parseInt(m[2], 16) : parseInt(m[1].replace(/\?/g, "f"), 16);
+    if (lo <= hi) out.push([lo, hi]);
+  }
+  return out;
+}
+export const coversCp = (rs, cp) => rs.some(([a, b]) => cp >= a && cp <= b);
+// 一块认它管的最小的那个字（样式表里那一条和浏览器手里那一块对上用；两边写法不一样，大小写、空格、次序都可能变）
+export const rangeKey = (rs) => (rs.length ? Math.min(...rs.map((r) => r[0])) : -1);
