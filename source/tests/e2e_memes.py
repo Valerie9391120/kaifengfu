@@ -146,6 +146,24 @@ with sync_playwright() as p:
     r5 = row(pa)
     ok(not r5["compact"] and r5["model"] and r5["mic"] and r5["h"] == r0["h"], "面板收了、键盘也落下去：回到两行，模型、听写回来")
 
+    # ---- 打字的时候点挨着输入框的那一条：一下就点着 ----
+    # （手指按下去那一刻打字的框就失了焦点；输入框要是当场长高，挨着它的那一条被挤开，松手落在输入框上，那一下白点了：等这一下点完再变回两行）
+    say(pa, "原样回：[DOC:小纸条.md]\n写在这里\n[/DOC]")
+    pa.locator(".kfs-doc-card").last.wait_for(timeout=20000); pa.wait_for_timeout(1500)
+    pa.get_by_placeholder("说话，我听着").tap(); keyboard(pa, 447)
+    cb = pa.locator(".kfs-doc-card").last.bounding_box()
+    comp_top = pa.evaluate("document.querySelector('.kfs-composer').getBoundingClientRect().top")
+    tap_y = cb["y"] + cb["height"] - 6
+    covered = comp_top - tap_y < r0["h"] - r1["h"]   # 输入框当场长高的话，点的地方就被它盖上了
+    pa.touchscreen.tap(cb["x"] + cb["width"] / 2, tap_y); pa.wait_for_timeout(600)
+    opened = pa.locator(".kfs-doc-body").count() == 1
+    r6 = row(pa)
+    ok(covered and opened and not r6["compact"],
+       f"打字的时候点挨着输入框的那张文档卡片（点的地方离输入框 {round(comp_top - tap_y)} 像素，输入框变回两行要长高 {r0['h'] - r1['h']}）：一下就点开了，点完输入框才变回两行")
+    if opened:
+        pa.get_by_role("button", name="关闭").click(); pa.wait_for_timeout(400)
+    keyboard(pa, None)
+
     # ---- 三套主题各拍一张 ----
     for t in ["qinglv", "dingxiang", "heiye"]:
         pa.evaluate("(t) => document.documentElement.setAttribute('data-kfs-theme', t)", t)

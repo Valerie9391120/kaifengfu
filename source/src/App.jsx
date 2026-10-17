@@ -3565,6 +3565,45 @@ export default function App({ account = {} }) {
   useLayoutEffect(() => {
     if (taRef.current) fitComposer(taRef.current);
   }, [compact]);
+  // 打字的时候点了别处（底下那条回话、文档卡片……）：按下去那一刻打字的框就失了焦点。
+  // 这时候先不变回两行：输入框一长高，她点的那一条（多半就是挨着输入框的最底下那条）被挤开，松手落在输入框上，那一下白点了。
+  // 等这一下点完（松手、点击发完）再变（手机上按下、松手、点击是连着发的，等的只是一眨眼）
+  const pressing = useRef(false);
+  useEffect(() => {
+    const down = () => (pressing.current = true);
+    const up = () => (pressing.current = false);
+    window.addEventListener("mousedown", down, true);
+    window.addEventListener("mouseup", up, true);
+    window.addEventListener("dragend", up, true);
+    return () => {
+      window.removeEventListener("mousedown", down, true);
+      window.removeEventListener("mouseup", up, true);
+      window.removeEventListener("dragend", up, true);
+    };
+  }, []);
+  const taBlurred = () => {
+    if (!pressing.current) {
+      setTaFocus(false);
+      return;
+    }
+    let t = 0;
+    const done = () => {
+      window.removeEventListener("mouseup", later, true);
+      window.removeEventListener("dragend", later, true);
+      clearTimeout(t);
+      // 这工夫里又点回了打字的框：还是一行
+      if (document.activeElement !== taRef.current) setTaFocus(false);
+    };
+    // 松手那一下后面紧跟着点击：等点击发完
+    const later = () => {
+      clearTimeout(t);
+      t = setTimeout(done, 0);
+    };
+    window.addEventListener("mouseup", later, true);
+    window.addEventListener("dragend", later, true);
+    // 一直没松手（按着不放、挪到了外头）：一秒以后照样变回去
+    t = setTimeout(done, 1000);
+  };
 
   // 表情包面板（照微信，卿卿 10 月 17 日要的）：沉在输入框底下，占着键盘那块地方。
   // 点笑脸：键盘开着的先收下去（面板等键盘落下去那一帧才撑开，见 input.css），再点一下只收面板、不弹键盘
@@ -4899,7 +4938,7 @@ export default function App({ account = {} }) {
                   setTaFocus(true);
                   if (memePanel) memesToKeyboard();
                 }}
-                onBlur={() => setTaFocus(false)}
+                onBlur={taBlurred}
                 onChange={(e) => {
                   setInput(e.target.value);
                   fitComposer(e.target);
