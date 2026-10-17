@@ -255,7 +255,7 @@ TOP = "Math.round(document.querySelector('.kfs-chat-scroll').scrollTop)"
 # 圆钮：出没出来、在哪
 BTN = """(() => { const s = document.querySelector('.kfs-latest'); const c = getComputedStyle(s); const r = s.querySelector('button').getBoundingClientRect();
   const list = document.querySelector('.kfs-chat-scroll').getBoundingClientRect(); const comp = document.querySelector('.kfs-composer').getBoundingClientRect();
-  const panel = document.querySelector('.kfs-sheet.overflow-y-auto'); const pt = panel ? panel.getBoundingClientRect().top : null;
+  const panel = document.querySelector('.kfs-meme-panel'); const pt = panel ? panel.getBoundingClientRect().top : null;
   return { shown: c.visibility === 'visible' && Number(c.opacity) > 0.99 && c.pointerEvents === 'auto', hidden: c.visibility === 'hidden' && c.pointerEvents === 'none', cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: r.width, h: r.height,
     bottom: r.bottom, listBottom: list.bottom, mid: list.left + list.width / 2, compTop: comp.top, panelTop: pt }; })()"""
 
@@ -421,7 +421,7 @@ def scroll(browser):
     shot(pa, "scroll-button-memes")
     # 面板开着的时候点顶栏：只收面板，不回顶
     pa.touchscreen.tap(bar["x"], bar["y"]); pa.wait_for_timeout(600)
-    ok(pa.evaluate(TOP) == t0 and pa.locator(".kfs-sheet.overflow-y-auto").count() == 0, "表情包面板开着的时候点顶栏中间：只收面板，聊天记录不动")
+    ok(pa.evaluate(TOP) == t0 and pa.locator(".kfs-meme-panel").count() == 0, "表情包面板开着的时候点顶栏中间：只收面板，聊天记录不动")
     pa.get_by_role("button", name="表情包").tap(); pa.wait_for_timeout(500)
     b = pa.evaluate(BTN)
     pa.touchscreen.tap(b["cx"], b["cy"]); pa.wait_for_timeout(700)
