@@ -171,7 +171,7 @@ with sync_playwright() as p:
     pa.mouse.click(200, 160); time.sleep(0.4)
     closed_by_blank = not pa.evaluate(MEMES_OPEN)
     pa.get_by_role("button", name="表情包").click(); time.sleep(0.4)
-    pa.get_by_placeholder("说话，我听着").click(); time.sleep(0.4)
+    pa.get_by_placeholder("说话，我听着").click(); time.sleep(1.0)   # 电脑上没有键盘升起来：过一会儿也收（见 App.jsx 的 memesToKeyboard）
     closed_by_typing = not pa.evaluate(MEMES_OPEN)
     pa.evaluate("document.activeElement && document.activeElement.blur()")
     ok(opened and closed_by_blank and closed_by_typing, "表情包面板：点聊天记录的空白处、点输入框，都会收起来")

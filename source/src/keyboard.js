@@ -7,9 +7,14 @@
 // 只管输入框、弹出面板和门口这几处（.kfs-composer、.kfs-sheet、data-kfs-kbfit），
 // 日记那种整页往下滚的地方还是让 iOS 自己推。
 // 外壳的 top 和 height 用的是 --kfs-kb-top、--kfs-kb-h（见 App.jsx 和 Gate.jsx）。
+// 顺手量一下这台手机的键盘多高（--kfs-kb-px，记在这台手机上）：表情包面板沉在输入框底下，照键盘那么高，
+// 键盘和面板换来换去的时候输入框不跳（见 input.css 的 .kfs-meme-panel）。
 // =====================================================
 
 const FIT = ".kfs-composer, .kfs-sheet, [data-kfs-kbfit]";
+const KB_KEY = "kfs-kb-px";
+const KB_MIN = 150;
+const KB_MAX = 900;
 
 const isTextField = (a) =>
   !!a && (a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && !/^(checkbox|radio|file|button|submit|range|color)$/i.test(a.type || "")));
@@ -38,6 +43,11 @@ export function initKeyboardFit() {
   const root = document.documentElement;
   let raf = 0;
   let open = false;
+  let kbPx = 0; // 这一回键盘开着的时候量到的高（键盘本身加上面那条“上一项、下一项、完成”）
+  try {
+    const v = Number(localStorage.getItem(KB_KEY));
+    if (v >= KB_MIN && v <= KB_MAX) root.style.setProperty("--kfs-kb-px", v + "px");
+  } catch (e) {}
 
   const update = () => {
     raf = 0;
@@ -47,6 +57,12 @@ export function initKeyboardFit() {
     if (now) {
       root.style.setProperty("--kfs-kb-top", Math.round(vv.offsetTop) + "px");
       root.style.setProperty("--kfs-kb-h", Math.round(vv.height) + "px");
+      // 键盘往上升的那一阵这个数一直在变，最后一回的就是它停下来的高
+      const kb = Math.round(base - vv.height);
+      if (kb >= KB_MIN && kb <= KB_MAX && kb !== kbPx) {
+        kbPx = kb;
+        root.style.setProperty("--kfs-kb-px", kb + "px");
+      }
       if (!open) {
         open = true;
         root.setAttribute("data-kfs-kb", "");
@@ -54,6 +70,11 @@ export function initKeyboardFit() {
       }
     } else if (open) {
       open = false;
+      if (kbPx) {
+        try {
+          localStorage.setItem(KB_KEY, String(kbPx));
+        } catch (e) {}
+      }
       root.removeAttribute("data-kfs-kb");
       root.style.removeProperty("--kfs-kb-top");
       root.style.removeProperty("--kfs-kb-h");

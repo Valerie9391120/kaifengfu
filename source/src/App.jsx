@@ -3545,6 +3545,30 @@ export default function App({ account = {} }) {
     return () => clearTimeout(t);
   }, [voiceNote]);
 
+  // 表情包面板（照微信，卿卿 10 月 17 日要的）：沉在输入框底下，占着键盘那块地方。
+  // 点笑脸：键盘开着的先收下去（面板等键盘落下去那一帧才撑开，见 input.css），再点一下只收面板、不弹键盘
+  const toggleMemes = () => {
+    if (memePanel) {
+      setMemePanel(false);
+      return;
+    }
+    const ta = taRef.current;
+    if (ta && document.activeElement === ta) ta.blur();
+    setMemePanel(true);
+  };
+  // 面板开着点输入框：键盘升起来那一下（keyboard.js 报“开了”）面板已经压成 0 了，这时候再收，输入框正好落在键盘上面、不跳；
+  // 键盘没升起来的（接着实体键盘、电脑上）过一会儿也收
+  const memesToKeyboard = () => {
+    let t = 0;
+    const done = () => {
+      window.removeEventListener("kfs-kb", onKb);
+      clearTimeout(t);
+      setMemePanel(false);
+    };
+    const onKb = (e) => e.detail && e.detail.open && done();
+    window.addEventListener("kfs-kb", onKb);
+    t = setTimeout(done, 600);
+  };
   const sendMeme = async (file) => {
     setMemePanel(false);
     setSheet(null);
@@ -4777,28 +4801,6 @@ export default function App({ account = {} }) {
           </span>
         </div>
 
-        {/* 表情包面板 */}
-        {memePanel && (
-          <div
-            className="relative z-10 flex-shrink-0 overflow-y-auto kfs-scroll kfs-sheet"
-            style={{ ...glass(0.5, 28), borderRadius: 24, margin: "0 12px 8px", padding: 12, maxHeight: 250 }}
-          >
-            <div className="grid grid-cols-4" style={{ gap: 10 }}>
-              {allMemes.map((m) => (
-                <button
-                  key={m.file}
-                  onClick={() => sendMeme(m.file)}
-                  aria-label={m.name}
-                  className="kfs-tap overflow-hidden"
-                  style={{ aspectRatio: "1 / 1", borderRadius: 16, border: HAIRLINE, boxShadow: "0 3px 10px rgba(var(--k-shade),0.12)" }}
-                >
-                  <img src={memeSrc(m.file)} alt="" loading="lazy" className="w-full h-full object-cover" />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         {voiceNote && (
           <div
             className="relative z-10 flex-shrink-0 kfs-in"
@@ -4809,10 +4811,11 @@ export default function App({ account = {} }) {
         )}
 
         {/* 输入框：照官方摆，上面写字，下面一排按钮，整块贴着底边。
-            --kfs-sab 平时是底下横条要让的高度，iOS 底下空一条的时候是 0（见 input.css） */}
+            --kfs-sab 平时是底下横条要让的高度，iOS 底下空一条的时候是 0（见 input.css）。
+            表情包面板开着的时候连在按钮底下、一起贴到屏幕最底（照微信，卿卿 10 月 17 日要的），横条那一截由面板自己让 */}
         <div
           className="kfs-composer relative z-10 flex-shrink-0"
-          style={{ ...DOCK_GLASS, padding: "10px 14px max(8px, var(--kfs-sab))" }}
+          style={{ ...DOCK_GLASS, padding: memePanel ? "10px 14px 0" : "10px 14px max(8px, var(--kfs-sab))" }}
         >
           {attach.length > 0 && (
             <div className="flex overflow-x-auto kfs-scroll" style={{ gap: 10, padding: "6px 4px 10px" }}>
@@ -4868,7 +4871,7 @@ export default function App({ account = {} }) {
                 value={input}
                 rows={1}
                 placeholder={dictating ? "正在听你说…" : "说话，我听着"}
-                onFocus={() => memePanel && setMemePanel(false)}
+                onFocus={() => memePanel && memesToKeyboard()}
                 onChange={(e) => {
                   setInput(e.target.value);
                   fitComposer(e.target);
@@ -4901,7 +4904,7 @@ export default function App({ account = {} }) {
                     <RoundBtn onClick={() => photoInputRef.current && photoInputRef.current.click()} label="发照片或文档">
                       <Icon name="plus" size={20} />
                     </RoundBtn>
-                    <RoundBtn onClick={() => setMemePanel(!memePanel)} label="表情包" active={memePanel}>
+                    <RoundBtn onClick={toggleMemes} label="表情包" active={memePanel}>
                       <Icon name="smile" size={20} />
                     </RoundBtn>
                   </>
@@ -4983,6 +4986,25 @@ export default function App({ account = {} }) {
                   </button>
                 )}
               </div>
+          {/* 表情包面板：沉在按钮底下，照键盘那么高（见 input.css 的 .kfs-meme-panel），一行四张，上下翻；点一张直接发出去 */}
+          {memePanel && (
+            <div className="kfs-meme-panel overflow-y-auto kfs-scroll" style={{ margin: "8px -14px 0", borderTop: HAIRLINE }}>
+              <div className="grid grid-cols-4" style={{ gap: 10, padding: "12px 14px max(12px, var(--kfs-sab))" }}>
+                {allMemes.map((m) => (
+                  <button
+                    key={m.file}
+                    onClick={() => sendMeme(m.file)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    aria-label={m.name}
+                    className="kfs-tap overflow-hidden"
+                    style={{ aspectRatio: "1 / 1", borderRadius: 16, border: HAIRLINE, boxShadow: "0 3px 10px rgba(var(--k-shade),0.12)" }}
+                  >
+                    <img src={memeSrc(m.file)} alt="" loading="lazy" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         {/* 加号背后的文件框：照片，加上 Word、Markdown、文本。iPhone 的“选取文件”里只有这几种点得动 */}
         <input

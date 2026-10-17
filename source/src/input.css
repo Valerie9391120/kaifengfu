@@ -143,6 +143,18 @@ html[data-kfs-kb] {
   --kfs-sab: 0px;
 }
 
+/* 表情包面板（卿卿 10 月 17 日要的，照微信）：沉在输入框底下、连成一整块、贴到屏幕最底，
+   照这台手机的键盘那么高（keyboard.js 量的 --kfs-kb-px；还没量过先按屏幕四成）。
+   键盘开着的时候压成 0：点输入框，键盘升起来那一帧面板没了，输入框正好落在键盘上面；
+   点表情包，键盘落下去那一帧面板出来，占着键盘原来那块地方。输入框不上下跳 */
+.kfs-meme-panel {
+  height: clamp(200px, var(--kfs-kb-px, 40vh), 62vh);
+}
+html[data-kfs-kb] .kfs-meme-panel {
+  height: 0;
+  overflow: hidden;
+}
+
 /* 键盘开着时，弹出面板最高只到状态栏底下，不钻到状态栏后面去：
    账户面板很长，在最上面那一行改昵称时，名字和面板的顶边都得看得见 */
 html[data-kfs-kb] .kfs-sheet-box {
