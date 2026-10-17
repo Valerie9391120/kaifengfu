@@ -347,6 +347,8 @@ def scroll(browser):
     ok(box0 - box1 == 300 and pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], f"在最底下的时候键盘把聊天记录的盒子顶矮了（{box0} → {box1}）：照旧贴着底")
     chat(pa, "键盘开着的时候你回")
     ok(pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], "键盘开着的时候他回话：跟到底")
+    # 手机上键盘落下去是因为输入框失了焦点：先失焦点（打字的时候输入框是一行，失了焦点变回两行、长高一截，盒子跟着矮一截），再把外壳放回去
+    pa.evaluate("document.activeElement && document.activeElement.blur()"); pa.wait_for_timeout(300)
     pa.evaluate(KB, 0); pa.wait_for_timeout(300)
     ok(pa.evaluate(f"{LIST}.clientHeight") == box0 and pa.evaluate(GAP) <= 1 and pa.evaluate(BTN)["hidden"], "键盘收了、盒子高回去：还在最底下")
     drag(pa, f, 380, 700)
@@ -466,6 +468,8 @@ def scroll(browser):
 
     # 她自己点开“思考过程”：聊天记录变高了，可那不是新话，刚点开的字不能被带走
     # 点的是那一行的头上（自己算位置点：点开以后那一块很高，让测试工具挑地方点的话，它会先把聊天记录滚一下）
+    # 先让输入框失了焦点（上面发话的时候焦点留在输入框里，输入框是一行；点那一下会失焦点、变回两行长高一截，把盒子也带矮，这里只看点开收起）
+    pa.evaluate("document.activeElement && document.activeElement.blur()"); pa.wait_for_timeout(400)
     think = pa.get_by_role("button", name="思考过程").last
     tb = think.bounding_box()
     t_before = pa.evaluate(TOP)
