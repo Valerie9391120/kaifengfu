@@ -169,6 +169,9 @@ const NO_CACHE_MS = 10 * 60 * 1000;
 // =========================================================
 const DEFAULT_SETTINGS = { model: DEFAULT_MODEL, maxTokens: 2048, mcps: DEFAULT_MCPS };
 
+// 打字的框最高多少（照微信，八行上下；见 fitComposer）
+const COMPOSE_MAX = 200;
+
 export default function App({ account = {} }) {
   const rootRef = useRef(null);
   const theme = useTheme();
@@ -202,6 +205,8 @@ export default function App({ account = {} }) {
   const [sheet, setSheet] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [memePanel, setMemePanel] = useState(false);
+  // 她在打字（输入框有焦点）：输入框变成一行（见底下“输入框”那一块）
+  const [taFocus, setTaFocus] = useState(false);
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1793,11 +1798,12 @@ export default function App({ account = {} }) {
   // 浏览器会把聊天记录的位置往回收；再定回去的时候，位置它不一定给放回来（Chrome 会放，iPhone 上不一定）。
   // 不放回来的话，草稿打到两行以上，每敲一个字聊天记录就往下掉一截；掉得超过 64 像素（四五行）还会被当成她翻走了。
   // 所以量之前把聊天记录的位置记下，量完放回去
+  // 打字的框随着行数一行一行长高，最高八行上下（COMPOSE_MAX，照微信：卿卿 10 月 17 日试了微信发来的截图），再多就在框里翻
   const fitComposer = (el) => {
     const list = scrollRef.current;
     const keep = list ? list.scrollTop : 0;
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+    el.style.height = Math.min(el.scrollHeight, COMPOSE_MAX) + "px";
     if (list && Math.abs(list.scrollTop - keep) >= 1) list.scrollTop = keep;
   };
 
@@ -3545,6 +3551,21 @@ export default function App({ account = {} }) {
     return () => clearTimeout(t);
   }, [voiceNote]);
 
+  // 输入框一行还是两行（卿卿 10 月 17 日要的：打字的时候输入框加键盘占得太多）。
+  // 键盘开着（输入框有焦点）或者表情包面板开着：一行，左边加号，中间打字，右边笑脸和发送（听写开着的时候留着听写）；
+  // 都收下去：照原来两行，上面打字，下面加号、笑脸、模型……听写、发送。
+  // 打字的框一直是同一个（摆在一张格子里换格子，不换地方）：换来换去焦点不丢、键盘不收
+  const compact = taFocus || memePanel;
+  const composeSlots = compact
+    ? [!editing && "plus", "ta", !editing && "smile", dictating && "mic", "key"].filter(Boolean)
+    : [!editing && "plus", !editing && "smile", "model", "gap", "mic", "key"].filter(Boolean);
+  const composeCols = composeSlots.map((k) => (k === "ta" || k === "gap" ? "minmax(0, 1fr)" : "auto")).join(" ");
+  const composeAreas = compact ? `"${composeSlots.join(" ")}"` : `"${composeSlots.map(() => "ta").join(" ")}" "${composeSlots.join(" ")}"`;
+  // 一行两行换了：打字的框照新的样子重新量一回高
+  useLayoutEffect(() => {
+    if (taRef.current) fitComposer(taRef.current);
+  }, [compact]);
+
   // 表情包面板（照微信，卿卿 10 月 17 日要的）：沉在输入框底下，占着键盘那块地方。
   // 点笑脸：键盘开着的先收下去（面板等键盘落下去那一帧才撑开，见 input.css），再点一下只收面板、不弹键盘
   const toggleMemes = () => {
@@ -4812,10 +4833,12 @@ export default function App({ account = {} }) {
 
         {/* 输入框：照官方摆，上面写字，下面一排按钮，整块贴着底边。
             --kfs-sab 平时是底下横条要让的高度，iOS 底下空一条的时候是 0（见 input.css）。
-            表情包面板开着的时候连在按钮底下、一起贴到屏幕最底（照微信，卿卿 10 月 17 日要的），横条那一截由面板自己让 */}
+            表情包面板开着的时候连在按钮底下、一起贴到屏幕最底（照微信，卿卿 10 月 17 日要的），横条那一截由面板自己让。
+            打字的时候（键盘或者表情包面板开着）变成一行：左边加号，中间打字，右边笑脸和发送；模型、听写先收起来（她 10 月 17 日点的） */}
         <div
           className="kfs-composer relative z-10 flex-shrink-0"
-          style={{ ...DOCK_GLASS, padding: memePanel ? "10px 14px 0" : "10px 14px max(8px, var(--kfs-sab))" }}
+          data-compact={compact ? "" : undefined}
+          style={{ ...DOCK_GLASS, padding: `${compact ? 8 : 10}px 14px ${memePanel ? "0" : "max(8px, var(--kfs-sab))"}` }}
         >
           {attach.length > 0 && (
             <div className="flex overflow-x-auto kfs-scroll" style={{ gap: 10, padding: "6px 4px 10px" }}>
@@ -4865,13 +4888,18 @@ export default function App({ account = {} }) {
               </button>
             </div>
           )}
+          <div style={{ display: "grid", gridTemplateColumns: composeCols, gridTemplateAreas: composeAreas, columnGap: 6, rowGap: 4, alignItems: compact ? "end" : "center" }}>
               <textarea
                 ref={taRef}
                 className="kfs-field block w-full"
                 value={input}
                 rows={1}
                 placeholder={dictating ? "正在听你说…" : "说话，我听着"}
-                onFocus={() => memePanel && memesToKeyboard()}
+                onFocus={() => {
+                  setTaFocus(true);
+                  if (memePanel) memesToKeyboard();
+                }}
+                onBlur={() => setTaFocus(false)}
                 onChange={(e) => {
                   setInput(e.target.value);
                   fitComposer(e.target);
@@ -4885,51 +4913,65 @@ export default function App({ account = {} }) {
                   }
                 }}
                 style={{
+                  gridArea: "ta",
                   resize: "none",
-                  maxHeight: 120,
-                  padding: "6px 10px",
+                  maxHeight: COMPOSE_MAX,
+                  // 一行的时候自己是一个圆角的框（跟两边的圆钮一样高），两行的时候照原来贴在玻璃上
+                  padding: compact ? "8px 12px" : "6px 10px",
+                  borderRadius: compact ? 19 : 0,
                   fontSize: 16,
                   lineHeight: 1.45,
                   color: T.ink,
-                  background: "transparent",
+                  background: compact ? fill(0.42) : "transparent",
                   border: "none",
                   outline: "none",
                   userSelect: "text",
                   WebkitUserSelect: "text",
                 }}
               />
-              <div className="flex items-center" style={{ gap: 6, marginTop: 4 }}>
                 {!editing && (
-                  <>
+                  <span style={{ gridArea: "plus", display: "flex" }}>
                     <RoundBtn onClick={() => photoInputRef.current && photoInputRef.current.click()} label="发照片或文档">
                       <Icon name="plus" size={20} />
                     </RoundBtn>
+                  </span>
+                )}
+                {!editing && (
+                  <span style={{ gridArea: "smile", display: "flex" }}>
                     <RoundBtn onClick={toggleMemes} label="表情包" active={memePanel}>
                       <Icon name="smile" size={20} />
                     </RoundBtn>
-                  </>
+                  </span>
                 )}
-                <button
-                  onClick={() => setSheet("model")}
-                  onMouseDown={(e) => e.preventDefault()}
-                  className="kfs-tap flex items-center flex-shrink-0"
-                  style={{
-                    gap: 3,
-                    padding: "8px 10px 8px 13px",
-                    borderRadius: 999,
-                    fontSize: 13,
-                    color: T.ink,
-                    backgroundColor: fill(0.42),
-                    border: HAIRLINE,
-                  }}
-                >
-                  {modelLabel(activeModel)}
-                  <Icon name="chevD" size={14} />
-                </button>
-                <div className="flex-1" />
-                <RoundBtn onClick={toggleDictation} label="听写" active={dictating}>
-                  <Icon name="mic" size={19} />
-                </RoundBtn>
+                {!compact && (
+                  <button
+                    onClick={() => setSheet("model")}
+                    onMouseDown={(e) => e.preventDefault()}
+                    className="kfs-tap flex items-center flex-shrink-0"
+                    style={{
+                      gridArea: "model",
+                      justifySelf: "start",
+                      gap: 3,
+                      padding: "8px 10px 8px 13px",
+                      borderRadius: 999,
+                      fontSize: 13,
+                      color: T.ink,
+                      backgroundColor: fill(0.42),
+                      border: HAIRLINE,
+                    }}
+                  >
+                    {modelLabel(activeModel)}
+                    <Icon name="chevD" size={14} />
+                  </button>
+                )}
+                {(!compact || dictating) && (
+                  <span style={{ gridArea: "mic", display: "flex" }}>
+                    <RoundBtn onClick={toggleDictation} label="听写" active={dictating}>
+                      <Icon name="mic" size={19} />
+                    </RoundBtn>
+                  </span>
+                )}
+                <span style={{ gridArea: "key", display: "flex" }}>
                 {keyKind === "send" ? (
                   <button
                     onClick={sendText}
@@ -4985,7 +5027,8 @@ export default function App({ account = {} }) {
                     <Icon name="wave" color={T.onDai} size={19} sw={2} />
                   </button>
                 )}
-              </div>
+                </span>
+          </div>
           {/* 表情包面板：沉在按钮底下，照键盘那么高（见 input.css 的 .kfs-meme-panel），一行四张，上下翻；点一张直接发出去 */}
           {memePanel && (
             <div className="kfs-meme-panel overflow-y-auto kfs-scroll" style={{ margin: "8px -14px 0", borderTop: HAIRLINE }}>

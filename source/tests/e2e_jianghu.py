@@ -183,6 +183,7 @@ with sync_playwright() as p:
            "点了那一行：他接着说完（寄的最后一句最前面还是那一步的结果）")
 
         # ================= 换个会先想一阵的模型：想的那一块不寄回去 =================
+        pa.evaluate("document.activeElement && document.activeElement.blur()")   # 打字的时候输入框是一行、模型那个按钮收着（她 10 月 17 日定的）：先让键盘收下去
         pa.get_by_role("button", name=re.compile("^Sonnet 4.6")).click()
         pa.get_by_text("选择模型", exact=True).wait_for(timeout=5000)
         pa.get_by_role("button", name=re.compile("^Opus 5.5")).click(); time.sleep(0.6)
@@ -193,6 +194,7 @@ with sync_playwright() as p:
         ok(all(x["type"] != "thinking" for m in asst for x in m["content"]) and cb["model"] == "claude-opus-5-5", "Opus 5.5 回话前面带着一块“想的”（空的，带签名）：结果递回去的时候不带它（全不带，那边认）")
         pa.get_by_role("button", name=re.compile("^Opus 5.5")).click()
         pa.get_by_text("选择模型", exact=True).wait_for(timeout=5000)
+        pa.evaluate("document.activeElement && document.activeElement.blur()")   # 打字的时候输入框是一行、模型那个按钮收着（她 10 月 17 日定的）：先让键盘收下去
         pa.get_by_role("button", name=re.compile("^Sonnet 4.6")).click(); time.sleep(0.6)
 
         # ================= 南衙：小字、接着上一局 =================
