@@ -1,7 +1,7 @@
 // 藏音匣：不碰页面的零件（src/cangyin/parts.js）、转繁体（src/cangyin/s2t.js）、刻本体切出来的那些块（static/jinhui/）。
 // 跟别的几份一样先用 esbuild 打成一份再跑（package.json 的 test:unit）
 import fs from "node:fs";
-import { BOX_KEY, BOX_AUDIO, BOX_TEXT_MAX, packEntry, keptText, readEntry, listEntries, sameVoiceIds, findBySrc, boxSub, cnNum, cnDate, dayOf, lenOf, monthOf, monthKey, rngOf, paperOf, PAPERS, pickFrom, cutQuote } from "../src/cangyin/parts.js";
+import { BOX_KEY, BOX_AUDIO, BOX_TEXT_MAX, packEntry, keptText, readEntry, listEntries, sameVoiceIds, findBySrc, boxSub, cnNum, cnDate, dayOf, lenOf, monthOf, monthKey, rngOf, paperOf, PAPERS, pickFrom, cutQuote, rangesOf, coversCp, rangeKey } from "../src/cangyin/parts.js";
 import { toTrad } from "../src/cangyin/s2t.js";
 
 let passed = 0;
@@ -105,6 +105,18 @@ ok([0, 0.4, 1, 3.4, 3.6, 59.4, 59.6, 60, 72, 120, 125].map(lenOf).join(" ") === 
   ok(cutQuote("  早。\n窗外的光  很好  ", w, 300) === "“早。 窗外的光 很好”", "换行、连着的空白并成一个空格，头尾的去掉");
   ok(cutQuote("嗯", w, 10) === "“…”", "一个字都放不下也不出错");
   ok(cutQuote("😀😀😀😀😀😀", w, 60) === "“😀😀😀…”", "表情这种两个码元的字不劈开");
+}
+
+// ---------- 刻本体的那几块管哪些字（没取成的那一块照这个找回地址再取） ----------
+{
+  const rs = rangesOf("U+4E58, U+4ea6-4EAB,U+4E??, junk, U+50-40");
+  ok(eq(rs, [[0x4e58, 0x4e58], [0x4ea6, 0x4eab], [0x4e00, 0x4eff]]), "unicode-range 拆开：单个字、一段、带问号的一整段；大小写、空格不讲究，认不出来的、倒着写的不算");
+  ok(coversCp(rs, 0x4ea8) && coversCp(rs, 0x4e58) && coversCp(rs, 0x4e9f) && !coversCp(rs, 0x4f00) && !coversCp([], 0x4e58), "哪个字归这一块管");
+  ok(rangeKey(rangesOf("U+5FD8, U+4E58, U+6050")) === 0x4e58 && rangeKey(rangesOf("u+4e58,u+5fd8")) === 0x4e58 && rangeKey([]) === -1,
+    "一块认它管的最小的那个字（样式表和浏览器手里的写法、次序不一样也对得上）");
+  const meta = JSON.parse(fs.readFileSync(new URL("../static/jinhui/slices.json", import.meta.url), "utf8"));
+  const keys = meta.slices.map((sl) => rangeKey(rangesOf([...sl.c].map((c) => "U+" + c.codePointAt(0).toString(16)).join(","))));
+  ok(new Set(keys).size === keys.length, `79 块各认各的那个字，不重（${keys.length} 块）`);
 }
 
 // ---------- 转繁体 ----------

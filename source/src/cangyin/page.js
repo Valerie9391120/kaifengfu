@@ -11,7 +11,7 @@
 // 不碰存档、不碰云端：要什么都从 api 递进来（见 mountBox）。
 // =====================================================
 import { CSS, TEMPLATE } from "./style.js";
-import { cnDate, dayOf, lenOf, monthOf, monthKey, rngOf, paperOf, pickFrom, cutQuote } from "./parts.js";
+import { cnDate, dayOf, lenOf, monthOf, monthKey, rngOf, paperOf, pickFrom, cutQuote, rangesOf, coversCp as covers, rangeKey as keyOf } from "./parts.js";
 
 /* global __KFS_CANGYIN_ASSETS__ */
 // 图和刻本体样式表的地址（build.mjs 照指纹写进来的；照网页的根找，两个入口都一样）
@@ -116,18 +116,91 @@ function ensureStyles() {
   return cssReady;
 }
 
-// 刻本体是切成一块一块的（unicode-range），用到哪些字才取哪几块：先把这一句要的取回来，最多等 wait 毫秒
+// ---------- 刻本体某一块没取成 ----------
+// 那一下网断了、卡了：浏览器把这一块记成“取不到”，这一页开着的时候再也不去取，那几个字一直是系统字，
+// 划掉重开才好（卿卿 10 月 17 日碰上的“忘”）。用到的时候看一眼：这一句要的字所在的那一块没取成，
+// 照样式表里写的地址（后面带个记号，不拿缓存里的）另起一个再取一回；后加的那一个排在原来那一块前头，取到了那几个字就换成刻本。
+// 一块一趟最多补三回（一直取不到的，照旧摆系统字）
+const FAMILY = "KFS Jinhui";
+const famOf = (face) => String(face.family || "").replace(/["']/g, "");
+const parsed = new WeakMap();
+const rangesOfFace = (face) => {
+  let rs = parsed.get(face);
+  if (!rs) parsed.set(face, (rs = rangesOf(face.unicodeRange)));
+  return rs;
+};
+// 样式表里每一块的地址（一块认它管的最小的那个字）
+let srcs = null;
+function sliceSrcs() {
+  if (srcs && srcs.size) return srcs;
+  srcs = new Map();
+  try {
+    const link = document.getElementById("kfs-jinhui-css");
+    const sheet = link && link.sheet;
+    for (const r of sheet ? Array.from(sheet.cssRules) : []) {
+      if (typeof CSSFontFaceRule === "undefined" || !(r instanceof CSSFontFaceRule)) continue;
+      const m = /url\(\s*["']?([^"')]+)["']?\s*\)/.exec(r.style.getPropertyValue("src"));
+      const rs = rangesOf(r.style.getPropertyValue("unicode-range"));
+      if (m && rs.length) srcs.set(keyOf(rs), new URL(m[1], sheet.href || link.href).href);
+    }
+  } catch (e) {}
+  return srcs;
+}
+// 这一句要的字里，刻本体有、眼下却用不上的：还没取、正在取的几个字（waiting），没取成的那几块（broken，原来那一块）
+function faceState(text) {
+  const faces = [];
+  document.fonts.forEach((face) => {
+    if (famOf(face) === FAMILY) faces.push(face);
+  });
+  let waiting = 0;
+  const broken = [];
+  for (const cp of new Set(Array.from(String(text), (c) => c.codePointAt(0)))) {
+    const mine = faces.filter((face) => covers(rangesOfFace(face), cp));
+    if (!mine.length || mine.some((face) => face.status === "loaded")) continue;
+    if (mine.some((face) => face.status !== "error")) waiting++;
+    else if (!broken.includes(mine[0])) broken.push(mine[0]);
+  }
+  return { waiting, broken };
+}
+const tries = new Map(); // 哪一块补过几回
+function retry(broken) {
+  const loads = [];
+  if (typeof FontFace === "undefined") return loads;
+  for (const face of broken) {
+    const key = keyOf(rangesOfFace(face));
+    const url = sliceSrcs().get(key);
+    const n = tries.get(key) || 0;
+    if (!url || n >= 3) continue;
+    tries.set(key, n + 1);
+    try {
+      const again = new FontFace(FAMILY, `url("${url}${url.includes("?") ? "&" : "?"}again=${n + 1}")`, { unicodeRange: face.unicodeRange, display: "swap" });
+      document.fonts.add(again);
+      loads.push(again.load().catch(() => {}));
+    } catch (e) {}
+  }
+  return loads;
+}
+
+// 刻本体是切成一块一块的（unicode-range），用到哪些字才取哪几块：先把这一句要的取回来（没取成的补一回），最多等 wait 毫秒
 function fontsFor(text, wait) {
   const f = document.fonts;
-  if (!f || !f.load || !text) return Promise.resolve(true);
-  const p = (cssReady || Promise.resolve()).then(() => {
-    try {
-      if (f.check(FONT, text)) return true;
-    } catch (e) {}
-    return f.load(FONT, text).then(
-      () => true,
-      () => false
-    );
+  if (!f || !f.load || !f.forEach || !text) return Promise.resolve(true);
+  const p = (cssReady || Promise.resolve()).then(async () => {
+    let s = faceState(text);
+    if (s.waiting) {
+      try {
+        await f.load(FONT, text);
+      } catch (e) {}
+      s = faceState(text);
+    }
+    if (s.broken.length) {
+      const loads = retry(s.broken);
+      if (loads.length) {
+        await Promise.all(loads);
+        s = faceState(text);
+      }
+    }
+    return !s.waiting && !s.broken.length;
   });
   return wait == null ? p : Promise.race([p, new Promise((r) => setTimeout(() => r(false), wait))]);
 }

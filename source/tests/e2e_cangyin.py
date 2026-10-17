@@ -108,6 +108,23 @@ CSP = "window.__kfsCsp = []; document.addEventListener('securitypolicyviolation'
 # 纸条底下那张画布上画出来没有：抽几处看是不是不透明
 PAPER_INK = """() => { const c = document.querySelector('.cy-strip canvas.cy-paper'); if (!c || !c.width) return 0; const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
   let n = 0, all = 0; for (let i = 3; i < d.length; i += 4 * 61) { all++; if (d[i] > 200) n++; } return n / all; }"""
+# 刻本体：这一句的字里，有哪些字那一块还用不上（miss）；哪些字那一块原来没取成、补回来了（fixed）；补回来的头一个字照刻本画没有；没取成过的块有几个
+FONT_STATE = r"""(text) => {
+  const rangesOf = (s) => String(s || '').split(',').map((p) => /U\+([0-9a-f?]+)(?:-([0-9a-f]+))?/i.exec(p.trim())).filter(Boolean)
+    .map((m) => [parseInt(m[1].replace(/\?/g, '0'), 16), m[2] ? parseInt(m[2], 16) : parseInt(m[1].replace(/\?/g, 'f'), 16)]);
+  const faces = [...document.fonts].filter((f) => f.family.replace(/["']/g, '') === 'KFS Jinhui').map((f) => ({ f, rs: rangesOf(f.unicodeRange) }));
+  const miss = [], fixed = [];
+  for (const ch of new Set([...text])) {
+    const cp = ch.codePointAt(0);
+    const mine = faces.filter((x) => x.rs.some(([a, b]) => cp >= a && cp <= b));
+    if (!mine.length) continue;
+    if (!mine.some((x) => x.f.status === 'loaded')) miss.push(ch);
+    else if (mine.some((x) => x.f.status === 'error')) fixed.push(ch);
+  }
+  const draw = (font, ch) => { const c = document.createElement('canvas'); c.width = c.height = 48; const x = c.getContext('2d'); x.font = font; x.textBaseline = 'middle'; x.fillText(ch, 4, 24); return x.getImageData(0, 0, 48, 48).data.join(','); };
+  const keben = fixed.length ? draw('36px "KFS Jinhui", serif', fixed[0]) !== draw('36px serif', fixed[0]) : null;
+  return { miss, fixed, keben, errors: faces.filter((x) => x.f.status === 'error').length };
+}"""
 # 另一台设备：从哪个入口进（丁香的入口是 dingxiang/）
 def second_device_at(page, url):
     page.goto(url)
@@ -398,8 +415,21 @@ with sync_playwright() as p:
     pb = ctx2.new_page()
     pb.on("pageerror", lambda e: errors.append("[另一台] " + str(e)))
     bad = []
+    # 这一台上刻本体除了头一块，每一块头一回去取都取不成（取的那一下网断了）；带着“再取一回”记号的照常给
+    flaky, again_reqs = set(), []
+    def flaky_font(route):
+        url = route.request.url
+        m = re.search(r"/jinhui-[0-9a-f]+/(\d\d)\.woff2(\?.*)?$", url)
+        if m and "again=" in url:
+            again_reqs.append(m.group(1))
+        if m and m.group(1) != "00" and "again=" not in url and m.group(1) not in flaky:
+            flaky.add(m.group(1))
+            return route.abort()
+        return route.continue_()
+    pb.route(re.compile(r".*/jinhui-[0-9a-f]+/\d\d\.woff2.*"), flaky_font)
+    on_purpose = lambda url: bool(re.search(r"/jinhui-[0-9a-f]+/\d\d\.woff2$", url))
     pb.on("response", lambda r: bad.append(f"{r.status} {r.url}") if r.status >= 400 and "/assets/" in r.url else None)
-    pb.on("requestfailed", lambda r: bad.append(f"失败 {r.url}") if "/assets/" in r.url and not r.url.startswith("blob:") else None)
+    pb.on("requestfailed", lambda r: bad.append(f"失败 {r.url}") if "/assets/" in r.url and not r.url.startswith("blob:") and not on_purpose(r.url) else None)
     second_device_at(pb, BASE + "dingxiang/")   # 另一台用丁香的入口进
     end = time.time() + 15
     synced = False
@@ -418,8 +448,11 @@ with sync_playwright() as p:
     drew2 = wait_box(pb, "state", "open", 6)
     pb.wait_for_timeout(600)
     w2 = pb.evaluate("document.querySelector('.cy-words').textContent")
-    ok(drew2 and len(tm2) == 2 and w2 in tm2.values() and pb.evaluate(PAPER_INK) > 0.5 and pb.evaluate("document.fonts.check('17.5px \"KFS Jinhui\"', document.querySelector('.cy-words').textContent)"),
-       f"丁香入口：繁体自己转（这台设备记着），纸条、残纸、刻本体都取得到（{w2[:8]}…）")
+    fs2 = pb.evaluate(FONT_STATE, w2)
+    ok(drew2 and len(tm2) == 2 and w2 in tm2.values() and pb.evaluate(PAPER_INK) > 0.5 and not fs2["miss"],
+       f"丁香入口：繁体自己转（这台设备记着），纸条、残纸、刻本体都取得到（{w2[:8]}…；用不上的字：{''.join(fs2['miss'])}）")
+    ok(bool(flaky) and fs2["errors"] > 0 and bool(fs2["fixed"]) and fs2["keben"] is True and bool(again_reqs),
+       f"刻本体有几块头一回没取成（{len(flaky)} 块）：用到的时候自己再取一回，那几个字照样是刻本（补回来的：{''.join(fs2['fixed'][:6])}，再取了 {len(again_reqs)} 回）")
     pb.screenshot(path="/tmp/cangyin_e2e_dingxiang_entry.png")
     pb.mouse.click(40, 800); wait_box(pb, "state", "ready", 5)
     swipe(pb, 200, 700, 300)
