@@ -6,3 +6,4 @@ source/.cache/
 source/tests/shots/
 __pycache__/
 source/tests/look/
+source/dist-test2/

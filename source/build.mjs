@@ -84,8 +84,9 @@ const ranges = (text) => {
   return out.join(",");
 };
 const jinhuiCss = Buffer.from(
-  `/* KFS Jinhui：齊伋體（Qiji, Lingdong Huang, SIL OFL 1.1, Reserved Font Name QIJI）截出来、改了名的；授权见 ${jinhuiDir}/OFL.txt */\n` +
-    jinhui.slices.map((sl) => `@font-face{font-family:"KFS Jinhui";src:url("${jinhuiDir}/${sl.f}") format("woff2");font-display:block;unicode-range:${ranges(sl.c)}}`).join("\n") +
+  `/* KFS Jinhui：齊伋體（Qiji, Copyright (c) 2020 Lingdong Huang, Reserved Font Name QIJI）加上 Noto Serif CJK SC 的标点数字（(c) 2017-2023 Adobe, Reserved Font Name 'Source'），SIL OFL 1.1；截出来、改了名的；授权见 ${jinhuiDir}/OFL.txt */\n` +
+    // swap：那一块还没取回来先用宋体摆着（纸条那头最多等九百毫秒，等不及先摆宋体，到了再换），不让字空着
+    jinhui.slices.map((sl) => `@font-face{font-family:"KFS Jinhui";src:url("${jinhuiDir}/${sl.f}") format("woff2");font-display:swap;unicode-range:${ranges(sl.c)}}`).join("\n") +
     "\n"
 );
 const jinhuiCssName = `jinhui-${hash(jinhuiCss)}.css`;
@@ -116,8 +117,14 @@ const side = async (entry, name, extra = {}) => {
 };
 const cangyinName = await side("src/cangyin/page.js", "cangyin", { define: { "process.env.NODE_ENV": '"production"', __KFS_CANGYIN_ASSETS__: JSON.stringify(cyAssets) } });
 define.__KFS_CANGYIN__ = JSON.stringify(`./${cangyinName}`);
-// 词典里全是汉字：照 UTF-8 原样写（esbuild 默认写成 \\uXXXX，大一倍）
-const s2tName = await side("src/cangyin/s2t.js", "s2t", { charset: "utf8" });
+// 词典里全是汉字：照 UTF-8 原样写（esbuild 默认写成 \\uXXXX，大一倍）。
+// opencc-js 是 MIT，词典是 OpenCC 的（Apache-2.0）：两份授权原文跟着包走（写在包的末尾）
+const openccLic = ["node_modules/opencc-js/LICENSE", "node_modules/opencc-js/THIRD_PARTY_LICENSES.md"].map((f) => fs.readFileSync(f, "utf8").replace(/\*\//g, "* /")).join("\n\n");
+const s2tName = await side("src/cangyin/s2t.js", "s2t", {
+  charset: "utf8",
+  banner: { js: "/*! opencc-js (MIT, Copyright (c) 2020-2021 The nk2028 Project) with OpenCC dictionary data (Apache-2.0); license texts at the end of this file */" },
+  footer: { js: "/*!\n" + openccLic + "\n*/" },
+});
 define.__KFS_S2T__ = JSON.stringify(`./${s2tName}`);
 
 if (TEST_URL) {

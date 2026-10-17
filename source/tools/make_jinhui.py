@@ -38,9 +38,10 @@ PER = 100      # 往后一块多少个字
 ADV = 800      # 刻本字都是 800 宽
 CX, CY, S = 500, 280, 0.82   # 刻本字格子的中心；Noto 的字挪进来缩多少（Noto 的格子中心 (500, 380)、字高九百，刻本字七百四十来）
 PUNCT = "，；：？！“”‘’…—–（）《》〈〉「」『』【】·/%~～＋－＝0123456789"
-COPY = ("Based on Qiji font, Copyright (c) 2020, Lingdong Huang, with Reserved Font Name QIJI; "
-        "punctuation and digits from Noto Serif CJK SC, Copyright 2017-2023 Adobe, with Reserved Font Name 'Source'. "
-        "Subset, simplified, merged and renamed for kaifengfu.")
+# 两份字体的版权声明照原样留着（OFL 要求）：齊伋體的，和 Noto Serif CJK（思源宋体）的
+COPY = ("Copyright (c) 2020, Lingdong Huang, with Reserved Font Name QIJI. "
+        "Punctuation and digits from Noto Serif CJK SC: \u00a9 2017-2023 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. "
+        "Subset, simplified, merged and renamed (KFS Jinhui) for kaifengfu.")
 OFL = "This Font Software is licensed under the SIL Open Font License, Version 1.1. https://openfontlicense.org"
 
 chars = [c for c in open(os.path.join(HERE, "jinhui_chars.txt"), encoding="utf-8").read() if not c.isspace()]

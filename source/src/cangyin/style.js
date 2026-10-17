@@ -31,6 +31,9 @@ html[data-kfs-theme="heiye"] .kfs-cangyin {
 .kfs-cangyin button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
 .cy-stage { position: absolute; inset: 0; overflow: hidden; background: var(--bg); isolation: isolate; }
 .cy-safe { position: absolute; left: 0; top: 0; width: 1px; height: var(--safe-t); visibility: hidden; pointer-events: none; }
+.cy-safeb { position: absolute; left: 0; bottom: 0; width: 1px; height: var(--safe-b); visibility: hidden; pointer-events: none; }
+/* 给读屏、键盘的按钮：看不见、手指点不到（手指点匣子、上下划照旧） */
+.cy-sr { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; pointer-events: none; }
 /* 纸的纹理：灰的，柔光叠在纸色上（亮的地方亮一点，暗的地方暗一点，平均不变） */
 .cy-tex {
   position: absolute; inset: 0; pointer-events: none; z-index: 0;
@@ -150,6 +153,7 @@ html[data-kfs-theme="heiye"] .kfs-cangyin {
 export const TEMPLATE = `
 <div class="cy-stage">
   <div class="cy-safe"></div>
+  <div class="cy-safeb"></div>
   <div class="cy-tex"></div>
   <div class="cy-flower"></div>
   <div class="cy-pages">
@@ -180,5 +184,7 @@ export const TEMPLATE = `
     </section>
   </div>
   <button class="cy-ui cy-back" aria-label="退出藏音匣"><svg viewBox="0 0 18 18"><path d="M11.5 3.5 L6 9 L11.5 14.5"/></svg></button>
+  <button class="cy-sr cy-draw">从匣子里抽一条</button>
+  <button class="cy-sr cy-flip">看藏音匣里的全部</button>
 </div>
 `;
