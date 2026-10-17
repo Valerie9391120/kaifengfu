@@ -296,7 +296,6 @@ with sync_playwright() as p:
     close_api(pa)
     pa.get_by_role("button", name=re.compile("^Haiku 4.5")).click()
     pa.get_by_text("选择模型", exact=True).wait_for(timeout=5000)
-    pa.evaluate("document.activeElement && document.activeElement.blur()")   # 打字的时候输入框是一行、模型那个按钮收着（她 10 月 17 日定的）：先让键盘收下去
     pa.get_by_role("button", name=re.compile("^Sonnet 4.6")).click(); pa.wait_for_timeout(600)
     ok(json.loads(pa.evaluate(KV, "kfs2:settings")).get("model") == "claude-sonnet-4-6", "换回 Sonnet 4.6")
 
