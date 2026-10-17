@@ -1,7 +1,7 @@
 // 藏音匣：不碰页面的零件（src/cangyin/parts.js）、转繁体（src/cangyin/s2t.js）、刻本体切出来的那些块（static/jinhui/）。
 // 跟别的几份一样先用 esbuild 打成一份再跑（package.json 的 test:unit）
 import fs from "node:fs";
-import { BOX_KEY, BOX_AUDIO, BOX_TEXT_MAX, packEntry, readEntry, listEntries, findBySrc, boxSub, cnNum, cnDate, dayOf, lenOf, monthOf, monthKey, rngOf, paperOf, PAPERS, pickFrom, cutQuote } from "../src/cangyin/parts.js";
+import { BOX_KEY, BOX_AUDIO, BOX_TEXT_MAX, packEntry, keptText, readEntry, listEntries, sameVoiceIds, findBySrc, boxSub, cnNum, cnDate, dayOf, lenOf, monthOf, monthKey, rngOf, paperOf, PAPERS, pickFrom, cutQuote } from "../src/cangyin/parts.js";
 import { toTrad } from "../src/cangyin/s2t.js";
 
 let passed = 0;
@@ -21,16 +21,20 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 // ---------- 存在哪儿、一条什么样 ----------
 ok(BOX_KEY === "kfs2:cyx:" && BOX_AUDIO === "kfs2:cyxa:" && !BOX_AUDIO.startsWith(BOX_KEY), "一条存在 kfs2:cyx:，声音存在 kfs2:cyxa:（声音那一串不会被当成一条认）");
 {
-  const e = { src: "m1.0", chat: "c1", at: 1792000000000, text: "今天降温了。", trad: "", dur: 3.456, saved: 1792000100000 };
+  const e = { src: "m1.0", chat: "c1", at: 1792000000000, text: "今天降温了。", dur: 3.456, saved: 1792000100000 };
   const back = readEntry("x1", packEntry(e));
-  ok(eq(back, { id: "x1", src: "m1.0", chat: "c1", at: 1792000000000, text: "今天降温了。", trad: "", dur: 3.5, saved: 1792000100000 }), "存一条、读回来：几秒留一位小数，别的原样");
+  ok(eq(back, { id: "x1", src: "m1.0", chat: "c1", at: 1792000000000, text: "今天降温了。", dur: 3.5, saved: 1792000100000 }), "存一条、读回来：几秒留一位小数，别的原样");
   ok(JSON.parse(packEntry(e)).v === 1, "存的时候写着版本 1");
+  ok(!("trad" in JSON.parse(packEntry({ ...e, trad: "今天降溫了。" }))) && !("trad" in readEntry("x1", JSON.stringify({ v: 1, text: "字", trad: "字" }))),
+    "繁体不存进去（每台设备自己转、自己记着），读的时候也不认");
+  ok(keptText("卿卿，晚安。") === "卿卿，晚安。" && keptText("") === "……" && keptText("  \n ") === "……" && keptText(null) === "……",
+    "存进来的字：转出来的那些；只有语气标签、摘干净没字了的写“……”（不然那一条看不见、也移不出）");
   ok(readEntry("x", packEntry({ ...e, text: "" })) === null && readEntry("x", packEntry({ ...e, text: "   " })) === null, "没有字的不算一条");
   ok(readEntry("x", "not json") === null && readEntry("x", JSON.stringify({ v: 2, text: "a" })) === null && readEntry("x", "null") === null && readEntry("x", "[]") === null, "认不出来的（坏的、版本不对的）不算一条");
   const odd = readEntry("y", JSON.stringify({ v: 1, text: "字", src: 5, chat: null, at: "x", trad: 7, dur: -3, saved: "z" }));
-  ok(odd && odd.src === "" && odd.chat === "" && odd.at === 0 && odd.trad === "" && odd.dur === 0 && odd.saved === 0, "该是字的不是字、该是数的不是数：当没有");
+  ok(odd && odd.src === "" && odd.chat === "" && odd.at === 0 && odd.dur === 0 && odd.saved === 0, "该是字的不是字、该是数的不是数：当没有");
   const long = "字".repeat(BOX_TEXT_MAX + 50);
-  ok(readEntry("z", packEntry({ ...e, text: long, trad: long })).text.length === BOX_TEXT_MAX && JSON.parse(packEntry({ ...e, text: long })).text.length === BOX_TEXT_MAX, `字最多留 ${BOX_TEXT_MAX} 个`);
+  ok(readEntry("z", packEntry({ ...e, text: long })).text.length === BOX_TEXT_MAX && JSON.parse(packEntry({ ...e, text: long })).text.length === BOX_TEXT_MAX, `字最多留 ${BOX_TEXT_MAX} 个`);
   ok(JSON.parse(packEntry({ text: "a", at: -5, dur: "x", saved: null })).at === 0 && JSON.parse(packEntry({ text: "a", at: -5, dur: "x" })).dur === 0, "存的时候负的、不是数的都当 0");
 }
 {
@@ -38,8 +42,17 @@ ok(BOX_KEY === "kfs2:cyx:" && BOX_AUDIO === "kfs2:cyxa:" && !BOX_AUDIO.startsWit
   const list = listEntries([p("a", 100, 5), p("b", 300, 1), p("c", 200, 9), p("d", 300, 7), [BOX_AUDIO + "a", "{}"], ["kfs2:chat:x", "[]"], [BOX_KEY + "bad", "{"], [BOX_KEY + "gone", null]]);
   ok(eq(list.map((e) => e.id), ["d", "b", "c", "a"]), "排成从新到旧（照他说的时候；同一刻的后存进来的在前）；声音那一串、别的钥匙、坏的、删了的都不算");
   ok(findBySrc(list, "sc").id === "c" && findBySrc(list, "nope") === null && findBySrc(list, "") === null, "照从哪条语音来找存过的那一条");
-  const twice = listEntries([p("e1", 1, 50), [BOX_KEY + "e2", packEntry({ src: "se1", at: 1, saved: 10, text: "话" })]]);
-  ok(findBySrc(twice, "se1").id === "e2", "同一条存过两回（两台设备各存了一回）：给最早存的那条");
+  // 同一条语音存过两回（两台设备还没同步上的时候各存了一回）
+  const pairs2 = [p("e1", 1, 50), [BOX_KEY + "e2", packEntry({ src: "se1", at: 1, saved: 10, text: "话" })], p("f", 5, 3), [BOX_KEY + "e3", packEntry({ src: "se1", at: 1, saved: 70, text: "话" })]];
+  const twice = listEntries(pairs2);
+  ok(eq(twice.map((e) => e.id), ["f", "e2"]), "同一条语音存过两回：列表上只摆先存的那一条");
+  ok(findBySrc(twice, "se1").id === "e2" && findBySrc(listEntries(pairs2).concat(readEntry("e0", packEntry({ src: "se1", text: "话", saved: 10 }))), "se1").id === "e0",
+    "长按的时候认“存过没有”：给先存的那条（同一刻存的照编号）");
+  ok(eq(sameVoiceIds(pairs2, "e2").sort(), ["e1", "e2", "e3"]) && eq(sameVoiceIds(pairs2, "f"), ["f"]) && eq(sameVoiceIds(pairs2, "gone"), ["gone"]),
+    "移出的时候：同一条语音存过的几回一起移出（不然移出一条、藏着的那条又冒出来）");
+  const nosrc = listEntries([[BOX_KEY + "n1", packEntry({ text: "甲", at: 2 })], [BOX_KEY + "n2", packEntry({ text: "乙", at: 1 })]]);
+  ok(eq(nosrc.map((e) => e.id), ["n1", "n2"]) && eq(sameVoiceIds([[BOX_KEY + "n1", packEntry({ text: "甲" })], [BOX_KEY + "n2", packEntry({ text: "乙" })]], "n1"), ["n1"]),
+    "不知道从哪条语音来的（src 空的）：不当成同一条");
 }
 ok(boxSub(0) === "还空着" && boxSub(1) === "藏了 1 条" && boxSub(12) === "藏了 12 条", "南衙那一行的小字：还空着、藏了几条");
 
@@ -107,7 +120,9 @@ ok(toTrad("") === "" && toTrad(null) === "" && toTrad("OK，好啦 :) 123") === 
   const set = new Set([...all]);
   ok(meta.family === "KFS Jinhui" && meta.slices.length > 40 && set.size === [...all].length, `刻本体切成 ${meta.slices.length} 块，一个字只在一块里`);
   ok(meta.slices.every((s) => fs.existsSync(new URL(s.f, dir)) && fs.statSync(new URL(s.f, dir)).size > 1000), "每一块都在");
-  ok(fs.readFileSync(new URL("OFL.txt", dir), "utf8").includes("SIL OPEN FONT LICENSE") && fs.readFileSync(new URL("OFL.txt", dir), "utf8").includes("Reserved Font Name QIJI"), "授权跟着字体放在一起（OFL，写着保留字体名 QIJI）");
+  const ofl = fs.readFileSync(new URL("OFL.txt", dir), "utf8");
+  ok(ofl.includes("SIL OPEN FONT LICENSE") && ofl.includes("Copyright (c) 2020, Lingdong Huang") && ofl.includes("Reserved Font Name QIJI") && ofl.includes("Adobe") && ofl.includes("Reserved Font Name 'Source'"),
+    "授权跟着字体放在一起（OFL；齊伋體、Noto Serif CJK 两份版权声明照原样，写着保留字体名 QIJI、Source）");
   const head = meta.slices[0].c;
   ok(["，", "。", "？", "！", "“", "”", "…", "〇", "一", "的", "了", "我", "你"].every((ch) => head.includes(ch)), "头一块里是标点、〇 和最常用的字");
   const need = "今天降溫了，出門把圍巾帶上。別嫌麻煩，就繞兩圈。剛纔那首歌我又聽了一遍。頭髮長了。飯喫了沒有？晚安，卿卿。二〇二六年十月十四日";

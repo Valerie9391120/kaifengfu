@@ -1,6 +1,6 @@
 KFS Jinhui（开封府藏音匣纸条上的字）
 
-Based on Qiji font, Copyright (c) 2020, Lingdong Huang, with Reserved Font Name QIJI; punctuation and digits from Noto Serif CJK SC, Copyright 2017-2023 Adobe, with Reserved Font Name 'Source'. Subset, simplified, merged and renamed for kaifengfu.
+Copyright (c) 2020, Lingdong Huang, with Reserved Font Name QIJI. Punctuation and digits from Noto Serif CJK SC: © 2017-2023 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. Subset, simplified, merged and renamed (KFS Jinhui) for kaifengfu.
 
 Qiji font: https://github.com/LingDong-/qiji-font
 Noto Serif CJK: https://github.com/notofonts/noto-cjk

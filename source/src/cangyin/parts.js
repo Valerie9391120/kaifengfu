@@ -6,13 +6,14 @@
 // 测试在 Node 里跑（tests/cangyin.test.mjs）。
 // =====================================================
 
-// 一条：kfs2:cyx:<编号>，内容 { v: 1, src, chat, at, text, trad, dur, saved }，加密了跟着云端走。
+// 一条：kfs2:cyx:<编号>，内容 { v: 1, src, chat, at, text, dur, saved }，加密了跟着云端走。
 //   src：从哪一条语音存进来的（voice.js 的 voiceKeyOf：那一条回话的 id.第几样），聊天里长按的时候认“存过没有”用
 //   chat：那段对话的编号（只是记着，删了对话这一条照样在）
 //   at：他说那一句的时候（毫秒；纸条和列表上的日期都是这个，不是存进来的时候）
-//   text：转出来的字（voice.js 的 heardOf：语气标签摘干净）
-//   trad：转成繁体的字（纸条上用刻本体，刻本是繁体）。存进来的那一下不转，头一回点开藏音匣的时候补（转字的那一包一兆多，不让聊天的时候背着）
+//   text：转出来的字（voice.js 的 heardOf：语气标签摘干净；只有语气标签的那种写“……”）
 //   dur：几秒；saved：存进来的时候
+// 纸条上的繁体不存在这里：每台设备点开藏音匣的时候自己转、自己记着（CangyinPage.jsx 的 TRAD_KEY）。
+// 存进来以后这一条就不再改（改了要跟别的设备上的“移出”打架：那边删了、这边一改又冒出来）
 export const BOX_KEY = "kfs2:cyx:";
 // 那一条的声音：kfs2:cyxa:<编号>，跟 kfs2:voice: 里一模一样（voice.js 的 packVoice），存进来的那一下从那边整份拷过来。
 // 另存一份是卿卿点过头的：删了对话、他那一条语音没了，藏音匣里的还在
@@ -26,11 +27,12 @@ export function packEntry(e) {
     chat: String(e.chat || ""),
     at: Math.max(0, Number(e.at) || 0),
     text: String(e.text || "").slice(0, BOX_TEXT_MAX),
-    trad: String(e.trad || "").slice(0, BOX_TEXT_MAX),
     dur: Math.round(Math.max(0, Number(e.dur) || 0) * 10) / 10,
     saved: Math.max(0, Number(e.saved) || 0),
   });
 }
+// 存进来的字：转出来的那些；只有语气标签（[soft chuckle] 这种，念出来是一声笑）摘干净就没字了，写“……”
+export const keptText = (heard) => String(heard || "").trim() || "……";
 
 // 读一条：认不出来的给 null（不当一条摆出来）
 export function readEntry(id, text) {
@@ -44,7 +46,6 @@ export function readEntry(id, text) {
       chat: s(d.chat),
       at: Math.max(0, Number(d.at) || 0),
       text: d.text.slice(0, BOX_TEXT_MAX),
-      trad: s(d.trad).slice(0, BOX_TEXT_MAX),
       dur: Math.max(0, Number(d.dur) || 0),
       saved: Math.max(0, Number(d.saved) || 0),
     };
@@ -53,22 +54,43 @@ export function readEntry(id, text) {
   }
 }
 
-// 存档里那一串（[钥匙, 内容]）→ 一条一条，从新到旧（照他说的时候；同一刻的照存进来的先后）
-export function listEntries(pairs) {
+// 存档里那一串（[钥匙, 内容]）里认得出来的每一条（不去重）
+function readAll(pairs) {
   const out = [];
-  for (const [k, v] of pairs) {
+  for (const [k, v] of pairs || []) {
     if (!k || !String(k).startsWith(BOX_KEY) || v == null) continue;
     const e = readEntry(String(k).slice(BOX_KEY.length), v);
     if (e) out.push(e);
   }
-  return out.sort((a, b) => b.at - a.at || b.saved - a.saved || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return out;
+}
+// 同一条语音存过两回的（两台设备还没同步上的时候各存了一回），先存的那一条算数
+const earlier = (a, b) => a.saved < b.saved || (a.saved === b.saved && a.id < b.id);
+
+// 存档里那一串（[钥匙, 内容]）→ 一条一条，从新到旧（照他说的时候；同一刻的照存进来的先后）。
+// 同一条语音存过两回的只摆先存的那一条
+export function listEntries(pairs) {
+  const all = readAll(pairs);
+  const first = new Map();
+  for (const e of all) if (e.src && (!first.has(e.src) || earlier(e, first.get(e.src)))) first.set(e.src, e);
+  return all
+    .filter((e) => !e.src || first.get(e.src) === e)
+    .sort((a, b) => b.at - a.at || b.saved - a.saved || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
-// 聊天里长按的那一条语音存过没有：存过的那一条（同一条存过两回的，给最早的那条）
+// 移出一条：同一条语音存过两回的，几回一起移出（不然移出了一条，藏着的另一条又冒出来）
+export function sameVoiceIds(pairs, id) {
+  const all = readAll(pairs);
+  const me = all.find((e) => e.id === String(id));
+  if (!me || !me.src) return [String(id)];
+  return all.filter((e) => e.src === me.src).map((e) => e.id);
+}
+
+// 聊天里长按的那一条语音存过没有：存过的那一条（同一条存过两回的，给先存的那条）
 export function findBySrc(list, src) {
   if (!src) return null;
   let hit = null;
-  for (const e of list) if (e.src === src && (!hit || e.saved < hit.saved)) hit = e;
+  for (const e of list) if (e.src === src && (!hit || earlier(e, hit))) hit = e;
   return hit;
 }
 

@@ -52,8 +52,8 @@ import { ApiPanel } from "./panels/ApiPanel.jsx";
 import { PushPanel } from "./panels/PushPanel.jsx";
 import { ModelPanel } from "./panels/ModelPanel.jsx";
 import { NanyaPanel, soonToast } from "./panels/NanyaPanel.jsx";
-import { BOX_KEY, BOX_AUDIO, packEntry, readEntry, listEntries, findBySrc, boxSub } from "./cangyin/parts.js";
-import { CangyinPage, loadS2T } from "./cangyin/CangyinPage.jsx";
+import { BOX_KEY, BOX_AUDIO, packEntry, keptText, listEntries, sameVoiceIds, findBySrc, boxSub } from "./cangyin/parts.js";
+import { CangyinPage, TRAD_KEY } from "./cangyin/CangyinPage.jsx";
 import { CallPage } from "./call/CallPage.jsx";
 import { createListener, pauseOf } from "./call/listen.js";
 import { createSayer, segmentsOfReply, segmentsOfItems } from "./call/say.js";
@@ -339,7 +339,8 @@ export default function App({ account = {} }) {
   const [boxOpen, setBoxOpen] = useState(false);
   const [boxList, setBoxList] = useState([]);
   const boxRef = useRef([]);
-  const boxTried = useRef(new Set()); // 转过繁体（不管成没成）的那几条：存不住的不来回转
+  // 藏音匣借走了放声音的东西（见 boxAudio）：这边要停下它的时候（切到后台、来电话）告诉那一页一声
+  const audioOwner = useRef(null);
   const [diaryToday, setDiaryToday] = useState({ her: false, him: false });
   const diaryCache = useRef({});
   const dayMsgsRef = useRef({});
@@ -665,35 +666,6 @@ export default function App({ account = {} }) {
       offStatus();
     };
   }, []);
-
-  // ---- 藏音匣：纸条上用刻本体，字要繁体。存进来的那一下不转（转字的那一包一兆多，不让聊天背着），
-  // 点开藏音匣的时候把还没转过的那几条转了存回去（一条只转一回；存不住的这一趟不再转）----
-  useEffect(() => {
-    if (!boxOpen) return;
-    const todo = boxList.filter((e) => !e.trad && !boxTried.current.has(e.id));
-    if (!todo.length) return;
-    let gone = false;
-    loadS2T().then(
-      async (m) => {
-        for (const e of todo) {
-          if (gone) return;
-          boxTried.current.add(e.id);
-          const cur = readEntry(e.id, store.peek(BOX_KEY + e.id));
-          if (!cur || cur.trad) continue;
-          let trad = "";
-          try {
-            trad = m.toTrad(cur.text);
-          } catch (er) {}
-          if (trad) await store.set(BOX_KEY + e.id, packEntry({ ...cur, trad }));
-        }
-        if (!gone) refreshBox();
-      },
-      () => {}
-    );
-    return () => {
-      gone = true;
-    };
-  }, [boxOpen, boxList]);
 
   // ---- 前情提要（规矩见 recap.js） ----
   // 一段对话抄过的那几份（另存一条，不在对话里）
@@ -1078,6 +1050,8 @@ export default function App({ account = {} }) {
     return audioRef.current;
   };
   const stopVoice = () => {
+    const lost = audioOwner.current;
+    audioOwner.current = null;
     const a = audioRef.current;
     if (a) {
       a.onended = null;
@@ -1087,6 +1061,7 @@ export default function App({ account = {} }) {
     }
     playingRef.current = "";
     setPlaying("");
+    if (lost) lost();
   };
   // 放完一条：紧跟着的下一个气泡也是他的语音、念好了的，接着放（照微信）
   const nextVoiceAfter = (key) => {
@@ -1198,17 +1173,23 @@ export default function App({ account = {} }) {
       return;
     }
     const id = newId();
+    // 先存声音、再存这一条：这一条在了，声音就一定在（另一台设备上先同步到这一条、声音还在路上的，放的时候说一句“还没同步过来”）
     await store.set(BOX_AUDIO + id, raw);
-    await store.set(BOX_KEY + id, packEntry({ src, chat: chatIdRef.current, at: r.msg.ts || Date.now(), text: heardOf(r.item.text), dur: rec.dur, saved: Date.now() }));
+    await store.set(BOX_KEY + id, packEntry({ src, chat: chatIdRef.current, at: r.msg.ts || Date.now(), text: keptText(heardOf(r.item.text)), dur: rec.dur, saved: Date.now() }));
     refreshBox();
     setToast("已存入藏音匣");
   };
+  // 移出：同一条语音存过两回的（两台设备还没同步上的时候各存了一回）一起移出
   const dropKept = async (id) => {
-    await store.del(BOX_KEY + id);
-    await store.del(BOX_AUDIO + id);
+    const ids = sameVoiceIds(store.keys(BOX_KEY).map((k) => [k, store.peek(k)]), id);
+    for (const x of ids) {
+      await store.del(BOX_KEY + x);
+      await store.del(BOX_AUDIO + x);
+    }
     refreshBox();
   };
-  // 藏音匣那一页放声音：用聊天里那一个放声音的东西（iPhone 上被她点过一回，接着放才不拦）
+  // 藏音匣那一页放声音：用聊天里那一个放声音的东西（iPhone 上被她点过一回，接着放才不拦）。
+  // 那一页要放的时候 claim(lost)：聊天这边放着的停下，之后这边再停它（切到后台、来电话、点开别的）就叫一声 lost，那一页上跟着停
   const boxAudio = {
     el: player,
     load: loadAudio,
@@ -1220,7 +1201,10 @@ export default function App({ account = {} }) {
         return "";
       }
     },
-    claim: stopVoice,
+    claim: (lost) => {
+      stopVoice();
+      audioOwner.current = lost || null;
+    },
   };
 
   // API 面板里：念语音的小后端接上没有（打开面板的时候看一眼，不花钱）
@@ -4022,6 +4006,7 @@ export default function App({ account = {} }) {
       localStorage.removeItem(WANT_KEY); // 要念还没念的语音条（换了人登录，不替上一位念）
       localStorage.removeItem(HEARD_KEY);
       localStorage.removeItem(MOTTO_LAST);
+      localStorage.removeItem(TRAD_KEY); // 藏音匣纸条上转好的繁体（是她存的那几句话，跟本地存档一起清掉）
     } catch (e) {}
     stopVoice();
     if (account.signOut) account.signOut();

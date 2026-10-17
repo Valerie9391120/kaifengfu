@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { T } from "../ui/style.js";
 
 // 藏音匣那一页在开封府这头的壳子（里面那一页见 page.js，单独一包，头一回点进去才取）。
@@ -27,13 +27,35 @@ export const loadS2T = () => {
   return s2tP;
 };
 
+// 纸条上的繁体：这台设备上自己转、自己记着（编号 → 繁体），不往存档里写（存进来的那一条不再改，见 parts.js）。
+// 转字的那一包一兆多、头一回拿出来要一百来毫秒：点进去等匣子画完了再转，只转这台设备上还没转过的那几条
+export const TRAD_KEY = "kfs-cyx-trad";
+const TRAD_WAIT = 1500;
+function readTrad() {
+  try {
+    const o = JSON.parse(localStorage.getItem(TRAD_KEY) || "{}");
+    return o && typeof o === "object" && !Array.isArray(o) ? o : {};
+  } catch (e) {
+    return {};
+  }
+}
+function writeTrad(o) {
+  try {
+    localStorage.setItem(TRAD_KEY, JSON.stringify(o));
+  } catch (e) {}
+}
+
 // entries：藏音匣里的那几条（parts.js 的 listEntries）；audio：{ el, load, urlOf, claim }（见 page.js 的 mountBox）；
 // 那一包取不回来（网不好）：onFail
 export function CangyinPage({ entries, audio, toast, onBack, onRemove, onFail }) {
   const ref = useRef(null);
   const inst = useRef(null);
   const latest = useRef(null);
-  latest.current = { entries, audio, toast, onBack, onRemove, onFail };
+  const [trad, setTrad] = useState(readTrad);
+  const tried = useRef(new Set()); // 这一趟转过的（转不出来的不来回转）
+  // 递给那一页的：每一条带上这台设备上转好的繁体
+  const shown = useMemo(() => entries.map((e) => (trad[e.id] ? { ...e, trad: trad[e.id] } : e)), [entries, trad]);
+  latest.current = { entries, shown, audio, toast, onBack, onRemove, onFail };
   useEffect(() => {
     let gone = false;
     loadPage().then(
@@ -41,12 +63,12 @@ export function CangyinPage({ entries, audio, toast, onBack, onRemove, onFail })
         if (gone || !ref.current) return;
         const L = () => latest.current;
         inst.current = m.mountBox(ref.current, {
-          entries: L().entries,
+          entries: L().shown,
           audio: {
             el: () => L().audio.el(),
             load: (a, url) => L().audio.load(a, url),
             urlOf: (id) => L().audio.urlOf(id),
-            claim: () => L().audio.claim(),
+            claim: (lost) => L().audio.claim(lost),
           },
           toast: (t) => L().toast(t),
           onBack: () => L().onBack(),
@@ -64,7 +86,40 @@ export function CangyinPage({ entries, audio, toast, onBack, onRemove, onFail })
     };
   }, []);
   useEffect(() => {
-    if (inst.current) inst.current.update(entries);
-  }, [entries]);
+    if (inst.current) inst.current.update(shown);
+  }, [shown]);
+  // 还没转繁体的：等一会儿（匣子画完）再取那一包转
+  useEffect(() => {
+    if (!entries.some((e) => !trad[e.id] && !tried.current.has(e.id))) return;
+    let gone = false;
+    const t = setTimeout(() => {
+      loadS2T().then(
+        (m) => {
+          if (gone) return;
+          const have = readTrad();
+          const next = {};
+          for (const e of latest.current.entries) {
+            let s = have[e.id] || "";
+            if (!s && !tried.current.has(e.id)) {
+              tried.current.add(e.id);
+              try {
+                s = m.toTrad(e.text);
+              } catch (er) {
+                s = "";
+              }
+            }
+            if (s) next[e.id] = s; // 只记还在匣子里的那几条（移出了的顺手忘掉）
+          }
+          writeTrad(next);
+          setTrad(next);
+        },
+        () => {}
+      );
+    }, TRAD_WAIT);
+    return () => {
+      gone = true;
+      clearTimeout(t);
+    };
+  }, [entries, trad]);
   return <div ref={ref} className="absolute inset-0 z-40 kfs-page kfs-cangyin-shell" style={{ background: T.bg }} />;
 }

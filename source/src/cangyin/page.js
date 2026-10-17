@@ -135,7 +135,8 @@ function fontsFor(text, wait) {
 // root：一块铺满屏幕的空 div（CangyinPage 给的）。
 // api：
 //   entries：一条一条（{ id, at, text, trad, dur }，从新到旧，见 parts.js 的 listEntries）
-//   audio：{ el() 那一个放声音的东西, load(a, url) 换地址（上一个 blob: 收回）, urlOf(id) 那一条的声音变成能放的地址（没有给 ""）, claim() 聊天那边别再管它 }
+//   audio：{ el() 那一个放声音的东西, load(a, url) 换地址（上一个 blob: 收回）, urlOf(id) 那一条的声音变成能放的地址（没有给 ""）,
+//            claim(lost) 聊天那边别再管它；之后开封府那边要停下它（切到后台、来电话）的时候叫一声 lost }
 //   toast(话)、onBack()、onRemove(id)
 // 返回 { update(entries), destroy() }
 export function mountBox(root, api) {
@@ -163,6 +164,7 @@ export function mountBox(root, api) {
     if (v == null || v === "") delete root.dataset[k];
     else root.dataset[k] = String(v);
   };
+  const viaKeys = (e) => e.detail === 0;
 
   // ---------- 残纸：每条语音配五张里的一张，同一条一直是那一张；九宫格画在 canvas 上 ----------
   const paperImgs = new Map();
@@ -221,37 +223,54 @@ export function mountBox(root, api) {
   const A = api.audio;
   let playing = null; // { v, where: 1 | 第二页那一行 }
   let loaded = ""; // 放声音的东西眼下装着哪一条
+  let loadedSrc = ""; // 装的时候的那个地址（不是它了，就是别处换过）
   const ours = { ended: null, pause: null, error: null };
   function hook(a) {
     a.onended = ours.ended;
     a.onpause = ours.pause;
     a.onerror = ours.error;
   }
+  const mine = () => A.el().onended === ours.ended;
+  // 开封府那边把放声音的东西停了（切到后台、来电话）：画面上跟着停；放到哪儿还记着，再点接着放
+  const lost = () => {
+    if (!dead) syncIcons();
+  };
   function startAudio(v, where) {
     const a = A.el();
-    if (!playing || playing.v !== v || loaded !== v.id || a.onended !== ours.ended) {
+    if (loaded !== v.id || !loadedSrc || a.src !== loadedSrc) {
       const url = A.urlOf(v.id);
       if (!url) {
         api.toast("这条语音还没同步过来，放不出来");
         return false;
       }
-      A.claim();
+      if (!mine()) A.claim(lost);
       hook(a);
       a.pause();
       A.load(a, url);
       loaded = v.id;
+      loadedSrc = a.src;
       try {
         a.currentTime = 0;
       } catch (e) {}
+    } else {
+      // 还是装着的这一条：被停下过的拿回来接着放；放完了的、换了一处放的（第一页放过、到第二页再点）从头
+      if (!mine()) {
+        A.claim(lost);
+        hook(a);
+      }
+      if (!playing || playing.v !== v)
+        try {
+          a.currentTime = 0;
+        } catch (e) {}
     }
     playing = { v, where };
     const p = a.play();
     if (p && p.catch)
-      p.catch(() => {
-        if (playing && playing.v === v && a.paused) {
-          playing = null;
-          syncIcons();
-        }
+      p.catch((er) => {
+        if (dead || !playing || playing.v !== v || !a.paused) return;
+        syncIcons();
+        // iPhone 没认出是她手指点的那一下，不让出声：说一声（再点一下一般就行）
+        if (er && er.name === "NotAllowedError") api.toast("手机没让放出声来，再点一下试试");
       });
     return true;
   }
@@ -298,6 +317,7 @@ export function mountBox(root, api) {
     if (!playing) return;
     playing = null;
     loaded = "";
+    loadedSrc = "";
     syncIcons();
     api.toast("这条语音放不出来");
   };
@@ -354,11 +374,13 @@ export function mountBox(root, api) {
   let H = 640;
   let G = null;
   let safeT = 0;
+  let safeB = 0;
   function measure() {
     const r = stage.getBoundingClientRect();
     W = r.width || 360;
     H = r.height || 640;
     safeT = $("cy-safe").getBoundingClientRect().height || 0;
+    safeB = $("cy-safeb").getBoundingClientRect().height || 0;
     const bw = clamp(W * 0.47, 150, 230);
     const fh = bw * 0.5;
     const cx = W / 2;
@@ -500,7 +522,8 @@ export function mountBox(root, api) {
   // 在匣子里：整条藏在缝底下；冒出来：整条刚好离开那道缝
   const P_inside = () => ({ x: G.cx, y: G.seam + 46, r: 90 + P.tilt, sx: 86 / sw, sy: 26 / sh, o: 0 });
   const P_pop = () => ({ x: G.cx + 3, y: G.seam - 52, r: P.unfoldTurn + P.tilt, sx: 86 / sw, sy: 26 / sh, o: 0 });
-  const P_open = () => ({ x: G.cx, y: G.bottom + 26 + sh / 2, r: 0, sx: 1, sy: 1, o: 1 });
+  // 落在匣子前面；纸条长（展开了）也不过屏幕底下那一条（iPhone 底下那一横留出来）
+  const P_open = () => ({ x: G.cx, y: Math.max(G.bottom + 26, Math.min(G.bottom + 26 + sh / 2, H - safeB - 12 - sh / 2)), r: 0, sx: 1, sy: 1, o: 1 });
   function paintStrip1() {
     const dy = -P.stripRise * H * focus;
     const g = 1 + (P.stripGrow - 1) * focus;
@@ -523,12 +546,21 @@ export function mountBox(root, api) {
     paintStrip1();
   }
   const wordsOf = (v) => v.trad || v.text;
+  // 收着最多四行；展开了照屏幕上放得下的行数（太长的那种展开了也还是截着，不出屏幕）
+  function linesFit() {
+    const lh = parseFloat(getComputedStyle(words1).lineHeight) || 31.5;
+    const chrome = s1.offsetHeight - words1.offsetHeight; // 纸边、年月日那一行
+    return Math.max(4, Math.floor((H - safeB - 12 - (G.bottom + 26) - chrome) / lh));
+  }
+  function setOpened(on) {
+    opened = on;
+    words1.style.webkitLineClamp = on ? String(linesFit()) : "";
+  }
   function fillStrip1(v) {
     s1.dataset.paper = STRIPS[paperOf(v.id)];
     words1.textContent = wordsOf(v);
     date1.textContent = cnDate(v.at);
-    opened = false;
-    words1.classList.add("cy-clamp");
+    setOpened(false);
     playIcon(play1, false);
     layoutStrip1();
     // 四行放不下：点那几行字展开、再点收起（不摆按钮）
@@ -536,19 +568,38 @@ export function mountBox(root, api) {
     sh = s1.offsetHeight;
     paintPaper(s1, sw, sh);
   }
-  // 刻本体到了以后纸条重新量一回（抽的时候等不及先用宋体摆出来的那种）
+  // 刻本体到了、繁体换上了：纸条重新量一回，落的地方跟着挪
   function refit(v) {
     if (dead || cur !== v || s1.style.display === "none") return;
-    expandable = words1.classList.contains("cy-clamp") ? words1.scrollHeight > words1.clientHeight + 2 : expandable;
+    if (!opened) expandable = words1.scrollHeight > words1.clientHeight + 2;
     const h = s1.offsetHeight;
-    if (Math.abs(h - sh) < 0.5) return;
-    sh = h;
-    paintPaper(s1, sw, sh);
+    if (Math.abs(h - sh) >= 0.5) {
+      sh = h;
+      paintPaper(s1, sw, sh);
+    }
     if (state === "open") {
-      pose.y = P_open().y;
-      paintStrip1();
+      const y = P_open().y;
+      if (Math.abs(pose.y - y) >= 0.5) {
+        pose.y = y;
+        paintStrip1();
+      }
     }
   }
+  // 眼前这一张换字（繁体补好了）
+  function swapWords(v) {
+    if (words1.textContent === wordsOf(v)) return;
+    words1.textContent = wordsOf(v);
+    if (opened) setOpened(true);
+    refit(v);
+    fontsFor(wordsOf(v)).then(() => refit(v));
+  }
+  // 眼前这一张不在匣子里了（第二页上、别的设备上移出了）：声音停下，收回去（正抽着的，抽完了再收）
+  function dropCur() {
+    if (playing && playing.where === 1) stopAudio();
+    syncIcons();
+    if (state === "open") putBack();
+  }
+  const inBoxNow = (v) => voices.some((x) => x.id === v.id);
   function choose() {
     next = pickFrom(voices, lastId);
     if (next) fontsFor(wordsOf(next));
@@ -610,7 +661,12 @@ export function mountBox(root, api) {
       pose.r = lerp(b.r, 0, E.outBack(Math.min(1, t * 1.15), 1.2));
       paintStrip1();
     }, E.inOutCubic);
+    if (dead || cur !== v) return;
     setState("open");
+    // 抽的工夫里：这一条被移出了的收回去；繁体补好了的换上；刻本体到了的照新的量
+    if (!inBoxNow(v)) return putBack();
+    if (words1.textContent !== wordsOf(v)) swapWords(v);
+    else refit(v);
   }
   async function putBack() {
     if (state !== "open" || !cur) return;
@@ -735,10 +791,12 @@ export function mountBox(root, api) {
     r.q.textContent = full;
     r.prog.style.strokeDasharray = RING_C.toFixed(2);
     r.prog.style.strokeDashoffset = RING_C.toFixed(2);
-    // 键盘也按得动（手指走下面“手指”那一套）
-    r.btn.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), togglePlay(r)));
-    el.querySelector(".cy-body").addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setOpen(openRow === r ? null : r)));
-    el.querySelector(".cy-out").addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), removeRow(r)));
+    // 键盘、读屏也按得动（手指走下面“手指”那一套；见 viaKeys）
+    const body = el.querySelector(".cy-body");
+    r.btn.addEventListener("click", (e) => viaKeys(e) && togglePlay(r));
+    el.querySelector(".cy-out").addEventListener("click", (e) => viaKeys(e) && openRow === r && removeRow(r));
+    body.addEventListener("click", (e) => viaKeys(e) && !e.target.closest(".cy-out") && setOpen(openRow === r ? null : r));
+    body.addEventListener("keydown", (e) => e.target === body && (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setOpen(openRow === r ? null : r)));
     return r;
   }
   function buildDeck(keepScroll) {
@@ -990,7 +1048,13 @@ export function mountBox(root, api) {
   const page = new Spr(0);
   function paintPages() {
     pagesEl.style.transform = `translateY(${-page.x * H}px)`;
-    mark("page", page.x > 0.5 ? 1 : 0);
+    const n = page.x > 0.5 ? 1 : 0;
+    if (root.dataset.page === String(n)) return;
+    mark("page", n);
+    // 读屏只念眼前这一页
+    $("cy-p1").setAttribute("aria-hidden", n ? "true" : "false");
+    $("cy-p2").setAttribute("aria-hidden", n ? "false" : "true");
+    $("cy-flip").textContent = n ? "回到匣子" : "看藏音匣里的全部";
   }
   function stepPage(dt) {
     page.step(dt, P.pageK, P.pageC);
@@ -1014,7 +1078,12 @@ export function mountBox(root, api) {
   let finger = null;
   const inUI = (el) => !!(el && el.closest && el.closest(".cy-ui"));
   const onDown = (e) => {
-    if (finger || inUI(e.target)) return;
+    if (inUI(e.target)) return;
+    if (finger) {
+      // 第二根手指不管；上一根手指没收尾（抬起来那一下没传到）又按下来头一根：上一根当取消了
+      if (!e.isPrimary) return;
+      up({ pointerId: finger.id }, true);
+    }
     const r = stage.getBoundingClientRect();
     const x = e.clientX - r.left;
     const y = e.clientY - r.top;
@@ -1118,8 +1187,7 @@ export function mountBox(root, api) {
     if (onStrip) {
       if (target.closest(".cy-play")) return toggle1();
       if (target.closest(".cy-words") && expandable) {
-        opened = !opened;
-        words1.classList.toggle("cy-clamp", !opened);
+        setOpened(!opened);
         sh = s1.offsetHeight;
         paintPaper(s1, sw, sh);
         pose.y = P_open().y;
@@ -1141,8 +1209,16 @@ export function mountBox(root, api) {
     if (state === "open") putBack();
   }
 
-  // 第一页纸条上的按钮：键盘也按得动
-  play1.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), toggle1()));
+  // 键盘、读屏（VoiceOver 点两下）按出来的“点击”不带手指（detail 是 0）；手指点的那一下上面“手指”那一套已经管了，
+  // 跟着来的那个点击（detail 是 1）不再算一回
+  play1.addEventListener("click", (e) => viaKeys(e) && toggle1());
+  // 匣子、翻页：给读屏的两个看不见的按钮（手指点匣子、划上划下照旧）
+  $("cy-draw").addEventListener("click", (e) => {
+    if (!viaKeys(e)) return;
+    if (state === "ready") drawOut();
+    else if (state === "open") putBack().then(() => !dead && drawOut());
+  });
+  $("cy-flip").addEventListener("click", (e) => viaKeys(e) && goPage(page.t > 0.5 ? 0 : 1));
   // 左上角很淡的返回：停下声音，回到侧栏
   $("cy-back").addEventListener("click", () => {
     stopAudio();
@@ -1150,10 +1226,8 @@ export function mountBox(root, api) {
   });
   // 切走了：停下
   const onVis = () => {
-    if (document.visibilityState !== "visible" && isPlaying()) {
-      pauseAudio();
-      syncIcons();
-    }
+    if (document.visibilityState !== "visible" && isPlaying()) pauseAudio();
+    syncIcons();
   };
   document.addEventListener("visibilitychange", onVis);
   const onResize = () => {
@@ -1167,6 +1241,8 @@ export function mountBox(root, api) {
     paintBox();
     if (cur && state === "open") {
       layoutStrip1();
+      if (opened) setOpened(true);
+      sh = s1.offsetHeight;
       paintPaper(s1, sw, sh);
       Object.assign(pose, P_open());
       paintStrip1();
@@ -1201,13 +1277,12 @@ export function mountBox(root, api) {
         voices = fresh;
         buildDeck(true);
       }
-      // 眼前这一张：繁体补好了就换上
-      if (cur && byId.has(cur.id)) {
-        cur.trad = byId.get(cur.id).trad;
-        if (state === "open" && words1.textContent !== wordsOf(cur)) {
-          const v = cur;
-          words1.textContent = wordsOf(v);
-          fontsFor(wordsOf(v)).then(() => refit(v));
+      // 眼前这一张：繁体补好了就换上（正抽着的，抽完了换）；移出了就收回去
+      if (cur) {
+        if (!byId.has(cur.id)) dropCur();
+        else {
+          cur.trad = byId.get(cur.id).trad;
+          if (state === "open") swapWords(cur);
         }
       }
       if (!next || !byId.has(next.id)) choose();
