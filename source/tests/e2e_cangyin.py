@@ -4,7 +4,7 @@
 # 刻本体一块一块按需取；转繁体那一包只在点开藏音匣的时候取，转好的记在这台设备上；切到后台停下、回来接着放；
 # 只有语气标签的语音也存得进、移得出；丁香入口点进去也取得到图和字；页面上没有被安全策略拦下的东西。
 # 先在 source/ 里 npm run build:test，起好两个服务（见开发说明），再：python3 tests/e2e_cangyin.py
-import json, re, sys, time
+import json, re, sys, time, urllib.parse
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from playwright.sync_api import sync_playwright
@@ -524,6 +524,36 @@ with sync_playwright() as p:
     g3 = pa.evaluate(GEOM)
     ok(g3["lines"] == 4, "再点字：收回四行")
     pa.mouse.click(40, 840); wait_box(pa, "state", "ready", 5)
+    pa.locator(".cy-back").click(); pa.wait_for_timeout(500)
+    if pa.locator("div.absolute.inset-0.z-30").count():
+        pa.locator("div.absolute.inset-0.z-30").click(); pa.wait_for_timeout(600)
+
+    # ================= 正在藏音匣里放，他打来了：开封府那边停下放声音的东西，这一页上跟着停；挂了再点接着放 =================
+    # （切到后台那一回这一页自己也看得见，这一回只有开封府那边叫一声 lost 才知道）
+    long_kept = next(iter(stored(pa)[0]), "")
+    mock("/__debug/claude-hold?ms=10000")
+    mock("/__debug/reply-queue?text=" + urllib.parse.quote("[CALL]\n在听什么呢。"))
+    say(pa, "嗯")
+    nanya_rows(pa)
+    open_box(pa)
+    swipe(pa, 200, 700, 300)
+    wait_box(pa, "page", "1", 3); pa.wait_for_timeout(500)
+    tap(pa, ".cy-ring", 0)
+    was_playing = wait_box(pa, "playing", long_kept, 3)
+    rang = wait_js(pa, "!!document.querySelector('.kfs-ring')", 20000)
+    pa.wait_for_timeout(500)
+    b = box(pa)
+    on_cls = pa.evaluate("document.querySelector('.cy-vrow').classList.contains('cy-on')")
+    t_before = pa.evaluate("window.__kfsAudio.currentTime")
+    ok(was_playing and rang and b.get("playing") is None and pa.evaluate("window.__kfsAudio.paused") and not on_cls,
+       f"藏音匣里正放着，他打来了：来电页面出来，这一页上跟着停（{b}）")
+    pa.locator(".kfs-ring button[aria-label='挂断']").click(); pa.wait_for_timeout(700)
+    tap(pa, ".cy-ring", 0)
+    pa.wait_for_timeout(500)
+    t_after = pa.evaluate("window.__kfsAudio.currentTime")
+    ok(pa.locator(".kfs-cangyin").count() == 1 and box(pa).get("playing") == long_kept and t_after >= t_before > 0.3,
+       f"挂了：还在藏音匣里，再点接着放（{t_before:.1f} → {t_after:.1f} 秒）")
+    tap(pa, ".cy-ring", 0); pa.wait_for_timeout(300)
     pa.locator(".cy-back").click(); pa.wait_for_timeout(500)
 
     csp = pa.evaluate("window.__kfsCsp")
