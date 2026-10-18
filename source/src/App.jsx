@@ -1430,6 +1430,8 @@ export default function App({ account = {} }) {
   // opts.signal 是她按停的时候要拉的那根线：拉了，这里抛 code 是 stopped 的错，而且保证不再把回话整理出来
   // （整理回话的那一下会换头像、改名字、记用量：按了停的那一回，这些都不能发生）。
   // 这个保证是下面两头给的：新路 mail.js 的 guarded，老路 cloud.js 的 callClaude，按了停都只抛 stopped、不交回话
+  // 回来的是要开封府替他办的一步（翻日记、下棋），可那一回不是这台发的（见 ownJob）
+  const notMine = (info, data) => !!info && !ownJob(info) && !!data && data.stop_reason === "tool_use" && toolCallsOf(data.content, CALL_NAMES).length > 0;
   const requestReply = async (msgs, opts = {}) => {
     const signal = opts.signal || null;
     if (opts.resume) {
@@ -1437,10 +1439,7 @@ export default function App({ account = {} }) {
       // 守着的是别的设备发的那一回，回来的却是要开封府替他办的一步（翻日记、下棋）：这台不整理、不放，信留着，
       // 让发的那台办（两台都办的话会各要一回后半截）；它关着的话，过 STEP_GRACE 这台再替它办（见 applyMail）。
       // 在整理之前就打住：整理那一下会记用量、换头像、改名字，信箱那头回头还要再整理一遍
-      const fromInfo = got.info || opts.resume.info;
-      if (!ownJob(fromInfo) && got.data && got.data.stop_reason === "tool_use" && toolCallsOf(got.data.content, CALL_NAMES).length) {
-        throw Object.assign(new Error("发的那台替他办"), { code: "elsewhere" });
-      }
+      if (notMine(got.info || opts.resume.info, got.data)) throw Object.assign(new Error("发的那台替他办"), { code: "elsewhere" });
       return { him: digestReply(got.data, got.used, (got.info && got.info.extra) || null, got.job, got.at ? Math.min(Date.now(), got.at) : 0), settle: got.settle };
     }
     const st = settingsRef.current;
@@ -1533,6 +1532,9 @@ export default function App({ account = {} }) {
         // 是工具连不上、摘了工具才通的，不算缓存的毛病；是 Anthropic 一时出岔子、小后端才换的写法（shaky），也不算：
         // 记了的话，它挤上两三秒，她这一趟后面的每句话都不带缓存、按全价算
         if (first.cache && !got.used.cache && !got.used.shaky && !!got.used.mcp === !!first.mcp) flagsRef.current.noCacheAt = Date.now();
+        // 她点“重发”找回来的是别的设备发的那一回（这台守着它的时候断过网，记得它；见 mail.js 的 asking），回来的是要替他办的一步：
+        // 跟守信箱那一支一样打住，让发的那台办（不然两台各要一回后半截）
+        if (notMine(got.info, got.data)) throw Object.assign(new Error("发的那台替他办"), { code: "elsewhere" });
         // 从信箱里取的：算小后端放进去那会儿到的（切走半天才回来取，不该显示成刚到）
         return { him: digestReply(got.data, got.used, ctx, got.job, got.at ? Math.min(Date.now(), got.at) : 0), settle: got.settle };
       } catch (e) {
