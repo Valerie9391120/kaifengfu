@@ -77,6 +77,7 @@ import {
   TY_STYLES,
   TY_PHOTO_MAX,
   TY_STALE,
+  TY_WAIT,
   madeDays,
   infoOf,
   notesOf,
@@ -4217,18 +4218,31 @@ export default function App({ account = {} }) {
       const at = (was && was.at) || (wxRec && wxRec.at) || "";
       const q = tyArrangeAsk({ label, her: namesRef.current.her || HER_NAME, quotes: mats.quotes, photos: shown, diary, wx, at, wish: ask.text, keep });
       let data;
+      // 等他最多五分钟：一直没回（网卡住了），这一台上“在排”就一直转、别处也收拾不了（这一天在 tyBusy 里），当没排成
+      const ac = new AbortController();
+      let late = false;
+      const timer = setTimeout(() => {
+        late = true;
+        ac.abort();
+      }, TY_WAIT);
       try {
-        data = await callClaude({
-          model,
-          max_tokens: thinksFirst(model) ? 8000 : 3000,
-          system: [
-            { type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } },
-            { type: "text", text: q.rule },
-          ],
-          messages: [{ role: "user", content: [{ type: "text", text: `${q.text}\n\n${nowNote}` }].concat(blocks) }],
-        });
+        data = await callClaude(
+          {
+            model,
+            max_tokens: thinksFirst(model) ? 8000 : 3000,
+            system: [
+              { type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } },
+              { type: "text", text: q.rule },
+            ],
+            messages: [{ role: "user", content: [{ type: "text", text: `${q.text}\n\n${nowNote}` }].concat(blocks) }],
+          },
+          undefined,
+          ac.signal
+        );
       } catch (e) {
-        throw Object.assign(new Error(String((e && e.message) || e)), { why: "没连上，等一会儿再交给我一回" });
+        throw Object.assign(new Error(String((e && e.message) || e)), { why: late ? "等了好久没回来，再交给我一回试试" : "没连上，等一会儿再交给我一回" });
+      } finally {
+        clearTimeout(timer);
       }
       recordUsage(data);
       const said = (data.content || [])
@@ -4273,8 +4287,9 @@ export default function App({ account = {} }) {
           steps: done,
         })
       );
-      // 这一页同页记着的版式风格要是她没改过（离开那一天的时候自动记的），拿掉：照他挑的摆
-      if (!keep.look && store.peek(`${TY_LS}journalLook:${day}`) != null) {
+      // 这一页同页记着的版式风格要是她没改过（离开那一天的时候自动记的），拿掉：照他挑的摆。
+      // 这会儿再看一眼（他排着的时候她要是挑了版式风格，照她的）
+      if (!keep.look && !herLookOf(store, day, was) && store.peek(`${TY_LS}journalLook:${day}`) != null) {
         await store.del(`${TY_LS}journalLook:${day}`);
         tyChanged([`${TY_LS}journalLook:${day}`]);
       }

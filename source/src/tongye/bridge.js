@@ -611,21 +611,35 @@ window.__kfsAskRef = (u) => {
   if (owners.has(s)) return IMG + owners.get(s);
   return s;
 };
-// “光义刚更新了这一页”（同页收 day 的时候，tools/tongye.mjs 换的那一句问这里）：只在他真的排好了一回的时候说。
-// 同页每收一回 day 就把每一天都再收一遍：打开以前排好的、同一回排好的说过了的、他正排着、没排成放回原样的，都不说
-const OPENED_AT = Date.now();
-const hisSaid = new Map();
+// “光义刚更新了这一页”（同页收 day 的时候，tools/tongye.mjs 换的那一句问这里）：只在他新排好的那一回说。
+// 同页收 day 的时候先告诉这里（__kfsIngest，tools/tongye.mjs 在 ingestDay 开头加的）：记下那一天上一回收到的是哪一份（钟点 ts）。
+// 她开着那一页的时候收到他排好的、钟点跟上一回不一样（新排好的），才说。她自己起标题、另一台设备改了、别的日子在排，
+// 那一天的钟点都不变，不说；打开以前就排好的（头一回收到）、他正排着、没排成放回原样的，也不说
+const dayTs = new Map(); // 那一天上一回收到的 day 的钟点
+const fresh = new Set(); // 这一回收到的那一天是新的一份（钟点变了）
+window.__kfsIngest = (R) => {
+  if (!R || !R.day) return;
+  const before = dayTs.get(R.day);
+  dayTs.set(R.day, R.ts);
+  if (before !== undefined && before !== R.ts) fresh.add(R.day);
+  else fresh.delete(R.day);
+  // 她正开着起标题那一条：跟着收到的这一份（同页这就把题签重摆一遍，她打着的字摆完再摆回去）
+  const o = ti;
+  if (o && o.md === R.day) {
+    o.R = R;
+    if (o.typed) setTimeout(() => ti === o && showTitle(o.h2, titleOf(norm(o.inp.value), o.R, o.md)), 0);
+  }
+};
 window.__kfsHisNew = (R) => {
-  if (!R || R.by !== "me" || R.status !== "done" || !(Number(R.ts) > OPENED_AT) || (R.steps || []).some((s) => s && s.fail)) return false;
-  if (hisSaid.get(R.day) === R.ts) return false;
-  hisSaid.set(R.day, R.ts);
-  return true;
+  if (!R || !fresh.has(R.day)) return false;
+  fresh.delete(R.day);
+  return R.by === "me" && R.status === "done" && !(R.steps || []).some((s) => s && s.fail);
 };
 
 // ---------- 她自己起标题（第二步；她 10 月 18 日看了样子说“可以 老公请施工～”）：点纸上的题签，底下冒出一条打标题 ----------
 // 存在那一天的 day 里（herTitle，host.js 的 setTitle；他排的时候不盖）。清空就用回原来的（他起过就用他的，没起过写日子）。
 // 跟同页自己改字那一条一样：边打纸上边换，点“好”、回车、点别处都算定了；Esc 是不改了。
-// 正开着“批注”“拆零件”的时候点题签，照旧是批注、拆零件，不冒这一条
+// 正开着“批注”的时候点题签，照旧是批注，不冒这一条（拆零件那一颗藏着；开着的话也一样）
 let ti = null; // 开着的那一条：{ box, h2, md, full, was（打开时纸上的）, R（那一天的 day，取回来以前是 null）, got }
 const hisName = () => {
   try {
@@ -647,23 +661,27 @@ const hisTitle = (R) => (R && R.by === "me" && R.title) || "";
 const herTitleOf = (R) => (R ? R.herTitle || (R.by !== "me" && R.title) || "" : null);
 // 纸上该摆的：她起的，没有就他起的，再没有写日子
 const titleOf = (t, R, md) => t || hisTitle(R) || md;
+// 标题一行：空白（连全角空格、换行）收成一个空格再比（他起的里头要是有，她点开不改就走，不算她改了）
+const norm = (x) => String(x || "").replace(/\s+/g, " ").trim();
 function closeTitle(keep) {
   const o = ti;
   if (!o) return;
   ti = null;
   o.box.remove();
-  // 不改了：她打过字（纸上换过）才换回去；没打过的不碰（开着的时候那一天要是又摆了一回，纸上已经是新的）
+  // 纸上该摆回去的：照手上最新的那一份（开着的时候收到过新的，见 __kfsIngest）；没取回那一天的 day，照打开的时候纸上的
+  const back = () => (o.R ? titleOf(herTitleOf(o.R), o.R, o.md) : o.was);
+  // 不改了：她打过字（纸上换过）才换回去；没打过的不碰
   if (!keep) {
-    if (o.typed) showTitle(o.h2, o.was);
+    if (o.typed) showTitle(o.h2, back());
     return;
   }
-  const t = o.inp.value.replace(/\s+/g, " ").trim();
+  const t = norm(o.inp.value);
   (async () => {
     await o.got;
     const had = herTitleOf(o.R);
     // 没改：跟她起的一样；没起过的，跟他起的一样（不把他起的当成她起的存下）；没取回那一天的 day，照打开的时候纸上的比
-    if (had === null ? t === (o.was === o.md ? "" : o.was) : t === had || (!had && t === hisTitle(o.R))) {
-      if (o.typed) showTitle(o.h2, titleOf(t, o.R, o.md));
+    if (had === null ? t === norm(o.was === o.md ? "" : o.was) : t === norm(had) || (!had && t === norm(hisTitle(o.R)))) {
+      if (o.typed) showTitle(o.h2, back());
       return;
     }
     showTitle(o.h2, titleOf(t, o.R, o.md));
@@ -674,7 +692,7 @@ function closeTitle(keep) {
       ok = false;
     }
     if (!ok) {
-      showTitle(o.h2, o.was);
+      showTitle(o.h2, back());
       try {
         // eslint-disable-next-line no-undef
         if (typeof toast === "function") toast("标题没存上，再试一回");
@@ -709,7 +727,7 @@ function openTitle(h2) {
   ti = o;
   o.got = ask("get", { k: KV + "day/" + full })
     .then((v) => {
-      o.R = typeof v === "string" ? parseJson(v) : null;
+      if (!o.R) o.R = typeof v === "string" ? parseJson(v) : null;
       if (ti !== o) return;
       if (o.R && !o.typed) {
         inp.value = herTitleOf(o.R) || hisTitle(o.R);
@@ -720,7 +738,7 @@ function openTitle(h2) {
     .catch(() => {});
   inp.addEventListener("input", () => {
     o.typed = true;
-    showTitle(h2, titleOf(inp.value.replace(/\s+/g, " ").trim(), o.R, md));
+    showTitle(h2, titleOf(norm(inp.value), o.R, md));
   });
   inp.addEventListener("keydown", (e) => {
     // 拼音还在候选里的那一下回车是选字，不算定了

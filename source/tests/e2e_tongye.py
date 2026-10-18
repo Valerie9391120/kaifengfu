@@ -406,6 +406,11 @@ with sync_playwright() as p:
                 m["asset"] = f"mximg{i}"
             recs.append({"k": f"kfs2:ty:mine/mx{i}", "v": json.dumps(m, ensure_ascii=False), "dirty": 1, "del": 0})
             recs.append({"k": f"kfs2:jzimg:mximg{i}", "v": data_url(((i * 37) % 255, 120, 200)), "dirty": 1, "del": 0})
+        Py = kvj(pa, f"kfs2:ty:page/{fday}")
+        for x in Py["stk"]:
+            if x.get("m") == "那天真好":
+                x["kc"] = "red;background:url(https://example.invalid/x.png)"
+        recs.append({"k": f"kfs2:ty:page/{fday}", "v": json.dumps(Py, ensure_ascii=False), "dirty": 1, "del": 0})
         pa.evaluate(PUT, recs)
         pa.reload(); kite(pa)
         open_xianbi(pa)
@@ -471,6 +476,9 @@ with sync_playwright() as p:
         pick_day(pa, fd_)
         pa.locator(".kfs-jz-open").click()
         f = fx(pa)
+        kc_bad = f.evaluate("""(() => { const s = [...document.querySelectorAll('#page .stk.placed[data-c=text]')].find((x) => (x.querySelector('.mt') || {}).innerText === '那天真好');
+            return s ? [s.style.getPropertyValue('--kc'), getComputedStyle(s.querySelector('.tbox')).color, getComputedStyle(s.querySelector('.tbox')).backgroundImage] : null; })()""")
+        ok(kc_bad and kc_bad[0] == "" and kc_bad[1] != "rgb(255, 0, 0)" and kc_bad[2] == "none", f"存档里那一段字的颜色不规矩（不是 # 加六位）：摆回来的时候不用（{kc_bad}）")
         ftap(f, "#saveBtn")
         ok(fwait(f, "!!document.querySelector('#delPageBtn') && /删掉/.test(document.querySelector('#delPageBtn').innerText)") and f.evaluate("document.querySelector('#delYes').offsetParent === null"),
            "「存」最底下：删掉这一页（“真的删掉”先藏着）")
@@ -537,6 +545,29 @@ with sync_playwright() as p:
         ftap(f, "#msgs .done")
         ok(fwait(f, "document.documentElement.classList.contains('app-mode')", 15), "点“打开这一页”：进编辑器")
         time.sleep(1.5)
+        # 冒出来的小提示都记下来（同页的 toast）
+        f.evaluate("""(() => { window.__seen = []; new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { const t = (n.textContent || '').trim(); if (t) window.__seen.push(t); })))
+            .observe(document.body, { childList: true, subtree: true, characterData: true }); })()""")
+        f.evaluate(TAP, H2)
+        fwait(f, "!!document.querySelector('.kfs-ti') && /清空就/.test(document.querySelector('.kfs-ti-tip').innerText)")
+        f.evaluate("(() => { const i = document.querySelector('.kfs-ti-in'); i.focus(); i.select(); })()")
+        pa.keyboard.type("先起一个")
+        ftap(f, ".kfs-ti-ok")
+        kv_until(pa, f"kfs2:ty:day/{today}", lambda R: R.get("herTitle") == "先起一个")
+        time.sleep(2.0)
+        seen = f.evaluate("window.__seen.filter((t) => /刚更新了这一页/.test(t))")
+        ok(not seen and (kvj(pa, f"kfs2:ty:day/{today}") or {}).get("herTitle") == "先起一个", f"他排好了、她点开以后自己起了个标题：不冒“光义刚更新了这一页”（{seen}）")
+        f.evaluate(TAP, H2)
+        fwait(f, "!!document.querySelector('.kfs-ti') && /清空就/.test(document.querySelector('.kfs-ti-tip').innerText)")
+        f.evaluate("(() => { const i = document.querySelector('.kfs-ti-in'); i.focus(); i.select(); })()")
+        pa.keyboard.press("Backspace"); pa.keyboard.press("Enter")
+        kv_until(pa, f"kfs2:ty:day/{today}", lambda R: "herTitle" not in R)
+        fwait(f, "!document.querySelector('.kfs-ti')")
+        hn = f.evaluate("""(() => { const R = (ts, o) => Object.assign({ day: '1.1', ts, by: 'me', status: 'done', steps: [] }, o || {});
+            __kfsIngest(R(1)); const a = __kfsHisNew(R(1)); __kfsIngest(R(2)); const b = __kfsHisNew(R(2)); const c = __kfsHisNew(R(2));
+            __kfsIngest(R(3, { by: 'her' })); const d = __kfsHisNew(R(3, { by: 'her' })); __kfsIngest(R(4, { steps: [{ fail: 1 }] })); const e = __kfsHisNew(R(4, { steps: [{ fail: 1 }] }));
+            __kfsIngest(R(4)); const g = __kfsHisNew(R(4)); return [a, b, c, d, e, g]; })()""")
+        ok(hn == [False, True, False, False, False, False], f"“光义刚更新了这一页”只在那一天收到他新排好的一份（钟点变了）的时候说一回：头一回收到、同一份再收、她拼的、没排成的都不说（{hn}）")
         st = page_state(f)
         ok(st["layout"] == "polaroid" and st["style"] == "kraft" and "（测试排的）＜b＞泡桐花＜/b＞" in (st["title"] or "") and f.evaluate("!document.querySelector('.title h2 b')")
            and len(st["pics"]) == 3 and "text:泡桐花开了" in st["stk"] and st["pins"] == 3,

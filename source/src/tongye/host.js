@@ -135,7 +135,7 @@ export async function ensureDay(store, day, now = Date.now()) {
   const w = parse(store.peek(`${TY_KV}wx/${day}`));
   if (w && Number.isFinite(w.code)) {
     R.wx = { code: w.code, hi: w.hi, lo: w.lo, mm: w.mm || 0, wind: w.wind || 0, sun: w.sun || "—", src: w.src || "open-meteo" };
-    if (w.at) R.at = w.at;
+    if (w.at) R.at = tyClean(String(w.at), 40);
   }
   await ok(store.set(`${TY_KV}day/${day}`, JSON.stringify(R)));
   tyChanged([`${TY_KV}day/${day}`]);
@@ -330,7 +330,7 @@ export function migrateOld(oldPage, oldNotes, day, now = Date.now()) {
     title,
     layout: OLD_LAYOUT[p.layout] || "column",
     style: OLD_STYLE[p.style] || "qingmo",
-    at: (p.wx && p.wx.city) || "",
+    at: tyClean(String((p.wx && p.wx.city) || ""), 40),
     text,
     photos: a.photos.map((x) => ({ src: "kfsimg:" + x.id, role: x.role === "hero" || x.role === "pair" ? x.role : "", note: x.note || "" })),
     chat: a.quotes.map((q) => ({ w: q.w === "him" ? "me" : "her", t: q.t, p: q.p })),
@@ -404,7 +404,7 @@ export async function fillWeather(store, day, cfg, fetchWx) {
     const city = cfg && cfg.city;
     if (!city) return null;
     const w = await fetchWx(city, day);
-    rec = { at: city.name, code: w.code, hi: w.hi, lo: w.lo, mm: w.mm || 0, wind: Number.isFinite(w.wind) ? w.wind : 0, sun: w.sun || "—", src: "open-meteo" };
+    rec = { at: tyClean(String(city.name || ""), 40), code: w.code, hi: w.hi, lo: w.lo, mm: w.mm || 0, wind: Number.isFinite(w.wind) ? w.wind : 0, sun: w.sun || "—", src: "open-meteo" };
     await ok(store.set(`${TY_KV}wx/${day}`, JSON.stringify(rec)));
     keys.push(`${TY_KV}wx/${day}`);
     fetched = true;
@@ -413,7 +413,7 @@ export async function fillWeather(store, day, cfg, fetchWx) {
   if (R && !R.wx && Number.isFinite(rec.code)) {
     // 同页收这一页的时候拿 R.wx 整个盖掉那一天的天气（不是合并）：日落也写进来，不然天气贴纸上的日落没了
     R.wx = { code: rec.code, hi: rec.hi, lo: rec.lo, mm: rec.mm || 0, wind: rec.wind || 0, sun: rec.sun || "—", src: rec.src || "open-meteo" };
-    if (!R.at && rec.at) R.at = rec.at;
+    if (!R.at && rec.at) R.at = tyClean(String(rec.at), 40);
     await ok(store.set(`${TY_KV}day/${day}`, JSON.stringify(R)));
     keys.push(`${TY_KV}day/${day}`);
   }
@@ -445,6 +445,7 @@ export const tyKitList = (kind) =>
 export const TY_PHOTO_MAX = 10; // 寄给他看几张（长边 512）
 export const TY_QUOTE_MAX = 8; // 一页最多摆几句原话（同页的原话便签最多摆八句）
 export const TY_STALE = 10 * 60 * 1000; // 排了十分钟还没排完：当排到一半断了（开封府被关了）
+export const TY_WAIT = 5 * 60 * 1000; // 问他那一回最多等五分钟（比上面那个短：这一台自己先说没排成）
 export const tyTag = (i) => `照片${i + 1}`;
 const ROLES = ["hero", "pair", "sh"];
 // 他留批注能贴的几块（同页的零件）
@@ -589,7 +590,8 @@ export function parseTyArrange(said, quotes = [], tags = []) {
   const has = (obj, k) => typeof k === "string" && Object.prototype.hasOwnProperty.call(obj, k);
   const layout = has(TY_LAYOUTS, o.layout) && o.layout !== "routemap" ? o.layout : "";
   const style = has(TY_STYLES, o.style) ? o.style : "";
-  const title = tyClean(o.title, 40);
+  // 标题一行：空白（连全角空格、换行）收成一个空格，同她起的（不然她点开题签不改就走，会当成她改了）
+  const title = tyClean(typeof o.title === "string" ? o.title.replace(/\s+/g, " ") : o.title, 40);
   const n = o.note && typeof o.note === "object" ? o.note : null;
   const nt = n ? tyClean(n.text, 300) : "";
   const note = nt ? { text: nt, b: NOTE_BLOCKS.includes(n.b) ? n.b : "" } : null;
@@ -598,10 +600,17 @@ export function parseTyArrange(said, quotes = [], tags = []) {
   return { layout, style, title, text, quotes: qs, photos, note };
 }
 
-// 交给他了：那一天的 day 记上“在排”。排之前有页的照旧摆着（同页照 steps 亮“在排”），那一份记在 mk.prev（没排成放回去）
+// 交给他了：那一天的 day 记上“在排”。排之前有页的照旧摆着（同页照 steps 亮“在排”），那一份记在 mk.prev（没排成放回去）。
+// 上一回排到一半断了的（还记着“在排”，过了十分钟又交给他）：排之前那一份照它记着的 mk.prev，不然没排成的时候放不回去；
+// 她起的标题照这会儿的（排着的那一份上她可能刚起过、清空过）
 export function makingDay(prev, day, steps, now = Date.now()) {
-  const was = prev && prev.status !== "failed" && prev.status !== "making" ? prev : null;
-  return { ...(was || { day, by: "me", title: "", ts: now }), status: "making", steps, mk: { at: now, prev: was } };
+  const base = prev && prev.status === "making" ? (prev.mk && prev.mk.prev) || null : prev;
+  const was = base && base.status !== "failed" && base.status !== "making" ? base : null;
+  const R = { ...(was || { day, by: "me", title: "", ts: now }), status: "making", steps, mk: { at: now, prev: was } };
+  const her = prev && prev.status === "making" ? (typeof prev.herTitle === "string" ? prev.herTitle : "") : (was && was.herTitle) || "";
+  if (her) R.herTitle = her;
+  else delete R.herTitle;
+  return R;
 }
 // 没排成：排之前有页的放回去（记一步“没排成”，同页“在排”那一栏照着说）；没有的记一个 failed（什么都没有，日历上不标、同页不起页）。
 // 他排的那一会儿她起了标题（herTitle：排着的那一份上记着的）：照她起的；原来没有页的，就起成她的一页
