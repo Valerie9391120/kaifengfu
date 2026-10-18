@@ -4,6 +4,7 @@ import { build } from "esbuild";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { makeTongye } from "./tools/tongye.mjs";
 
 const OUT = process.env.KFS_OUT || "dist";
 const TEST_URL = process.env.KFS_TEST_URL || "";
@@ -126,14 +127,32 @@ const s2tName = await side("src/cangyin/s2t.js", "s2t", {
   footer: { js: "/*!\n" + openccLic + "\n*/" },
 });
 define.__KFS_S2T__ = JSON.stringify(`./${s2tName}`);
-// 手帐贴纸里 Fluent Emoji 那几栏的图（src/jz/stickers.js 照 vendor/fluent-emoji/ 里的 SVG 原文打进来）：单独一包，头一回打开手帐才取。
-// 两份 MIT 的授权写在包头上，原文见 vendor/fluent-emoji/LICENSE.md
-const jzstkName = await side("src/jz/stickers.js", "jzstk", {
-  loader: { ".svg": "text" },
+// 原来那一版手帐的 Fluent Emoji 贴纸包（src/jz/stickers.js → assets/jzstk-<指纹>.js）：闲笔集换成同页以后用不着了，不再打（同页的贴纸都在它那一页里）
+// 同页（TangfanOVO/tongye 那一本手帐，作者同意了搬进来，见 vendor/tongye/KFS.md）：照原样拿它那一页，打 tools/tongye.mjs 里那几处补丁，
+// 把开封府那一层（src/tongye/bridge.js）塞进最前面，配上这一页自己的安全规矩（只许跑这几段脚本、只连自己），名字带指纹。
+// 开封府开门不碰它，闲笔集里点手帐的时候才用框装进来（TongyeFrame.jsx 的 TONGYE_URL）
+const tyBridge = await build({
+  entryPoints: ["src/tongye/bridge.js"],
+  bundle: true,
+  minify: true,
+  format: "iife",
+  platform: "browser",
+  target: ["es2020", "safari14"],
+  write: false,
+  legalComments: "none",
   charset: "utf8",
-  banner: { js: "/*! Fluent Emoji (MIT License, Copyright (c) Microsoft Corporation) via fluentui-emoji (MIT License, Copyright (c) 2022 Mohammad Abu Mattar); license texts: vendor/fluent-emoji/LICENSE.md in the kaifengfu repository */" },
+  logLevel: "warning",
 });
-define.__KFS_JZSTK__ = JSON.stringify(`./${jzstkName}`);
+const ty = makeTongye(fs.readFileSync("vendor/tongye/app.html", "utf8"), tyBridge.outputFiles[0].text);
+const tyBuf = Buffer.from(
+  ty.html.replace(
+    "<!doctype html>",
+    "<!doctype html>\n<!-- 同页 · tongye — Copyright (c) 2026 幡幡 (TangfanOVO), AGPL-3.0 (https://github.com/TangfanOVO/tongye); used in 开封府 with the author's permission, patched as listed in tools/tongye.mjs. Bundled assets keep their own licenses: see vendor/tongye/NOTICE.md and vendor/tongye/LICENSE in the kaifengfu repository. -->"
+  )
+);
+const tyName = `tongye-${hash(tyBuf)}.html`;
+fs.writeFileSync(`${OUT}/assets/${tyName}`, tyBuf);
+define.__KFS_TONGYE__ = JSON.stringify(`./assets/${tyName}`);
 
 if (TEST_URL) {
   define.__KFS_SUPABASE_URL__ = JSON.stringify(TEST_URL);
@@ -273,6 +292,6 @@ console.log(`  ${lotusName}  ${size(`${OUT}/assets/${lotusName}`)}`);
 console.log(`  ${jianghuName}  ${size(`${OUT}/assets/${jianghuName}`)}`);
 console.log(`  ${cangyinName}  ${size(`${OUT}/assets/${cangyinName}`)}`);
 console.log(`  ${s2tName}  ${size(`${OUT}/assets/${s2tName}`)}`);
-console.log(`  ${jzstkName}  ${size(`${OUT}/assets/${jzstkName}`)}`);
+console.log(`  ${tyName}  ${size(`${OUT}/assets/${tyName}`)}（同页，${ty.scripts} 段脚本记了指纹）`);
 console.log(`  ${jinhuiCssName} + ${jinhuiDir}/（${jinhui.slices.length} 块，${(jinhuiBufs.reduce((n, b) => n + b.length, 0) / 1024).toFixed(0)} KB）`);
 console.log(`  连接：${SUPABASE_URL}`);

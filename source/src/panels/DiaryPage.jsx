@@ -4,12 +4,12 @@ import { dayKeyOf, ymKeyOf, parseDayKey, MOODS, moodOf, heatLevel, monthCells } 
 import { SERIF, T, glass, chip, chipPrimary, field, fill, HAIR, HAIRLINE } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { Glows, IconBtn } from "../ui/parts.jsx";
-import { JzPage, JzCard } from "../jz/JzPage.jsx";
+import { TongyeFrame } from "../tongye/TongyeFrame.jsx";
+import { TyCard } from "../tongye/TyCard.jsx";
 import { NOTE_MAX } from "../jz/model.js";
 import { clip } from "../recap.js";
-import { newId } from "../util.js";
 
-// 那一天的批注（手帐上的、他翻日记的时候留的，都在这儿；见 jz/model.js）：一条一条摆着，底下能再留一条；
+// 那一天的批注（同页那一本里留的、他翻日记的时候留的，都在这儿；见 tongye/host.js）：一条一条摆着，底下能再留一条；
 // 长按不好找，删就在每一条后头摆一个“删”，点两下才删（跟删日记一样）
 function DayNotes({ notes, onAdd, onDrop }) {
   const [text, setText] = useState("");
@@ -102,9 +102,9 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
   const [writing, setWriting] = useState(false);
   const [err, setErr] = useState("");
   const [armed, setArmed] = useState(null);
-  // 闲笔集里掺的手帐（见 jz/）：这一天有没有一页、几条批注；点开的是哪一天
-  const [jzInfo, setJzInfo] = useState({ day: "", page: null, notes: [], hero: null }); // day：读的是哪一天（换了一天、还没读完的时候不摆上一天的）
-  const [jzOpen, setJzOpen] = useState(null);
+  // 闲笔集里掺的手帐（同页那一本，见 tongye/）：这一天有没有一页、几条批注；点开的是哪一天
+  const [jzInfo, setJzInfo] = useState({ day: "", info: null, notes: [] }); // day：读的是哪一天（换了一天、还没读完的时候不摆上一天的）
+  const [jzOpen, setJzOpen] = useState(null); // { day, mode, deps }
   const [jzTick, setJzTick] = useState(0);
   // 掺过手帐的那几天：日历格子左上角标一个 🏷️（卿卿 10 月 18 日早上要的）。点开手帐再出来（jzTick）重新看一遍
   const [jzDays, setJzDays] = useState(() => new Set());
@@ -122,13 +122,8 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
     if (!jz || !sel) return;
     let alive = true;
     (async () => {
-      const [page, notes] = await Promise.all([jz.loadPage(sel), jz.loadNotes(sel)]);
-      let hero = null;
-      if (page && page.arr.photos.length) {
-        const h = page.arr.photos.find((x) => x.role === "hero") || page.arr.photos[0];
-        hero = await jz.getImg(h.id);
-      }
-      if (alive) setJzInfo({ day: sel, page, notes, hero });
+      const [info, notes] = await Promise.all([jz.info(sel), jz.notes(sel)]);
+      if (alive) setJzInfo({ day: sel, info, notes });
     })();
     return () => {
       alive = false;
@@ -246,6 +241,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               return (
                 <button
                   key={key}
+                  data-day={key}
                   disabled={future}
                   onClick={() => {
                     setSel(key);
@@ -411,12 +407,20 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               <>
                 <div style={{ height: 1, background: HAIR, margin: "18px 0 16px" }} />
                 <div style={{ fontSize: 12.5, color: T.dai, marginBottom: 10 }}>手帐和批注</div>
-                <JzCard page={jzInfo.page} notes={jzInfo.notes} heroSrc={jzInfo.hero} onOpen={() => setJzOpen(sel)} />
+                <TyCard
+                  info={jzInfo.info}
+                  notes={jzInfo.notes}
+                  onOpen={async () => {
+                    const day = sel;
+                    const mode = await jz.prepare(day);
+                    setJzOpen({ day, mode, deps: jz.frame() });
+                  }}
+                />
                 <DayNotes
                   notes={jzInfo.notes}
                   onAdd={async (text) => {
                     const day = sel;
-                    const list = await jz.addNote(day, { id: newId(), who: "her", text, at: Date.now(), part: "" });
+                    const list = await jz.addNote(day, text);
                     if (list) setJzInfo((x) => (x.day === day ? { ...x, notes: list } : x));
                   }}
                   onDrop={async (id) => {
@@ -435,12 +439,14 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
         )}
       </div>
       {jzOpen && jz ? (
-        <JzPage
-          day={jzOpen}
-          diary={month[jzOpen] || {}}
-          api={jz}
-          onBack={() => {
+        <TongyeFrame
+          day={jzOpen.day}
+          mode={jzOpen.mode}
+          {...jzOpen.deps}
+          onClose={async () => {
+            const day = jzOpen.day;
             setJzOpen(null);
+            await jz.tidy(day);
             setJzTick((t) => t + 1);
           }}
         />

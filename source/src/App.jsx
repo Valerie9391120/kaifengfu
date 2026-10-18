@@ -45,10 +45,8 @@ import { SplashByTheme } from "./Splash.jsx";
 import { NickTitle } from "./panels/NickTitle.jsx";
 import { MdView } from "./panels/MdView.jsx";
 import { DiaryPage } from "./panels/DiaryPage.jsx";
-import { JZ_KEY, JZN_KEY, JZIMG_KEY, JZCFG_KEY, readPage, readNotes, materialsOf, buildArrangeAsk, parseArrange, photoTag } from "./jz/model.js";
-import { geocode, dayWeather } from "./jz/weather.js";
-import { NAMES_FOR_HIM, stickerByName } from "./jz/stickerList.js";
-import { dataUrlBlock } from "./prompt/messages.js";
+import { JZCFG_KEY } from "./jz/model.js";
+import { dayWeather } from "./jz/weather.js";
 import { HistoryPage } from "./panels/HistoryPage.jsx";
 import { HisAvatarCard, AvatarSection } from "./panels/AvatarSection.jsx";
 import { MemoryPanel } from "./panels/MemoryPanel.jsx";
@@ -71,6 +69,7 @@ import { createEchoProbe, ECHO_LINE, ECHO_KEY } from "./call/echo.js";
 import { EchoProbe } from "./call/EchoProbe.jsx";
 import { pendingCall, ringLeft, CALL_RING_MS } from "./call/incoming.js";
 import { createBarge, echoOf, ackOnly, cutPlan, cutItems } from "./call/barge.js";
+import { TY_IMG, madeDays, infoOf, notesOf, addNoteTo, dropNoteOf, ensureDay, tidyDay, migrateAll, fillWeather, tyReader } from "./tongye/host.js";
 import { IncomingCall } from "./call/IncomingCall.jsx";
 import { isCallMark } from "./call/marks.js";
 
@@ -91,22 +90,6 @@ const loadEngine = () => {
     throw e;
   });
   return enginePromise;
-};
-
-// 手帐贴纸里 Fluent Emoji 那几栏的图（见 jz/stickers.js）：单独一包，build.mjs 打成 assets/jzstk-<指纹>.js，名字写进 __KFS_JZSTK__。
-// 头一回打开手帐才取；取不到的那几张先摆一块灰的，下回再取
-/* global __KFS_JZSTK__ */
-const JZSTK_URL = typeof __KFS_JZSTK__ !== "undefined" ? __KFS_JZSTK__ : "./jzstk.js";
-let jzEmojiP = null;
-const loadJzEmoji = () => {
-  if (!jzEmojiP)
-    jzEmojiP = import(new URL(JZSTK_URL, import.meta.url).href)
-      .then((m) => m.EMOJI)
-      .catch((e) => {
-        jzEmojiP = null;
-        throw e;
-      });
-  return jzEmojiP;
 };
 
 const MAX_STEPS = 12; // 江湖棋局里他一口气连着调引擎、还没说完的，接到这么多步就不自己接了（见 afterStep）
@@ -1368,45 +1351,13 @@ export default function App({ account = {} }) {
     return him;
   };
 
-  // ---- 那一天的批注（见 jz/model.js）：一条一条加、一条一条删，每回现读现写 ----
-  // 不拿手里的整张单子去盖：他翻日记时留的、另一台设备同步来的，都不会被这边手里那张旧单子盖掉。存不上抛错
-  const addJzNote = async (day, note) => {
-    const list = readNotes(await store.get(JZN_KEY + day));
-    if (note.id && list.some((n) => n.id === note.id)) return list;
-    list.push(note);
-    if (!(await store.set(JZN_KEY + day, JSON.stringify(list)))) throw new Error("没存上");
-    return readNotes(JSON.stringify(list));
-  };
-  const dropJzNote = async (day, id) => {
-    const list = readNotes(await store.get(JZN_KEY + day)).filter((n) => n.id !== id);
-    if (!list.length) await store.del(JZN_KEY + day);
-    else if (!(await store.set(JZN_KEY + day, JSON.stringify(list)))) throw new Error("没存上");
-    return list;
-  };
-
   // ---- 日记共读：他翻日记的时候从哪儿取（见 diaryTools.js） ----
   // 每回现取：日记就在这台手机的存档里（解开了的），别的设备写的同步下来也在这儿；她点过保存的都在
-  // 闲笔集里掺的手帐、那一天的批注也给他看（见 jz/model.js）；他留批注（diary_note）也走这儿
+  // 闲笔集里掺的手帐（同页那一本）、那一天的批注也给他看；他留批注（diary_note）也走这儿（见 tongye/host.js 的 tyReader）
   const diaryReader = {
     months: async () => store.keys(DIARY_KEY).map((k) => k.slice(DIARY_KEY.length)),
     month: async (ym) => safeParse(await store.get(DIARY_KEY + ym), {}) || {},
-    jz: async (day) => {
-      const t = await store.get(JZ_KEY + day);
-      return t ? readPage(t, day) : null;
-    },
-    notes: async (day) => readNotes(await store.get(JZN_KEY + day)),
-    extras: async () => {
-      const jz = new Set(store.keys(JZ_KEY).filter((k) => store.peek(k)).map((k) => k.slice(JZ_KEY.length)));
-      const notes = new Map();
-      for (const k of store.keys(JZN_KEY)) {
-        const n = readNotes(await store.get(k)).length;
-        if (n) notes.set(k.slice(JZN_KEY.length), n);
-      }
-      return { jz, notes };
-    },
-    addNote: async (day, note) => {
-      await addJzNote(day, note); // 同一步替他办了两回：编号一样，只留一条
-    },
+    ...tyReader(store),
   };
 
   // ---- 江湖棋局：替他调引擎（见 game/jianghu.js） ----
@@ -4087,95 +4038,25 @@ export default function App({ account = {} }) {
     return { text: parsed.text, moods: parsed.moods, updatedAt: Date.now() };
   };
 
-  // ---- 闲笔集里掺的手帐（见 jz/model.js） ----
-  // 他排这一天：走写日记那条路（另问他一回，不进聊天）。照片缩成长边 512 附在后面，他写编号；原话他也只写编号，字从原话里抄。
-  // 回 { arr, layout, style, note }：arr.photos 里，这一页本来就有的写 id，聊天里那张写 chat（JzPage 另存一份再用）
-  const arrangeByHim = async (day, page, mats, wish) => {
-    const st = settingsRef.current;
-    const model = st.model || DEFAULT_MODEL;
-    const d = parseDayKey(day);
-    const label = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 星期${WEEK[d.getDay()]}`;
-    const docs = memFilesRef.current.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
-    const { staticText, nowNote } = buildSystem({
-      now: new Date(),
-      memeList: allMemes,
-      hisAvatarName: avatarName(avatarsRef.current.him),
-      memDocs: docs,
-      mcpNames: [],
-      voice: !!st.voice,
-      thoughts: st.thoughts !== false,
-      callable: st.callable !== false,
-      diary: false, // 这一回不带工具，名帖里不带【日记本】那一段（跟写日记那一回一样）
-    });
-    const diary = ((await loadMonth(day.slice(0, 7))) || {})[day] || {};
-    // 给他看的照片：这一页上已经有的，加上那天聊天里还没放上去的；最多十张
-    const cands = [];
-    page.arr.photos.forEach((x) => cands.push({ kind: "page", id: x.id, t: "" }));
-    (mats.photos || []).forEach((p) => {
-      if (!page.arr.photos.some((x) => x.from === p.imgId)) cands.push({ kind: "chat", id: p.imgId, t: p.t });
-    });
-    const shown = [];
-    const blocks = [];
-    const photoIds = {};
-    for (const c of cands.slice(0, 10)) {
-      const data = c.kind === "page" ? await store.get(JZIMG_KEY + c.id) : imgsRef.current[c.id] || (await store.get("kfs2:img:" + c.id));
-      if (!data) continue;
-      let thumb = data;
+  // ---- 同页那一本手帐（见 src/tongye/、开发说明“同页搬进来”那一节）：闲笔集里那张小卡片、批注、点开的那一层 ----
+  // 框里那一页关在隔开的框里，能要的只有这一本自己的东西、某一天的原话和聊天里的照片（见 tongye/host.js 的 makeServer）
+  const tyApi = {
+    // 掺过手帐的那几天（闲笔集的日历格子上标一个 🏷️）。原来那一版掺的页先挪过来（挪过的不再挪）
+    days: async () => {
       try {
-        thumb = await urlToThumb(data, 512);
+        await migrateAll(store);
       } catch (e) {}
-      const blk = dataUrlBlock(thumb);
-      if (!blk) continue;
-      const tag = photoTag(shown.length);
-      shown.push({ tag, t: c.t });
-      photoIds[tag] = c.kind === "page" ? c.id : "chat:" + c.id;
-      blocks.push({ type: "text", text: tag }, blk);
-    }
-    const ask = buildArrangeAsk({
-      label,
-      quotes: mats.quotes || [],
-      photos: shown,
-      diary,
-      wx: page.wx,
-      keep: { hide: page.mine.hide, texts: page.mine.texts.map((t) => t.m), edit: page.mine.edit },
-      stickers: NAMES_FOR_HIM,
-    });
-    const text = `${ask.text}${wish ? `\n\n她说想要：${wish}` : ""}\n\n${nowNote}`;
-    const data = await callClaude({
-      model,
-      max_tokens: thinksFirst(model) ? 8000 : 3000,
-      system: [
-        { type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } },
-        { type: "text", text: ask.rule },
-      ],
-      messages: [{ role: "user", content: [{ type: "text", text }].concat(blocks) }],
-    });
-    recordUsage(data);
-    const said = (data.content || [])
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-    const r = parseArrange(said, mats.quotes || [], photoIds, stickerByName);
-    r.arr.photos = r.arr.photos.map((x) => (x.id.startsWith("chat:") ? { chat: x.id.slice(5), role: x.role, note: x.note } : x));
-    return r;
-  };
-  // 手帐那一层要的几样（存档、照片、天气、问他），交给闲笔集，再交给 JzPage
-  const jzApi = {
-    // 掺过手帐的那几天（闲笔集的日历格子上标一个 🏷️）：删了的不算
-    days: async () => store.keys(JZ_KEY).filter((k) => store.peek(k)).map((k) => k.slice(JZ_KEY.length)),
-    loadPage: async (day) => {
-      const t = await store.get(JZ_KEY + day);
-      return t ? readPage(t, day) : null;
+      return madeDays(store);
     },
-    savePage: async (day, page) => {
-      if (!page) await store.del(JZ_KEY + day);
-      else if (!(await store.set(JZ_KEY + day, JSON.stringify(page)))) markStorageFail();
+    info: async (day) => {
+      const i = infoOf(store, day);
+      if (!i) return null;
+      return { ...i, hero: i.heroId ? (await store.get(TY_IMG + i.heroId)) || null : null };
     },
-    loadNotes: async (day) => readNotes(await store.get(JZN_KEY + day)),
-    // 加一条、删一条（现读现写，见 addJzNote）：回那一天现在的整张单子；存不上照别处一样报“没存上”，回 null
-    addNote: async (day, note) => {
+    notes: async (day) => notesOf(store, day),
+    addNote: async (day, text) => {
       try {
-        return await addJzNote(day, note);
+        return await addNoteTo(store, day, "her", text);
       } catch (e) {
         markStorageFail();
         return null;
@@ -4183,33 +4064,50 @@ export default function App({ account = {} }) {
     },
     dropNote: async (day, id) => {
       try {
-        return await dropJzNote(day, id);
+        return await dropNoteOf(store, day, id);
       } catch (e) {
         markStorageFail();
         return null;
       }
     },
-    materials: async (day) => {
-      if (!dayMsgsRef.current[day]) await loadDays();
-      return materialsOf(dayMsgsRef.current[day] || []);
+    // 点开之前：这一天还没有页就起一页空的；她填过天气在哪儿、这一天还没取过，取一回（取到了告诉框里）
+    prepare: async (day) => {
+      try {
+        await migrateAll(store);
+      } catch (e) {}
+      let mode = "self";
+      try {
+        mode = await ensureDay(store, day);
+      } catch (e) {
+        markStorageFail();
+      }
+      const cfg = safeParse(await store.get(JZCFG_KEY), {}) || {};
+      fillWeather(store, day, cfg, dayWeather).catch(() => {});
+      return mode;
     },
-    chatImg: async (imgId) => imgsRef.current[imgId] || (await store.get("kfs2:img:" + imgId)) || null,
-    getImg: async (id) => (await store.get(JZIMG_KEY + id)) || null,
-    putImg: async (id, data) => {
-      if (!(await store.set(JZIMG_KEY + id, data))) markStorageFail();
+    // 框里要的几样：每一天聊了多少、某一天的话、聊天里的一张照片
+    frame: () => {
+      const heat = {};
+      Object.keys(dayMsgsRef.current).forEach((k) => {
+        heat[k] = (dayMsgsRef.current[k] || []).length;
+      });
+      return {
+        heat,
+        dayMsgs: async (date) => {
+          if (!dayMsgsRef.current[date]) await loadDays();
+          return dayMsgsRef.current[date] || [];
+        },
+        chatImg: async (imgId) => imgsRef.current[imgId] || (await store.get("kfs2:img:" + imgId)) || null,
+        onFail: markStorageFail,
+      };
     },
-    dropImg: (id) => store.del(JZIMG_KEY + id),
-    shrink: (data, max) => urlToThumb(data, max),
-    loadCfg: async () => safeParse(await store.get(JZCFG_KEY), {}) || {},
-    saveCfg: async (c) => {
-      if (!(await store.set(JZCFG_KEY, JSON.stringify(c)))) markStorageFail();
+    // 关上的时候：点开什么都没动的那一页不留（删掉一页、找回一页在同页里：「存」最底下，30 天内能找回）
+    tidy: async (day) => {
+      try {
+        await tidyDay(store, day);
+      } catch (e) {}
     },
-    geocode: (q) => geocode(q),
-    weather: (city, day) => dayWeather(city, day),
-    loadEmoji: loadJzEmoji,
-    arrange: arrangeByHim,
   };
-
   // ---- 测试连接 ----
   const testApi = async () => {
     setTesting(true);
@@ -5331,7 +5229,7 @@ export default function App({ account = {} }) {
           saveEntry={saveEntry}
           loadDays={loadDays}
           writeHis={writeHis}
-          jz={jzApi}
+          jz={tyApi}
         />
       )}
 

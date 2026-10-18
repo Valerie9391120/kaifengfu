@@ -21,7 +21,7 @@
 import { MOODS, dayKeyOf, parseDayKey } from "./diary.js";
 import { pad, WEEK } from "./days.js";
 import { clip } from "./recap.js";
-import { pageText, NOTE_MAX, PART_KEYS, partName } from "./jz/model.js";
+import { NOTE_MAX } from "./jz/model.js";
 
 export const DIARY_KEY = "kfs2:diary:";
 export const READ_MAX = 7; // 读全文一次最多几天
@@ -32,6 +32,8 @@ const OUT_MAX = 16000; // 读全文一回最多递多少字（够了就不往下
 const HEAD = 30; // 目录里每篇开头几个字
 const AROUND = 40; // 搜到的那一处前后各几个字
 const TERMS_MAX = 5; // 搜的时候最多认几个词
+// 批注贴在那一页手帐的哪一块旁边（闲笔集的手帐是同页那一本：这几样换成同页的零件，见 tongye/host.js 的 TOOL_PART；叫法照同页里她看到的）
+export const NOTE_PARTS = { title: "题签（标题）", wx: "天气签", hero: "主照片", route: "路线", shot: "截图", quote: "引言", body: "正文", pair: "双联照", pen: "红笔段落", food: "票根（吃了什么）" };
 
 export const DIARY_TOOLS = [
   {
@@ -77,7 +79,7 @@ export const DIARY_TOOLS = [
       properties: {
         date: { type: "string", description: "哪一天，写成 2026-10-12 这样。" },
         text: { type: "string", description: "批注的话。" },
-        part: { type: "string", enum: ["title", "hero", "quote", "her", "him", "body", "food", "pen", "wx", "mood"], description: "贴在手帐哪一块旁边（有手帐的那一天才有用）：title 标题、hero 主照片、quote 原话、her 她的日记、him 你的日记、body 正文、food 饭、pen 红笔、wx 天气、mood 心情。" },
+        part: { type: "string", enum: Object.keys(NOTE_PARTS), description: `贴在手帐哪一块旁边（有手帐的那一天才有用）：${Object.entries(NOTE_PARTS).map(([k, t]) => `${k} ${t}`).join("、")}。` },
       },
       required: ["date", "text"],
     },
@@ -188,7 +190,8 @@ function whole(side, who) {
 // ---------- 三样工具 ----------
 // reader：{ months: async () => ["2026-09", …]（有日记的那几个月）, month: async (ym) => 那个月的那一条（没有就是 {}） }
 
-// 手帐和批注（见 jz/model.js）：reader 给了才看（测试里的老 reader 没给，照只有日记的算）
+// 手帐和批注（闲笔集里同页那一本，见 tongye/host.js 的 tyReader：page 那一天的手帐和批注写成的字、pageBits 页上写着的字、
+// notes 那一天的批注、extras 哪几天有、addNote 他留一条）：reader 给了才看（测试里的老 reader 没给，照只有日记的算）
 // 回 { jz: Set(有手帐的日子), notes: Map(日子 → 几条批注) }
 async function extrasOf(reader) {
   if (!reader.extras) return { jz: new Set(), notes: new Map() };
@@ -274,11 +277,11 @@ async function read(input, reader, now) {
       if (!months[ym]) months[ym] = (await reader.month(ym)) || {};
       const e = months[ym][k] || {};
       const tag = k === today ? "（今天）" : "";
-      // 那一天的手帐和批注（reader 给了才有）
+      // 那一天的手帐和批注（reader 给了才有，见 tongye/host.js 的 dayTextOf）
       let extra = "";
-      if (reader.jz) {
+      if (reader.page) {
         try {
-          extra = pageText(await reader.jz(k), reader.notes ? await reader.notes(k) : [], e);
+          extra = (await reader.page(k)) || "";
         } catch (x) {
           extra = "";
         }
@@ -318,19 +321,12 @@ async function search(input, reader, now) {
         }
       });
   }
-  if (reader.extras && (reader.jz || reader.notes)) {
+  if (reader.extras && (reader.pageBits || reader.notes)) {
     const ex = await extrasOf(reader);
-    if (reader.jz)
+    if (reader.pageBits)
       for (const k of ex.jz) {
         try {
-          const p = await reader.jz(k);
-          if (!p) continue;
-          const e = p.mine.edit || {};
-          const bits = [e.title !== undefined ? e.title : p.arr.title, e.body !== undefined ? e.body : p.arr.body, ((e.pen !== undefined ? e.pen : p.arr.pen) || {}).text || ""]
-            .concat(p.mine.texts.map((t) => t.m))
-            .filter(Boolean)
-            .join("\n")
-            .replace(/\[\[|\]\]/g, "");
+          const bits = await reader.pageBits(k);
           if (bits && who !== "him") docs.push({ k, rank: 2, label: "手帐上写的", text: bits, moods: [] });
         } catch (x) {}
       }
@@ -376,9 +372,10 @@ async function noteOn(input, reader, now, id) {
   if (k > dayKeyOf(now)) return { err: true, out: `${fullDay(k)}还没到，批注留不上。`, note: "想留批注，没留成" };
   if (!text) return { err: true, out: "批注的话是空的：text 里写上要留的那一句。", note: "想留批注，没留成" };
   if (!reader.addNote) return { err: true, out: "这会儿留不了批注（开封府这边还没接上）。", note: "想留批注，没留成" };
-  const part = PART_KEYS.includes(input.part) ? input.part : "";
+  // 贴在哪一块旁边：那一天有手帐才贴（没有手帐的那天留在那一天上）
+  const part = Object.prototype.hasOwnProperty.call(NOTE_PARTS, input.part) && (await extrasOf(reader)).jz.has(k) ? input.part : "";
   await reader.addNote(k, { id: String(id || ""), who: "him", text, at: now.getTime(), part });
-  return { out: `留好了：${fullDay(k)}${part ? `的手帐上，${partName(part)}旁边` : "那一天底下"}多了你这一条批注，她在闲笔集里看得到。`, note: `批注了日记 · ${shortDay(k, now)}` };
+  return { out: `留好了：${fullDay(k)}${part ? `的手帐上，${NOTE_PARTS[part]}旁边` : "那一天底下"}多了你这一条批注，她在闲笔集里看得到。`, note: `批注了日记 · ${shortDay(k, now)}` };
 }
 
 // 替他把这一步里翻日记的那几样翻完（别的工具不碰，原样留着；已经翻过的不再翻）。回新的一份 calls

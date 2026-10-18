@@ -1,5 +1,5 @@
-// 闲笔集里掺的手帐（见 src/jz/、开发说明“闲笔集掺手帐”那一节）：存档收拾、两层合起来、原料、他排的那一段怎么拆、
-// 各版式排成哪几块、贴纸栏、翻日记的工具看得到手帐和批注、他留批注。数据都是编的。
+// 原来那一版手帐（见 src/jz/、开发说明“闲笔集掺手帐”那一节）：存档收拾、两层合起来、原料、他排的那一段怎么拆、
+// 各版式排成哪几块、贴纸栏。闲笔集换成同页以后（见 tongye.test.mjs），这一版的页挪过去要用这里的存档收拾、原料、天气，还测着。数据都是编的。
 import {
   emptyPage, readPage, viewOf, penParts, headOf, materialsOf, pickQuotes, mergeQuotes, quoteSpan, wxName, wxLine, readNotes, buildArrangeAsk, parseArrange, scatter,
   pageText, roll, LAYOUT_KEYS, STYLE_KEYS, LAYOUTS, STYLES, PART_KEYS, photoTag, QUOTE_MAX, PHOTO_MAX,
@@ -8,8 +8,6 @@ import { blocksOf, partsShown } from "../src/jz/sheet.js";
 import { TABS, NAMES_FOR_HIM, stickerByName, EMOJI_NAMES, SEALS } from "../src/jz/stickerList.js";
 import { STYLE_KEYS_LOOK, JZ_CSS } from "../src/jz/look.js";
 import { geocode, dayWeather, WX_HOSTS } from "../src/jz/weather.js";
-import { DIARY_TOOLS, DIARY_NAMES, runDiaryCalls } from "../src/diaryTools.js";
-import { DIARY_SECTION } from "../src/prompt/system.js";
 import fs from "node:fs";
 
 let pass = 0, failN = 0;
@@ -178,45 +176,7 @@ let noCity = "";
 try { await dayWeather(null, "2026-10-12", async () => ({})); } catch (e) { noCity = e.message; }
 ok(noCity.includes("还没填"), "没填在哪儿：不取");
 
-// =====================================================
-// 翻日记的工具看得到手帐和批注、他能留批注
-// =====================================================
-ok(DIARY_TOOLS.map((t) => t.name).join() === "diary_list,diary_read,diary_search,diary_note" && DIARY_NAMES.has("diary_note") && DIARY_TOOLS[3].input_schema.required.join() === "date,text", "翻日记的工具多了一样：diary_note（留批注）");
-ok(DIARY_SECTION.includes("diary_note") && DIARY_SECTION.includes("手帐") && DIARY_SECTION.includes("批注"), "名帖里那一段写着手帐、批注、怎么留");
-const BOOK = { "2026-10": { "2026-10-12": { her: { text: "她的日记", moods: ["happy"] } } } };
-const PAGES = { "2026-10-12": page, "2026-10-14": readPage({ arr: { title: "只有手帐的一天", body: "灯笼" } }, "2026-10-14") };
-const NOTES = { "2026-10-12": [{ id: "n1", who: "her", text: "这天真好", at: at(22, 0), part: "hero" }], "2026-10-15": [{ id: "n2", who: "him", text: "灯笼那天", at: at(23, 0), part: "" }] };
-const reader = {
-  months: async () => Object.keys(BOOK),
-  month: async (ym) => BOOK[ym] || {},
-  jz: async (d) => PAGES[d] || null,
-  notes: async (d) => NOTES[d] || [],
-  extras: async () => ({ jz: new Set(Object.keys(PAGES)), notes: new Map(Object.entries(NOTES).map(([k, v]) => [k, v.length])) }),
-  addNote: async (d, n) => {
-    NOTES[d] = NOTES[d] || [];
-    if (!NOTES[d].some((x) => x.id === n.id)) NOTES[d].push(n);
-  },
-};
-const NOW = new Date(2026, 9, 18, 2, 0);
-const call = (name, input, id = "toolu_" + Math.random()) => ({ id, name, input });
-const [ls] = await runDiaryCalls([call("diary_list", { month: "2026-10" })], reader, NOW);
-ok(ls.out.includes("有日记、手帐或批注的 3 天") && ls.out.includes("10月12日 星期一｜她：心情 开心；“她的日记”｜你：没写｜手帐：有｜批注 1 条") && ls.out.includes("10月14日 星期三｜她：没写｜你：没写｜手帐：有") && ls.out.includes("10月15日 星期四｜她：没写｜你：没写｜批注 1 条"), "目录：有手帐、有批注的日子标着；没写日记、只有手帐或批注的那天也列");
-const [rd] = await runDiaryCalls([call("diary_read", { dates: ["2026-10-12", "2026-10-14"] })], reader, NOW);
-ok(rd.out.includes("手帐：有一页（你排的；版式 拍立得墙，风格 和纸）") && rd.out.includes("标题：泡桐花") && rd.out.includes("正文：她改过的正文") && rd.out.includes("她在页上写的字：“好看”") && rd.out.includes("批注 1 条：") && rd.out.includes("她（10月12日 22:00，贴在主照片旁边）：这天真好"), "读全文：那天的手帐（谁排的、版式风格、标题、正文、她写的字）和批注跟着一起");
-ok(rd.out.includes("照片 5 张：主照片（底下写着：运河边）、双联照 2 张、饭（番茄牛肉米线）、别的 1 张") && rd.out.includes("摆的原话：09:46 卿卿：今天看到泡桐花"), "照片他看不见：写明几张、各是什么、备注；摆的原话带着几点、谁说的");
-ok(rd.out.includes("【2026年10月14日 星期三】\n这天两个人都没写日记。\n\n手帐：有一页（她自己拼的") && rd.out.includes("标题：只有手帐的一天"), "没写日记、只有手帐的那天：照样给手帐");
-const [sr] = await runDiaryCalls([call("diary_search", { query: "灯笼" })], reader, NOW);
-ok(sr.out.includes("一共 2 处") && sr.out.indexOf("10月15日 你的批注：灯笼那天") < sr.out.indexOf("10月14日 手帐上写的：") && sr.out.includes("10月14日 手帐上写的："), "按词找：手帐上写的字、批注也找，新的在前");
-const [nt] = await runDiaryCalls([call("diary_note", { date: "2026-10-12", text: "  那天的泡桐花  ", part: "hero" }, "toolu_n9")], reader, NOW);
-ok(!nt.err && nt.note === "批注了日记 · 10月12日" && nt.out.includes("主照片旁边") && NOTES["2026-10-12"].some((n) => n.id === "toolu_n9" && n.who === "him" && n.text === "那天的泡桐花" && n.part === "hero"), "他留批注：存进那一天（谁、几点、贴在哪），小字“批注了日记 · 10月12日”");
-await runDiaryCalls([call("diary_note", { date: "2026-10-12", text: "那天的泡桐花" }, "toolu_n9")], reader, NOW);
-ok(NOTES["2026-10-12"].filter((n) => n.id === "toolu_n9").length === 1, "同一步替他办两回（两台设备）：只留一条（编号就是他调的那一样的编号）");
-const [nf] = await runDiaryCalls([call("diary_note", { date: "2026-12-01", text: "x" })], reader, NOW);
-const [ne] = await runDiaryCalls([call("diary_note", { date: "2026-10-12", text: "  " })], reader, NOW);
-const [nr] = await runDiaryCalls([call("diary_note", { date: "2026-10-12", text: "x" })], { months: async () => [], month: async () => ({}) }, NOW);
-ok(nf.err && ne.err && nr.err && nf.note === "想留批注，没留成" && nr.out.includes("留不了"), "还没到的日子、空的、开封府没接上：都没留成");
-const [n0] = await runDiaryCalls([call("diary_note", { date: "2026-10-13", text: "没有手帐的一天也能留", part: "坏的" })], reader, NOW);
-ok(!n0.err && NOTES["2026-10-13"][0].part === "" && n0.out.includes("那一天底下"), "没有手帐的那天也能留（留在那一天上）；认不出的零件不贴");
+// （翻日记的工具看得到手帐和批注、他留批注：闲笔集换成同页以后，挪到 tongye.test.mjs，照同页的存档测）
 ok(pageText(null, []) === "" && pageText(null, ns).startsWith("批注 2 条："), "给工具看的字：什么都没有回空；只有批注就只写批注");
 // 表情占两格：截在表情中间的不能留半个（存进去、给他看的、寄给他的都是）
 const lone = (s) => /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
