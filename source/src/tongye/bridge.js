@@ -37,6 +37,39 @@ const TOK = ON && typeof INIT.tok === "string" ? INIT.tok : "";
 // 同页里几处“今天”（本子首页的日子、热力图的最后一格……）照这个（tools/tongye.mjs 换的）
 window.__kfsToday = today;
 
+// ---------- 字：同页原来从 Google Fonts 现取，开封府自己带着（tools/tyfonts.mjs；卿卿 10 月 18 日定的“放到开封府自己这儿”） ----------
+// <head> 里那几张（底下那三种字）tools/tongye.mjs 已经写进页里了。换风格的时候同页的 loadFonts 叫这里（它自己先看过这一种风格取没取过）：
+//   - 换上的那一种风格：照 Google 的样子，一种字一个粗细一张样式表，挂进 <head>（存长图的时候 html-to-image 照样式表把字画进去，同原版）
+//   - “换风格”那一层里的小样（preview）：原版只取小样上那几个字；这里用同一批块里含那几个字的几块，只认那几个字，
+//     用 FontFace 放进来、不挂样式表（存长图不带它们，同原版不多带）。只有用到的那几块浏览器才去取
+const TYF = __KFS_TYFONTS__;
+const fontHref = (f) => `./${TYF.dir}/${f}`;
+const fontOn = new Set(TYF.base);
+const fontPv = new Set();
+window.__kfsFonts = (fonts, preview) => {
+  for (const spec of fonts || [])
+    for (const key of TYF.spec[spec] || []) {
+      if (fontOn.has(key)) continue;
+      if (!preview) {
+        fontOn.add(key);
+        const l = document.createElement("link");
+        l.rel = "stylesheet";
+        l.href = fontHref(TYF.css[key]);
+        document.head.appendChild(l);
+      } else if (!fontPv.has(key) && typeof FontFace === "function" && document.fonts) {
+        fontPv.add(key);
+        const [family, weight] = key.split("|");
+        for (const [file, range] of TYF.pv[key] || []) {
+          try {
+            document.fonts.add(new FontFace(family, `url(${fontHref(file)}) format("woff2")`, { weight, style: "normal", display: "swap", unicodeRange: range }));
+          } catch (e) {
+            /* 这一块放不进来：小样上这几个字用别的字摆 */
+          }
+        }
+      }
+    }
+};
+
 // ---------- 跟外面说话：一问一答（postMessage） ----------
 let seq = 0;
 const waiting = new Map();

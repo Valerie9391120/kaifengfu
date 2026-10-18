@@ -89,15 +89,23 @@ export const PATCHES = [
   ["let pDirty=false;function flushPage(){", "let pDirty=false;window.__kfsFlush=()=>flushPage();function flushPage(){", 1, "关之前存"],
   // 留了批注：同页是送回它家里的聊天，开封府这边没送，光义翻日记看得到（不说“送回家了”）
   ['if(msg)msg.textContent="存好了，也送回家了，"+NM("me")+"那边看得到"', 'if(msg)msg.textContent="存好了，"+NM("me")+"翻日记的时候看得到"', 1, "不说送回家了"],
-  // 字体：同页从 Google Fonts 现取；开封府这一页的安全规矩只连自己（字体那一题她还没定）。连上 Google 的那两行拿掉，换风格的时候也不去取
+  // 字体：同页从 Google Fonts 现取；开封府这一页的安全规矩只连自己。同一批字开封府自己带着
+  // （tools/tyfonts.mjs；卿卿 10 月 18 日定的“放到开封府自己这儿”，样子跟原版一模一样）：
+  // 连 Google 的那一行拿掉；<head> 里取字的那一行换成开封府自己的那几张（makeTongye 填进来，还在原来那个地方）；
+  // 换风格的时候（loadFonts）照同页写的那一种问开封府那一层要（bridge.js 的 __kfsFonts），前面那几句（取过的不再取）照旧
   ['<link rel="preconnect" href="https://fonts.googleapis.com">\n', "", 1, "不连 Google"],
   [
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;600&family=IBM+Plex+Mono:wght@400;500&family=Long+Cang&display=swap">\n',
-    "",
+    "<!--kfs:fonts-->\n",
     1,
-    "不连 Google",
+    "字从开封府自己这儿取",
   ],
-  ["function loadFonts(st,preview){", "function loadFonts(st,preview){return;", 1, "不连 Google"],
+  [
+    '\n const l=document.createElement("link");l.rel="stylesheet";l.href="https://fonts.googleapis.com/css2?"+st.fonts.map(f=>"family="+f).join("&")+(preview?"&text="+encodeURIComponent("0123456789.这一天的标题"):"")+"&display=swap";document.head.appendChild(l)}',
+    "\n window.__kfsFonts&&__kfsFonts(st.fonts,preview)}",
+    1,
+    "字从开封府自己这儿取",
+  ],
   // 每一天的页（day/<日子>）头一回收齐了，记一笔：开封府要打开某一天，等它收齐了再开
   [
     'db.collection("day").onSnapshot(q=>{q.docs.forEach(d=>ingestDay(d.data()));',
@@ -120,7 +128,8 @@ export const PATCHES = [
 // 一段脚本的指纹（写进这一页的安全规矩：只有这几段跑得了）
 const sha = (s) => "'sha256-" + createHash("sha256").update(s, "utf8").digest("base64") + "'";
 
-export function makeTongye(src, bridgeJs) {
+// fonts：tools/tyfonts.mjs 打好的字（baseHrefs：<head> 里那几张样式表，相对这一页）；不给就不放（单测里）
+export function makeTongye(src, bridgeJs, fonts = null) {
   // 换行一律照 \n（浏览器读进来的脚本就是这样的，脚本的指纹照这样算才对得上）
   let html = src.replace(/\r\n?/g, "\n");
   for (const [from, to, n, why] of PATCHES) {
@@ -128,6 +137,9 @@ export function makeTongye(src, bridgeJs) {
     if (got !== n) throw new Error(`同页的补丁对不上（${why}）：“${from.slice(0, 60)}”找到 ${got} 处，应该是 ${n} 处`);
     html = html.split(from).join(to);
   }
+  const hrefs = (fonts && fonts.baseHrefs) || [];
+  if (!hrefs.every((h) => /^\.\/tyfonts-[0-9a-f]{10}\/[a-z0-9-]+\.css$/.test(h))) throw new Error("同页 <head> 里的字只能是开封府自己的那几张");
+  html = html.replace("<!--kfs:fonts-->\n", hrefs.map((h) => `<link rel="stylesheet" href="${h}">\n`).join(""));
   const CHARSET = '<meta charset="utf-8">';
   if (html.split(CHARSET).length !== 2) throw new Error("同页的 <meta charset> 不是一处");
   if (html.indexOf(CHARSET) > 200) throw new Error("同页的 <meta charset> 不在最前面");
@@ -143,6 +155,7 @@ export function makeTongye(src, bridgeJs) {
     "img-src 'self' data: blob:",
     // 存长图：html-to-image 要把页上的图、字取一遍（都是这一页自己的）
     "connect-src 'self' data: blob:",
+    // 字：开封府自己带着的那一批（tools/tyfonts.mjs，同在 assets/ 里）；存长图的时候 html-to-image 把字取一遍、变成 data: 画进去
     "font-src 'self' data:",
     "media-src 'self' blob:",
     "object-src 'none'",
