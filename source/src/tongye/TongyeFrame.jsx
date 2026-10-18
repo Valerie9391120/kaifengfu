@@ -42,6 +42,15 @@ const newTok = () => {
   }
 };
 
+// 框还没摆出来的那一下，底色跟同页一样（它照手机的深浅：浅的 #EAEAE7、深的 #0F1011），不先闪一下别的颜色
+const DARK = () => {
+  try {
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  } catch (e) {
+    return false;
+  }
+};
+
 export function TongyeFrame({ day, mode, heat, dayMsgs, chatImg, onFail, onAsk, onClose }) {
   const box = useRef(null);
   // 同页还没摆好（那一页 6.5 MB 还在下载、没网取不到）：这边摆一颗回去的，不然她被这一层挡住出不去
@@ -111,7 +120,7 @@ export function TongyeFrame({ day, mode, heat, dayMsgs, chatImg, onFail, onAsk, 
     };
   }, []);
   return (
-    <div ref={box} className="kfs-ty absolute inset-0" style={{ zIndex: 60, background: "#f1eee8" }}>
+    <div ref={box} className="kfs-ty absolute inset-0" style={{ zIndex: 60, background: DARK() ? "#0F1011" : "#EAEAE7" }}>
       {ready ? null : (
         <div className="kfs-ty-wait" style={{ position: "absolute", left: 0, right: 0, top: 0, paddingTop: safeTopPx(), zIndex: 2, pointerEvents: "none" }}>
           <button

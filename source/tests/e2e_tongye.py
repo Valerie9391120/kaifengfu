@@ -176,6 +176,25 @@ TAP = """(sel) => { const e = document.querySelector(sel); if (!e) throw new Err
 H2 = "#page .title h2"
 H2TXT = "(document.querySelector('#page .title h2') || {}).innerText"
 
+# 框里那一页一开始就记下：盖着的那一层（从闲笔集点开某一天的时候盖的）揭开的那一下，翻到了没有（Playwright 的 init script 每一个框都跑，在它自己的脚本前头）
+LIFT = """(() => { if (!/tongye-/.test(location.href)) return; window.__kfsLift = null;
+  new MutationObserver(() => { const h = document.documentElement; if (h && window.__kfsLift === null && h.getAttribute('data-kfs-open') && !h.classList.contains('kfs-opening')) {
+    const sh = document.getElementById('shell'), sd = document.getElementById('sDay');
+    window.__kfsLift = { app: h.classList.contains('app-mode'), off: !!(sh && sh.classList.contains('off')), sDay: !!(sd && sd.classList.contains('on')), cover: h.getAttribute('data-kfs-open') }; } })
+  .observe(document, { subtree: true, attributes: true, attributeFilter: ['class', 'data-kfs-open'] }); })()"""
+
+def lifted(f, timeout=15):
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            v = f.evaluate("window.__kfsLift")
+            if v:
+                return v
+        except Exception:
+            pass
+        time.sleep(0.2)
+    return None
+
 def page_state(f):
     return f.evaluate("""(() => ({ layout: curLayout, style: curStyle, day: PAGE_DAY,
       stk: [...document.querySelectorAll('#page .stk.placed:not(.deco)')].map((x) => x.dataset.c + ':' + (x.dataset.c === 'text' ? (x.querySelector('.mt') || {}).innerText : x.dataset.k)),
@@ -188,6 +207,7 @@ with sync_playwright() as p:
     mock("/__debug/reset")
     A = browser.new_context(**IPHONE)
     A.add_init_script(STUB)
+    A.add_init_script(LIFT)
     A.route(re.compile(r"^https://(geocoding-api|api|archive-api)\.open-meteo\.com/.*"), open_meteo)
     pa = A.new_page()
     pa.on("pageerror", lambda e: errors.append("A: " + str(e)))
@@ -252,6 +272,9 @@ with sync_playwright() as p:
         pa.locator(".kfs-jz-open").click()
         f = fx(pa)
         ok(f is not None, "点开卡片：盖上一层，里面是同页那一本，进了编辑器")
+        lf = lifted(f)
+        ok(lf and lf["app"] and lf["off"] and lf["cover"] == f"正在打开 {fd_.month}.{fd_.day}……",
+           f"点开的那一下先盖着（“正在打开 {fd_.month}.{fd_.day}……”），编辑器出来、本子首页收起来以后才揭开：首页不闪（{lf}）")
         st = page_state(f)
         ok(st["day"] == f"{fd_.month}.{fd_.day}" and st["layout"] == "column" and st["style"] == "washi" and "泡桐花" in (st["title"] or ""), f"打开的是昨天那一页：单栏流、和纸、标题“泡桐花”（{st['title']!r}）")
         ok(fwait(f, "[...document.querySelectorAll('#page img')].some((i) => i.src.startsWith('blob:') && i.naturalWidth > 0)"), "主照片摆上了（图从开封府的存档里取来，框里换成 blob: 地址）")
@@ -286,6 +309,8 @@ with sync_playwright() as p:
         ok(pa.locator(".kfs-jz-open").inner_text().strip() == "掺一页手帐", "今天还没掺：卡片是“掺一页手帐”")
         pa.locator(".kfs-jz-open").click()
         f = day_screen(pa)
+        lf = lifted(f)
+        ok(lf and lf["sDay"] and not lf["app"], f"还没掺过的那一天：也先盖着，那一天的那一屏滑进来以后才揭开（{lf}）")
         ok(f is not None and f.evaluate("document.getElementById('toChat').offsetParent !== null && document.getElementById('toSelf').offsetParent !== null")
            and "交给光义" in f.evaluate("document.getElementById('toChat').innerText"), "点开：同页那一天的那一屏（本子首页点一天的那一屏），「交给光义」「自己拼」两颗")
         ok(fwait(f, "document.querySelectorAll('#dayThumbs img').length === 2 && [...document.querySelectorAll('#dayThumbs img')].every((i) => i.naturalWidth > 0)")
@@ -576,6 +601,9 @@ with sync_playwright() as p:
         f.evaluate("(() => { try { window.__kfsShell.home(); } catch (e) {} })()"); time.sleep(0.6)
         ok(f.evaluate("[...document.querySelectorAll('#rec .card b')].some((b) => b.textContent.includes('（测试排的）＜b＞泡桐花') && !b.querySelector('b'))"),
            "本子首页那一列：他起的标题照字摆（同页那儿是直接当 HTML 画的，尖括号换成全角就画不成别的）")
+        since = f.evaluate("document.getElementById('shSum').innerText")
+        n_since = (date.today() - date(2026, 10, 18)).days + 1
+        ok(since.startswith(f"从 10.18 写到今天，第 {n_since} 天"), f"本子首页：从这一本搬进来那天（10.18）写起，第 {n_since} 天（{since!r}）")
         # 掺过一页的那一天的那一屏：几张照片、几句聊天照那天在聊天里的（同页原来拿那一页上的几张、他挑的那几句，小图还摆不出来；她 10 月 18 日 19:18 截图报的）
         f.evaluate("document.getElementById('shToday').click()")
         ok(fwait(f, "document.getElementById('sDay').classList.contains('on') && document.querySelectorAll('#dayThumbs img').length === 2 && [...document.querySelectorAll('#dayThumbs img')].every((i) => i.naturalWidth > 0)", 20),

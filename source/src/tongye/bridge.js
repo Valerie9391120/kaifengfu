@@ -39,6 +39,35 @@ window.__kfsToday = today;
 // 点开不写（那一天的那一屏点“自己拼”，同页当场写一页空的 day：tools/tongye.mjs 换的那一句问这里），她头一回动手才起
 window.__kfsLazy = ON;
 
+// ---------- 本子首页“从哪天写到今天，第几天”：照这一本搬进开封府那一天算（host.js 的 TY_START；她 10 月 18 日定的“就从今天开始”） ----------
+// 同页原来写的是今天往前 120 天那一天（tools/tongye.mjs 换的那一句问这里；它首页那一张格子还是从那一天排起）
+window.__kfsSince = () => {
+  const m = ON && typeof INIT.start === "string" ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(INIT.start) : null;
+  if (!m) return null;
+  const t = today();
+  const n = Math.round((new Date(t.getFullYear(), t.getMonth(), t.getDate()) - new Date(+m[1], +m[2] - 1, +m[3])) / 864e5) + 1;
+  return n >= 1 ? `从 ${+m[2]}.${+m[3]} 写到今天，第 <b>${n}</b> 天` : null;
+};
+
+// ---------- 从闲笔集点开某一天：先盖一层，那一天摆好了再揭开（她 10 月 18 日 20:53 定的） ----------
+// 同页一打开先摆它自己的本子首页；开封府要等她的照片库、那一天的页取齐了才翻到那一天（见下面 onReady），
+// 中间这一会儿首页会闪一下。盖的这一层跟本子同色（照手机的深浅），写“正在打开 10.18……”；同页的样式还没到也盖得住
+// （这一段在 <head> 最前面就跑，盖在 html 上）。外面那一颗“‹ 闲笔集”揭开以前一直在（揭开了才说 ready），出得去
+const OPENING = ON && INIT.open && INIT.open.day ? mdOf(INIT.open.day, today()) : null;
+if (OPENING) {
+  try {
+    const st = document.createElement("style");
+    st.textContent = [
+      "html.kfs-opening::after{content:attr(data-kfs-open);position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:#EAEAE7;color:#8D9196;font:14px/1.6 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;letter-spacing:.06em;pointer-events:none;transition:opacity .24s}",
+      "@media (prefers-color-scheme:dark){html.kfs-opening::after{background:#0F1011;color:#8E9297}}",
+      "html.kfs-opening.kfs-opened::after{opacity:0}",
+    ].join("\n");
+    document.head.appendChild(st);
+    document.documentElement.setAttribute("data-kfs-open", `正在打开 ${OPENING}……`);
+    document.documentElement.classList.add("kfs-opening");
+  } catch (e) {}
+}
+
 // ---------- 字：同页原来从 Google Fonts 现取，开封府自己带着（tools/tyfonts.mjs；卿卿 10 月 18 日定的“放到开封府自己这儿”） ----------
 // <head> 里那几张（底下那三种字）tools/tongye.mjs 已经写进页里了。换风格的时候同页的 loadFonts 叫这里（它自己先看过这一种风格取没取过）：
 //   - 换上的那一种风格：照 Google 的样子，一种字一个粗细一张样式表，挂进 <head>（存长图的时候 html-to-image 照样式表把字画进去，同原版）
@@ -949,6 +978,20 @@ function onReady() {
   citySection();
   titleTap();
   colorBar();
+  // 揭开盖着的那一层（见上面 OPENING）：淡出，再告诉外面摆好了（外面那一颗“‹ 闲笔集”这时候才收）
+  let shown = false;
+  const uncover = () => {
+    if (shown) return;
+    shown = true;
+    const h = document.documentElement;
+    if (h.classList.contains("kfs-opening")) {
+      h.classList.add("kfs-opened");
+      setTimeout(() => h.classList.remove("kfs-opening", "kfs-opened"), 260);
+    }
+    tellOut("ready");
+  };
+  // 翻到了：看一页的是编辑器出来、本子首页收起来了；还没掺过的是那一天的那一屏滑进来了
+  const arrived = (mode) => (mode === "day" ? !!document.querySelector("#sDay.on") : document.documentElement.classList.contains("app-mode") && !!document.querySelector("#shell.off"));
   // 要打开的那一天：等她的照片库（同页的 mine）取齐了再开，不然她放在页上的照片同页摆不出来（见上面存那一页的第 3 条）。
   // 十二秒还没齐：照样开，这一回改的都不存，说一声
   const o = INIT.open;
@@ -956,6 +999,7 @@ function onReady() {
     const md = mdOf(o.day, today());
     if (md && window.__kfsShell) {
       const end = Date.now() + 12000;
+      const mode = o.mode || "view";
       (async () => {
         while (!window.__kfsMineIn && Date.now() < end) await sleep(100);
         if (!window.__kfsMineIn) {
@@ -968,11 +1012,19 @@ function onReady() {
             } catch (e) {}
           }, 1500);
         }
-        window.__kfsShell.open(md, o.mode || "view");
+        try {
+          window.__kfsShell.open(md, mode);
+        } catch (e) {}
+        // 翻到了再揭开（滑进来那一下也等它滑完）；等太久（二十秒）也揭开，不让她一直对着盖着的那一层
+        const stop = Date.now() + 20000;
+        while (!arrived(mode) && Date.now() < stop) await sleep(50);
+        await sleep(mode === "day" ? 520 : 60);
+        uncover();
       })();
+      return;
     }
   }
-  tellOut("ready");
+  uncover();
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => setTimeout(onReady, 0));

@@ -160,6 +160,14 @@ export const PATCHES = [
   ],
   // 那一天的那一屏点“自己拼”：同页当场写一页空的 day；开封府这边点开不写，她头一回动手才起（见 bridge.js 的 touch、host.js 的 ensureDay）
   ['try{const db=window.__jdb;db&&db.collection("day").doc(day).set(R)}catch(_){}', 'try{const db=window.__jdb;db&&!window.__kfsLazy&&db.collection("day").doc(day).set(R)}catch(_){}', 1, "自己拼点开不写"],
+  // 本子首页“从哪天写到今天，第几天”：照这一本搬进开封府那一天算（她 10 月 18 日定的“就从今天开始”，见 bridge.js 的 __kfsSince）；
+  // 同页原来写的是今天往前 120 天那一天（首页那一张格子从那一天排起，格子照旧）
+  [
+    '$("#shSum").innerHTML=`从 ${START[0]}.${START[1]} 写到今天，第 <b>${n}</b> 天<br>',
+    '$("#shSum").innerHTML=`${(window.__kfsSince&&__kfsSince())||`从 ${START[0]}.${START[1]} 写到今天，第 <b>${n}</b> 天`}<br>',
+    1,
+    "从哪天写起",
+  ],
   // 那一天的那一屏上“几张照片、几句聊天”和那几张小图：照她那天在聊天里发的照片、聊的原话数（开封府取来的，见 bridge.js 的 __kfsDayPh）。
   // 同页原来拿那一天的 day 里的：掺过一页的日子摆的成了那一页上的几张、他挑的那几句，小图还摆不出来（照片的地址不在它的 PH 里；她 10 月 18 日 19:18 截图报的）
   [
