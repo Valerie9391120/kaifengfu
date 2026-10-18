@@ -413,11 +413,32 @@ window.__kfsReload = () => (ON ? closeNow() : location.reload());
 window.__kfsWorth = (R) => {
   if (!R || typeof R !== "object") return false;
   const T = R.text || {};
-  return !!(R.title || (R.photos || []).length || (R.chat || []).length || T.p1 || T.pen || T.cap || T.p2 || T.ann || T.quote || R.food || R.status === "making");
+  return !!(R.title || R.herTitle || (R.photos || []).length || (R.chat || []).length || T.p1 || T.pen || T.cap || T.p2 || T.ann || T.quote || R.food || R.status === "making");
 };
 
 // ---------- 页面摆好以后 ----------
 const CSS = [
+  // 她自己起标题：题签底下冒出来的那一条（跟贴纸那一条一个样子）
+  ".kfs-ti{position:absolute;z-index:72;display:flex;flex-direction:column;align-items:flex-start;gap:6px}",
+  ".kfs-ti-row{display:flex;gap:4px;align-items:center;padding:4px;border-radius:22px;background:var(--ink);box-shadow:var(--lift,0 8px 24px rgba(0,0,0,.22))}",
+  ".kfs-ti-in{width:210px;height:36px;border:0;border-radius:18px;padding:0 12px;font:inherit;font-size:16px;background:rgba(255,255,255,.14);color:var(--paper);outline:none}",
+  ".kfs-ti-in::placeholder{color:var(--paper);opacity:.55}",
+  ".kfs-ti-ok{width:44px;height:36px;border:0;border-radius:18px;background:none;color:var(--paper);font-size:14px}",
+  ".kfs-ti-tip{font-size:12px;color:var(--ink2);background:var(--paper);padding:2px 8px;border-radius:8px}",
+  // 打的字挑颜色：没挑的跟着纸（同页原来那一句 .tbox{color:var(--ink)}）；“色”只给打的字（kfs-can-col，见 __kfsSel）。
+  // 那一条多一颗：同页自己定的每颗 32 像素（窄屏 29）是照十颗放得下算的，十一颗每颗窄到 28（窄屏 26），还是一排放得下。
+  // 同页那几句写的是 #stkbar，这里也写 #stkbar 才盖得过
+  ".stk.placed .tbox{color:var(--kc,var(--ink))}",
+  "#stkbar .kfs-col{display:none;color:#FFD4C4}",
+  "#stkbar.kfs-can-col .kfs-col{display:block}",
+  "#stkbar.kfs-can-col .tools button{width:28px}",
+  "#stkbar .kfs-colrow{display:none;gap:4px;align-items:center;padding:0 4px}",
+  "#stkbar.kfs-coloring .tools{display:none}",
+  "#stkbar.kfs-coloring .kfs-colrow{display:flex}",
+  "#stkbar .kfs-sw{width:28px;height:28px;flex:none;border-radius:50%;padding:0;border:2px solid rgba(255,255,255,.25)}",
+  "#stkbar .kfs-sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--ink),0 0 0 4px #fff}",
+  "#stkbar .kfs-col-ok{width:36px;height:36px;border:0;background:none;color:var(--paper);font-size:14px}",
+  "@media (max-width:380px){#stkbar.kfs-can-col .tools button{width:26px}#stkbar .kfs-sw{width:26px;height:26px}}",
   // 那一天的那一屏：“几样吃的”（开封府没有吃了什么的记录）
   "#dayFound>span:nth-child(3){display:none!important}",
   // 交给光义：“在排”那一栏里没排成的那一步（打个叉，不转、不打勾）
@@ -601,6 +622,216 @@ window.__kfsHisNew = (R) => {
   return true;
 };
 
+// ---------- 她自己起标题（第二步；她 10 月 18 日看了样子说“可以 老公请施工～”）：点纸上的题签，底下冒出一条打标题 ----------
+// 存在那一天的 day 里（herTitle，host.js 的 setTitle；他排的时候不盖）。清空就用回原来的（他起过就用他的，没起过写日子）。
+// 跟同页自己改字那一条一样：边打纸上边换，点“好”、回车、点别处都算定了；Esc 是不改了。
+// 正开着“批注”“拆零件”的时候点题签，照旧是批注、拆零件，不冒这一条
+let ti = null; // 开着的那一条：{ box, h2, md, full, was（打开时纸上的）, R（那一天的 day，取回来以前是 null）, got }
+const hisName = () => {
+  try {
+    // 同页的 NM（署名，设置里能改）是它脚本里的 const（不在 window 上），这里照名字找
+    // eslint-disable-next-line no-undef
+    return (typeof NM === "function" && String(NM("me") || "").trim()) || "他";
+  } catch (e) {
+    return "他";
+  }
+};
+const showTitle = (h2, text) => {
+  const sv = h2.querySelector("svg");
+  h2.textContent = text;
+  if (sv) h2.appendChild(sv);
+};
+// 他起的（他排的一页上的 title；她自己拼的一页上 title 里记着的是她的，见 host.js 的 setTitle）
+const hisTitle = (R) => (R && R.by === "me" && R.title) || "";
+// 她这会儿起的（没取回那一天的 day 的时候是 null）
+const herTitleOf = (R) => (R ? R.herTitle || (R.by !== "me" && R.title) || "" : null);
+// 纸上该摆的：她起的，没有就他起的，再没有写日子
+const titleOf = (t, R, md) => t || hisTitle(R) || md;
+function closeTitle(keep) {
+  const o = ti;
+  if (!o) return;
+  ti = null;
+  o.box.remove();
+  // 不改了：她打过字（纸上换过）才换回去；没打过的不碰（开着的时候那一天要是又摆了一回，纸上已经是新的）
+  if (!keep) {
+    if (o.typed) showTitle(o.h2, o.was);
+    return;
+  }
+  const t = o.inp.value.replace(/\s+/g, " ").trim();
+  (async () => {
+    await o.got;
+    const had = herTitleOf(o.R);
+    // 没改：跟她起的一样；没起过的，跟他起的一样（不把他起的当成她起的存下）；没取回那一天的 day，照打开的时候纸上的比
+    if (had === null ? t === (o.was === o.md ? "" : o.was) : t === had || (!had && t === hisTitle(o.R))) {
+      if (o.typed) showTitle(o.h2, titleOf(t, o.R, o.md));
+      return;
+    }
+    showTitle(o.h2, titleOf(t, o.R, o.md));
+    let ok = false;
+    try {
+      ok = await ask("setTitle", { date: o.full, title: t });
+    } catch (e) {
+      ok = false;
+    }
+    if (!ok) {
+      showTitle(o.h2, o.was);
+      try {
+        // eslint-disable-next-line no-undef
+        if (typeof toast === "function") toast("标题没存上，再试一回");
+      } catch (e) {}
+    }
+  })();
+}
+function openTitle(h2) {
+  closeTitle(true);
+  const md = typeof window.PAGE_DAY === "string" ? window.PAGE_DAY : "";
+  const full = fullOf(md, today());
+  const pg = document.getElementById("page");
+  if (!full || !pg) return;
+  const box = document.createElement("div");
+  box.className = "kfs-ti";
+  box.innerHTML =
+    '<div class="kfs-ti-row"><input class="kfs-ti-in" maxlength="20" placeholder="二十个字以内" autocomplete="off" enterkeyhint="done"><button type="button" class="tap kfs-ti-ok">好</button></div>' +
+    '<div class="kfs-ti-tip">给这一页起个标题</div>';
+  // 摆在题签底下（放在纸里，跟着纸走；纸要是缩放过，照纸自己的尺寸算）
+  const r = h2.getBoundingClientRect();
+  const pr = pg.getBoundingClientRect();
+  const k = pg.offsetWidth ? pr.width / pg.offsetWidth || 1 : 1;
+  box.style.left = Math.max(4, Math.min((r.left - pr.left) / k - pg.clientLeft - 4, pg.clientWidth - 276)) + "px";
+  box.style.top = (r.bottom - pr.top) / k - pg.clientTop + 10 + "px";
+  pg.appendChild(box);
+  const inp = box.querySelector("input");
+  const tip = box.querySelector(".kfs-ti-tip");
+  // 纸上这会儿摆的（写着日子就是还没有标题）
+  const was = (h2.textContent || "").trim();
+  inp.value = was === md ? "" : was;
+  const o = { box, h2, md, full, was, inp, R: null, got: null, typed: false };
+  ti = o;
+  o.got = ask("get", { k: KV + "day/" + full })
+    .then((v) => {
+      o.R = typeof v === "string" ? parseJson(v) : null;
+      if (ti !== o) return;
+      if (o.R && !o.typed) {
+        inp.value = herTitleOf(o.R) || hisTitle(o.R);
+        inp.select();
+      }
+      tip.textContent = `给这一页起个标题（清空就${hisTitle(o.R) ? `用回${hisName()}起的` : "回到写日子"}）`;
+    })
+    .catch(() => {});
+  inp.addEventListener("input", () => {
+    o.typed = true;
+    showTitle(h2, titleOf(inp.value.replace(/\s+/g, " ").trim(), o.R, md));
+  });
+  inp.addEventListener("keydown", (e) => {
+    // 拼音还在候选里的那一下回车是选字，不算定了
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      closeTitle(true);
+    } else if (e.key === "Escape") closeTitle(false);
+  });
+  box.querySelector(".kfs-ti-ok").onclick = () => closeTitle(true);
+  // 跟着这一下点的就把键盘叫出来（iPhone 要在点的那一下里）
+  try {
+    inp.focus();
+    inp.select();
+  } catch (e) {}
+}
+function titleTap() {
+  // 这一下按下去的时候是不是正开着批注、拆零件（批注那边按下去就收了，等到 click 再看就晚了）
+  let busy = false;
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      const pg = document.getElementById("page");
+      const app = document.getElementById("app");
+      busy = !!((pg && pg.classList.contains("noting")) || (app && app.classList.contains("xray")));
+      // 点别处：定了
+      if (ti && !ti.box.contains(e.target)) closeTitle(true);
+    },
+    true
+  );
+  document.addEventListener("click", (e) => {
+    const h2 = e.target && e.target.closest ? e.target.closest("#page .title h2") : null;
+    if (!h2 || busy || !document.documentElement.classList.contains("app-mode")) return;
+    const pg = document.getElementById("page");
+    const app = document.getElementById("app");
+    if ((pg && pg.classList.contains("noting")) || (app && app.classList.contains("xray"))) return;
+    openTitle(h2);
+  });
+}
+
+// ---------- 打的字挑颜色（同上）：点她打的那一段字，底下那一条里“字”后面多一颗“色”，点了换成一排颜色 ----------
+// 只给打的字（文字贴纸，五种字形都行）；便签、照片底下那一句不给。颜色记在那一张贴纸上（--kc），跟着那一段字存
+// （tools/tongye.mjs 在存那一页、存一代、摆回来那几处接上的）。第一个是原来的（跟着纸走，换风格跟着变）
+const INKS = [
+  ["", "原来的"],
+  ["#1F1D1A", "墨黑"],
+  ["#C23A2B", "朱红"],
+  ["#D9738C", "樱粉"],
+  ["#A0662F", "赭石"],
+  ["#E8C24A", "鹅黄"],
+  ["#3F6B55", "松绿"],
+  ["#2F4A8A", "靛蓝"],
+  ["#FFFFFF", "白"],
+];
+const typed = (s) => !!(s && s.querySelector && s.querySelector(".tbox"));
+function colorBar() {
+  const bar = document.getElementById("stkbar");
+  const tools = bar && bar.querySelector(".tools");
+  if (!tools || bar.querySelector(".kfs-col")) return;
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "kfs-col";
+  b.setAttribute("aria-label", "换颜色");
+  b.textContent = "色";
+  const txt = tools.querySelector('[data-a="txt"]');
+  if (txt && txt.nextSibling) tools.insertBefore(b, txt.nextSibling);
+  else tools.appendChild(b);
+  const row = document.createElement("div");
+  row.className = "kfs-colrow";
+  row.innerHTML =
+    INKS.map(([c, n]) => `<button type="button" class="kfs-sw" data-c="${c}" aria-label="${n}" style="background:${c || "conic-gradient(var(--paper) 0 50%,var(--ink) 50% 100%)"}"></button>`).join("") +
+    '<button type="button" class="kfs-col-ok">好</button>';
+  bar.appendChild(row);
+  const sel = () => {
+    const s = document.querySelector("#page .stk.placed.sel");
+    return typed(s) ? s : null;
+  };
+  const mark = () => {
+    const s = sel();
+    const cur = s ? s.style.getPropertyValue("--kc").trim().toUpperCase() : "";
+    row.querySelectorAll(".kfs-sw").forEach((x) => {
+      const on = x.dataset.c.toUpperCase() === cur;
+      x.classList.toggle("on", on);
+      x.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  };
+  b.onclick = () => {
+    if (!sel()) return;
+    bar.classList.add("kfs-coloring");
+    mark();
+  };
+  row.querySelectorAll(".kfs-sw").forEach((x) => {
+    x.onclick = () => {
+      const s = sel();
+      if (!s) return;
+      // 改了贴纸的 style：同页自己就存那一页（它看着贴纸的 style）
+      if (x.dataset.c) s.style.setProperty("--kc", x.dataset.c);
+      else s.style.removeProperty("--kc");
+      mark();
+    };
+  });
+  row.querySelector(".kfs-col-ok").onclick = () => bar.classList.remove("kfs-coloring");
+}
+// 换选了一张、不选了（同页的 select，tools/tongye.mjs 在开头问这里）：颜色那一排收回去；选的是打的字才有“色”
+window.__kfsSel = (s) => {
+  const bar = document.getElementById("stkbar");
+  if (!bar) return;
+  bar.classList.remove("kfs-coloring");
+  bar.classList.toggle("kfs-can-col", typed(s));
+};
+
 // ---------- 天气在哪儿：设置里多一节（她填一回，掺新的一页就自己取那一天的天气） ----------
 function citySection() {
   const main = $('#cfg .cfgpage[data-p="main"]');
@@ -685,6 +916,8 @@ function onReady() {
   }
   chatPhotoItem();
   citySection();
+  titleTap();
+  colorBar();
   // 要打开的那一天：等她的照片库（同页的 mine）取齐了再开，不然她放在页上的照片同页摆不出来（见上面存那一页的第 3 条）。
   // 十二秒还没齐：照样开，这一回改的都不存，说一声
   const o = INIT.open;

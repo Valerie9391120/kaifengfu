@@ -224,8 +224,15 @@ const moved = await migrateAll(s4, 5000);
 const R4 = P(s4, `${TY_KV}day/2026-10-17`);
 const P4 = P(s4, `${TY_KV}page/2026-10-17`);
 ok(moved.length === 1 && moved[0].day === "2026-10-17" && eq(moved[0].lost, ["h:heart"]), "挪过来一页（坏的存档、认不出的日子不挪）；同页里没有一样的手绘贴纸记下来挪不过来");
-ok(R4.title === "她改的标题" && R4.by === "me" && R4.layout === "polaroid" && R4.style === "news" && R4.at === "某城" && R4.text.p1 === "原来的正文" && R4.text.pen.text === "[[红笔]]一句" && R4.wx.code === 3,
-  "那一天（同页的 day）：标题照她改的、他排的、拍立得墙、报纸、正文、红笔、天气");
+ok(R4.title === "原来的标题" && R4.herTitle === "她改的标题" && infoOf(s4, "2026-10-17").title === "她改的标题" && R4.by === "me" && R4.layout === "polaroid" && R4.style === "news" && R4.at === "某城" && R4.text.p1 === "原来的正文" && R4.text.pen.text === "[[红笔]]一句" && R4.wx.code === 3,
+  "那一天（同页的 day）：他起的标题记着，她改的记成她起的（纸上、卡片照她的；他再排也不盖）、他排的、拍立得墙、报纸、正文、红笔、天气");
+const mvT = (arr, edit) => migrateOld({ ...OLD, arr: { ...OLD.arr, ...arr }, mine: { ...OLD.mine, edit } }, [], "2026-10-17", 1).R;
+ok(eq([mvT({ by: "her", title: "" }, { title: "她拼的<一页>" })].map((R) => [R.by, R.title, R.herTitle]), [["her", "", "她拼的＜一页＞"]])
+  && eq([mvT({ by: "him", title: "他起的" }, {})].map((R) => [R.title, "herTitle" in R]), [["他起的", false]])
+  && eq([mvT({ by: "him", title: "他起的" }, { title: "" })].map((R) => [R.title, "herTitle" in R]), [["", false]])
+  && eq([mvT({ by: "him", title: "他起的" }, { title: "他起的" })].map((R) => [R.title, "herTitle" in R]), [["他起的", false]])
+  && mvT({ by: "her", title: "她原来起的" }, {}).herTitle === "她原来起的",
+  "挪标题：她自己拼的，标题算她起的（尖括号换全角）；他排的她没改，照他的；她在上一版删空了的，照删空的（写日子）");
 ok(eq(R4.photos.map((p) => [p.src, p.role]), [["kfsimg:jzold1", "hero"], ["kfsimg:jzold2", ""]]) && eq(R4.chat, [{ w: "her", t: "16:12", p: "今天看到泡桐花了" }, { w: "me", t: "16:13", p: "好看" }]), "照片还是那几张图（编号不变）；原话照原样，他叫 me");
 ok(P4.stk.some((x) => x.c === "emoji" && x.k === "fox" && x.who === "me") && P4.stk.some((x) => x.c === "kao" && x.k === "(｀・ω・´)" && x.who === "her") && P4.stk.some((x) => x.c === "text" && x.m === "那天真好" && x.who === "her") && eq(P4.hide, ["wx"]),
   "贴纸、她写的字挪到页上（谁贴的照旧）；藏起来的天气照样藏（心情同页没有这一块）");
@@ -455,6 +462,55 @@ ok(herLookOf(s12, AD, { photos: [] }) === null && herLookOf(s12, AD, { layout: "
   "她自己挑过的版式风格：跟那一页本来的一样的不算（同页离开一天自动记的）");
 
 // =====================================================
+// 她自己起标题（点纸上的题签；她 10 月 18 日看了样子说“可以”）：存在那一天的 day 里（herTitle），他排的时候不盖
+// =====================================================
+const s13 = mkStore();
+let tfails = 0;
+const srvT = makeServer({ store: s13, onFail: () => tfails++ });
+const TD = "2026-10-16";
+const TK = `${TY_KV}day/${TD}`;
+let tPushed = [];
+const offT = onTyChanged((keys) => tPushed.push(...keys));
+ok((await srvT.handle("setTitle", { date: TD, title: "  <b>泡桐花</b>\n开了  " })) === true && P(s13, TK).herTitle === "＜b＞泡桐花＜/b＞ 开了" && P(s13, TK).by === "her" && P(s13, TK).status === "done" && P(s13, TK).title === "" && tPushed.includes(TK),
+  "她在自己拼的一页上起标题：那一天还没有 day 先起一个（她的），标题收拾成一行（尖括号换全角，同他起的），告诉开着的框");
+offT();
+ok(madeOf(s13, TD) && infoOf(s13, TD).title === "＜b＞泡桐花＜/b＞ 开了" && pageTextOf(s13, TD).includes("标题：＜b＞泡桐花＜/b＞ 开了（她自己起的）") && pageBitsOf(s13, TD).includes("泡桐花"),
+  "只起了个标题也算掺了一页：卡片、他翻日记看到的都是她起的");
+await srvT.handle("setTitle", { date: TD, title: "一二三四五六七八九十一二三四五六七八九十多出来的" });
+ok(P(s13, TK).herTitle === "一二三四五六七八九十一二三四五六七八九十", "二十个字以内（多的截掉）");
+ok((await srvT.handle("setTitle", { date: "10.16", title: "x" })) === false && (await srvT.handle("setTitle", { date: TD, title: 3 })) === false && (await srvT.handle("setTitle", { date: TD, title: "长".repeat(201) })) === false && P(s13, TK).herTitle.startsWith("一二三"),
+  "日子不规矩、不是字、长得离谱的：不收，原来的不动");
+s13.m.set(TK, J({ day: TD, status: "done", by: "me", title: "他起的", ts: 50, text: { p1: "运河边" } }));
+await srvT.handle("setTitle", { date: TD, title: "她起的" });
+const RT = P(s13, TK);
+ok(RT.title === "他起的" && RT.herTitle === "她起的" && RT.by === "me" && RT.ts === 50 && RT.text.p1 === "运河边" && infoOf(s13, TD).title === "她起的" && infoOf(s13, TD).by === "him",
+  "他排的一页上她起标题：他起的留着（不盖），纸上、卡片照她起的；还是他排的那一页");
+ok(pageTextOf(s13, TD).includes("标题：她起的（她自己起的；你起的是“他起的”）") && pageBitsOf(s13, TD).includes("她起的") && pageBitsOf(s13, TD).includes("他起的"), "他翻日记：看到的是她起的，也知道自己起的是什么；按词找两个都找得到");
+await srvT.handle("setTitle", { date: TD, title: "   " });
+ok(!("herTitle" in P(s13, TK)) && infoOf(s13, TD).title === "他起的" && pageTextOf(s13, TD).includes("标题：他起的") && !pageTextOf(s13, TD).includes("她自己起的"), "清空：拿掉她起的，用回他起的");
+s13.m.set(TK, J({ day: TD, status: "failed", by: "me", title: "", ts: 60, steps: [{ a: "没排成", fail: 1 }] }));
+await srvT.handle("setTitle", { date: TD, title: "重新来" });
+ok(P(s13, TK).status === "done" && P(s13, TK).by === "her" && P(s13, TK).herTitle === "重新来" && !P(s13, TK).steps, "没排成的那一天她起标题：照她自己拼的起一页");
+s13.m.set(TK, J(makingDay({ day: TD, status: "done", by: "her", title: "", ts: 70, herTitle: "原来的" }, TD, [{ a: "在排", ok: false }], 80)));
+await srvT.handle("setTitle", { date: TD, title: "排着的时候起的" });
+const MT = P(s13, TK);
+ok(MT.status === "making" && MT.herTitle === "排着的时候起的" && MT.mk.at === 80 && MT.mk.prev.herTitle === "原来的", "他正排着的时候她起标题：写在排着的那一份上（排完照这个）");
+const FT = failedDay(MT, TD, [{ a: "没排成", fail: 1 }]);
+ok(FT.herTitle === "排着的时候起的" && FT.by === "her" && FT.ts === 70, "排着的时候起了标题、没排成：原来那一页放回去，标题照她新起的");
+const FT2 = failedDay({ ...MT, herTitle: undefined }, TD, [{ a: "没排成", fail: 1 }]);
+ok(!("herTitle" in FT2) && FT2.by === "her", "排着的时候清空了、没排成：原来那一页放回去，不带标题");
+const FT3 = failedDay({ ...makingDay(null, TD, [], 90), herTitle: "新起的" }, TD, [{ a: "没排成", fail: 1 }], 95);
+s13.m.set(TK, J(FT3));
+ok(FT3.status === "done" && FT3.by === "her" && FT3.herTitle === "新起的" && madeOf(s13, TD) && infoOf(s13, TD).title === "新起的", "原来没有页、排着的时候她起了标题、没排成：起成她的一页（标题留着），不算没有页");
+s13.m.set(TK, J({ day: TD, status: "done", by: "her", title: "上一版挪过来的", ts: 96 }));
+await srvT.handle("setTitle", { date: TD, title: "" });
+ok(P(s13, TK).title === "" && !("herTitle" in P(s13, TK)) && !madeOf(s13, TD), "她自己拼的一页，title 里记着的也是她的：清空就都拿掉（写日子）");
+s13.m.set(TK, J(FT3));
+s13.full = true;
+ok((await srvT.handle("setTitle", { date: TD, title: "存不进去" })) === false && tfails >= 1 && P(s13, TK).herTitle === "新起的", "存不上：回 false（同页那边说一声），原来的不动");
+s13.full = false;
+
+// =====================================================
 // 照原样拿同页那一页：打补丁、安全规矩
 // =====================================================
 const SRC = fs.readFileSync(new URL("../vendor/tongye/app.html", import.meta.url), "utf8");
@@ -474,6 +530,9 @@ ok(!/googleapis|gstatic/.test(html) && !html.includes("<!--kfs:fonts-->") && !ht
 ok(html.includes("function savePage(){if(restoring)return;if(window.__kfsSaveOk&&!window.__kfsSaveOk())return;") && html.includes("window.__kfsPageIn&&window.__kfsPageIn(k);") && html.includes("window.__kfsMineIn=1;") && html.includes("window.__kfsFlush=()=>flushPage();") && html.includes("PAGE_DAY=k;window.__kfsOpened&&window.__kfsOpened(k);"),
   "同页自己存那一页之前问一声；那一页取回来了、照片库齐了、关之前存、换了天才许存，几处都接上了");
 ok(html.includes('"存好了，"+NM("me")+"翻日记的时候看得到"') && !html.includes("也送回家了"), "留了批注不说“送回家了”");
+ok(html.includes("const P={t:R.herTitle||R.title||k,") && html.split('{const kc=x.style.getPropertyValue("--kc").trim();if(kc)o.kc=kc}').length === 3 && html.split('if(o.kc&&/^#[0-9a-fA-F]{6}$/.test(o.kc))el.style.setProperty("--kc",o.kc);').length === 3
+  && html.includes("function select(s){window.edOff&&edOff(s);window.__kfsSel&&__kfsSel(s);"),
+  "她起的标题、打的字的颜色那几处接上了：纸上照她起的；颜色存那一页、存一代都记下，摆回来都摆上（只认 #六位的颜色）；换选了一张收起颜色那一排");
 ok(html.includes("map(x=>window.__kfsAskRef?__kfsAskRef(x):x)") && html.includes('(R.status==="making"||R.status==="failed")') && html.includes('s2.fail?"fail"') && html.includes("!(r.steps||[]).some(x=>x&&x.fail)")
   && html.includes('(window.__kfsHisNew?__kfsHisNew(R):R.by!=="her")&&toast2') && html.includes('if(mode==="day"&&!DONE[k]){try{openDay(k)}') && html.includes("dayIn:function(k,ph,chat)") && html.includes('"这天还没有天气"'),
   "交给光义那几处接上了：寄的照片换成开封府的编号、没排成不起页不冒“打开这一页”、“光义刚更新了这一页”只在他排好的时候说、开封府能打开某一天的那一屏、那一屏的照片原话");

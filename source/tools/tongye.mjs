@@ -131,6 +131,20 @@ export const PATCHES = [
     1,
     "收齐了",
   ],
+  // 她自己起的标题（第二步，她 10 月 18 日看了样子说“可以”：点纸上的题签起标题，见 bridge.js）：存在那一天的 day 里（herTitle），
+  // 题签、本子首页那一列照她起的摆；清空了用回原来的（他起过就用他的，没起过写日子）
+  ["const P={t:R.title||k,", "const P={t:R.herTitle||R.title||k,", 1, "她自己起的标题"],
+  // 打的字挑颜色（同上：点她打的那一段字，那一条里多一颗“色”，见 bridge.js）：颜色记在那一张贴纸上（--kc），
+  // 存那一页、存一代的时候一起记下，摆回来（打开、换回哪一代、撤回、找回）的时候一起摆回来
+  [
+    "if(x.dataset.t)o.t=x.dataset.t;if(x.dataset.st)o.st=+x.dataset.st;",
+    'if(x.dataset.t)o.t=x.dataset.t;if(x.dataset.st)o.st=+x.dataset.st;{const kc=x.style.getPropertyValue("--kc").trim();if(kc)o.kc=kc}',
+    2,
+    "打的字的颜色",
+  ],
+  ['el.style.setProperty("--s",o.s||1);', 'el.style.setProperty("--s",o.s||1);if(o.kc&&/^#[0-9a-fA-F]{6}$/.test(o.kc))el.style.setProperty("--kc",o.kc);', 2, "打的字的颜色"],
+  // 换选了一张（或者不选了）：颜色那一排收回去（见 bridge.js 的 __kfsSel）
+  ["function select(s){window.edOff&&edOff(s);", "function select(s){window.edOff&&edOff(s);window.__kfsSel&&__kfsSel(s);", 1, "打的字的颜色"],
   // 回本子再点开同一天（比如交给光义、他排好了点“打开这一页”）：同页只在换了一天的时候才照那一天的 day 重摆、套版式风格，
   // 不在编辑器里的那一会儿那一天变了（他排好了、另一台设备改了），点开看到的还是旧的。开封府这边点开同一天也重摆一回
   [" if(changed)journalSetDay(k,fillDay);", " if(changed)journalSetDay(k,fillDay);else if(window.__kfsLazy&&EDATA[k]){try{fillDay(k);setTimeout(()=>{try{drawUL();drawBars();drawPen();drawPins()}catch(e){}},60)}catch(e){}}", 1, "点开同一天也重摆"],

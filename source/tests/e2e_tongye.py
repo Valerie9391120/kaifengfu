@@ -155,6 +155,27 @@ def his_last_call(page):
     steps = [m for m in msgs if m["role"] == "him" and m.get("calls")]
     return steps[-1]["calls"][0] if steps else {}
 
+def kv_until(page, key, pred, timeout=12):
+    # 存档里那一条等到合 pred 为止（框里点了以后外面存要一会儿）
+    end = time.time() + timeout
+    v = None
+    while time.time() < end:
+        v = kvj(page, key)
+        try:
+            if pred(v):
+                return v
+        except Exception:
+            pass
+        time.sleep(0.25)
+    return v
+
+# 在框里点一下（按下、抬起、click 都发：批注那一下是按下的时候接的）
+TAP = """(sel) => { const e = document.querySelector(sel); if (!e) throw new Error('没有 ' + sel); const r = e.getBoundingClientRect();
+  const o = { bubbles: true, cancelable: true, composed: true, clientX: r.left + Math.min(8, r.width / 2), clientY: r.top + r.height / 2, pointerType: 'touch', isPrimary: true, pointerId: 7 };
+  e.dispatchEvent(new PointerEvent('pointerdown', o)); e.dispatchEvent(new PointerEvent('pointerup', o)); e.click(); }"""
+H2 = "#page .title h2"
+H2TXT = "(document.querySelector('#page .title h2') || {}).innerText"
+
 def page_state(f):
     return f.evaluate("""(() => ({ layout: curLayout, style: curStyle, day: PAGE_DAY,
       stk: [...document.querySelectorAll('#page .stk.placed:not(.deco)')].map((x) => x.dataset.c + ':' + (x.dataset.c === 'text' ? (x.querySelector('.mt') || {}).innerText : x.dataset.k)),
@@ -216,9 +237,9 @@ with sync_playwright() as p:
         R = kvj(pa, f"kfs2:ty:day/{fday}")
         P = kvj(pa, f"kfs2:ty:page/{fday}")
         N = kvj(pa, "kfs2:ty:notes/nold1")
-        ok(R and R["title"] == "泡桐花" and R["layout"] == "column" and R["style"] == "washi" and R["photos"][0]["src"] == "kfsimg:jzold1" and R["photos"][0]["role"] == "hero"
+        ok(R and R.get("herTitle") == "泡桐花" and R["title"] == "" and R["layout"] == "column" and R["style"] == "washi" and R["photos"][0]["src"] == "kfsimg:jzold1" and R["photos"][0]["role"] == "hero"
            and R["chat"] == [{"w": "her", "t": "16:12", "p": "今天看到泡桐花了"}] and R["by"] == "her",
-           "挪过来的那一天（同页的 day）：标题照她改的、单栏流、和纸（青墨素纸那几种同名的换成同页的）、主照片还是那张图、原话照原样")
+           "挪过来的那一天（同页的 day）：标题照她改的（她自己拼的一页，记成她起的）、单栏流、和纸（青墨素纸那几种同名的换成同页的）、主照片还是那张图、原话照原样")
         ok(P and any(s["c"] == "emoji" and s["k"] == "fox" and s["who"] == "her" for s in P["stk"]) and any(s["c"] == "text" and s.get("m") == "那天真好" for s in P["stk"]),
            "她贴的狐狸、写的“那天真好”挪到她那一层（同页的 page）")
         ok(N and N["day"] == fday and N["b"] == "he" and N["who"] == "her" and N["text"] == "˚ʚ(´◡`)ɞ˚", "批注挪成同页的批注：贴在主照片旁边")
@@ -467,7 +488,7 @@ with sync_playwright() as p:
         ftap(f, "#trashList [data-tr]")
         ok(gone(pa), "找回：关上回闲笔集")
         R = kvj(pa, f"kfs2:ty:day/{fday}")
-        ok(R and R["title"] == "泡桐花" and kvj(pa, "kfs2:ty:notes/nold1") and not trash_keys(pa), f"找回来了：那一页、批注都在，废纸篓空了（点开那一下什么都没写，没多出一页空的进废纸篓：{trash_keys(pa)}）")
+        ok(R and R.get("herTitle") == "泡桐花" and kvj(pa, "kfs2:ty:notes/nold1") and not trash_keys(pa), f"找回来了：那一页、批注都在，废纸篓空了（点开那一下什么都没写，没多出一页空的进废纸篓：{trash_keys(pa)}）")
         ok("泡桐花" in pa.locator(".kfs-jz-open").inner_text() and pa.locator(".kfs-page .kfs-jz-tag").count() == 2, "闲笔集里昨天的卡片、🏷️ 都回来了")
 
         # ================= 交给光义：另问他一回，不进聊天；她那一层一样不动 =================
@@ -528,6 +549,113 @@ with sync_playwright() as p:
         card = pa.locator(".kfs-jz-open").inner_text()
         ok("（测试排的）＜b＞泡桐花＜/b＞" in card and "拍立得墙 × 牛皮纸" in card and "他排的" in card, f"闲笔集今天的卡片：他起的标题、她挑的版式风格、他排的（{card!r}）")
 
+        # ================= 她自己起标题（点纸上的题签；她 10 月 18 日看了样子说“可以”）：他起的留着，不盖 =================
+        his_t = "（测试排的）＜b＞泡桐花＜/b＞"
+        dkey = f"kfs2:ty:day/{today}"
+        pa.locator(".kfs-jz-open").click()
+        f = fx(pa)
+        ftap(f, "#noteBtn")
+        f.evaluate(TAP, H2); time.sleep(0.6)
+        ok(f.evaluate("!document.querySelector('.kfs-ti') && !!document.querySelector('.npop')"), "正开着“批注”的时候点题签：照旧是批注（冒的是批注的气泡），不冒起标题那一条")
+        ftap(f, ".npop [data-nx]")
+        ftap(f, "#xray")
+        f.evaluate(TAP, H2); time.sleep(0.6)
+        ok(f.evaluate("document.getElementById('app').classList.contains('xray') && !document.querySelector('.kfs-ti')"), "正开着“拆零件”的时候点题签：也不冒")
+        ftap(f, "#xray")
+        f.evaluate(TAP, H2)
+        ok(fwait(f, f"!!document.querySelector('.kfs-ti') && document.querySelector('.kfs-ti-in').value === '{his_t}' && /清空就用回光义起的/.test(document.querySelector('.kfs-ti-tip').innerText)"),
+           "点一下题签：底下冒出一条打标题，填着他起的；底下一行写着清空就用回光义起的")
+        geo = f.evaluate("""(() => { const b = document.querySelector('.kfs-ti').getBoundingClientRect(), h = document.querySelector('#page .title h2').getBoundingClientRect(), p = document.getElementById('page').getBoundingClientRect();
+            return [Math.round(b.top - h.bottom), Math.round(b.left - p.left), Math.round(p.right - b.right)]; })()""")
+        ok(4 <= geo[0] <= 24 and geo[1] >= 0 and geo[2] >= 0, f"那一条摆在题签底下、在纸里（离题签、纸的左右：{geo}）")
+        f.evaluate("(() => { const i = document.querySelector('.kfs-ti-in'); i.focus(); i.select(); })()")
+        pa.keyboard.type("不要了")
+        ok(f.evaluate(H2TXT).strip() == "不要了", "边打纸上边换")
+        pa.keyboard.press("Escape"); time.sleep(0.8)
+        ok(f.evaluate("!document.querySelector('.kfs-ti')") and f.evaluate(H2TXT).strip() == his_t and "herTitle" not in (kvj(pa, dkey) or {}), "按 Esc：不改了，纸上换回去，什么都不存")
+        f.evaluate(TAP, H2)
+        fwait(f, "!!document.querySelector('.kfs-ti') && /清空就/.test(document.querySelector('.kfs-ti-tip').innerText)")
+        f.evaluate("(() => { const i = document.querySelector('.kfs-ti-in'); i.focus(); i.select(); })()")
+        pa.keyboard.type("我起的<标题>")
+        ftap(f, ".kfs-ti-ok")
+        R = kv_until(pa, dkey, lambda R: R.get("herTitle") == "我起的＜标题＞")
+        ok(R and R.get("herTitle") == "我起的＜标题＞" and R["title"] == his_t and R["by"] == "me" and R["layout"] == "bento",
+           f"点“好”：存在那一天的 day 里，记成她起的（尖括号换全角）；他起的留着，还是他排的那一页（{ {k: (R or {}).get(k) for k in ['herTitle', 'title', 'by']} }）")
+        ok(fwait(f, "(document.querySelector('#page .title h2') || {}).innerText.trim() === '我起的＜标题＞' && !!document.querySelector('#page .title h2 svg') && !document.querySelector('#page .title h2 b') && !document.querySelector('.kfs-ti')"),
+           "题签换成她起的（照字摆，红笔下划线还在），那一条收起来")
+        ftap(f, ".backhome"); time.sleep(0.8)
+        f.evaluate("(() => { try { window.__kfsShell.home(); } catch (e) {} })()"); time.sleep(0.6)
+        ok(f.evaluate("[...document.querySelectorAll('#rec .card b')].some((b) => b.textContent.includes('我起的＜标题＞') && !b.querySelector('*'))"), "本子首页那一列：照她起的")
+        close_ty(pa, f)
+        card = pa.locator(".kfs-jz-open").inner_text()
+        ok("我起的＜标题＞" in card and "他排的" in card, f"闲笔集今天的卡片：她起的标题（还是他排的）（{card!r}）")
+        pa.locator(".kfs-jz-open").click()
+        f = fx(pa)
+        f.evaluate(TAP, H2)
+        ok(fwait(f, "!!document.querySelector('.kfs-ti') && document.querySelector('.kfs-ti-in').value === '我起的＜标题＞' && /清空就用回光义起的/.test(document.querySelector('.kfs-ti-tip').innerText)"), "再打开、点题签：填着她起的")
+        f.evaluate("(() => { const i = document.querySelector('.kfs-ti-in'); i.focus(); i.select(); })()")
+        pa.keyboard.press("Backspace"); time.sleep(0.3)
+        ok(f.evaluate(H2TXT).strip() == his_t, "删空：纸上马上换回他起的")
+        pa.keyboard.press("Enter")
+        R = kv_until(pa, dkey, lambda R: "herTitle" not in R)
+        ok(R and "herTitle" not in R and R["title"] == his_t and fwait(f, f"(document.querySelector('#page .title h2') || {{}}).innerText.trim() === '{his_t}'"), "回车：拿掉她起的，用回他起的")
+        f.evaluate(TAP, H2)
+        fwait(f, "!!document.querySelector('.kfs-ti') && /清空就/.test(document.querySelector('.kfs-ti-tip').innerText)")
+        f.evaluate("(() => { const i = document.querySelector('.kfs-ti-in'); i.focus(); i.select(); })()")
+        pa.keyboard.type("泡桐花那天")
+        f.evaluate(TAP, "#page .prose"); time.sleep(0.3)
+        R = kv_until(pa, dkey, lambda R: R.get("herTitle") == "泡桐花那天")
+        ok(R and R.get("herTitle") == "泡桐花那天" and f.evaluate("!document.querySelector('.kfs-ti')"), "打完点纸上别处：也算定了（同同页自己改字那一条），存上")
+
+        # ================= 打的字挑颜色（同上）：点她打的那一段字，那一条里多一颗“色” =================
+        TXT = "[...document.querySelectorAll('#page .stk.placed[data-c=text]')].find((x) => (x.querySelector('.mt') || {}).innerText === '泡桐花开了')"
+        pkey = f"kfs2:ty:page/{today}"
+        ink0 = f.evaluate(f"getComputedStyle({TXT}.querySelector('.mt')).color")
+        f.evaluate(f"select({TXT})"); time.sleep(0.5)
+        bar = f.evaluate("""(() => { const b = document.getElementById('stkbar'); return { can: b.classList.contains('kfs-can-col'), btns: [...b.querySelectorAll('.tools button')].filter((x) => x.offsetParent).map((x) => x.innerText).join(''),
+            w: b.offsetWidth, pw: document.getElementById('page').clientWidth }; })()""")
+        ok(bar["can"] and bar["btns"] == "字色形转大小上下底顶撕" and bar["w"] <= bar["pw"], f"点她打的那一段字：那一条里“字”后面多一颗“色”，每颗窄一点，还是一排放得下（{bar}）")
+        ftap(f, "#stkbar .kfs-col")
+        ok(f.evaluate("""(() => { const b = document.getElementById('stkbar'); return b.classList.contains('kfs-coloring') && b.querySelectorAll('.kfs-sw').length === 9 && b.querySelector('.kfs-colrow').offsetParent !== null
+            && b.querySelector('.tools').offsetParent === null && b.querySelector('.kfs-sw.on').dataset.c === '' && b.offsetWidth <= document.getElementById('page').clientWidth; })()"""),
+           "点“色”：换成一排九个颜色（原来的那个圈着），放得下")
+        ftap(f, "#stkbar .kfs-sw[data-c='#C23A2B']")
+        ok(f.evaluate(f"getComputedStyle({TXT}.querySelector('.mt')).color") == "rgb(194, 58, 43)" and f.evaluate("document.querySelector('#stkbar .kfs-sw.on').dataset.c") == "#C23A2B",
+           "点朱红：那一段字马上换成朱红，朱红圈上")
+        others = f.evaluate(f"[...document.querySelectorAll('#page .stk.placed[data-c=text]')].filter((x) => x !== {TXT}).map((x) => getComputedStyle(x.querySelector('.mt')).color)")
+        ok(others and all(c == ink0 for c in others), f"别的字不动（{others}，原来是 {ink0}）")
+        ftap(f, "#stkbar .kfs-col-ok")
+        ok(f.evaluate("!document.getElementById('stkbar').classList.contains('kfs-coloring') && document.querySelector('#stkbar .tools').offsetParent !== null"), "点“好”：收回去")
+        P = kv_until(pa, pkey, lambda P: any(x.get("m") == "泡桐花开了" and x.get("kc") == "#C23A2B" for x in P["stk"]))
+        ok(P and any(x.get("m") == "泡桐花开了" and x.get("kc") == "#C23A2B" for x in P["stk"]) and not any(x.get("kc") for x in P["stk"] if x.get("m") != "泡桐花开了"),
+           "颜色跟着那一段字存在她那一层（别的不带）")
+        f.evaluate("select(document.querySelector('#page .stk.placed[data-c=pic]'))"); time.sleep(0.4)
+        ok(f.evaluate("!document.getElementById('stkbar').classList.contains('kfs-can-col') && document.querySelector('#stkbar .kfs-col').offsetParent === null && document.querySelector('#stkbar [data-a=txt]').offsetParent !== null"),
+           "点她放的照片（底下能写一句）：没有“色”（只给打的字）")
+        f.evaluate("select(null)"); time.sleep(0.3)
+        f.evaluate("applyStyle('xuan')"); time.sleep(1.2)
+        ok(f.evaluate(f"getComputedStyle({TXT}.querySelector('.mt')).color") == "rgb(194, 58, 43)", "换风格：还是朱红")
+        f.evaluate("applyStyle('kraft')"); time.sleep(1.0)
+        ftap(f, "#saveBtn"); ftap(f, "#genSave"); time.sleep(0.8)
+        ftap(f, "#saveGrab")
+        G = kv_until(pa, f"kfs2:ty:gens/{today}", lambda G: len(G["list"]) == 2)
+        gn = G["list"][-1]["n"] if G else 0
+        ok(G and any(x.get("m") == "泡桐花开了" and x.get("kc") == "#C23A2B" for x in G["list"][-1]["stk"]), f"存一代（第 {gn} 代）：颜色也记下")
+        f.evaluate(f"select({TXT})"); time.sleep(0.4)
+        ftap(f, "#stkbar .kfs-col"); ftap(f, "#stkbar .kfs-sw[data-c='']"); ftap(f, "#stkbar .kfs-col-ok")
+        f.evaluate("select(null)"); time.sleep(0.3)
+        ok(f.evaluate(f"getComputedStyle({TXT}.querySelector('.mt')).color") == ink0 and kv_until(pa, pkey, lambda P: not any(x.get("kc") for x in P["stk"])) is not None
+           and not any(x.get("kc") for x in kvj(pa, pkey)["stk"]), "挑“原来的”：跟着纸，存的那一份也拿掉了颜色")
+        f.evaluate(f"loadGen({gn})"); time.sleep(2.0)
+        ok(fwait(f, f"(() => {{ const t = {TXT}; return !!t && getComputedStyle(t.querySelector('.mt')).color === 'rgb(194, 58, 43)'; }})()"), f"换回第 {gn} 代：朱红回来了")
+        close_ty(pa, f)
+        ok(any(x.get("m") == "泡桐花开了" and x.get("kc") == "#C23A2B" for x in kvj(pa, pkey)["stk"]), "关上：存着朱红")
+        pa.locator(".kfs-jz-open").click()
+        f = fx(pa)
+        ok(f is not None and fwait(f, f"(() => {{ const t = {TXT}; return !!t && getComputedStyle(t.querySelector('.mt')).color === 'rgb(194, 58, 43)'; }})()") and f.evaluate(H2TXT).strip() == "泡桐花那天",
+           "再打开：那一段字还是朱红，题签是她起的")
+        close_ty(pa, f)
+
         # ================= 交给光义，没排成：说一声，不起页 =================
         f3 = td - timedelta(days=3)
         pick_day(pa, f3)
@@ -549,7 +677,7 @@ with sync_playwright() as p:
         # ================= 云端只有乱码 =================
         rows = mock("/__debug/rows")
         flat = json.dumps(rows, ensure_ascii=False)
-        leaks = [w for w in ["泡桐花", "蹲着拍的", "那天真好", "某城", "kraft", "polaroid", "journalLook", "kfsimg", "kfs2:ty", "测试排的", "kfschat", "安安静静的"] if w in flat]
+        leaks = [w for w in ["泡桐花", "蹲着拍的", "那天真好", "某城", "kraft", "polaroid", "journalLook", "kfsimg", "kfs2:ty", "测试排的", "kfschat", "安安静静的", "我起的", "herTitle", "C23A2B"] if w in flat]
         ok(not leaks, f"云端只有乱码（字、城市、版式风格、键名都看不见：{leaks}）")
     except Exception as e:
         import traceback; traceback.print_exc()
