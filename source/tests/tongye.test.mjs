@@ -3,9 +3,9 @@
 // 天气、框里那一页能要的几样（只认这一本的）、翻日记的工具看得到这一本（他留批注）、照原样拿同页那一页打补丁和安全规矩。数据都是编的。
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { fullOf, mdOf, toFull, toMd, pathToStore, idFromStore, lsKeyToStore, lsKeyFromStore } from "../src/tongye/dates.js";
+import { fullOf, mdOf, toFull, toMd, pathToStore, idFromStore, lsKeyToStore, lsKeyFromStore, yearAgoOf } from "../src/tongye/dates.js";
 import {
-  TY_KV, TY_LS, TY_IMG, TY_BLOCKS, TOOL_PART, madeOf, madeDays, infoOf, notesOf, addNoteTo, dropNoteOf, ensureDay, tidyDay,
+  TY_KV, TY_LS, TY_IMG, TY_BLOCKS, TOOL_PART, madeOf, madeDays, infoOf, notesOf, addNoteTo, dropNoteOf, ensureDay, openMode, quotesOfStk,
   migrateOld, migrateAll, fillWeather, chatOf, makeServer, okKey, okId, okDate, pageTextOf, dayTextOf, pageBitsOf, extrasOf, addHisNote, tyReader, onTyChanged, todayFor,
 } from "../src/tongye/host.js";
 import { DIARY_TOOLS, DIARY_NAMES, NOTE_PARTS, runDiaryCalls } from "../src/diaryTools.js";
@@ -55,29 +55,50 @@ ok(pathToStore("notes/n1", T0) === "notes/n1" && pathToStore("cfg/main", T0) ===
   "只有一天一条的那几样（day、page、gens、wx）换；批注、设置原样；换不了的回 null");
 ok(eq(toFull({ "9.27": { day: "9.27", t: "x" }, list: [{ day: "10.1" }], day: 3 }, T0), { "2026-09-27": { day: "2026-09-27", t: "x" }, list: [{ day: "2026-10-01" }], day: 3 }),
   "存进去：像月.日的键、叫 day 的字段（字符串）换成年-月-日，套着的一层一层都换");
-ok(eq(toMd({ "2025-10-18": 1, "2026-10-01": { day: "2026-10-01" }, notes: [{ day: "2025-01-01" }] }, T0), { "10.1": { day: "10.1" }, notes: [{ day: "2025-01-01" }] }),
-  "取出来：换不回来的键整条拿掉；换不回来的 day 字段原样（对不上哪一天，等于看不见）");
+ok(eq(toMd({ "2025-10-18": 1, "2026-10-01": { day: "2026-10-01" }, notes: [{ day: "2025-01-01" }] }, T0), { "2025-10-18": 1, "10.1": { day: "10.1" }, notes: [{ day: "2025-01-01" }] }),
+  "取出来：换不回来的键、day 字段都原样留着（对不上同页里的哪一天，等于看不见；存回去也还是它，不丢）");
+// 废纸篓里记着“day/10.20”这样的键：删的时候换成年-月-日，找回的时候换得回来的换回去、换不回来的照年-月-日写回原来那一年
+const SNAP = toFull({ day: "10.20", docs: { "day/10.20": { day: "10.20", title: "x" }, "page/10.20": { stk: [] }, "notes/n1": { day: "10.20" } } }, T0);
+ok(eq(Object.keys(SNAP.docs), ["day/2025-10-20", "page/2025-10-20", "notes/n1"]) && SNAP.day === "2025-10-20" && SNAP.docs["notes/n1"].day === "2025-10-20", "删的时候：废纸篓里那几条的键、日子都换成年-月-日（10.20 是去年的）");
+const T2 = new Date(2026, 9, 21, 9, 0);
+const BACK = toMd(SNAP, T2);
+ok(eq(Object.keys(BACK.docs), ["day/2025-10-20", "page/2025-10-20", "notes/n1"]) && BACK.day === "2025-10-20" && pathToStore("day/2025-10-20", T2) === "day/2025-10-20",
+  "过了一年那一天再找回：换不回来，照年-月-日原样，写回 2025-10-20（不会写到今年的 10.20 上，盖掉别的日子）");
+ok(eq(Object.keys(toMd(SNAP, T0).docs), ["day/10.20", "page/10.20", "notes/n1"]), "一年以内找回：照同页的样子换回月.日");
+// 2 月 29 日那天：3.1 是去年的 3 月 1 日，换出去也换得回来
+const LEAP = new Date(2028, 1, 29, 9, 0);
+ok(fullOf("3.1", LEAP) === "2027-03-01" && mdOf("2027-03-01", LEAP) === "3.1" && mdOf("2027-02-28", LEAP) === null && fullOf("2.28", LEAP) === "2028-02-28" && yearAgoOf(LEAP).getDate() === 28,
+  "2 月 29 日那天：一年前是 2 月 28 日（3.1 换出去是去年的 3 月 1 日，也换得回来）");
 ok(lsKeyToStore("journalPage:9.27", T0) === "journalPage:2026-09-27" && lsKeyToStore("journalCfg", T0) === "journalCfg" && lsKeyFromStore("journalLook:2026-09-27", T0) === "journalLook:9.27" && lsKeyFromStore("journalLook:2024-01-01", T0) === null && lsKeyFromStore("stkUse", T0) === "stkUse",
   "这台设备上的键：冒号后面是日子的那几样换，别的原样");
 
 // =====================================================
-// 这一本的存档：算不算掺了一页、卡片、批注、点开没动不留
+// 这一本的存档：算不算掺了一页、卡片、批注；点开不写，头一回动手才起那一天
 // =====================================================
 const D = "2026-10-12";
 const s1 = mkStore();
-ok((await ensureDay(s1, D, 1000)) === "self" && P(s1, `${TY_KV}day/${D}`).by === "her" && P(s1, `${TY_KV}day/${D}`).day === D, "这一天还没有页：起一页空的（她自己拼的），点开是“自己拼”");
-ok(!madeOf(s1, D) && eq(madeDays(s1), []) && infoOf(s1, D) === null && pageTextOf(s1, D) === "", "空的一页不算掺了：日历上不标、没有卡片、他翻日记也看不到");
-s1.m.set(`${TY_KV}page/${D}`, J({ stk: [{ c: "stamp", k: "feng", who: "me", x: 1, y: 2 }] }));
-ok(!madeOf(s1, D), "同页替他盖的那个章不算她掺了东西");
-s1.m.set(`${TY_KV}wx/${D}`, J({ code: 1 }));
-s1.m.set(`${TY_LS}journalLook:${D}`, J({ layout: "cover", style: "night" }));
-ok((await tidyDay(s1, D)) === true && eq(s1.keys(TY_KV), [`${TY_KV}wx/${D}`]) && s1.peek(`${TY_LS}journalLook:${D}`), "点开没动就关了：那一页不留（那一天的天气、她挑的版式风格留着）");
-s1.m.delete(`${TY_KV}wx/${D}`);
-s1.m.set(`${TY_KV}day/${D}`, J({ day: D, by: "her", title: "" }));
+ok(openMode(s1, D) === "self" && s1.keys(TY_KV).length === 0, "这一天还没有页：点开是“自己拼”，什么都不写");
+let pushed = [];
+const offP = onTyChanged((keys) => pushed.push(...keys));
+s1.m.set(`${TY_KV}wx/${D}`, J({ at: "某城", code: 61, hi: 15.4, lo: 9.6, mm: 3, wind: 20, sun: "18:21", src: "open-meteo" }));
+ok((await ensureDay(s1, D, 1000)) === true && P(s1, `${TY_KV}day/${D}`).by === "her" && P(s1, `${TY_KV}day/${D}`).wx.sun === "18:21" && P(s1, `${TY_KV}day/${D}`).at === "某城" && pushed.includes(`${TY_KV}day/${D}`),
+  "她头一回动手：起那一天的 day（她自己拼的），取过的天气一起写进去（天气签照它画），告诉开着的框");
+ok((await ensureDay(s1, D, 2000)) === false && P(s1, `${TY_KV}day/${D}`).ts === 1000, "已经有了：不再起，不盖");
+offP();
+ok(!madeOf(s1, D) && eq(madeDays(s1), []) && infoOf(s1, D) === null && pageTextOf(s1, D) === "" && openMode(s1, D) === "self", "空的一页（只有天气）不算掺了：日历上不标、没有卡片、他翻日记也看不到");
+s1.m.set(`${TY_KV}page/${D}`, J({ stk: [{ c: "kao", k: "٩(ˊᗜˋ*)و", who: "me", x: 1, y: 2, me1: 1 }] }));
+ok(!madeOf(s1, D), "同页点开的时候替他放的那一张（me1）不算掺了东西");
+s1.m.set(`${TY_KV}page/${D}`, J({ stk: [{ c: "kao", k: "x", who: "me", me1: 1 }, { c: "stamp", k: "feng", who: "me", x: 1, y: 2 }] }));
+ok(madeOf(s1, D) && openMode(s1, D) === "view" && eq(madeDays(s1), [D]), "她点了“让光义贴一张”贴上的也算（同同页：除了那一张 me1 都算）：点开是看");
+s1.m.set(`${TY_KV}page/${D}`, J({ stk: [], hide: ["wx"] }));
+ok(madeOf(s1, D), "藏了哪几块也算（同同页的 worth）");
+s1.m.set(`${TY_KV}page/${D}`, J({ stk: [] }));
+s1.m.set(`${TY_KV}gens/${D}`, J({ list: [{ n: 1 }] }));
+ok(madeOf(s1, D), "存过一代也算（只靠骰子摆的一页也是她存下来的）");
+s1.m.delete(`${TY_KV}gens/${D}`);
+s1.m.delete(`${TY_KV}day/${D}`);
 s1.m.set(`${TY_KV}page/${D}`, J({ stk: [{ c: "emoji", k: "fox", who: "her", x: 1, y: 2 }] }));
-ok(madeOf(s1, D) && (await ensureDay(s1, D)) === "view" && (await tidyDay(s1, D)) === false && eq(madeDays(s1), [D]), "她贴了一张狐狸就算掺了：点开是看，关上留着");
-s1.m.set(`${TY_KV}page/${D}`, J({ stk: [{ c: "emoji", k: "fox", who: "her", x: 1, y: 2, d: 1 }] }));
-ok(!madeOf(s1, D), "撕掉了的不算");
+ok(madeOf(s1, D) && eq(madeDays(s1), [D]) && infoOf(s1, D).sub === "单栏流 × 青墨素纸", "只有 page 没有 day 的（起 day 那一下没存上）也算，日历上照样标");
 
 const s2 = mkStore({
   [`${TY_KV}day/${D}`]: J({
@@ -88,7 +109,17 @@ const s2 = mkStore({
     text: { p1: "下午去了运河边。", cap: "运河边", pen: { text: "[[紫色]]的，一串一串", margin: "记得" }, p2: "<her>这张</her>是她拍的" },
     food: { meal: "午饭", at: "米线店", items: [["番茄牛肉米线", 5], ["冰粉", 4]] },
   }),
-  [`${TY_KV}page/${D}`]: J({ stk: [{ c: "text", k: "t1", who: "her", m: "好看" }, { c: "pic", k: "m1", who: "her" }, { c: "emoji", k: "fox", who: "her" }], hide: ["wx"] }),
+  [`${TY_KV}page/${D}`]: J({
+    stk: [
+      { c: "text", k: "t1", who: "her", m: "好看" },
+      { c: "pic", k: "m1", who: "her", m: "运河边上" },
+      { c: "emoji", k: "fox", who: "her" },
+      { c: "kao", k: "٩(ˊᗜˋ*)و", who: "me", me1: 1 },
+      { c: "qsel", k: "C:" + encodeURIComponent(JSON.stringify([{ d: "10.12", w: "her", t: "09:50", p: "风好大 拍糊了", src: "原话" }])), who: "her" },
+      { c: "qsel", k: "c:10.12#3", who: "her" },
+    ],
+    hide: ["wx"],
+  }),
   [`${TY_LS}journalLook:${D}`]: J({ layout: "polaroid", style: "washi" }),
   [`${TY_KV}mine/m1`]: J({ id: "m1", src: "kfsimg:m1img", day: D }),
 });
@@ -112,9 +143,14 @@ await dropNoteOf(s2, D, nHim.id);
 const txt = pageTextOf(s2, D);
 ok(txt.startsWith("手帐：有一页（你排的；版式 拍立得墙，风格 和纸）") && txt.includes("标题：泡桐花") && txt.includes("正文：下午去了运河边。") && txt.includes("红笔：紫色的，一串一串（页边：记得）") && txt.includes("截图说明：这张是她拍的"),
   "他翻到那一天：谁排的、版式风格、标题、正文、红笔（记号去掉）、截图说明");
-ok(txt.includes("照片 5 张：主照片（底下写着：运河边）、双联照 2 张、截图 1 张、她贴上去的 1 张") && txt.includes("摆的原话：09:46 卿卿：今天看到泡桐花｜09:47 你：拍给我看"), "照片他看不见：写明几张、各是什么；摆的原话带着几点、谁说的");
-ok(txt.includes("票根：午饭 米线店：番茄牛肉米线、冰粉") && txt.includes("她在页上写的字：“好看”") && txt.includes("贴纸 1 张") && txt.includes("她藏起来的：天气签") && !txt.includes("天气："), "票根、她写的字、贴纸几张；藏起来的天气不念，写明藏了");
-ok(pageBitsOf(s2, D).includes("紫色的，一串一串") && pageBitsOf(s2, D).includes("好看") && !pageBitsOf(s2, D).includes("[["), "按词找的时候：页上写着的字（记号去掉）");
+ok(txt.includes("照片 5 张：主照片（底下写着：运河边）、双联照 2 张、截图 1 张、她贴上去的 1 张（底下写着：“运河边上”）") && txt.includes("摆的原话：09:46 卿卿：今天看到泡桐花｜09:47 你：拍给我看"),
+  "照片他看不见：写明几张、各是什么、她在照片底下写的；摆的原话带着几点、谁说的");
+ok(txt.includes("她贴的原话：09:50 卿卿：风好大 拍糊了") && txt.includes("引用的便签 1 张（这边认不出写的是哪几句）"), "她从引用栏贴到纸上的原话也念（认不出的那种写明有一张）");
+ok(txt.includes("票根：午饭 米线店：番茄牛肉米线、冰粉") && txt.includes("她在页上写的字：“好看”") && txt.includes("贴纸 1 张") && txt.includes("她藏起来的：天气签") && !txt.includes("天气："),
+  "票根、她写的字、贴纸几张（同页替他放的那一张不算）；藏起来的天气不念，写明藏了");
+ok(pageBitsOf(s2, D).includes("紫色的，一串一串") && pageBitsOf(s2, D).includes("好看") && pageBitsOf(s2, D).includes("运河边上") && pageBitsOf(s2, D).includes("风好大 拍糊了") && !pageBitsOf(s2, D).includes("[["),
+  "按词找的时候：页上写着的字（记号去掉）、照片底下写的、她贴的原话");
+ok(quotesOfStk({ c: "qsel", k: "C:坏了%" }) === null && quotesOfStk({ c: "text", k: "C:x" }) === null, "认不出的原话便签不出错");
 await addNoteTo(s2, D, "her", "这天真好", new Date(2026, 9, 12, 22, 0).getTime());
 const r2 = notesOf(s2, D)[0];
 s2.m.set(`${TY_KV}notes/re2`, J({ id: "re2", day: D, who: "me", text: "嗯", at: new Date(2026, 9, 12, 23, 5).getTime(), re: r2.id, b: "" }));
@@ -194,6 +230,19 @@ ok(P(s4, `${TY_KV}notes/nold1`).b === "he" && P(s4, `${TY_KV}notes/nold1`).who =
 ok(s4.peek(`${TY_KV}moved/2026-10-17`) && s4.peek(JZ_KEY + "2026-10-17") && (await migrateAll(s4, 6000)).length === 0, "记一笔挪过；原来那一版的存档留着；再挪一回什么都不动");
 const s5 = mkStore({ [JZ_KEY + "2026-10-17"]: J(OLD), [`${TY_KV}day/2026-10-17`]: J({ day: "2026-10-17", title: "同页里已经有了" }) });
 ok((await migrateAll(s5)).length === 0 && P(s5, `${TY_KV}day/2026-10-17`).title === "同页里已经有了", "同页里那一天已经有页了：不挪，不盖");
+// 上一版只有批注、没有页的那几天
+const s6n = mkStore({
+  [JZN_KEY + "2026-10-16"]: J([{ id: "nn1", who: "her", text: "只有批注的一天", at: at - 86400000 }, { id: "坏的 编号", who: "him", text: "编号不对的那条", at: at - 86000000 }]),
+  [JZN_KEY + "2026-10-15"]: J([{ id: "nn9", who: "her", text: "已经挪过", at: at - 2 * 86400000 }]),
+  [`${TY_KV}notes/nn9`]: J({ id: "nn9", day: "2026-10-15", who: "her", text: "已经挪过", at: 1 }),
+});
+const mv6 = await migrateAll(s6n, 7000);
+const n16 = notesOf(s6n, "2026-10-16");
+ok(n16.length === 2 && n16[0].text === "只有批注的一天" && n16[0].who === "her" && n16[1].who === "me" && /^jzn20261016\d$/.test(n16[1].id) && s6n.peek(`${TY_KV}moved/2026-10-16`),
+  "上一版只有批注没有页的那天：批注也挪过来（他的叫 me，编号不规矩的另起一个），记一笔挪过");
+ok(notesOf(s6n, "2026-10-15").length === 1 && mv6.some((m) => m.day === "2026-10-15" && m.notes === 0), "已经挪过来的那条不再挪一份");
+await dropNoteOf(s6n, "2026-10-16", "nn1");
+ok((await migrateAll(s6n, 8000)).length === 0 && notesOf(s6n, "2026-10-16").length === 1, "她在这边删了的：不会从上一版的存档里又冒出来");
 
 // =====================================================
 // 天气
@@ -212,6 +261,14 @@ ok(w1 && eq(P(s6, `${TY_KV}wx/${D}`), { at: "某城", code: 61, hi: 15.4, lo: 9.
   "取一回：写进同页的 wx，也写进那一天的页（连日落，不然同页收这一页的时候日落没了）");
 ok(told.includes(`${TY_KV}wx/${D}`), "开着的框知道了（TongyeFrame 听着）");
 ok((await fillWeather(s6, D, { city: { name: "某城", lat: 1, lon: 2 } }, fakeWx)) === null && wxCalls.length === 1, "取过的不再取");
+s6.m.set(`${TY_KV}day/${D}`, J({ day: D, by: "her", title: "", ts: 9 }));
+told = [];
+await fillWeather(s6, D, { city: { name: "某城", lat: 1, lon: 2 } }, fakeWx);
+ok(P(s6, `${TY_KV}day/${D}`).wx.code === 61 && P(s6, `${TY_KV}day/${D}`).wx.sun === "18:21" && wxCalls.length === 1 && told.includes(`${TY_KV}day/${D}`),
+  "那一天的 day 是后起的、没有天气：照取过的写进去（不再取一回），告诉开着的框");
+const s6b = mkStore();
+await fillWeather(s6b, "2026-10-11", { city: { name: "某城", lat: 1, lon: 2 } }, fakeWx);
+ok(s6b.peek(`${TY_KV}day/2026-10-11`) === null && P(s6b, `${TY_KV}wx/2026-10-11`).code === 61, "那一天还没有 day：只记天气，不起 day（点开不写页）");
 off();
 
 // =====================================================
@@ -253,6 +310,7 @@ ok(ph.length === 1 && ph[0].id === "img1" && ph[0].t === "09:47" && ph[0].data.s
 ok((await H("city")) === null && eq(await H("geocode", { q: "" }), []) && (await H("geocode", { q: "某城" })).length === 6, "天气在哪儿：还没填；找城市最多列六个，空的不找");
 ok((await H("setCity", { city: { name: "某城", lat: 200, lon: 1 } })) === false && (await H("setCity", { city: { name: "某城", lat: 12.3456, lon: -45.6789, where: "某省 · 某国" } })) === true, "挑城市：经纬度不对的不收");
 ok(eq(await H("city"), { name: "某城", where: "某省 · 某国" }) && P(s7, "kfs2:jzcfg").city.tz === "auto", "记在 kfs2:jzcfg（跟原来那一版同一处）");
+ok((await H("touch", { date: "2026-10-09" })) === true && P(s7, `${TY_KV}day/2026-10-09`).by === "her" && (await H("touch", { date: "坏的" })) === false, "她在那一天头一回动手：外面起那一天的 day（日子不规矩的不起）");
 let threw = [];
 for (const m of ["eval", "constructor", "__proto__", "toString", "hasOwnProperty"]) {
   try {
@@ -292,6 +350,10 @@ ok(html.indexOf('<meta charset="utf-8">') < html.indexOf("Content-Security-Polic
   "安全规矩、开封府那一层都在最前面（同页自己的脚本之前）");
 ok(!html.includes("localStorage") && !/\beval\(/.test(html) && !html.includes("new Function") && html.includes('<meta name="referrer" content="no-referrer">') && html.includes('<meta name="robots" content="noindex, nofollow">'), "同页里一处 localStorage、eval 都不剩；不带来路、不让搜");
 ok(html.includes('her:"卿卿",me:"光义"') && html.includes("const WX={};") && html.includes('let CURDAY="";') && html.includes("window.__kfsShell="), "署名换成卿卿和光义；演示的天气清掉；从“没在哪一天”开始；开封府能打开某一天");
+ok(!html.includes('<link rel="preconnect"') && !/<link[^>]+fonts\.googleapis/.test(html) && html.includes("function loadFonts(st,preview){return;") && !csp.includes("google"), "字体先不去 Google 取（连都不连）");
+ok(html.includes("function savePage(){if(restoring)return;if(window.__kfsSaveOk&&!window.__kfsSaveOk())return;") && html.includes("window.__kfsPageIn&&window.__kfsPageIn(k);") && html.includes("window.__kfsMineIn=1;") && html.includes("window.__kfsFlush=()=>flushPage();") && html.includes("PAGE_DAY=k;window.__kfsOpened&&window.__kfsOpened(k);"),
+  "同页自己存那一页之前问一声；那一页取回来了、照片库齐了、关之前存、换了天才许存，几处都接上了");
+ok(html.includes('"存好了，"+NM("me")+"翻日记的时候看得到"') && !html.includes("也送回家了"), "留了批注不说“送回家了”");
 ok(!html.includes("setTimeout(function(){location.reload()},900)") && html.split("setTimeout(function(){window.__kfsReload?__kfsReload():location.reload()},900)").length === 3 && html.includes('return w==="me"?"光义":"卿卿"'), "删掉这一页、找回以后不在框里重新载入（关上回闲笔集）");
 ok(PATCHES.every(([from, to, n]) => SRC.split(from).length - 1 === n && typeof to === "string"), `每一处补丁在原文里都找得到、处数对得上（${PATCHES.length} 处）`);
 const bad = (mut) => {

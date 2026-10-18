@@ -28,9 +28,12 @@ try {
 const PARENT = window.parent && window.parent !== window ? window.parent : null;
 const ON = !!(INIT && PARENT);
 
-// “今天”：外面带进来的（翻一年以前的页的时候挪到那一天），往后照这一页的钟走
-const shift = ON && Number.isFinite(INIT.today) ? INIT.today - Date.now() : 0;
-const today = () => new Date(Date.now() + shift);
+// “今天”：外面带进来的（翻一年以前的页的时候挪到那一天）。开着的时候不往前走（同页自己的“今天”也是打开那一下定的）：
+// 过了半夜还开着，日子换算照旧，写的还是打开时那一天、那一年
+const T0 = ON && Number.isFinite(INIT.today) ? INIT.today : Date.now();
+const today = () => new Date(T0);
+// 每一回问外面都带着这一个暗号（开门的时候外面给的，只在这一段里）：框里换成了别的网页，它问什么外面都不理
+const TOK = ON && typeof INIT.tok === "string" ? INIT.tok : "";
 // 同页里几处“今天”（本子首页的日子、热力图的最后一格……）照这个（tools/tongye.mjs 换的）
 window.__kfsToday = today;
 
@@ -44,10 +47,10 @@ function ask(method, args) {
   const id = ++seq;
   return new Promise((res, rej) => {
     waiting.set(id, { res, rej });
-    PARENT.postMessage({ kfsTy: 1, id, method, args }, "*");
+    PARENT.postMessage({ kfsTy: 1, tok: TOK, id, method, args }, "*");
   });
 }
-const tellOut = (method, args) => ON && PARENT.postMessage({ kfsTy: 1, method, args }, "*");
+const tellOut = (method, args) => ON && PARENT.postMessage({ kfsTy: 1, tok: TOK, method, args }, "*");
 const setSafe = (s) => {
   const r = document.documentElement.style;
   for (const k of ["t", "b", "l", "r"]) if (Number.isFinite(s[k])) r.setProperty("--safe-" + k, s[k] + "px");
@@ -139,7 +142,7 @@ const parseJson = (s) => {
 };
 
 // ---------- 刚打开、还没换到要看的那一天之前：同页按它自带的那一天（9.26）摆过一遍，那时候写的不存 ----------
-// 换天（journalSetDay，tools/tongye.mjs 在它末尾加了一句 __kfsOpened）以后才放开
+// 换天（journalSetDay 里 PAGE_DAY 换过来那一下，tools/tongye.mjs 在那儿加了一句 __kfsOpened）以后才放开
 let opened = false;
 window.__kfsOpened = () => {
   opened = true;
@@ -150,6 +153,33 @@ const lsHead = (k) => {
 };
 const lsHeld = (k) => !opened && DAY_LS.includes(lsHead(k));
 const pathHeld = (p) => !opened && /^(page|gens)\//.test(String(p));
+
+// ---------- 同页自己存那一页（savePage，tools/tongye.mjs 在它开头问 __kfsSaveOk）：三样都对上才存 ----------
+//   1. 那一天的页从存档里取回来了（pageRef.get 回来了：__kfsPageIn）。没回来之前同页先摆一页空的，那时候存，真的那一页就被盖了
+//   2. 她在这一天真的动过手（在纸上、贴纸栏、加东西那一排、下面弹出来的那几层里点、按、打字）。光点开不算：
+//      同页自己挪那一张 me1、把取回来的页再摆一遍，都会叫它存一回，存的是原样，可另一台设备做好、这台还没同步下来的那一页，会被这边自动存的空页盖掉
+//   3. 照片库取齐了（不齐的时候她放的照片摆不出来，一存就把照片弄丢了；取不齐这一回都不存，见下面 onReady）
+let pageIn = null;
+let touched = null;
+let noSave = false;
+const touchedDays = new Set(); // 起过 day 的那几天（年-月-日），不再问外面
+window.__kfsPageIn = (k) => {
+  pageIn = k;
+};
+window.__kfsSaveOk = () => !ON || (!noSave && opened && pageIn === window.PAGE_DAY && touched === window.PAGE_DAY);
+// 顶上那一栏（回本子、标题、版式风格）、本子首页、回闲笔集那一颗：不算动了这一页
+const CHROME = ".top, #shell, .kfs-close, .backhome";
+for (const type of ["pointerdown", "keydown", "input", "change", "click", "drop", "paste"])
+  document.addEventListener(
+    type,
+    (e) => {
+      if (!opened) return;
+      const t = e.target;
+      if (t && t.closest && t.closest(CHROME)) return;
+      touched = window.PAGE_DAY;
+    },
+    true
+  );
 
 // ---------- localStorage 那一层（同页里那几十处换成了 __kfsLS） ----------
 function makeLS() {
@@ -235,7 +265,14 @@ if (ON) {
       if (pathHeld(path)) return null;
       const sp = pathToStore(path, today());
       if (!sp) return null;
-      await ask("set", { k: KV + sp, v: JSON.stringify(toStore(data)) });
+      // 那一天头一回存那一页、存一代：外面先起那一天的 day（点开的时候不起，见 host.js 的 ensureDay）
+      const m = /^(page|gens)\/(\d{4}-\d{2}-\d{2})$/.exec(sp);
+      if (m && !touchedDays.has(m[2])) {
+        if (!(await ask("touch", { date: m[2] }))) throw new Error("没存上");
+        touchedDays.add(m[2]);
+      }
+      // 没存上（存档满了、存不进去）：报错，同页自己那几处“没存成”的路才走得到（比如删一页：挪进废纸篓没存上，就不删原来的）
+      if ((await ask("set", { k: KV + sp, v: JSON.stringify(toStore(data)) })) === false) throw new Error("没存上");
       return null;
     },
     async del(path) {
@@ -246,17 +283,19 @@ if (ON) {
     async list(col) {
       const pre = KV + col + "/";
       const rows = (await ask("list", { prefix: pre })) || [];
-      const out = [];
+      const items = [];
       for (const [k, v] of rows) {
         const id = idFromStore(col, String(k).slice(pre.length), today());
         const o = id && typeof v === "string" ? parseJson(v) : null;
-        if (o != null) out.push({ id, data: await fromStore(o) });
+        if (o != null) items.push({ id, o });
       }
-      return out;
+      // 照片一起取（不一张一张排着等：她的照片库大了，一张一张等，点开要等好久）
+      const datas = await imgsIn(items.map((x) => toMd(x.o, today())));
+      return items.map((x, i) => ({ id: x.id, data: datas[i] }));
     },
     async upload(blob) {
       const id = "ty" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-      await ask("imgPut", { id, data: await blobToData(blob) });
+      if ((await ask("imgPut", { id, data: await blobToData(blob) })) === false) throw new Error("没存上");
       const url = URL.createObjectURL(blob);
       own(id, url);
       return { id, url };
@@ -315,8 +354,26 @@ if (ON) {
   window.__bzHeat = h;
 }
 
+// ---------- 关上回闲笔集：先把还没存的存了 ----------
+// 同页停手 0.7 秒才存那一页（savePage）、0.6 秒才存设置（saveCfg）：一关框就拆了，最后那一下没存上。
+// 先叫它把那一页马上存了（flushPage，tools/tongye.mjs 递出来的 __kfsFlush；没动过手的它不存），等设置那一下存完，
+// 还在路上的（存那一页、存设置、存照片）等它们回来（最多三秒），再说关
+let closing = false;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function closeNow() {
+  if (!ON) return;
+  if (closing) return;
+  closing = true;
+  try {
+    if (window.__kfsFlush) window.__kfsFlush();
+  } catch (e) {}
+  await sleep(700);
+  const end = Date.now() + 3000;
+  while (waiting.size && Date.now() < end) await sleep(100);
+  tellOut("close");
+}
 // 同页删掉这一页、找回一页以后要重新载入（回它的本子首页）：开封府这边本子首页就是闲笔集，关上回去（tools/tongye.mjs 换的那两处）
-window.__kfsReload = () => (ON ? tellOut("close") : location.reload());
+window.__kfsReload = () => (ON ? closeNow() : location.reload());
 // 找回之前那一天现在的 day 算不算有东西（同 host.js 的 madeOf 看 day 的那一半）：点开就起的那一页空的不算
 window.__kfsWorth = (R) => {
   if (!R || typeof R !== "object") return false;
@@ -337,6 +394,8 @@ const CSS = [
   // 「存」里删掉这一页：同页用 hidden 先藏着“真的删掉 / 算了”，可它自己的 .savebig{display:flex} 把 hidden 盖了，两颗一起露着（原版也这样），
   // 一下就能点到“真的删掉”。照它的意思：先点“删掉这一页”才露出来
   "#delBox [hidden]{display:none!important}",
+  // 批注那一栏的“分享到聊天”：同页是送进它家里的聊天；开封府这边光义翻日记看得到批注，这一颗先藏着（不然它说送进去了，其实没有）
+  "[data-sh]{display:none!important}",
   // 回闲笔集的那一颗
   ".kfs-close{display:inline-flex;align-items:center;gap:2px;margin-right:10px;padding:4px 8px 4px 2px;border:0;background:none;color:inherit;font:inherit;font-size:13px;opacity:.75;cursor:pointer}",
   ".kfs-close svg{width:16px;height:16px}",
@@ -537,16 +596,33 @@ function onReady() {
     b.className = "kfs-close tap";
     b.setAttribute("aria-label", "回闲笔集");
     b.innerHTML = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 4.5L7 10l5.5 5.5"/></svg>闲笔集';
-    b.onclick = () => tellOut("close");
+    b.onclick = () => closeNow();
     who.parentNode.insertBefore(b, who);
   }
   chatPhotoItem();
   citySection();
-  // 要打开的那一天
+  // 要打开的那一天：等她的照片库（同页的 mine）取齐了再开，不然她放在页上的照片同页摆不出来（见上面存那一页的第 3 条）。
+  // 十二秒还没齐：照样开，这一回改的都不存，说一声
   const o = INIT.open;
   if (o && o.day) {
     const md = mdOf(o.day, today());
-    if (md && window.__kfsShell) window.__kfsShell.open(md, o.mode || "view");
+    if (md && window.__kfsShell) {
+      const end = Date.now() + 12000;
+      (async () => {
+        while (!window.__kfsMineIn && Date.now() < end) await sleep(100);
+        if (!window.__kfsMineIn) {
+          noSave = true;
+          setTimeout(() => {
+            try {
+              // 同页的 toast 是它第三段脚本里的 const（不在 window 上），这里照名字找
+              // eslint-disable-next-line no-undef
+              if (typeof toast === "function") toast("照片还没取齐，这一回改的先不存，关上再开一回");
+            } catch (e) {}
+          }, 1500);
+        }
+        window.__kfsShell.open(md, o.mode || "view");
+      })();
+    }
   }
   tellOut("ready");
 }

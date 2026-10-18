@@ -443,10 +443,9 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
           day={jzOpen.day}
           mode={jzOpen.mode}
           {...jzOpen.deps}
-          onClose={async () => {
-            const day = jzOpen.day;
+          onClose={() => {
+            // 点开不动关上：什么都没写（同页里头一回动手才存，见 tongye/host.js 的 ensureDay），用不着收拾；回来重看一遍这一天
             setJzOpen(null);
-            await jz.tidy(day);
             setJzTick((t) => t + 1);
           }}
         />
