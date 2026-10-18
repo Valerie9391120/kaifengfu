@@ -551,8 +551,8 @@ ok(html.includes("function savePage(){if(restoring)return;if(window.__kfsSaveOk&
 ok(html.includes('"存好了，"+NM("me")+"翻日记的时候看得到"') && !html.includes("也送回家了"), "留了批注不说“送回家了”");
 ok(html.includes("const P={t:R.herTitle||R.title||k,") && html.split('{const kc=x.style.getPropertyValue("--kc").trim();if(kc)o.kc=kc}').length === 3 && html.split('if(o.kc&&/^#[0-9a-fA-F]{6}$/.test(o.kc))el.style.setProperty("--kc",o.kc);').length === 3
   && html.includes("function select(s){window.edOff&&edOff(s);window.__kfsSel&&__kfsSel(s);") && html.includes("function ingestDay(R){if(!R||!R.day)return;window.__kfsIngest&&__kfsIngest(R);")
-  && html.split('${E2(r.herTitle||r.title||"")}').length === 3,
-  "她起的标题、打的字的颜色那几处接上了：纸上、“做好了”那一条照她起的；颜色存那一页、存一代都记下，摆回来都摆上（只认 #六位的颜色）；换选了一张收起颜色那一排；收到那一天先告诉开封府那一层");
+  && html.split('${E2(r.herTitle||r.title||"")}').length === 3 && html.includes("const ph=(window.__kfsDayPh&&__kfsDayPh(day))||PHOTOS[day]||[]") && html.includes('src="${PH[k]||k}"'),
+  "她起的标题、打的字的颜色那几处接上了：纸上、“做好了”那一条照她起的；颜色存那一页、存一代都记下，摆回来都摆上（只认 #六位的颜色）；换选了一张收起颜色那一排；收到那一天先告诉开封府那一层；那一天的那一屏照聊天里的照片、原话数");
 ok(html.includes("map(x=>window.__kfsAskRef?__kfsAskRef(x):x)") && html.includes('(R.status==="making"||R.status==="failed")') && html.includes('s2.fail?"fail"') && html.includes("!(r.steps||[]).some(x=>x&&x.fail)")
   && html.includes('(window.__kfsHisNew?__kfsHisNew(R):R.by!=="her")&&toast2') && html.includes('if(mode==="day"&&!DONE[k]){try{openDay(k)}') && html.includes("dayIn:function(k,ph,chat)") && html.includes('"这天还没有天气"'),
   "交给光义那几处接上了：寄的照片换成开封府的编号、没排成不起页不冒“打开这一页”、“光义刚更新了这一页”只在他排好的时候说、开封府能打开某一天的那一屏、那一屏的照片原话");

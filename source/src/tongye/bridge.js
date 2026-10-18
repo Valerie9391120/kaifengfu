@@ -584,10 +584,15 @@ async function openChatPhotos() {
 }
 
 // ---------- 交给光义（同页的「交给」那一屏；开封府另问他一回，见 host.js 的 tyArrangeAsk、App.jsx 的 tyArrange） ----------
-// 那一天的那一屏（本子首页点一天、闲笔集点“掺一页手帐”）：那一天的页上没有照片的时候，照片那一栏摆她那天在聊天里发的照片
-// （「交给光义」那一屏照这一栏先挑四张，她能拿掉、能从相册再添）；“几句聊天”照那天的原话数（同页的 renderDay 叫这里）
+// 那一天的那一屏（本子首页点一天、闲笔集点“掺一页手帐”）：“几张照片、几句聊天”和那几张小图照她那天在聊天里发的照片、聊的原话数
+// （同页的 renderDay 叫这里取，摆的时候问 __kfsDayPh、__kfsDayN，tools/tongye.mjs 接上的。同页原来拿那一天的 day 里的：
+// 掺过一页的日子，摆的成了那一页上的几张、他挑的那几句，小图还摆不出来，她 10 月 18 日 19:18 截图报的）。
+// 那一天的页上没有照片的时候，聊天里的照片也给「交给光义」那一屏先挑四张（她能拿掉、能从相册再添）
 const chatRefs = new Map(); // blob 地址 → 聊天里那一张的编号
 const dayAsked = new Set();
+const dayStat = new Map(); // 月.日 → { ph: 那天聊天里的照片（blob 地址）, n: 那天的原话数 }；还没取回来是没有
+window.__kfsDayPh = (md) => (dayStat.has(md) ? dayStat.get(md).ph : null);
+window.__kfsDayN = (md) => (dayStat.has(md) ? dayStat.get(md).n : null);
 window.__bzDay = async (md) => {
   if (!ON || dayAsked.has(md)) return;
   dayAsked.add(md);
@@ -601,6 +606,7 @@ window.__bzDay = async (md) => {
       chatRefs.set(u, p.id);
       return u;
     });
+    dayStat.set(md, { ph: urls, n: chat.length });
     // 同页那一屏的照片、原话在它自己那一段里（摸不着），交给 tools/tongye.mjs 摆的那个口子：那一天还没有的才摆，还是那一天就再摆一回
     // （它再摆一回又会叫这里：取过的不再取）。那个口子还没摆好（同页刚打开）：等一会儿；等不到，下回再取
     for (let i = 0; i < 50 && !(window.__kfsShell && window.__kfsShell.dayIn); i++) await sleep(100);
