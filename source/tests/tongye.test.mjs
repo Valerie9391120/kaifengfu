@@ -87,6 +87,9 @@ s1.m.set(`${TY_KV}wx/${D}`, J({ at: "某城", code: 61, hi: 15.4, lo: 9.6, mm: 3
 ok((await ensureDay(s1, D, 1000)) === true && P(s1, `${TY_KV}day/${D}`).by === "her" && P(s1, `${TY_KV}day/${D}`).wx.sun === "18:21" && P(s1, `${TY_KV}day/${D}`).at === "某城" && pushed.includes(`${TY_KV}day/${D}`),
   "她头一回动手：起那一天的 day（她自己拼的），取过的天气一起写进去（天气签照它画），告诉开着的框");
 ok((await ensureDay(s1, D, 2000)) === false && P(s1, `${TY_KV}day/${D}`).ts === 1000, "已经有了：不再起，不盖");
+const s1b = mkStore({ [`${TY_KV}wx/${D}`]: J({ at: "<b>某城</b>", code: 3, hi: 20, lo: 10 }) });
+await ensureDay(s1b, D, 1000);
+ok(P(s1b, `${TY_KV}day/${D}`).at === "＜b＞某城＜/b＞", "写进 day 的地名：尖括号换全角（同页本子首页那一列把它当 HTML 画）");
 offP();
 ok(!madeOf(s1, D) && eq(madeDays(s1), []) && infoOf(s1, D) === null && pageTextOf(s1, D) === "" && openMode(s1, D) === "day", "空的一页（只有天气）不算掺了：日历上不标、没有卡片、他翻日记也看不到");
 s1.m.set(`${TY_KV}page/${D}`, J({ stk: [{ c: "kao", k: "٩(ˊᗜˋ*)و", who: "me", x: 1, y: 2, me1: 1 }] }));
@@ -227,6 +230,7 @@ ok(moved.length === 1 && moved[0].day === "2026-10-17" && eq(moved[0].lost, ["h:
 ok(R4.title === "原来的标题" && R4.herTitle === "她改的标题" && infoOf(s4, "2026-10-17").title === "她改的标题" && R4.by === "me" && R4.layout === "polaroid" && R4.style === "news" && R4.at === "某城" && R4.text.p1 === "原来的正文" && R4.text.pen.text === "[[红笔]]一句" && R4.wx.code === 3,
   "那一天（同页的 day）：他起的标题记着，她改的记成她起的（纸上、卡片照她的；他再排也不盖）、他排的、拍立得墙、报纸、正文、红笔、天气");
 const mvT = (arr, edit) => migrateOld({ ...OLD, arr: { ...OLD.arr, ...arr }, mine: { ...OLD.mine, edit } }, [], "2026-10-17", 1).R;
+ok(migrateOld({ ...OLD, wx: { ...OLD.wx, city: "<b>某城</b>" } }, [], "2026-10-17", 1).R.at === "＜b＞某城＜/b＞", "挪过来的地名也换全角");
 ok(eq([mvT({ by: "her", title: "" }, { title: "她拼的<一页>" })].map((R) => [R.by, R.title, R.herTitle]), [["her", "", "她拼的＜一页＞"]])
   && eq([mvT({ by: "him", title: "他起的" }, {})].map((R) => [R.title, "herTitle" in R]), [["他起的", false]])
   && eq([mvT({ by: "him", title: "他起的" }, { title: "" })].map((R) => [R.title, "herTitle" in R]), [["", false]])
@@ -276,6 +280,9 @@ told = [];
 await fillWeather(s6, D, { city: { name: "某城", lat: 1, lon: 2 } }, fakeWx);
 ok(P(s6, `${TY_KV}day/${D}`).wx.code === 61 && P(s6, `${TY_KV}day/${D}`).wx.sun === "18:21" && wxCalls.length === 1 && told.includes(`${TY_KV}day/${D}`),
   "那一天的 day 是后起的、没有天气：照取过的写进去（不再取一回），告诉开着的框");
+const s6c = mkStore({ [`${TY_KV}day/${D}`]: J({ day: D, by: "her", title: "", ts: 9 }) });
+await fillWeather(s6c, D, { city: { name: "<i>某城</i>", lat: 1, lon: 2 } }, fakeWx);
+ok(P(s6c, `${TY_KV}wx/${D}`).at === "＜i＞某城＜/i＞" && P(s6c, `${TY_KV}day/${D}`).at === "＜i＞某城＜/i＞", "城市名写进 wx、day 之前尖括号换全角");
 const s6b = mkStore();
 await fillWeather(s6b, "2026-10-11", { city: { name: "某城", lat: 1, lon: 2 } }, fakeWx);
 ok(s6b.peek(`${TY_KV}day/2026-10-11`) === null && P(s6b, `${TY_KV}wx/2026-10-11`).code === 61, "那一天还没有 day：只记天气，不起 day（点开不写页）");
@@ -409,6 +416,7 @@ const why = (f) => {
 ok(why(() => parseTyArrange("我想了想，不排了。", QS, TAGS)).includes("没有排好的那一段") && why(() => parseTyArrange("[JZ]\n{}\n[/JZ]", QS, TAGS)).includes("什么都没排出来")
   && why(() => parseTyArrange('[JZ]\n{"quotes":["编的"],"photos":[{"id":"照片7"}]}\n[/JZ]', QS, TAGS)).includes("什么都没排出来") && why(() => parseTyArrange("[JZ]\n[1,2]\n[/JZ]", QS, TAGS)).includes("看不懂"),
   "拆不出来、什么都没排（{}、只有对不上的编号）：没排成，跟她说一句为什么");
+ok(parseTyArrange(say({ title: " 泡桐花\u3000开了\n真好  " }), QS, TAGS).title === "泡桐花 开了 真好", "他起的标题一行：全角空格、换行、连着的空格收成一个空格（她点开题签不改就走，对得上）");
 const many = parseTyArrange(say({ quotes: Array.from({ length: 12 }, (_, i) => "q" + i) }), Array.from({ length: 12 }, (_, i) => ({ id: "q" + i, w: "her", t: "10:00", p: "话" + i })), TAGS);
 ok(many.quotes.length === 8, "原话最多八句");
 
@@ -428,6 +436,17 @@ ok(MK2.status === "making" && MK2.by === "her" && MK2.ts === 100 && MK2.herTitle
 const FD2 = failedDay(MK2, AD, [{ a: "没排成", b: "网断了", fail: 1 }]);
 ok(eq({ ...FD2, steps: undefined }, { ...HER, steps: undefined }) && FD2.steps[0].fail === 1 && !FD2.mk, "没排成（原来有页）：放回原样，记一步“没排成”");
 ok(makingDay({ ...FD, steps: [] }, AD, [], 9000).mk.prev === null && makingDay(MK, AD, [], 9000).mk.prev === null, "没排成的、正排着的那一份不当“排之前那一份”");
+// 排到一半断了（还记着“在排”），过了十分钟又交给他：排之前那一份照它记着的，她起的标题照这会儿的
+const STK = { ...makingDay(HER, AD, [{ a: "在排", ok: false }], 1000), herTitle: "排着的时候改的" };
+const RE = makingDay(STK, AD, [{ a: "在读", ok: false }], 1000 + TY_STALE + 5);
+ok(eq(RE.mk.prev, HER) && RE.herTitle === "排着的时候改的" && RE.by === "her" && RE.mk.at === 1000 + TY_STALE + 5,
+  "上一回排到一半断了、又交给他：排之前那一页还记着（没排成放得回去），她起的标题照这会儿的");
+const REF = failedDay(RE, AD, [{ a: "没排成", fail: 1 }]);
+ok(eq({ ...REF, steps: undefined, herTitle: undefined }, { ...HER, steps: undefined, herTitle: undefined }) && REF.herTitle === "排着的时候改的",
+  "这一回又没排成：原来那一页放回去（照片、字都在），标题是她这会儿起的（不会变成什么都没有）");
+const { herTitle: _h, ...STK0 } = STK;
+ok(!("herTitle" in makingDay(STK0, AD, [], 1000 + TY_STALE + 5)) && !("herTitle" in failedDay(makingDay(STK0, AD, [], 1000 + TY_STALE + 5), AD, [{ a: "没排成", fail: 1 }])),
+  "排着的时候她清空了标题：再交给他、再没排成，都不带标题（十分钟里交太多回那一条路也走这个）");
 const AR = arrangedDay("她起的", A1, { day: AD, src: (t) => ({ 照片1: "kfsimg:a1", 照片2: "kfsimg:a2" })[t], time: (t) => (t === "照片1" ? "16:01" : ""), wx: { code: 61, hi: 15, lo: 9, sun: "18:21" }, at: "某<城>", now: 9999, steps: [{ a: "排好了", ok: true }] });
 ok(AR.status === "done" && AR.by === "me" && AR.ts === 9999 && AR.title === "＜i＞泡桐花＜/i＞" && AR.herTitle === "她起的" && AR.layout === "polaroid" && AR.style === "xuan" && AR.at === "某＜城＞" && AR.wx.sun === "18:21",
   "他排好的那一份：他排的、排好了、这会儿的钟点；她起的标题留着；天气、在哪儿带上（在哪儿也换全角）");
@@ -531,8 +550,9 @@ ok(html.includes("function savePage(){if(restoring)return;if(window.__kfsSaveOk&
   "同页自己存那一页之前问一声；那一页取回来了、照片库齐了、关之前存、换了天才许存，几处都接上了");
 ok(html.includes('"存好了，"+NM("me")+"翻日记的时候看得到"') && !html.includes("也送回家了"), "留了批注不说“送回家了”");
 ok(html.includes("const P={t:R.herTitle||R.title||k,") && html.split('{const kc=x.style.getPropertyValue("--kc").trim();if(kc)o.kc=kc}').length === 3 && html.split('if(o.kc&&/^#[0-9a-fA-F]{6}$/.test(o.kc))el.style.setProperty("--kc",o.kc);').length === 3
-  && html.includes("function select(s){window.edOff&&edOff(s);window.__kfsSel&&__kfsSel(s);"),
-  "她起的标题、打的字的颜色那几处接上了：纸上照她起的；颜色存那一页、存一代都记下，摆回来都摆上（只认 #六位的颜色）；换选了一张收起颜色那一排");
+  && html.includes("function select(s){window.edOff&&edOff(s);window.__kfsSel&&__kfsSel(s);") && html.includes("function ingestDay(R){if(!R||!R.day)return;window.__kfsIngest&&__kfsIngest(R);")
+  && html.split('${E2(r.herTitle||r.title||"")}').length === 3,
+  "她起的标题、打的字的颜色那几处接上了：纸上、“做好了”那一条照她起的；颜色存那一页、存一代都记下，摆回来都摆上（只认 #六位的颜色）；换选了一张收起颜色那一排；收到那一天先告诉开封府那一层");
 ok(html.includes("map(x=>window.__kfsAskRef?__kfsAskRef(x):x)") && html.includes('(R.status==="making"||R.status==="failed")') && html.includes('s2.fail?"fail"') && html.includes("!(r.steps||[]).some(x=>x&&x.fail)")
   && html.includes('(window.__kfsHisNew?__kfsHisNew(R):R.by!=="her")&&toast2') && html.includes('if(mode==="day"&&!DONE[k]){try{openDay(k)}') && html.includes("dayIn:function(k,ph,chat)") && html.includes('"这天还没有天气"'),
   "交给光义那几处接上了：寄的照片换成开封府的编号、没排成不起页不冒“打开这一页”、“光义刚更新了这一页”只在他排好的时候说、开封府能打开某一天的那一屏、那一屏的照片原话");
