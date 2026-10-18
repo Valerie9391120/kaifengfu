@@ -4132,6 +4132,15 @@ export default function App({ account = {} }) {
     tyRuns.current.push(t0);
     let steps = [{ a: "在读这天的照片和聊天", ok: false }];
     let making = makingDay(prev, day, steps);
+    // 排的这一会儿她起了标题（setTitle 写在排着的那一份上）：往回写的时候带上
+    const withHers = (R) => {
+      const cur = dayRecOf(store, day);
+      if (cur && cur.status === "making" && cur.mk && cur.mk.at === making.mk.at) {
+        if (cur.herTitle) R.herTitle = cur.herTitle;
+        else delete R.herTitle;
+      }
+      return R;
+    };
     try {
       await write(making);
     } catch (e) {
@@ -4175,7 +4184,7 @@ export default function App({ account = {} }) {
         { a: "看了这天的照片和聊天", b: `${shown.length} 张照片 · ${mats.quotes.length} 句原话`, ok: true },
         { a: "在排", b: "挑照片、挑原话、起标题", ok: false },
       ];
-      making = { ...making, steps };
+      making = withHers({ ...making, steps });
       await write(making);
 
       // 问他：名帖照写日记那一回（不带工具，不带【日记本】那一段），后面跟【排手帐】
@@ -4200,7 +4209,7 @@ export default function App({ account = {} }) {
       const keep = {
         hide: (P.hide || []).filter((k) => typeof k === "string"),
         texts: (P.stk || []).filter((o) => o && o.c === "text" && !o.me1 && typeof o.m === "string" && o.m.trim()).map((o) => o.m.trim()),
-        title: (was && was.herTitle) || "",
+        title: making.herTitle || "",
         look: herLookOf(store, day, was),
       };
       const wxRec = (was && was.wx) || safeParse(store.peek(`${TY_KV}wx/${day}`), null);
@@ -4251,9 +4260,8 @@ export default function App({ account = {} }) {
       const nPh = A.photos.filter((p) => srcOf[p.tag]).length;
       const look = `${A.layout ? TY_LAYOUTS[A.layout] : "版式本子挑"} × ${A.style ? TY_STYLES[A.style] : "风格本子挑"}`;
       const done = [steps[0], { a: "排好了", b: `${keep.look ? "照你挑的版式风格" : look} · 照片 ${nPh} 张 · 原话 ${A.quotes.length} 句`, ok: true }];
-      // 排的这一会儿她自己起了标题：照她起的（读这会儿的那一份）
-      const cur = dayRecOf(store, day);
-      const herTitle = (cur && cur.herTitle) || (was && was.herTitle) || "";
+      // 排的这一会儿她自己起了标题、清空了：照她这会儿的（读这会儿排着的那一份，见 withHers）
+      const herTitle = withHers({ herTitle: making.herTitle || "" }).herTitle || "";
       await write(
         arrangedDay(herTitle, A, {
           day,
@@ -4280,7 +4288,7 @@ export default function App({ account = {} }) {
     } catch (e) {
       const why = (e && e.why) || "没排出来，再交给我一回试试";
       try {
-        await write(failedDay(making, day, [...steps.filter((s) => s.ok !== false), { a: "没排成", b: why, fail: 1 }]));
+        await write(failedDay(withHers({ ...making }), day, [...steps.filter((s) => s.ok !== false), { a: "没排成", b: why, fail: 1 }]));
       } catch (x) {}
       markAsk("failed");
     } finally {

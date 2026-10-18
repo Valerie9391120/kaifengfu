@@ -57,11 +57,11 @@ export function notesOf(store, day) {
     .sort((a, b) => (a.at || 0) - (b.at || 0));
 }
 
-// 那一天的 day 里有没有东西（标题、正文、照片、原话、红笔、票根……；他正排着也算）
+// 那一天的 day 里有没有东西（标题、她起的标题、正文、照片、原话、红笔、票根……；他正排着也算）
 export function dayHasContent(R) {
   if (!R || typeof R !== "object") return false;
   const T = R.text || {};
-  return !!(R.title || (R.photos || []).length || (R.chat || []).length || T.p1 || T.pen || T.cap || T.p2 || T.ann || T.quote || R.food || R.status === "making");
+  return !!(R.title || R.herTitle || (R.photos || []).length || (R.chat || []).length || T.p1 || T.pen || T.cap || T.p2 || T.ann || T.quote || R.food || R.status === "making");
 }
 
 // 这一天算不算掺了一页（日历上的 🏷️、闲笔集的卡片、他翻日记看不看得到）：光点开不算（同页替他在页上放的那一张 me1 也不算）；
@@ -99,7 +99,7 @@ export function infoOf(store, day) {
     if (m && String(m.src || "").startsWith("kfsimg:")) heroId = m.src.slice(7);
   }
   return {
-    title: R.title || "",
+    title: R.herTitle || R.title || "",
     layout,
     style,
     sub: `${TY_LAYOUTS[layout] || layout} × ${TY_STYLES[style] || style}`,
@@ -185,7 +185,8 @@ export function pageTextOf(store, day) {
   // 同页替他在页上放的那一张（me1）不算她贴的
   const stk = (P.stk || []).filter((o) => o && !o.me1);
   const lines = [`手帐：有一页（${R.by === "me" ? "你排的" : "她自己拼的"}；版式 ${TY_LAYOUTS[info.layout] || info.layout}，风格 ${TY_STYLES[info.style] || info.style}）`];
-  if (R.title && !hide.has("ti")) lines.push(`  标题：${one(R.title)}`);
+  const ti = R.herTitle || R.title;
+  if (ti && !hide.has("ti")) lines.push(`  标题：${one(ti)}${R.herTitle ? `（她自己起的${R.by === "me" && R.title && R.title !== R.herTitle ? `；你起的是“${one(R.title)}”` : ""}）` : ""}`);
   const wx = R.wx || parse(store.peek(`${TY_KV}wx/${day}`));
   if (wx && Number.isFinite(wx.code) && !hide.has("wx")) lines.push(`  天气：${WX_WORD(wx.code)} ${Math.round(wx.lo)}–${Math.round(wx.hi)}°C${R.at ? `（${R.at}）` : ""}`);
   const ph = (R.photos || []).filter((p) => p && p.src);
@@ -240,7 +241,7 @@ export function pageBitsOf(store, day) {
     .filter(Boolean)
     .flat()
     .map((q) => q.p);
-  return [R.title, T.p1, T.p2, T.cap, T.ann, T.pen && T.pen.text, qu && qu.p, ...stk.filter((o) => o.c === "text" || o.c === "pic").map((o) => o.m), ...her]
+  return [R.herTitle, R.title, T.p1, T.p2, T.cap, T.ann, T.pen && T.pen.text, qu && qu.p, ...stk.filter((o) => o.c === "text" || o.c === "pic").map((o) => o.m), ...her]
     .filter(Boolean)
     .join("\n")
     .replace(/\[\[|\]\]|<\/?her>/g, "");
@@ -315,12 +316,18 @@ export function migrateOld(oldPage, oldNotes, day, now = Date.now()) {
   if (pick("body")) text.p1 = pick("body");
   if (pick("cap")) text.cap = pick("cap");
   if (pen && pen.text) text.pen = { text: pen.text, margin: pen.margin || "" };
+  // 标题：他排的那一页，他起的记成 title，她改过的记成她起的（herTitle：她点题签起的也记在这儿，他再排也不盖）；
+  // 她自己拼的，标题都是她起的（herTitle）。她在上一版把他起的删空了的，照删空的（纸上写日子）。
+  // 尖括号换全角（同页本子首页那一列把标题当 HTML 画）
+  const tl = (t) => tyClean(String(t || "").replace(/\s+/g, " "), 40);
+  const title = a.by === "him" && e.title !== "" ? tl(a.title) : "";
+  const herTitle = a.by === "him" ? (e.title && e.title !== a.title ? tl(e.title) : "") : tl(pick("title"));
   const R = {
     day,
     status: "done",
     by: a.by === "him" ? "me" : "her",
     ts: p.at || now,
-    title: pick("title") || "",
+    title,
     layout: OLD_LAYOUT[p.layout] || "column",
     style: OLD_STYLE[p.style] || "qingmo",
     at: (p.wx && p.wx.city) || "",
@@ -328,6 +335,7 @@ export function migrateOld(oldPage, oldNotes, day, now = Date.now()) {
     photos: a.photos.map((x) => ({ src: "kfsimg:" + x.id, role: x.role === "hero" || x.role === "pair" ? x.role : "", note: x.note || "" })),
     chat: a.quotes.map((q) => ({ w: q.w === "him" ? "me" : "her", t: q.t, p: q.p })),
   };
+  if (herTitle) R.herTitle = herTitle;
   if (p.wx && Number.isFinite(p.wx.code)) R.wx = { code: p.wx.code, hi: p.wx.hi, lo: p.wx.lo, mm: p.wx.mm || 0, src: p.wx.src || "open-meteo" };
   // 贴纸：表情、颜文字、印章换成同页里对应的那几样；胶带和手绘同页里没有一样的，挪不过来
   const lost = [];
@@ -595,10 +603,18 @@ export function makingDay(prev, day, steps, now = Date.now()) {
   const was = prev && prev.status !== "failed" && prev.status !== "making" ? prev : null;
   return { ...(was || { day, by: "me", title: "", ts: now }), status: "making", steps, mk: { at: now, prev: was } };
 }
-// 没排成：排之前有页的放回去（记一步“没排成”，同页“在排”那一栏照着说）；没有的记一个 failed（什么都没有，日历上不标、同页不起页）
+// 没排成：排之前有页的放回去（记一步“没排成”，同页“在排”那一栏照着说）；没有的记一个 failed（什么都没有，日历上不标、同页不起页）。
+// 他排的那一会儿她起了标题（herTitle：排着的那一份上记着的）：照她起的；原来没有页的，就起成她的一页
 export function failedDay(making, day, steps, now = Date.now()) {
   const was = making && making.mk ? making.mk.prev : null;
-  if (was) return { ...was, steps };
+  const her = making && typeof making.herTitle === "string" ? making.herTitle : "";
+  if (was) {
+    const R = { ...was, steps };
+    if (her) R.herTitle = her;
+    else delete R.herTitle;
+    return R;
+  }
+  if (her) return { day, status: "done", by: "her", title: "", herTitle: her, ts: now, steps };
   return { day, status: "failed", by: "me", title: "", ts: now, steps };
 }
 // 他排好的那一份写成那一天的 day（同页 BACKEND.md 的样子）：他排的、排好的、这会儿的钟点。
@@ -653,6 +669,7 @@ export function askOf(id, o) {
 //   sources / chatPhotos     某一天聊天里的原话、聊天里的照片（引用栏、放照片用）
 //   city / geocode / setCity 天气在哪儿
 //   touch                    她在那一天头一回真的动了：还没有 day 就起一个（点开的时候什么都不写，见 ensureDay）
+//   setTitle                 她自己起的标题（点纸上的题签起的）：写进那一天的 day（herTitle），空的就拿掉
 //   close / ready            关上；页面摆好了
 // set 写的是一张新的 ask/<编号>（她在「交给光义」那一屏点了发送）：存好以后交给 onAsk（App.jsx 的 tyArrange，另问他一回）
 // 别的一概不认（回“不认得”）
@@ -755,6 +772,26 @@ export function makeServer({ store, dayMsgs, chatImg, onClose, onReady, onFail, 
       if (!okDate(date)) return false;
       try {
         await ensureDay(store, date);
+        return true;
+      } catch (e) {
+        if (onFail) onFail();
+        return false;
+      }
+    },
+    // 她自己起的标题：一行，二十个字以内（尖括号换全角，同他起的）；起标题算她动了手，那一天还没有 day 就先起一个
+    setTitle: async ({ date, title }) => {
+      if (!okDate(date) || typeof title !== "string" || title.length > 200) return false;
+      const t = tyClean(title.replace(/\s+/g, " "), 20);
+      try {
+        await ensureDay(store, date);
+        const R = dayRecOf(store, date);
+        if (!R) return false;
+        if (t) R.herTitle = t;
+        else delete R.herTitle;
+        // 她自己拼的一页：title 里记着的也是她起的（照她这一回的；清空就写日子）
+        if (R.by !== "me") R.title = "";
+        if (!(await put(`${TY_KV}day/${date}`, JSON.stringify(R)))) return false;
+        tyChanged([`${TY_KV}day/${date}`]);
         return true;
       } catch (e) {
         if (onFail) onFail();
