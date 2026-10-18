@@ -1,12 +1,14 @@
 # 同页那一本手帐搬进开封府（10 月 18 日，作者同意了；见开发说明“同页搬进来”那一节、src/tongye/、tools/tongye.mjs）的端到端测试。
 # 真的浏览器、假 Supabase，一台“手机”从头走到尾，再拿第二台对一下：
 #   原来那一版手帐掺的页（kfs2:jz:）挪过来；闲笔集日历上的 🏷️、那一天底下的卡片；点开是同页（隔开的框，碰不到开封府）；
-#   点开没动不留；天气在哪儿（Open-Meteo 用 page.route 假的）；换版式风格、打字、聊天里的照片、相册的照片、批注、存一代、存长图；
+#   点开没动不留；天气在哪儿（Open-Meteo 用 page.route 假的）；字（开封府自己带着，不连 Google；换风格那一层的小样）；
+#   换版式风格、打字、聊天里的照片、相册的照片、批注、存一代、存长图；
 #   关上再开都在；打完字马上关也存上了；闲笔集里留、删批注；照片库多了六十张，点开照片照样摆齐、没动手一笔不存；
 #   第二台设备同步过去照样；他翻日记看得到这一本、他留的批注贴在页上；删掉一页（同页「存」最底下）、找回来；
 #   框里不带暗号来问的一概不理；云端只有乱码；框里的安全规矩没拦它自己的脚本。
 # 同页的框是隔开的（sandbox），Playwright 往里点有时点歪（框在手机模式下的坐标），框里的点都直接发给那个元素（ftap）。
-# 先在 source/ 里 npm run build:test，起好假 Supabase（8787）和测试网页（8080），再：python3 tests/e2e_tongye.py
+# 先在 source/ 里 npm run build:test，起好假 Supabase（8787）和测试网页（8080，用 tests/serve.py 起：照 GitHub Pages 带 Access-Control-Allow-Origin，
+# 框里才取得到字），再：python3 tests/e2e_tongye.py
 import base64, io, json, os, re, time
 from datetime import date, timedelta
 from PIL import Image, ImageDraw
@@ -16,6 +18,12 @@ from mailkit import *
 errors = []
 refused = []
 wx_log = []
+google = []    # 向 Google Fonts 要过字的（一次都不该有）
+font_bad = []  # 取字被拦下的（跨来路、安全规矩）
+
+# 字取到了：那一种字至少有一块取回来了
+def font_in(fam):
+    return f"[...document.fonts].some((x) => x.family.replace(/[\"']/g, '') === '{fam}' && x.status === 'loaded')"
 
 def fake_photo(color, w=900, h=1200, fmt="PNG"):
     im = Image.new("RGB", (w, h), color)
@@ -142,6 +150,8 @@ with sync_playwright() as p:
     pa = A.new_page()
     pa.on("pageerror", lambda e: errors.append("A: " + str(e)))
     pa.on("console", lambda m: refused.append(m.text[:200]) if "Refused to execute" in m.text or "Refused to evaluate" in m.text else None)
+    pa.on("console", lambda m: font_bad.append(m.text[:200]) if re.search(r"blocked by CORS|Refused to load", m.text) else None)
+    A.on("request", lambda r: google.append(r.url) if re.search(r"fonts\.(googleapis|gstatic)\.com", r.url) else None)
     try:
         first_time(pa)
         td = date.today()
@@ -203,6 +213,14 @@ with sync_playwright() as p:
         st = page_state(f)
         ok(st["day"] == f"{fd_.month}.{fd_.day}" and st["layout"] == "column" and st["style"] == "washi" and "泡桐花" in (st["title"] or ""), f"打开的是昨天那一页：单栏流、和纸、标题“泡桐花”（{st['title']!r}）")
         ok(fwait(f, "[...document.querySelectorAll('#page img')].some((i) => i.src.startsWith('blob:') && i.naturalWidth > 0)"), "主照片摆上了（图从开封府的存档里取来，框里换成 blob: 地址）")
+        # 字：开封府自己带着（tools/tyfonts.mjs），不连 Google。框是隔开的（来路是 null），取字要 Access-Control-Allow-Origin（GitHub Pages 带着，测试网页 tests/serve.py 照样带）
+        links = f.evaluate("[...document.querySelectorAll('link[rel=stylesheet]')].map((l) => l.getAttribute('href'))")
+        base6 = ["noto-serif-sc-300", "noto-serif-sc-400", "noto-serif-sc-600", "ibm-plex-mono-400", "ibm-plex-mono-500", "long-cang-400"]
+        names = [h.split("/")[-1][:-4] for h in links]
+        ok(all(re.match(r"^\./tyfonts-[0-9a-f]{10}/[a-z0-9-]+\.css$", h) for h in links) and all(n in names for n in base6) and "zcool-xiaowei-400" in names and len(names) == len(set(names)),
+           f"字的样式表都是开封府自己的：原来取 Google 那一行换成的六张，和纸要的 ZCOOL XiaoWei 换上风格的时候挂上，不重复（{names}）")
+        ok(fwait(f, font_in("ZCOOL XiaoWei") + " && " + font_in("Noto Serif SC") + " && " + font_in("IBM Plex Mono"), 25),
+           "字取到了：标题的 ZCOOL XiaoWei、正文的思源宋体、小字的 IBM Plex Mono（没取到的话测试网页要用 tests/serve.py 起）")
         st = page_state(f)
         ok("emoji:fox" in st["stk"] and "text:那天真好" in st["stk"] and st["pins"] == 1, f"她贴的狐狸、写的字、那条批注的小记号都在（{st['stk']}，批注 {st['pins']}）")
         iso = f.evaluate("""() => { const r = {}; try { r.parent = !!window.parent.document; } catch (e) { r.parent = 'blocked'; }
@@ -251,8 +269,23 @@ with sync_playwright() as p:
         ok(fwait(f, "/小雨/.test(document.querySelector('#page').innerText)"), "纸上的天气签：小雨")
         ftap(f, "#cfgGrab")
 
+        # ================= 换风格那一层的小样：各用各的字 =================
+        n_links = f.evaluate("document.querySelectorAll('link[rel=stylesheet]').length")
+        f.evaluate("openSheet()"); time.sleep(0.6)
+        ok(fwait(f, " && ".join(font_in(x) for x in ["ZCOOL KuaiLe", "Silkscreen", "Playfair Display", "Ma Shan Zheng", "Unbounded", "Noto Sans SC"]), 30),
+           "换风格那一层：二十六张小样各用各的字（孟菲斯的 ZCOOL KuaiLe、像素的 Silkscreen、报纸的 Playfair Display、宣纸的马善政、Y2K 的 Unbounded、几种无衬线的思源黑体……）")
+        only_pv = f.evaluate("""(() => { const pv = new Set([...'0123456789.这一天的标题'].map((c) => c.codePointAt(0)));
+            const fs = [...document.fonts].filter((x) => x.family.replace(/["']/g, '') === 'ZCOOL KuaiLe');
+            return fs.length > 0 && fs.every((x) => x.unicodeRange.split(',').every((r) => { const [a, b] = r.trim().replace(/^U\\+/i, '').split('-');
+              const lo = parseInt(a, 16), hi = b ? parseInt(b, 16) : lo; for (let c = lo; c <= hi; c++) if (!pv.has(c)) return false; return true; })); })()""")
+        ok(f.evaluate("document.querySelectorAll('link[rel=stylesheet]').length") == n_links and only_pv,
+           "小样只认小样上那几个字（“0123456789.这一天的标题”），不挂样式表（存长图的时候不带它们，同原版）")
+        f.evaluate("closeSheet()"); time.sleep(0.6)
+
         # ================= 拼一页 =================
         f.evaluate("applyStyle('kraft'); applyLayout('polaroid')"); time.sleep(1.2)
+        ok(fwait(f, font_in("Special Elite"), 20) and f.evaluate("[...document.querySelectorAll('link[rel=stylesheet]')].some((l) => l.getAttribute('href').endsWith('/special-elite-400.css'))"),
+           "换成牛皮纸：它要的打字机字（Special Elite）挂上、取到了")
         f.evaluate("window.journalAdd.text()"); time.sleep(0.8)
         pa.keyboard.type("泡桐花开了"); time.sleep(0.4)
         f.evaluate("document.activeElement && document.activeElement.blur()"); time.sleep(0.8)
@@ -419,6 +452,7 @@ with sync_playwright() as p:
         import traceback; traceback.print_exc()
         ok(False, f"出错：{e}")
     finally:
+        ok(not google and not font_bad, f"字一回都没向 Google 要，也没有被拦下的（{google[:2]} {font_bad[:2]}）")
         ok(not refused, f"框里的安全规矩没拦同页自己的脚本：{refused[:2]}")
         ok(not errors, f"页面没报错：{errors[:3]}")
         print(f"\n通过 {count['passed']}  失败 {count['failed']}")

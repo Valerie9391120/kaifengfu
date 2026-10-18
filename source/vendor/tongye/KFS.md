@@ -47,9 +47,18 @@
    - 空本子里演示用的五天天气清掉；没有天气的时候别出错
    - 从“没在哪一天”开始（原来默认摆 9.26），开封府能打开某一天
    - 删掉这一页、找回以后不在框里重新载入，关上回闲笔集
+   - 字不去 Google Fonts 取：取字的那一行换成开封府自己带的那几张，换风格的时候问开封府那一层要（见下面“字”）
 2. **最前面塞开封府那一层**（`src/tongye/bridge.js`）：存档、照片、聊天里的原话和照片、天气在哪儿，都找外面要。
 3. **配上这一页自己的安全规矩**：只许跑这几段脚本（每一段记了指纹）、不许 eval、只连自己。
 4. 开头留一行注释写明出处、授权、作者同意了，写成 `assets/tongye-<指纹>.html`。
+
+## 字
+
+同页的字从 Google Fonts 现取、不随仓库分发（[NOTICE.md](NOTICE.md)）。开封府这一页只连自己，卿卿定的是把同一批字放到开封府自己这儿（10 月 18 日）：
+
+- 字从哪儿来：npm 上 Fontsource 打好的 Google Fonts 原样文件（`@fontsource/*`、`@fontsource-variable/fraunces`，版本钉死在 `package.json` 里），字体文件一个字节不改。
+- 要哪些：`tools/tyfonts.mjs` 照 `app.html` 里写的现算（`<head>` 里那一行、每一种风格的 `fonts`），二十种字、三十四个粗细。作者添了开封府没装的字、要了包里没有的粗细，打包停下来。
+- 打包的时候放进 `assets/tyfonts-<指纹>/`：一种字一个粗细一张样式表（照 Google 的样子切块，页面上用到哪些字才取哪几块），每一种字的授权（`licenses/`，十九种是 SIL OFL 1.1，Special Elite 是 Apache 2.0）、一份 `README.txt`。
 
 开封府里它关在一个隔开的框里（sandbox，没有 allow-same-origin）：碰不到开封府的网页、存档、钥匙，要什么只能来问，外面只答这一本手帐自己的几样（`src/tongye/host.js` 的 `makeServer`）。
 
@@ -57,4 +66,4 @@
 
 ## 往后作者更新了
 
-照上面的路子再搬一回：拿作者新的 `book/app.html` 原样换掉这里的，改这一页的版本、指纹，跑 `npm run build`。补丁对不上的那几处，照着新的原文改 `tools/tongye.mjs`，再跑一遍测试（`tests/tongye.test.mjs`、`tests/e2e_tongye.py`）。
+照上面的路子再搬一回：拿作者新的 `book/app.html` 原样换掉这里的，改这一页的版本、指纹，跑 `npm run build`。补丁对不上的那几处，照着新的原文改 `tools/tongye.mjs`；作者添了新的字，在 `package.json` 里装上那一种字的 Fontsource 包、写进 `tools/tyfonts.mjs` 的 `TY_FONT_PKGS`。再跑一遍测试（`tests/tongye.test.mjs`、`tests/e2e_tongye.py`）。

@@ -1,6 +1,7 @@
 // 同页那一本手帐搬进开封府（见 src/tongye/、tools/tongye.mjs、vendor/tongye/KFS.md、开发说明“同页搬进来”那一节）：
 // 日子换算（同页的“月.日”和开封府的“年-月-日”）、这一本的存档（算不算掺了一页、卡片、批注、点开没动不留）、原来那一版的页挪过来、
-// 天气、框里那一页能要的几样（只认这一本的）、翻日记的工具看得到这一本（他留批注）、照原样拿同页那一页打补丁和安全规矩。数据都是编的。
+// 天气、框里那一页能要的几样（只认这一本的）、翻日记的工具看得到这一本（他留批注）、照原样拿同页那一页打补丁和安全规矩、
+// 它要的字开封府自己带着（tools/tyfonts.mjs）。数据都是编的。
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { fullOf, mdOf, toFull, toMd, pathToStore, idFromStore, lsKeyToStore, lsKeyFromStore, yearAgoOf } from "../src/tongye/dates.js";
@@ -12,6 +13,7 @@ import { DIARY_TOOLS, DIARY_NAMES, NOTE_PARTS, runDiaryCalls } from "../src/diar
 import { DIARY_SECTION } from "../src/prompt/system.js";
 import { JZ_KEY, JZN_KEY } from "../src/jz/model.js";
 import { PATCHES, makeTongye } from "../tools/tongye.mjs";
+import { TY_FONT_PKGS, parseSpec, tyFontNeeds, makeTyFonts } from "../tools/tyfonts.mjs";
 
 let pass = 0, failN = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); } };
@@ -350,7 +352,8 @@ ok(html.indexOf('<meta charset="utf-8">') < html.indexOf("Content-Security-Polic
   "安全规矩、开封府那一层都在最前面（同页自己的脚本之前）");
 ok(!html.includes("localStorage") && !/\beval\(/.test(html) && !html.includes("new Function") && html.includes('<meta name="referrer" content="no-referrer">') && html.includes('<meta name="robots" content="noindex, nofollow">'), "同页里一处 localStorage、eval 都不剩；不带来路、不让搜");
 ok(html.includes('her:"卿卿",me:"光义"') && html.includes("const WX={};") && html.includes('let CURDAY="";') && html.includes("window.__kfsShell="), "署名换成卿卿和光义；演示的天气清掉；从“没在哪一天”开始；开封府能打开某一天");
-ok(!html.includes('<link rel="preconnect"') && !/<link[^>]+fonts\.googleapis/.test(html) && html.includes("function loadFonts(st,preview){return;") && !csp.includes("google"), "字体先不去 Google 取（连都不连）");
+ok(!/googleapis|gstatic/.test(html) && !html.includes("<!--kfs:fonts-->") && !html.includes("<link rel=\"stylesheet\"") && html.includes("\n window.__kfsFonts&&__kfsFonts(st.fonts,preview)}") && !csp.includes("google"),
+  "字不去 Google 取（连都不连）：换风格的时候问开封府那一层要（不给字的时候，<head> 里一张都不挂）");
 ok(html.includes("function savePage(){if(restoring)return;if(window.__kfsSaveOk&&!window.__kfsSaveOk())return;") && html.includes("window.__kfsPageIn&&window.__kfsPageIn(k);") && html.includes("window.__kfsMineIn=1;") && html.includes("window.__kfsFlush=()=>flushPage();") && html.includes("PAGE_DAY=k;window.__kfsOpened&&window.__kfsOpened(k);"),
   "同页自己存那一页之前问一声；那一页取回来了、照片库齐了、关之前存、换了天才许存，几处都接上了");
 ok(html.includes('"存好了，"+NM("me")+"翻日记的时候看得到"') && !html.includes("也送回家了"), "留了批注不说“送回家了”");
@@ -367,6 +370,59 @@ const bad = (mut) => {
 ok(bad((s) => s.replace("const WX={", "const WX ={")).includes("同页的补丁对不上（演示的天气清掉）"), "作者改了那一处：停下来，不悄悄打歪");
 ok(bad((s) => s.replace("</body>", '<script src="https://example.com/x.js"></script></body>')).includes("从外面取的脚本"), "多了从外面取的脚本：停下来");
 ok(bad((s) => s.replace("</body>", '<button onclick="x()">x</button></body>')).includes("写在标签上的事件"), "多了写在标签上的事件：停下来");
+// =====================================================
+// 同页的字：开封府自己带着（tools/tyfonts.mjs；卿卿 10 月 18 日定的“放到开封府自己这儿”）
+// =====================================================
+ok(eq(parseSpec("Noto+Sans+SC:wght@300;400;700"), { family: "Noto Sans SC", weights: [300, 400, 700] }) && eq(parseSpec("Long+Cang"), { family: "Long Cang", weights: [400] }) && eq(parseSpec("Caveat:wght@500"), { family: "Caveat", weights: [500] }),
+  "Google Fonts 的写法认得出：哪一种字、哪几个粗细（没写的是 400）");
+ok(eq(parseSpec("Fraunces:opsz,wght@9..144,300;600"), { family: "Fraunces", weights: [300] }), "“Fraunces:opsz,wght@9..144,300;600”后一半写法不对，Google 只给 300：这里也只给 300（要 600 的地方浏览器自己加粗，同原版）");
+const throwsOf = (f) => { try { f(); return ""; } catch (e) { return e.message; } };
+ok(throwsOf(() => parseSpec("Foo:wght@abc")).includes("认不出") && throwsOf(() => parseSpec("Foo:wght@1000")).includes("认不出"), "认不出的写法：停下来");
+const need = tyFontNeeds(SRC);
+ok(eq(need.base, ["Noto+Serif+SC:wght@300;400;600", "IBM+Plex+Mono:wght@400;500", "Long+Cang"]) && Object.keys(need.styles).length === 26 && need.preview === "0123456789.这一天的标题",
+  "同页那一页里要的字：<head> 里那一行三种、二十六种风格各自的、“换风格”小样上那几个字");
+const TF = makeTyFonts(SRC);
+const TF2 = makeTyFonts(SRC);
+const cssFiles = [...TF.files.keys()].filter((p) => p.endsWith(".css"));
+const woffs = [...TF.files.keys()].filter((p) => p.endsWith(".woff2"));
+ok(/^tyfonts-[0-9a-f]{10}$/.test(TF.dir) && TF.dir === TF2.dir && cssFiles.length === 34 && woffs.length === TF.fonts && TF.fonts > 1500,
+  `打好的字放在 assets/${TF.dir}/：三十四张样式表（一种字一个粗细一张）、${TF.fonts} 块字；再打一回一模一样（名字带内容的指纹）`);
+ok(eq(TF.baseHrefs, ["noto-serif-sc-300", "noto-serif-sc-400", "noto-serif-sc-600", "ibm-plex-mono-400", "ibm-plex-mono-500", "long-cang-400"].map((n) => `./${TF.dir}/${n}.css`)),
+  "<head> 里那一行换成六张：思源宋体三个粗细、IBM Plex Mono 两个、龙藏体");
+const allCss = cssFiles.map((p) => TF.files.get(p).toString());
+const refs = allCss.flatMap((c) => [...c.matchAll(/url\(([^)]+)\)/g)].map((m) => m[1]));
+ok(refs.length === TF.fonts && refs.every((r) => /^files\/[a-z0-9-]+\.woff2$/.test(r) && TF.files.has(r)) && !allCss.some((c) => /https?:|\.woff\)|format\('woff'\)/.test(c)),
+  "样式表里只指着这一目录里的字（一块一处，只用 woff2，不连外面）");
+ok(allCss.every((c) => (c.match(/@font-face\{/g) || []).length === (c.match(/unicode-range:U\+/g) || []).length && (c.match(/@font-face\{/g) || []).length === (c.match(/font-display:swap/g) || []).length),
+  "每一块都写着它管哪些字（用到哪些字才取哪几块）、先用别的字摆着等它到（同 Google 的 swap）");
+const nm = "node_modules";
+const pkgOf = (file) => Object.values(TY_FONT_PKGS).find((pkg) => fs.existsSync(`${nm}/${pkg}/files/${file}`));
+ok(woffs.every((p) => { const f = p.slice(6); const pkg = pkgOf(f); return pkg && fs.readFileSync(`${nm}/${pkg}/files/${f}`).equals(TF.files.get(p)); }), "每一块字都跟装好的包里的一个字节不差（不改字体文件）");
+const fr = TF.files.get("fraunces-300.css").toString();
+ok(/font-family:'Fraunces';[^}]*font-weight:300;/.test(fr) && !/Variable|100 900/.test(fr) && !TF.files.has("fraunces-600.css"), "Fraunces：名字照 Google 的（不带 Variable），只有 300 这一个粗细");
+const lics = [...TF.files.keys()].filter((p) => p.startsWith("licenses/"));
+const readme = TF.files.get("README.txt").toString();
+ok(lics.length === Object.keys(TY_FONT_PKGS).length && TF.files.get("licenses/special-elite.txt").toString().includes("Apache License") && TF.files.get("licenses/noto-sans-sc.txt").toString().includes("SIL Open Font License")
+  && Object.values(TY_FONT_PKGS).every((pkg) => readme.includes(pkg + "@")),
+  "每一种字的授权跟着走（二十份；Special Elite 是 Apache 2.0，别的是 SIL OFL 1.1），说明里写着哪个包哪一版");
+const M = TF.manifest;
+const PV = [...need.preview].map((c) => c.codePointAt(0));
+const cpsOf = (range) => range.split(",").flatMap((r) => { const [a, b] = r.replace(/^U\+/, "").split("-"); const lo = parseInt(a, 16), hi = b ? parseInt(b, 16) : lo; return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i); });
+ok(Object.values(need.styles).flat().every((sp) => (M.spec[sp] || []).length && M.spec[sp].every((k) => M.css[k] && TF.files.has(M.css[k]))) && M.base.every((k) => M.css[k]),
+  "交给开封府那一层的清单：同页写的每一种都对得上样式表");
+ok(Object.entries(M.pv).every(([k, list]) => !M.base.includes(k) && list.every(([f, r]) => TF.files.has(f) && cpsOf(r).every((c) => PV.includes(c))))
+  && Object.values(M.pv).every((list) => { const cs = list.flatMap(([, r]) => cpsOf(r)); return cs.length === new Set(cs).size; }),
+  "小样：只认小样上那几个字；一个字只算给一块（几块都管的，算给写在后面的那一块，同浏览器）；<head> 里本来就有的不另放");
+ok(eq(M.pv["Ma Shan Zheng|400"].map(([f, r]) => [f.replace(/^files\/ma-shan-zheng-|-400-normal\.woff2$/g, ""), r]), [["117", "U+6807"], ["118", "U+5929,U+8FD9,U+9898"], ["119", "U+4E00,U+7684"], ["latin", "U+002E,U+0030-0039"]]),
+  "宣纸的马善政：小样上那几个字在哪几块（数字和点用 latin 那一块）");
+const { html: htmlF } = makeTongye(SRC, BR, TF);
+const linksF = [...htmlF.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
+ok(eq(linksF, TF.baseHrefs) && htmlF.indexOf(linksF[0]) > htmlF.indexOf('<meta name="claude:viewport-fit-sides"') && htmlF.indexOf(linksF[5]) < htmlF.indexOf("<style>\n/* 一页 9.26"),
+  "给了字：原来取 Google 那一行的地方换成开封府自己的六张");
+ok(throwsOf(() => makeTongye(SRC, BR, { baseHrefs: ["https://fonts.googleapis.com/css2?family=X"] })).includes("只能是开封府自己的"), "<head> 里要挂别处的：停下来");
+ok(throwsOf(() => makeTyFonts(SRC.replace('"fonts": ["Silkscreen", "DotGothic16"]', '"fonts": ["Silkscreen", "Comic+Neue"]'))).includes("开封府没装"), "作者添了一种开封府没装的字：停下来");
+ok(throwsOf(() => makeTyFonts(SRC.replace('"fonts": ["Caveat:wght@500"]', '"fonts": ["Caveat:wght@800"]'))).includes("没有 800 这个粗细"), "要的粗细包里没有：停下来");
+
 const lic = fs.readFileSync(new URL("../vendor/tongye/LICENSE", import.meta.url), "utf8");
 const notice = fs.readFileSync(new URL("../vendor/tongye/NOTICE.md", import.meta.url), "utf8");
 const kfsMd = fs.readFileSync(new URL("../vendor/tongye/KFS.md", import.meta.url), "utf8");

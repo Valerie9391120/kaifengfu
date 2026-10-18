@@ -5,6 +5,7 @@ import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { makeTongye } from "./tools/tongye.mjs";
+import { makeTyFonts } from "./tools/tyfonts.mjs";
 
 const OUT = process.env.KFS_OUT || "dist";
 const TEST_URL = process.env.KFS_TEST_URL || "";
@@ -130,7 +131,16 @@ define.__KFS_S2T__ = JSON.stringify(`./${s2tName}`);
 // 原来那一版手帐的 Fluent Emoji 贴纸包（src/jz/stickers.js → assets/jzstk-<指纹>.js）：闲笔集换成同页以后用不着了，不再打（同页的贴纸都在它那一页里）
 // 同页（TangfanOVO/tongye 那一本手帐，作者同意了搬进来，见 vendor/tongye/KFS.md）：照原样拿它那一页，打 tools/tongye.mjs 里那几处补丁，
 // 把开封府那一层（src/tongye/bridge.js）塞进最前面，配上这一页自己的安全规矩（只许跑这几段脚本、只连自己），名字带指纹。
-// 开封府开门不碰它，闲笔集里点手帐的时候才用框装进来（TongyeFrame.jsx 的 TONGYE_URL）
+// 开封府开门不碰它，闲笔集里点手帐的时候才用框装进来（TongyeFrame.jsx 的 TONGYE_URL）。
+// 它要的字（原来从 Google Fonts 现取，卿卿定的放到开封府自己这儿）：tools/tyfonts.mjs 照那一页里写的现算、从装好的 @fontsource 包里拿原样文件，
+// 放进 assets/tyfonts-<指纹>/（一千五百多块、三十几兆，页面上用到哪些字才取哪几块）；<head> 里那几张写进那一页，换风格要的清单交给开封府那一层
+const tySrc = fs.readFileSync("vendor/tongye/app.html", "utf8");
+const tyFonts = makeTyFonts(tySrc);
+for (const [p, buf] of tyFonts.files) {
+  const out = `${OUT}/assets/${tyFonts.dir}/${p}`;
+  fs.mkdirSync(out.slice(0, out.lastIndexOf("/")), { recursive: true });
+  fs.writeFileSync(out, buf);
+}
 const tyBridge = await build({
   entryPoints: ["src/tongye/bridge.js"],
   bundle: true,
@@ -142,8 +152,9 @@ const tyBridge = await build({
   legalComments: "none",
   charset: "utf8",
   logLevel: "warning",
+  define: { __KFS_TYFONTS__: JSON.stringify(tyFonts.manifest) },
 });
-const ty = makeTongye(fs.readFileSync("vendor/tongye/app.html", "utf8"), tyBridge.outputFiles[0].text);
+const ty = makeTongye(tySrc, tyBridge.outputFiles[0].text, tyFonts);
 const tyBuf = Buffer.from(
   ty.html.replace(
     "<!doctype html>",
@@ -293,5 +304,6 @@ console.log(`  ${jianghuName}  ${size(`${OUT}/assets/${jianghuName}`)}`);
 console.log(`  ${cangyinName}  ${size(`${OUT}/assets/${cangyinName}`)}`);
 console.log(`  ${s2tName}  ${size(`${OUT}/assets/${s2tName}`)}`);
 console.log(`  ${tyName}  ${size(`${OUT}/assets/${tyName}`)}（同页，${ty.scripts} 段脚本记了指纹）`);
+console.log(`  ${tyFonts.dir}/（同页的字：${tyFonts.fonts} 块，连样式表、授权一共 ${(tyFonts.bytes / 1048576).toFixed(1)} MB）`);
 console.log(`  ${jinhuiCssName} + ${jinhuiDir}/（${jinhui.slices.length} 块，${(jinhuiBufs.reduce((n, b) => n + b.length, 0) / 1024).toFixed(0)} KB）`);
 console.log(`  连接：${SUPABASE_URL}`);
