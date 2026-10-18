@@ -576,6 +576,14 @@ with sync_playwright() as p:
         f.evaluate("(() => { try { window.__kfsShell.home(); } catch (e) {} })()"); time.sleep(0.6)
         ok(f.evaluate("[...document.querySelectorAll('#rec .card b')].some((b) => b.textContent.includes('（测试排的）＜b＞泡桐花') && !b.querySelector('b'))"),
            "本子首页那一列：他起的标题照字摆（同页那儿是直接当 HTML 画的，尖括号换成全角就画不成别的）")
+        # 掺过一页的那一天的那一屏：几张照片、几句聊天照那天在聊天里的（同页原来拿那一页上的几张、他挑的那几句，小图还摆不出来；她 10 月 18 日 19:18 截图报的）
+        f.evaluate("document.getElementById('shToday').click()")
+        ok(fwait(f, "document.getElementById('sDay').classList.contains('on') && document.querySelectorAll('#dayThumbs img').length === 2 && [...document.querySelectorAll('#dayThumbs img')].every((i) => i.naturalWidth > 0)", 20),
+           "掺过一页的那一天的那一屏：小图是她那天在聊天里发的两张，都摆出来了")
+        found = f.evaluate("document.getElementById('dayFound').innerText")
+        mm = re.search(r"(\d+)\s*张照片\s*(\d+)\s*句聊天", found)
+        ok(mm and int(mm.group(1)) == 2 and int(mm.group(2)) > len(R["chat"]) and "打开这一页" in f.evaluate("document.getElementById('toSelf').innerText"),
+           f"几张照片、几句聊天照那天在聊天里的（不是那一页上他挑的 {len(R['chat'])} 句）；下面那一颗是“打开这一页”（{found!r}）")
         close_ty(pa, f)
         card = pa.locator(".kfs-jz-open").inner_text()
         ok("（测试排的）＜b＞泡桐花＜/b＞" in card and "拍立得墙 × 牛皮纸" in card and "他排的" in card, f"闲笔集今天的卡片：他起的标题、她挑的版式风格、他排的（{card!r}）")

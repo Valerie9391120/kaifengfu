@@ -160,6 +160,15 @@ export const PATCHES = [
   ],
   // 那一天的那一屏点“自己拼”：同页当场写一页空的 day；开封府这边点开不写，她头一回动手才起（见 bridge.js 的 touch、host.js 的 ensureDay）
   ['try{const db=window.__jdb;db&&db.collection("day").doc(day).set(R)}catch(_){}', 'try{const db=window.__jdb;db&&!window.__kfsLazy&&db.collection("day").doc(day).set(R)}catch(_){}', 1, "自己拼点开不写"],
+  // 那一天的那一屏上“几张照片、几句聊天”和那几张小图：照她那天在聊天里发的照片、聊的原话数（开封府取来的，见 bridge.js 的 __kfsDayPh）。
+  // 同页原来拿那一天的 day 里的：掺过一页的日子摆的成了那一页上的几张、他挑的那几句，小图还摆不出来（照片的地址不在它的 PH 里；她 10 月 18 日 19:18 截图报的）
+  [
+    "const ph=PHOTOS[day]||[],chat=(G('CHATLOG')&&G('CHATLOG')[day]||[]).length",
+    "const ph=(window.__kfsDayPh&&__kfsDayPh(day))||PHOTOS[day]||[],chat=window.__kfsDayN&&__kfsDayN(day)!=null?__kfsDayN(day):(G('CHATLOG')&&G('CHATLOG')[day]||[]).length",
+    1,
+    "那一天的照片、原话数",
+  ],
+  ['th.innerHTML=ph.map(k=>`<img alt="" src="${PH[k]}">`).join("")', 'th.innerHTML=ph.map(k=>`<img alt="" src="${PH[k]||k}">`).join("")', 1, "那一天的照片、原话数"],
   // 那一天的那一屏：没有天气的日子同页说“会从照片里读出来”（它的后端读照片里的地点）；开封府的天气是照她填的“天气在哪儿”取的
   ['"这天的地点和天气，会从照片里读出来"', '"这天还没有天气"', 1, "天气从哪儿来"],
   // 开封府要打开某一天：本子的那一段里摆一个口子（同“自己拼”那一颗：这一天还没有页就先在这一页里起一页空的（不存，她动手了才存，见 bridge.js），
