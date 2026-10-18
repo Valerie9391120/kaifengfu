@@ -355,8 +355,11 @@ with sync_playwright() as p:
         pa.locator(".kfs-jz-open").click()
         f = fx(pa)
         ftap(f, "#saveBtn")
-        ok(fwait(f, "!!document.querySelector('#delPageBtn') && /删掉/.test(document.querySelector('#delPageBtn').innerText)"), "「存」最底下：删掉这一页")
-        ftap(f, "#delPageBtn"); ftap(f, "#delYes")
+        ok(fwait(f, "!!document.querySelector('#delPageBtn') && /删掉/.test(document.querySelector('#delPageBtn').innerText)") and f.evaluate("document.querySelector('#delYes').offsetParent === null"),
+           "「存」最底下：删掉这一页（“真的删掉”先藏着）")
+        ftap(f, "#delPageBtn")
+        ok(f.evaluate("document.querySelector('#delYes').offsetParent !== null"), "点了“删掉这一页”才露出“真的删掉”")
+        ftap(f, "#delYes")
         ok(gone(pa), "删掉：同页说一声，关上回闲笔集（不在框里重新载入）")
         ok(pa.locator(".kfs-jz-open").inner_text().strip() == "掺一页手帐" and kvj(pa, f"kfs2:ty:day/{fday}") is None and kvj(pa, "kfs2:ty:notes/nold1") is None and len(trash_keys(pa)) == 1,
            "昨天变回“掺一页手帐”；那一页连批注挪进废纸篓（同页的 trash）")

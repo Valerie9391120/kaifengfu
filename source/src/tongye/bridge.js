@@ -334,6 +334,9 @@ const CSS = [
   "#cfgKaoHome,[data-kh]{display:none!important}",
   // 引用栏里的吃了吗、书摘、健康：开封府没有这几样记录
   '[data-qs="吃了吗"],[data-qs="书摘"],[data-qs="健康"]{display:none!important}',
+  // 「存」里删掉这一页：同页用 hidden 先藏着“真的删掉 / 算了”，可它自己的 .savebig{display:flex} 把 hidden 盖了，两颗一起露着（原版也这样），
+  // 一下就能点到“真的删掉”。照它的意思：先点“删掉这一页”才露出来
+  "#delBox [hidden]{display:none!important}",
   // 回闲笔集的那一颗
   ".kfs-close{display:inline-flex;align-items:center;gap:2px;margin-right:10px;padding:4px 8px 4px 2px;border:0;background:none;color:inherit;font:inherit;font-size:13px;opacity:.75;cursor:pointer}",
   ".kfs-close svg{width:16px;height:16px}",
