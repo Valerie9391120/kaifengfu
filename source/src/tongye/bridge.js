@@ -418,6 +418,13 @@ window.__kfsWorth = (R) => {
 
 // ---------- 页面摆好以后 ----------
 const CSS = [
+  // 刘海屏（iPhone 顶上让开的那一截：外面量好写进来的 --safe-t）。编辑器顶上那一条原来粘在刘海底下（top 是 --safe-t），
+  // 后面的“版式 / 风格”那一块还照没有刘海排，被它挡住；往上划的时候刘海那一截露着底下的纸（她 10 月 18 日 18:44 截图报的）。
+  // 改成从最顶上粘住、底色一直铺到最顶上，里头的字往下让开刘海（同页自己“看一页”“交给光义”那两屏顶上就是这么做的）
+  // 两边那一截也铺上底色（同页那一条只有纸那么宽，往上划的时候“换笔”那个圆从边上露出来半个）
+  "html.app-mode .top{top:0;padding-top:calc(12px + var(--safe-t,0px));box-shadow:-48px 0 0 var(--bg),48px 0 0 var(--bg)}",
+  // 贴纸库那一层原来是屏幕的 94% 高，刘海屏上顶到刘海里去了：让开刘海
+  "html #libS{height:min(94vh,calc(100vh - var(--safe-t,0px) - 8px));max-height:min(94vh,calc(100vh - var(--safe-t,0px) - 8px))}",
   // 她自己起标题：题签底下冒出来的那一条（跟贴纸那一条一个样子）
   ".kfs-ti{position:absolute;z-index:72;display:flex;flex-direction:column;align-items:flex-start;gap:6px}",
   ".kfs-ti-row{display:flex;gap:4px;align-items:center;padding:4px;border-radius:22px;background:var(--ink);box-shadow:var(--lift,0 8px 24px rgba(0,0,0,.22))}",

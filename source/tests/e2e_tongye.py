@@ -679,6 +679,24 @@ with sync_playwright() as p:
            and not any(x.get("kc") for x in kvj(pa, pkey)["stk"]), "挑“原来的”：跟着纸，存的那一份也拿掉了颜色")
         f.evaluate(f"loadGen({gn})"); time.sleep(2.0)
         ok(fwait(f, f"(() => {{ const t = {TXT}; return !!t && getComputedStyle(t.querySelector('.mt')).color === 'rgb(194, 58, 43)'; }})()"), f"换回第 {gn} 代：朱红回来了")
+        # 刘海屏（iPhone 顶上让开 59、底下 34：外面那一层量好了告诉框里）。她 10 月 18 日 18:44 报的：编辑器顶上那一条把“版式 / 风格”那一块挡住了
+        pa.evaluate("() => document.querySelector('iframe.kfs-ty-frame').contentWindow.postMessage({ kfsTy: 1, safe: { t: 59, b: 34, l: 0, r: 0 } }, '*')")
+        time.sleep(0.8)
+        GEO = """(() => { const r = (s) => document.querySelector(s).getBoundingClientRect(); const t = r('.top'), b = r('.toolbar .tb');
+            return { top: [Math.round(t.top), Math.round(t.bottom)], tb: Math.round(b.top), pad: getComputedStyle(document.querySelector('.top')).paddingTop }; })()"""
+        f.evaluate("scrollTo(0, 0)"); time.sleep(0.4)
+        g0 = f.evaluate(GEO)
+        f.evaluate("scrollTo(0, 400)"); time.sleep(0.4)
+        g1 = f.evaluate(GEO)
+        f.evaluate("scrollTo(0, 0)")
+        ok(g0["tb"] >= g0["top"][1] and g0["pad"] == "71px" and g1["top"][0] == 0 and g1["top"][1] >= 59 + 60,
+           f"刘海屏：顶上那一条底色铺到最顶上、字让开刘海，“版式 / 风格”那一块排在它底下不被挡；往上划的时候刘海那一截是它盖着（{g0} {g1}）")
+        f.evaluate("document.getElementById('libBtn').click()"); time.sleep(0.8)
+        lib = f.evaluate("Math.round(document.getElementById('libS').getBoundingClientRect().top)")
+        f.evaluate("document.getElementById('libDone').click()"); time.sleep(0.5)
+        ok(lib >= 59, f"刘海屏：贴纸库那一层不顶进刘海里（顶上在 {lib}）")
+        pa.evaluate("() => document.querySelector('iframe.kfs-ty-frame').contentWindow.postMessage({ kfsTy: 1, safe: { t: 0, b: 0, l: 0, r: 0 } }, '*')")
+        time.sleep(0.5)
         close_ty(pa, f)
         ok(any(x.get("m") == "泡桐花开了" and x.get("kc") == "#C23A2B" for x in kvj(pa, pkey)["stk"]), "关上：存着朱红")
         pa.locator(".kfs-jz-open").click()
