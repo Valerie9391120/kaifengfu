@@ -43,6 +43,7 @@
 import { dayKeyOf, parseDayKey, MOODS } from "../diary.js";
 import { pad, WEEK, dayNumber } from "../days.js";
 import { plainOf } from "../rich.js";
+import { clip } from "../recap.js"; // 截字不劈开表情（半个表情寄过去，那边整段话都不认）
 
 export const JZ_KEY = "kfs2:jz:";
 export const JZN_KEY = "kfs2:jzn:";
@@ -148,20 +149,20 @@ export function readPage(text, day) {
     edit,
     hide: (Array.isArray(m.hide) ? m.hide : []).filter((k) => PART_KEYS.includes(k)),
     stickers: stickersOf(m.stickers),
-    texts: (Array.isArray(m.texts) ? m.texts : []).filter((t) => t && typeof t.m === "string" && t.m.trim()).map((t) => ({ id: String(t.id || ""), m: t.m.slice(0, 200), ...placeOf(t) })),
+    texts: (Array.isArray(m.texts) ? m.texts : []).filter((t) => t && typeof t.m === "string" && t.m.trim()).map((t) => ({ id: String(t.id || ""), m: clip(t.m, 200), ...placeOf(t) })),
     at: Number(m.at) || 0,
   };
   return p;
 }
-const str = (s, max) => (typeof s === "string" ? s.slice(0, max) : "");
-const penOf = (pen) => (pen && typeof pen === "object" && typeof pen.text === "string" && pen.text.trim() ? { text: pen.text.slice(0, 300), margin: str(pen.margin, 40) } : null);
+const str = (s, max) => (typeof s === "string" ? clip(s, max) : "");
+const penOf = (pen) => (pen && typeof pen === "object" && typeof pen.text === "string" && pen.text.trim() ? { text: clip(pen.text, 300), margin: str(pen.margin, 40) } : null);
 const num = (v, d, lo, hi) => {
   const n = Number(v);
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d;
 };
 const placeOf = (o) => ({ x: num(o.x, 0.5, -0.2, 1.2), y: num(o.y, 0.3, -0.2, 40), r: num(o.r, 0, -180, 180), s: num(o.s, 1, 0.3, 4) });
 function stickersOf(list) {
-  return (Array.isArray(list) ? list : []).filter((s) => s && typeof s.k === "string" && s.k).slice(0, 80).map((s) => ({ k: s.k.slice(0, 80), ...placeOf(s) }));
+  return (Array.isArray(list) ? list : []).filter((s) => s && typeof s.k === "string" && s.k).slice(0, 80).map((s) => ({ k: clip(s.k, 80), ...placeOf(s) }));
 }
 
 // 摆出来的样子：两层合起来，加上那天的日记和心情、照片的图。
@@ -298,6 +299,20 @@ export function pickQuotes(ids, quotes) {
   return (quotes || []).filter((q) => want.has(q.id)).slice(0, QUOTE_MAX);
 }
 
+// 这一页上已经摆着的原话加上那天聊天里的：同一句（同一个编号）只算一回、页上那份为准，照几点排。
+// 那段对话删了、这台设备上没有，页上摆着的也照样在单子里（挑别的那一句的时候不会把它们弄丢）
+export function mergeQuotes(saved, mats) {
+  const keep = new Map((saved || []).filter((q) => q && q.id).map((q) => [q.id, q]));
+  const out = (mats || []).filter((q) => q && q.id).map((q) => keep.get(q.id) || q);
+  const ids = new Set(out.map((q) => q.id));
+  keep.forEach((q) => {
+    if (ids.has(q.id)) return;
+    const at = out.findIndex((x) => x.t > q.t);
+    out.splice(at < 0 ? out.length : at, 0, q);
+  });
+  return out;
+}
+
 // 一串原话的头尾钟点：“09:46 – 11:45”（一句的就一个）
 export function quoteSpan(quotes) {
   if (!quotes || !quotes.length) return "";
@@ -340,7 +355,7 @@ export function readNotes(text) {
   } catch (e) {}
   return (Array.isArray(list) ? list : [])
     .filter((n) => n && typeof n.text === "string" && n.text.trim())
-    .map((n) => ({ id: String(n.id || ""), who: n.who === "him" ? "him" : "her", text: n.text.slice(0, 300), at: Number(n.at) || 0, part: PART_KEYS.includes(n.part) ? n.part : "" }))
+    .map((n) => ({ id: String(n.id || ""), who: n.who === "him" ? "him" : "her", text: clip(n.text, 300), at: Number(n.at) || 0, part: PART_KEYS.includes(n.part) ? n.part : "" }))
     .sort((a, b) => a.at - b.at);
 }
 export const NOTE_MAX = 300;
@@ -388,7 +403,7 @@ role 只有 hero（主照片，一张）、pair（双联照，两张）、food�
   lines.push(diary.him && diary.him.text ? `\n你这天的日记${himM ? `（心情：${himM}）` : ""}：\n${diary.him.text}` : "\n你这天没写日记。");
   if (quotes.length) {
     lines.push(`\n这天聊天里的原话（编号｜几点｜谁｜原话）：`);
-    quotes.forEach((q) => lines.push(`${q.id}｜${q.t}｜${q.w === "her" ? "卿卿" : "你"}｜${q.p.replace(/\s+/g, " ").slice(0, 160)}`));
+    quotes.forEach((q) => lines.push(`${q.id}｜${q.t}｜${q.w === "her" ? "卿卿" : "你"}｜${clip(q.p.replace(/\s+/g, " "), 160)}`));
   } else lines.push("\n这天你们没在开封府聊天。");
   if (photos.length) lines.push(`\n照片 ${photos.length} 张，图附在最后，照顺序是：${photos.map((x) => `${x.tag}（${x.t || "她放进来的"}）`).join("、")}。`);
   else lines.push("\n这天没有照片。");
@@ -417,11 +432,13 @@ export function parseArrange(text, quotes, photoIds = {}, stickerKey = () => "",
   } catch (e) {
     throw new Error("他排好的那一段看不懂");
   }
-  if (!o || typeof o !== "object") throw new Error("他排好的那一段看不懂");
+  if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error("他排好的那一段看不懂");
   const photos = [];
   const seen = new Set();
-  (Array.isArray(o.photos) ? o.photos : []).forEach((x) => {
-    const id = x && photoIds[String(x.id || "").replace(/\s/g, "")];
+  const own = (k) => (Object.prototype.hasOwnProperty.call(photoIds, k) ? photoIds[k] : "");
+  (Array.isArray(o.photos) ? o.photos : []).forEach((x0) => {
+    const x = typeof x0 === "string" ? { id: x0 } : x0; // 写成一串编号的（["照片1"]）也认，当“别的”
+    const id = x && own(String(x.id || "").replace(/\s/g, ""));
     if (!id || seen.has(id) || photos.length >= PHOTO_MAX) return;
     seen.add(id);
     photos.push({ id, role: PHOTO_ROLES.includes(x.role) ? x.role : "more", note: str(x.note, 60) });
@@ -452,7 +469,10 @@ export function parseArrange(text, quotes, photoIds = {}, stickerKey = () => "",
     photos,
     stickers: scatter(ks, rand),
   };
-  const note = o.note && typeof o.note === "object" && typeof o.note.text === "string" && o.note.text.trim() ? { text: o.note.text.trim().slice(0, NOTE_MAX), part: PART_KEYS.includes(o.note.part) ? o.note.part : "" } : null;
+  // 什么都没排（{}、只有对不上的编号）：不算排好，这一页原样不动（JzPage 报“没排成”）
+  const empty = !arr.title && !arr.body && !arr.cap && !arr.pen && !arr.quotes.length && !arr.photos.length && !arr.stickers.length && !LAYOUT_KEYS.includes(o.layout) && !STYLE_KEYS.includes(o.style);
+  if (empty) throw new Error("他排好的那一段是空的");
+  const note = o.note && typeof o.note === "object" && typeof o.note.text === "string" && o.note.text.trim() ? { text: clip(o.note.text.trim(), NOTE_MAX), part: PART_KEYS.includes(o.note.part) ? o.note.part : "" } : null;
   return { arr, layout: LAYOUT_KEYS.includes(o.layout) ? o.layout : "", style: STYLE_KEYS.includes(o.style) ? o.style : "", note };
 }
 
@@ -495,7 +515,7 @@ export function pageText(page, notes = [], diary = {}) {
       if (v.more.length) bits.push(`别的 ${v.more.length} 张${said(v.more)}`);
       lines.push(`  照片 ${pics.length} 张：${bits.join("、")}`);
     }
-    if (v.has("quote")) lines.push(`  摆的原话：${v.quotes.map((q) => `${q.t} ${q.w === "her" ? "卿卿" : "你"}：${q.p.replace(/\s+/g, " ").slice(0, 60)}`).join("｜")}`);
+    if (v.has("quote")) lines.push(`  摆的原话：${v.quotes.map((q) => `${q.t} ${q.w === "her" ? "卿卿" : "你"}：${clip(q.p.replace(/\s+/g, " "), 60)}`).join("｜")}`);
     if (v.has("body")) lines.push(`  正文：${v.body.replace(/\s+/g, " ")}`);
     if (v.has("pen")) lines.push(`  红笔：${v.pen.text.replace(/\[\[|\]\]/g, "")}${v.pen.margin ? `（页边：${v.pen.margin}）` : ""}`);
     if (page.mine.texts.length) lines.push(`  她在页上写的字：${page.mine.texts.map((t) => `“${t.m}”`).join("、")}`);

@@ -86,7 +86,7 @@ export const JZ_CSS = `
 .jz-sheet{position:relative;width:100%;box-sizing:border-box;padding:7.5cqw 6.5cqw 10cqw;background-color:var(--jz-paper);background-image:var(--jz-tex);background-size:var(--jz-tex-size);color:var(--jz-ink);font-family:var(--jz-body-font);border-radius:1.4cqw;box-shadow:0 1px 2px rgba(0,0,0,0.06),0 18px 40px -26px rgba(0,0,0,0.45);overflow:hidden;-webkit-user-select:none;user-select:none}
 .jz-sheet *{box-sizing:border-box}
 .jz-block{position:relative;margin-top:6cqw}
-.jz-block:first-child{margin-top:0}
+.jz-block:first-child,.jz-sheet-stitch+.jz-block{margin-top:0}
 .jz-row{display:grid;grid-template-columns:1fr 1fr;gap:4.2cqw;align-items:start}
 .jz-tap{cursor:pointer}
 .jz-sheet[data-editing="1"] .jz-tap{outline:1px dashed transparent;outline-offset:1.2cqw;transition:outline-color .2s}
@@ -166,6 +166,7 @@ export const JZ_CSS = `
 .jz-stk.txt{color:var(--jz-pen)}
 .jz-stk.sel{outline:1px dashed var(--jz-rule-strong);outline-offset:1.2cqw}
 .jz-stk .tape{width:30cqw;height:6.4cqw;opacity:.88}
+.kfs-jz-sticker .tape{width:100%;height:16px;border-radius:2px;opacity:.9}
 
 /* ========== 版式 ========== */
 /* 拍立得墙：照片白边加厚、歪着贴 */

@@ -66,7 +66,10 @@ def sheet_off(page):
 def toast(page, pattern, timeout=8000):
     return wait_js(page, f"(() => {{ const t = document.querySelector('.kfs-jz-toast'); return !!t && /{pattern}/.test(t.innerText); }})()", timeout)
 def tap_part(page, k):
-    page.locator(f".kfs-jz .jz-sheet [data-part='{k}']").first.click(); time.sleep(0.4)
+    # 贴纸、写的字是随手摆的，可能正好压在那一块上（真点会点到贴纸）：直接把“点了一下”发给那一块
+    page.locator(f".kfs-jz .jz-sheet [data-part='{k}']").first.dispatch_event("click"); time.sleep(0.4)
+IMGS = """() => new Promise((res, rej) => { const o = indexedDB.open('kfs-local'); o.onsuccess = () => { const r = o.result.transaction('kv').objectStore('kv').getAll();
+  r.onsuccess = () => res(r.result.filter((x) => x.k.startsWith('kfs2:jzimg:') && !x.del).map((x) => x.k.slice(11)).sort()); r.onerror = () => rej(r.error); }; o.onerror = () => rej(o.error); })"""
 def act(page, name):
     page.locator(".kfs-jz-act", has_text=name).click(); time.sleep(0.4)
 def look(page):
@@ -172,18 +175,23 @@ with sync_playwright() as p:
         her_q = pa.locator(".kfs-jz-quote-pick", has_text="今天看到泡桐花了").first
         her_q.click(); time.sleep(0.3)
         pa.locator(".kfs-jz-quote-pick", has_text="收到：今天看到泡桐花了").first.click(); time.sleep(0.3)
+        pa.locator(".kfs-jz input[type=file]").set_input_files({"name": "相册里的.png", "mimeType": "image/png", "buffer": fake_photo((210, 236, 222))})
+        pa.locator(".kfs-jz-photo-row").nth(1).wait_for(timeout=8000)
+        pa.locator(".kfs-jz-cap-in").fill("运河边 · 下午")
         sheet_off(pa); time.sleep(0.8)
         ok(pa.locator(".kfs-jz .jz-title").inner_text().startswith("泡桐花开了"), "标题摆上了")
-        ok(pa.locator(".kfs-jz .jz-hero img").count() == 1 and pa.locator(".kfs-jz .jz-quote .jz-q").count() == 2 and not pa.locator(".kfs-jz-empty").count(),
-           "头一张照片当了主照片；两句原话摆在原话卡上；空着的提示没了")
+        ok(pa.locator(".kfs-jz .jz-hero img").count() == 1 and pa.locator(".kfs-jz .jz-more img").count() == 1 and pa.locator(".kfs-jz .jz-quote .jz-q").count() == 2 and pa.locator(".kfs-jz .jz-hero .jz-cap").inner_text() == "运河边 · 下午",
+           "头一张照片当了主照片（底下那一行写上了），相册里那张摆在后头；两句原话摆在原话卡上")
         qtxt = pa.locator(".kfs-jz .jz-quote").inner_text()
         ok("卿卿" in qtxt and "光义" in qtxt and "今天看到泡桐花了" in qtxt, "原话照原样摆，标着谁、几点")
         time.sleep(0.8)
         pg = page_of_day(pa, today)
         hero = pg["arr"]["photos"][0]
+        album = pg["arr"]["photos"][1]
         ok(pg["arr"]["by"] == "her" and pg["arr"]["title"] == "泡桐花开了" and hero["from"] == photo_ids[0] and hero["role"] == "hero" and hero["id"].startswith("jz") and pg["wx"]["code"] == 61,
            "存了：她自己拼的、标题、主照片（从聊天里那张另存的一份，记着是哪张）、天气")
         ok(bool(kv(pa, "kfs2:jzimg:" + hero["id"])) and [q["p"] for q in pg["arr"]["quotes"]][0] == "今天看到泡桐花了", "照片另存在 kfs2:jzimg:（删了聊天也还在）；原话的字照原话抄")
+        ok(album["role"] == "more" and "from" not in album and bool(kv(pa, "kfs2:jzimg:" + album["id"])) and pg["arr"]["cap"] == "运河边 · 下午", "相册那张也另存了（不记从聊天哪张来）；主照片底下那一行存了")
 
         # ================= 版式、风格 =================
         pa.locator(".kfs-jz-layout").click(); time.sleep(0.4)
@@ -218,7 +226,10 @@ with sync_playwright() as p:
         wait_js(pa, "!!document.querySelector(\".kfs-jz-sticker[data-k='e:fox'] svg\")", 10000)
         ok(pa.locator(".kfs-jz-tab").count() == 10 and pa.locator(".kfs-jz-sticker[data-k='e:fox'] svg").count() == 1, "贴纸栏十栏；Fluent Emoji 那一包取得到（狐狸画出来了）")
         pa.locator(".kfs-jz-sticker[data-k='e:fox']").click(); time.sleep(0.9)
-        r0 = [s for s in page_of_day(pa, today)["mine"]["stickers"] if s["k"] == "e:fox"][0]["r"]
+        fox0 = [s for s in page_of_day(pa, today)["mine"]["stickers"] if s["k"] == "e:fox"][0]
+        r0 = fox0["r"]
+        ratio = pa.evaluate("(() => { const r = document.querySelector('.kfs-jz .jz-wrap').getBoundingClientRect(); return r.height / r.width; })()")
+        ok(0 < fox0["y"] < ratio - 0.05, f"新贴的就在纸上（不跑到纸底外头去：{fox0['y']:.2f} < {ratio:.2f}）")
         ok(pa.locator(".kfs-jz .jz-stk[data-k='e:fox'] svg").count() == 1 and pa.locator(".kfs-jz .jz-stk.sel").count() == 1 and pa.locator(".kfs-jz-selbar").is_visible(),
            "贴上一只狐狸：选中着，底下冒出转、大小、删")
         pa.locator(".kfs-jz-selbar").get_by_role("button", name="大").click(); time.sleep(0.2)
@@ -233,6 +244,9 @@ with sync_playwright() as p:
         pa.locator(".kfs-jz-scroll").click(position={"x": 8, "y": 8}); time.sleep(0.3)
         ok(pa.locator(".kfs-jz .jz-stk.sel").count() == 0 and not pa.locator(".kfs-jz-selbar").count(), "点纸外头：放掉")
         pa.locator(".kfs-jz-addsticker").click(); time.sleep(0.4)
+        pa.locator(".kfs-jz-tab", has_text="胶带").click(); time.sleep(0.3)
+        tapes = pa.evaluate("[...document.querySelectorAll(\".kfs-jz-sticker[data-k^='t:'] .tape\")].map((e) => e.getBoundingClientRect().height)")
+        ok(len(tapes) == 8 and min(tapes) > 8, f"胶带那一栏：八种花色都看得见（{tapes[:3]}…）")
         pa.locator(".kfs-jz-tab", has_text="印章").click(); time.sleep(0.3)
         ok(pa.locator(".kfs-jz-sticker").count() == 6 and pa.locator(".kfs-jz-sticker[data-k='s:卿卿']").count() == 1, "印章那一栏：先摆着的六枚（没有同页作者家的那两枚）")
         pa.get_by_placeholder("自己刻一枚（最多四个字）").fill("泡桐花开")
@@ -255,6 +269,12 @@ with sync_playwright() as p:
         pa.locator(".kfs-jz-edit").fill("泡桐花真的开了")
         pa.locator(".kfs-jz-save").click(); time.sleep(0.8)
         ok(pa.locator(".kfs-jz .jz-title").inner_text().startswith("泡桐花真的开了") and page_of_day(pa, today)["arr"]["title"] == "泡桐花真的开了", "改了标题（她自己拼的一页：直接改在排的那一份上）")
+        tap_part(pa, "cap")
+        ok([b.inner_text() for b in pa.locator(".kfs-jz-act").all()] == ["改字", "藏起来", "留一条批注"], "点主照片底下那一行：是它自己那一块（改字、藏起来、留批注），不当成点了照片")
+        act(pa, "改字")
+        pa.locator(".kfs-jz-edit").fill("运河边 · 下午四点")
+        pa.locator(".kfs-jz-save").click(); time.sleep(0.8)
+        ok(pa.locator(".kfs-jz .jz-hero .jz-cap").inner_text() == "运河边 · 下午四点" and page_of_day(pa, today)["arr"]["cap"] == "运河边 · 下午四点", "主照片底下那一行改得了")
         tap_part(pa, "mood")
         act(pa, "藏起来")
         ok(toast(pa, "心情.*藏起来了") and pa.locator(".kfs-jz .jz-sheet [data-part='mood']").count() == 0, "心情藏起来了")
@@ -276,7 +296,8 @@ with sync_playwright() as p:
         # ================= 让光义排 =================
         n_ar = len(calls())
         pa.locator(".kfs-jz-him").click(); time.sleep(0.4)
-        ok("你藏起来的、自己改的字、写的字、贴的贴纸都留着" in pa.locator(".kfs-sheet").last.inner_text(), "让他排之前说清楚：她动过的都留着")
+        him_txt = pa.locator(".kfs-sheet").last.inner_text()
+        ok("你藏起来的、自己改的字、写的字、贴的贴纸都留着" in him_txt and "你放的照片他没挑的挪到最后，不会丢" in him_txt and "用他写的" in him_txt, "让他排之前说清楚：她动过的都留着，她放的照片不会丢，她写的字照她写的摆")
         pa.locator(".kfs-jz-wish").fill("要那张饭")
         pa.locator(".kfs-jz-go").click()
         ok(toast(pa, "他排好了", 20000), "交给他：一会儿排好了")
@@ -287,14 +308,23 @@ with sync_playwright() as p:
         imgs = [b for b in content if b.get("type") == "image"]
         ok(len(ab["system"]) == 2 and ab["system"][1]["text"].startswith("【排手帐】") and "tools" not in ab and "【日记本】" not in ab["system"][0]["text"],
            "问他的那一回：名帖后面跟【排手帐】的规矩，不带工具，名帖里也不带【日记本】（跟写日记一样）")
-        ok(len(imgs) == 2 and "照片 2 张" in text0 and "她说想要：要那张饭" in text0 and HER_DIARY in text0 and "小雨" in text0 and "她藏起来的：心情" in text0 and "“好看”" in text0,
-           "寄过去的：两张照片（页上那张、聊天里还没放上去的那张）、原话、日记、天气、她想要的、她动过的")
+        ok(len(imgs) == 3 and "照片 3 张" in text0 and "她说想要：要那张饭" in text0 and HER_DIARY in text0 and "小雨" in text0 and "她藏起来的：心情" in text0 and "“好看”" in text0,
+           "寄过去的：三张照片（页上那两张、聊天里还没放上去的那张）、原话、日记、天气、她想要的、她动过的")
         ok(re.search(r"^\S+｜\d\d:\d\d｜卿卿｜今天看到泡桐花了$", text0, re.M), "原话一句一行，带编号")
-        ok(look(pa) == ["bento", "film"] and pa.locator(".kfs-jz .jz-title").inner_text().startswith("（测试排的）泡桐花"), f"他挑了格子便当 × 复古胶片，起了标题（{look(pa)}）")
         pg = page_of_day(pa, today)
+        ok(look(pa) == ["bento", "film"] and pg["arr"]["title"] == "（测试排的）泡桐花" and pa.locator(".kfs-jz .jz-title").inner_text().startswith("泡桐花真的开了")
+           and pg["mine"]["edit"].get("title") == "泡桐花真的开了" and pg["mine"]["edit"].get("cap") == "运河边 · 下午四点",
+           f"他挑了格子便当 × 复古胶片、起了标题；她原来写的标题、主照片底下那一行挪到她那一层，照她写的摆（{look(pa)}）")
         roles = {x["role"]: x for x in pg["arr"]["photos"]}
-        ok(pg["arr"]["by"] == "him" and roles["hero"]["id"] == hero["id"] and roles["food"]["from"] == photo_ids[1] and roles["food"]["id"].startswith("jz") and bool(kv(pa, "kfs2:jzimg:" + roles["food"]["id"])),
-           "主照片还是页上那张；饭是聊天里另一张（另存了一份）")
+        ok(pg["arr"]["by"] == "him" and [x["role"] for x in pg["arr"]["photos"]] == ["hero", "food", "more"] and roles["hero"]["id"] == hero["id"] and roles["hero"].get("from") == photo_ids[0]
+           and roles["food"]["from"] == photo_ids[1] and roles["food"]["id"].startswith("jz") and roles["more"]["id"] == album["id"]
+           and all(kv(pa, "kfs2:jzimg:" + x["id"]) for x in pg["arr"]["photos"]),
+           f"照片：主照片还是页上那张（记着从聊天哪张来）；饭是聊天里另一张（另存了一份）；相册那张他没挑，留在页上挪到最后；图一张都没删（{[(x['role'], x['id'][:8], x.get('from', '')[:6]) for x in pg['arr']['photos']]}）")
+        tap_part(pa, "title")
+        ok("用他写的" in [b.inner_text() for b in pa.locator(".kfs-jz-act").all()], "点标题：多一样“用他写的”")
+        act(pa, "用他写的"); time.sleep(0.8)
+        ok(pa.locator(".kfs-jz .jz-title").inner_text().startswith("（测试排的）泡桐花") and "title" not in page_of_day(pa, today)["mine"]["edit"],
+           f"点“用他写的”：标题换成他起的（{pa.locator('.kfs-jz .jz-title').inner_text()!r}，她那一层 {list(page_of_day(pa, today)['mine']['edit'])}）")
         sent = {m.group(1): m.group(2) for m in re.finditer(r"^(\S+)｜\d\d:\d\d｜(?:卿卿|你)｜(.*)$", text0, re.M)}
         ok([q["id"] for q in pg["arr"]["quotes"]] == list(sent)[:2] and all(sent[q["id"]] == q["p"] for q in pg["arr"]["quotes"]),
            f"原话：照他写的编号抄了两句（字照原话），编的那个编号不认（{[q['p'] for q in pg['arr']['quotes']]}）")
@@ -311,6 +341,15 @@ with sync_playwright() as p:
         pa.locator(".kfs-jz-wish").fill("排坏")
         pa.locator(".kfs-jz-go").click()
         ok(toast(pa, "没排成（他回的里头没有排好的那一段）", 20000) and page_of_day(pa, today)["arr"]["title"] == "（测试排的）泡桐花", "他回的拆不出来：说“没排成”，这一页原样不动")
+        before = page_of_day(pa, today)
+        imgs0 = pa.evaluate(IMGS)
+        pa.locator(".kfs-jz-him").click(); time.sleep(0.4)
+        pa.locator(".kfs-jz-wish").fill("排空")
+        pa.locator(".kfs-jz-go").click()
+        got_toast = toast(pa, "没排成（他排好的那一段是空的）", 20000)
+        after = page_of_day(pa, today)
+        ok(got_toast and after == before and pa.evaluate(IMGS) == imgs0,
+           f"他回了一段空的：也算没排成，这一页、照片一样都没动（提示 {got_toast}；变了的 {[k for k in after if after.get(k) != before.get(k)]}；图 {len(imgs0)} → {len(pa.evaluate(IMGS))}；{pa.evaluate('(document.querySelector(\'.kfs-jz-toast\') || {}).innerText')}）")
         tap_part(pa, "title")
         act(pa, "改字")
         pa.locator(".kfs-jz-edit").fill("她改的标题")
@@ -365,8 +404,8 @@ with sync_playwright() as p:
         ok("她改的标题" in card and "批注 3" in card and pa.locator(".kfs-day-note").count() == 3, "重新打开：卡片、三条批注都在")
         open_jz(pa)
         wait_js(pa, "!!document.querySelector(\".kfs-jz .jz-stk[data-k='e:fox'] svg\")", 10000)
-        ok(look(pa) == ["bento", "film"] and pa.locator(".kfs-jz .jz-stk[data-k='s:泡桐花开']").count() == 1 and pa.locator(".kfs-jz .jz-stk.txt", has_text="好看").count() == 1 and pa.locator(".kfs-jz .jz-hero img").count() == 1 and pa.locator(".kfs-jz .jz-food img").count() == 1,
-           "点开：版式风格、贴纸、写的字、主照片、饭都在")
+        ok(look(pa) == ["bento", "film"] and pa.locator(".kfs-jz .jz-stk[data-k='s:泡桐花开']").count() == 1 and pa.locator(".kfs-jz .jz-stk.txt", has_text="好看").count() == 1 and pa.locator(".kfs-jz .jz-hero img").count() == 1 and pa.locator(".kfs-jz .jz-food img").count() == 1 and pa.locator(".kfs-jz .jz-more img").count() == 1,
+           "点开：版式风格、贴纸、写的字、主照片、饭、相册那张都在")
         # ================= 云端只有乱码 =================
         time.sleep(3)
         rows = mock("/__debug/rows")
@@ -375,14 +414,24 @@ with sync_playwright() as p:
         ok(all(r["value"].startswith("v1.") and not CJK.search(r["value"]) and not CJK.search(r["key"]) for r in data_rows) and not any(w in dump for w in ["泡桐花", "她改的标题", "某城", "kfs2:jz", "12.35"]),
            f"云端每一条都是乱码：搜不到标题、批注、城市、记录名（{len(data_rows)} 条）")
 
-        # ================= 删掉这一页：图跟着删，批注留着 =================
+        # ================= 他正排着的时候删掉这一页：图跟着删、批注留着，他排好的那一版回来了也不再存 =================
         pg = page_of_day(pa, today)
         ids = [x["id"] for x in pg["arr"]["photos"]]
+        mock("/__debug/claude-hold?ms=20000")
+        pa.locator(".kfs-jz-him").click(); time.sleep(0.4)
+        pa.locator(".kfs-jz-wish").fill("")
+        pa.locator(".kfs-jz-go").click()
+        pa.locator(".kfs-jz-busy").wait_for(timeout=8000)
+        ok(pa.locator(".kfs-jz-him").is_disabled(), "他正排着：“让光义排”那一颗点不动（不会连着问两回）")
+        wait_mock(lambda: mock("/__debug/claude-held")["held"], 10)
         pa.locator(".kfs-jz-more").click(); time.sleep(0.4)
         pa.locator(".kfs-jz-delete").click(); time.sleep(0.3)
         pa.locator(".kfs-jz-delete").click(); time.sleep(1.2)
         ok(page_of_day(pa, today) is None and all(kv(pa, "kfs2:jzimg:" + i) is None for i in ids) and pa.locator(".kfs-jz-open").inner_text().strip() == "掺一页手帐",
            "删掉这一页：页和另存的照片都删了，卡片回到“掺一页手帐”")
+        mock("/__debug/claude-release"); time.sleep(3)
+        ok(page_of_day(pa, today) is None and pa.evaluate(IMGS) == [] and pa.locator(".kfs-jz-open").inner_text().strip() == "掺一页手帐",
+           "删了以后他排好的那一版才回来：不再存（页没活过来），聊天里那张也没另存")
         ok(len(notes_of_day(pa, today)) == 3 and pa.locator(".kfs-day-note").count() == 3, "批注不跟着删（那一天底下还在）")
         cid, msgs = chat_of(pa)
         ok(sum(1 for m in msgs if m.get("kind") == "photo") == 2, "聊天里那两张照片没动")

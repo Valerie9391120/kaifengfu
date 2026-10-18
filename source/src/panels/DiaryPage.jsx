@@ -6,6 +6,7 @@ import { Icon } from "../ui/Icon.jsx";
 import { Glows, IconBtn } from "../ui/parts.jsx";
 import { JzPage, JzCard } from "../jz/JzPage.jsx";
 import { NOTE_MAX } from "../jz/model.js";
+import { clip } from "../recap.js";
 import { newId } from "../util.js";
 
 // 那一天的批注（手帐上的、他翻日记的时候留的，都在这儿；见 jz/model.js）：一条一条摆着，底下能再留一条；
@@ -31,7 +32,7 @@ function DayNotes({ notes, onAdd, onDrop }) {
       ))}
       {open ? (
         <div style={{ marginTop: 10 }}>
-          <textarea className="kfs-field kfs-day-notein" value={text} onChange={(e) => setText(e.target.value.slice(0, NOTE_MAX))} rows={2} placeholder="在这一天留一句" style={{ ...field, resize: "none", lineHeight: 1.6 }} />
+          <textarea className="kfs-field kfs-day-notein" value={text} onChange={(e) => setText(clip(e.target.value, NOTE_MAX))} rows={2} placeholder="在这一天留一句" style={{ ...field, resize: "none", lineHeight: 1.6 }} />
           <div className="flex" style={{ gap: 8, marginTop: 8 }}>
             <button
               onClick={() => {
