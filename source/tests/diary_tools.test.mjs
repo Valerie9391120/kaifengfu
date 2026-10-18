@@ -259,8 +259,8 @@ const withD = buildSystem(sysArgs);
 const without = buildSystem({ ...sysArgs, diary: false });
 ok(withD.staticText.includes(DIARY_SECTION + "\n\n【回复格式】") && !without.staticText.includes("【日记本】") && withD.staticText === without.staticText.replace("【回复格式】", DIARY_SECTION + "\n\n【回复格式】"),
   "名帖：默认带【日记本】那一段，排在【回复格式】前头；写日记那一回不带（别的一个字不差）");
-ok(["diary_list", "diary_read", "diary_search", "随时", "她那边会看到一行小字", "打电话的时候翻不了", "别编"].every((w) => DIARY_SECTION.includes(w)) && !DIARY_SECTION.includes("闲笔集") && !DIARY_SECTION.includes("南衙") && !DIARY_SECTION.includes("【回复格式】"),
-  "那一段里写着三样怎么用、随时能翻、她看得到、打电话翻不了、别编；不提闲笔集、南衙这两个名字（还没问她）");
+ok(["diary_list", "diary_read", "diary_search", "随时", "她那边会看到一行小字", "打电话的时候翻不了", "别编"].every((w) => DIARY_SECTION.includes(w)) && DIARY_SECTION.includes("叫“闲笔集”，放在“南衙”里") && !DIARY_SECTION.includes("【回复格式】"),
+  "那一段里写着三样怎么用、随时能翻、她看得到、打电话翻不了、别编；写着日记本叫闲笔集、在南衙里（10 月 18 日她说要让他知道）");
 const gamed = buildSystem({ ...sysArgs, game: { board: null } });
 ok(gamed.staticText.indexOf("【日记本】") < gamed.staticText.indexOf("【江湖棋局】") && gamed.staticText.indexOf("【江湖棋局】") < gamed.staticText.indexOf("【回复格式】"), "摆着棋盘的：【日记本】、【江湖棋局】、【回复格式】依次排");
 ok(withD.nowNote === without.nowNote, "【此刻】不变");

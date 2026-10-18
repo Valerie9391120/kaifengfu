@@ -183,8 +183,8 @@ def run(browser):
     ok(wrote and subs == ["今天还没写", "今天卿卿写了", "今天还没写", "今天光义写了", "今天都写了"],
        f"格子上那行小字跟着日记变：{subs}")
     asked = json.dumps(calls()[-1]["body"], ensure_ascii=False) if wrote else ""
-    ok("这是开封府日记本里属于你的那一页" in asked and "闲笔集" not in asked and "南衙" not in asked,
-       "让那边写日记时寄去的话没跟着改名：还说“开封府日记本里属于你的那一页”，不提闲笔集、南衙")
+    ok("这是开封府日记本（闲笔集）里属于你的那一页" in asked,
+       "让那边写日记时寄去的话带着名字：“开封府日记本（闲笔集）里属于你的那一页”（10 月 18 日她说要让他知道）")
 
     # ---- 返回：回侧栏，不回菜单 ----
     pg.get_by_role("button", name="返回").first.click(); pg.wait_for_timeout(600)
