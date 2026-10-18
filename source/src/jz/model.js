@@ -426,11 +426,20 @@ role 只有 hero（主照片，一张）、pair（双联照，两张）、food�
 export function parseArrange(text, quotes, photoIds = {}, stickerKey = () => "", rand = Math.random, now = Date.now()) {
   const m = /\[JZ\]\s*([\s\S]*?)\s*\[\/JZ\]/i.exec(text || "") || /(\{[\s\S]*\})/.exec(text || "");
   if (!m) throw new Error("他回的里头没有排好的那一段");
+  // 他有时候会把那一段再包一层 ```json …```，或者前后多一两句话：剥掉包的那一层，再不行就取里头头一个 { 到最后一个 }
+  const body = m[1].trim().replace(/^```[a-zA-Z]*\s*/, "").replace(/\s*```$/, "");
   let o;
   try {
-    o = JSON.parse(m[1]);
+    o = JSON.parse(body);
   } catch (e) {
-    throw new Error("他排好的那一段看不懂");
+    const a = body.indexOf("{");
+    const b = body.lastIndexOf("}");
+    try {
+      o = a >= 0 && b > a ? JSON.parse(body.slice(a, b + 1)) : null;
+    } catch (x) {
+      o = null;
+    }
+    if (!o) throw new Error("他排好的那一段看不懂");
   }
   if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error("他排好的那一段看不懂");
   const photos = [];

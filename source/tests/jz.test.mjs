@@ -121,6 +121,9 @@ const errOf = (s) => {
 };
 ok(errOf("[JZ]\n{}\n[/JZ]").includes("空的") && errOf("[JZ][][/JZ]").includes("看不懂") && errOf('[JZ]{"quotes":["编的"],"photos":[{"id":"照片9"}],"stickers":["不存在"]}[/JZ]').includes("空的"),
   "排了个空的（{}、只有对不上的编号）、回的是一串（[]）：都算没排成，这一页不动");
+const fenced = parseArrange('好的\n[JZ]\n```json\n{"title":"包了一层","layout":"letter"}\n```\n[/JZ]', mats.quotes, {}, stickerByName);
+const chatty = parseArrange('[JZ]\n排好了：{"title":"前头多一句"}\n[/JZ]', mats.quotes, {}, stickerByName);
+ok(fenced.arr.title === "包了一层" && fenced.layout === "letter" && chatty.arr.title === "前头多一句", "他把那一段又包了一层 ```json```、前头多说了一句：剥掉了照样认");
 const strs = parseArrange('[JZ]{"title":"x","photos":["照片1",{"id":"constructor"},{"id":"__proto__"}]}[/JZ]', mats.quotes, { 照片1: "jzA" }, stickerByName);
 ok(strs.arr.photos.map((x) => `${x.id}:${x.role}`).join() === "jzA:more", "照片写成一串编号也认（当“别的”）；constructor 那种编号不认、不出错");
 const bare = parseArrange('{"title":"只有字","layout":"不认得"}', [], {}, () => "");
