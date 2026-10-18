@@ -14,7 +14,7 @@ errors = []
 HIS = "[...document.querySelectorAll(\"[data-kfs-bubble='him']\")].map((e) => e.innerText)"
 NOTES = "[...document.querySelectorAll('.kfs-diary-note')].map((e) => e.innerText)"
 HER_DIARY = "今天在运河边看到泡桐花，紫色的，一串一串挂着。"
-DIARY_NAMES = ["diary_list", "diary_read", "diary_search"]
+DIARY_NAMES = ["diary_list", "diary_read", "diary_search", "diary_note"]  # 掺了手帐以后多了一样：留批注
 
 def sys_text(body):
     s = body["system"]
@@ -82,10 +82,10 @@ with sync_playwright() as p:
         pa.get_by_role("button", name="返回").first.click(); time.sleep(0.6)
         close_side(pa)
 
-        # ================= 平常说话：带着翻日记的三样 =================
+        # ================= 平常说话：带着翻日记的四样 =================
         n0 = say_and_wait(pa, "你好", 1)
         b0 = said_by("你好", n0)[0]["body"]
-        ok(tool_names(b0) == DIARY_NAMES and "tool_choice" not in b0, f"平常说一句：带着翻日记的三样工具，随时能翻（{tool_names(b0)}）")
+        ok(tool_names(b0) == DIARY_NAMES and "tool_choice" not in b0, f"平常说一句：带着翻日记的四样工具，随时能翻（{tool_names(b0)}）")
         ok("【日记本】" in sys_text(b0) and "diary_search" in sys_text(b0) and sys_text(b0).index("【日记本】") < sys_text(b0).index("【回复格式】"), "名帖里有【日记本】那一段，排在【回复格式】前头")
         ok(pa.evaluate(NOTES) == [], "没翻：聊天里没有那一行小字")
 

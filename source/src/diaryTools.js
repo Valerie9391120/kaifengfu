@@ -21,6 +21,7 @@
 import { MOODS, dayKeyOf, parseDayKey } from "./diary.js";
 import { pad, WEEK } from "./days.js";
 import { clip } from "./recap.js";
+import { pageText, NOTE_MAX, PART_KEYS, partName } from "./jz/model.js";
 
 export const DIARY_KEY = "kfs2:diary:";
 export const READ_MAX = 7; // 读全文一次最多几天
@@ -65,6 +66,20 @@ export const DIARY_TOOLS = [
         who: { type: "string", enum: ["both", "her", "him"], description: "找谁写的：both 两个人的（不写就是这个），her 她写的，him 你写的。" },
       },
       required: ["query"],
+    },
+  },
+  {
+    name: "diary_note",
+    description:
+      "在日记本的某一天留一条批注（她在闲笔集那一天底下、那一天的手帐上都看得到，跟她留的批注摆在一起）。想留就留，一回一条，三百字以内。part 是贴在手帐的哪一块旁边，不写就是留在那一天上。",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "哪一天，写成 2026-10-12 这样。" },
+        text: { type: "string", description: "批注的话。" },
+        part: { type: "string", enum: ["title", "hero", "quote", "her", "him", "body", "food", "pen", "wx", "mood"], description: "贴在手帐哪一块旁边（有手帐的那一天才有用）：title 标题、hero 主照片、quote 原话、her 她的日记、him 你的日记、body 正文、food 饭、pen 红笔、wx 天气、mood 心情。" },
+      },
+      required: ["date", "text"],
     },
   },
 ];
@@ -173,8 +188,22 @@ function whole(side, who) {
 // ---------- 三样工具 ----------
 // reader：{ months: async () => ["2026-09", …]（有日记的那几个月）, month: async (ym) => 那个月的那一条（没有就是 {}） }
 
+// 手帐和批注（见 jz/model.js）：reader 给了才看（测试里的老 reader 没给，照只有日记的算）
+// 回 { jz: Set(有手帐的日子), notes: Map(日子 → 几条批注) }
+async function extrasOf(reader) {
+  if (!reader.extras) return { jz: new Set(), notes: new Map() };
+  try {
+    return await reader.extras();
+  } catch (e) {
+    return { jz: new Set(), notes: new Map() };
+  }
+}
+const extraTail = (ex, k) => `${ex.jz.has(k) ? "｜手帐：有" : ""}${ex.notes.get(k) ? `｜批注 ${ex.notes.get(k)} 条` : ""}`;
+
 async function list(input, reader, now) {
   const today = dayKeyOf(now);
+  const ex = await extrasOf(reader);
+  const extraDays = new Set([...ex.jz, ...ex.notes.keys()]);
   let days;
   let head;
   let note;
@@ -183,10 +212,11 @@ async function list(input, reader, now) {
     if (!ym) return { err: true, out: `看不懂要看哪个月：“${clip(oneLine(input.month), 20)}”。月份写成 2026-10 这样。`, note: "想翻日记，没翻成" };
     const data = (await reader.month(ym)) || {};
     // 还没到的日子不列（存档里就算有，读全文也不读：两样说法对得上）
-    days = Object.keys(data)
-      .filter((k) => dayOf(k) === k && k.startsWith(ym) && k <= today)
+    const keys = new Set(Object.keys(data).filter((k) => dayOf(k) === k && k.startsWith(ym) && k <= today));
+    extraDays.forEach((k) => k.startsWith(ym) && k <= today && keys.add(k));
+    days = Array.from(keys)
       .sort()
-      .map((k) => [k, data[k]]);
+      .map((k) => [k, data[k] || {}]);
     head = `日记本目录：${fullMonth(ym)}`;
     note = `翻了日记目录 · ${shortMonth(ym, now)}`;
     if (ym > today.slice(0, 7)) return { out: `${fullMonth(ym)}还没到（今天是 ${fullDay(today)}）。`, note };
@@ -195,15 +225,16 @@ async function list(input, reader, now) {
     for (let i = RECENT_DAYS - 1; i >= 0; i--) keys.push(dayKeyOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i)));
     const months = {};
     for (const ym of Array.from(new Set(keys.map((k) => k.slice(0, 7))))) months[ym] = (await reader.month(ym)) || {};
-    days = keys.map((k) => [k, months[k.slice(0, 7)][k]]).filter(([, e]) => e);
+    days = keys.map((k) => [k, months[k.slice(0, 7)][k] || (extraDays.has(k) ? {} : null)]).filter(([, e]) => e);
     head = `日记本目录：最近三十天（${shortDay(keys[0], now)}到${shortDay(today, now)}）`;
     note = "翻了日记目录 · 最近三十天";
   }
   const rows = days
-    .filter(([, e]) => e && (has(e.her) || has(e.him)))
-    .map(([k, e]) => `${shortDay(k, now)} 星期${WEEK[parseDayKey(k).getDay()]}${k === today ? "（今天）" : ""}｜${brief(e.her, "她")}｜${brief(e.him, "你")}`);
+    .filter(([k, e]) => e && (has(e.her) || has(e.him) || extraDays.has(k)))
+    .map(([k, e]) => `${shortDay(k, now)} 星期${WEEK[parseDayKey(k).getDay()]}${k === today ? "（今天）" : ""}｜${brief(e.her, "她")}｜${brief(e.him, "你")}${extraTail(ex, k)}`);
   if (!rows.length) return { out: `${head}\n这段日子一篇日记都没有。`, note };
-  return { out: `${head}（今天是 ${shortDay(today, now)}）\n有日记的 ${rows.length} 天，没写的日子不列：\n${rows.join("\n")}\n\n要看哪天的全文，调 diary_read。`, note };
+  const what = extraDays.size ? "有日记、手帐或批注" : "有日记";
+  return { out: `${head}（今天是 ${shortDay(today, now)}）\n${what}的 ${rows.length} 天，没写的日子不列：\n${rows.join("\n")}\n\n要看哪天的全文，调 diary_read。`, note };
 }
 
 async function read(input, reader, now) {
@@ -243,7 +274,17 @@ async function read(input, reader, now) {
       if (!months[ym]) months[ym] = (await reader.month(ym)) || {};
       const e = months[ym][k] || {};
       const tag = k === today ? "（今天）" : "";
+      // 那一天的手帐和批注（reader 给了才有）
+      let extra = "";
+      if (reader.jz) {
+        try {
+          extra = pageText(await reader.jz(k), reader.notes ? await reader.notes(k) : [], e);
+        } catch (x) {
+          extra = "";
+        }
+      }
       block = has(e.her) || has(e.him) ? `【${fullDay(k)}${tag}】\n${whole(e.her, "她")}\n\n${whole(e.him, "你")}` : `【${fullDay(k)}${tag}】\n这天两个人都没写日记。`;
+      if (extra) block += `\n\n${extra}`;
     }
     size += block.length;
     lines.push(block);
@@ -262,43 +303,82 @@ async function search(input, reader, now) {
   const who = input.who === "her" || input.who === "him" ? input.who : "both";
   const sides = who === "both" ? ["her", "him"] : [who];
   const lower = terms.map((t) => t.toLowerCase());
-  const months = (await reader.months()).filter((ym) => monthOf(ym) === ym).sort().reverse();
-  const hits = [];
-  let total = 0;
+  // 一篇一篇摆出来：日记（她的、他的），还有手帐上的字、批注（reader 给了才有）
+  const docs = [];
+  const months = (await reader.months()).filter((ym) => monthOf(ym) === ym);
   for (const ym of months) {
     const data = (await reader.month(ym)) || {};
-    const days = Object.keys(data)
+    Object.keys(data)
       .filter((k) => dayOf(k) === k && k.startsWith(ym))
-      .sort()
-      .reverse();
-    for (const k of days) {
-      for (const side of sides) {
-        const e = data[k] && data[k][side];
-        if (!has(e)) continue;
-        const text = textOf(e);
-        const moods = moodNames(e.moods);
-        const hay = `${moods.length ? "心情：" + moods.join("、") + "\n" : ""}${text}`.toLowerCase();
-        if (!lower.every((t) => hay.includes(t))) continue;
-        total++;
-        if (hits.length >= HIT_MAX) continue;
-        // 前后一小段：照头一个在正文里找得到的词截；只在心情里对上的，写心情
-        const low = text.toLowerCase();
-        const at = lower.map((t) => low.indexOf(t)).filter((i) => i >= 0).sort((a, b) => a - b)[0];
-        let piece;
-        if (at === undefined) piece = `心情：${moods.join("、")}`;
-        else {
-          const w = span(text, at - AROUND, at + AROUND + terms[0].length);
-          piece = `${w.a > 0 ? "……" : ""}${oneLine(w.s)}${w.b < text.length ? "……" : ""}`;
+      .forEach((k) => {
+        for (const side of sides) {
+          const e = data[k] && data[k][side];
+          if (!has(e)) continue;
+          docs.push({ k, rank: side === "her" ? 0 : 1, label: side === "her" ? "她写的" : "你写的", text: textOf(e), moods: moodNames(e.moods) });
         }
-        hits.push(`${shortDay(k, now)} ${side === "her" ? "她" : "你"}写的：${piece}`);
+      });
+  }
+  if (reader.extras && (reader.jz || reader.notes)) {
+    const ex = await extrasOf(reader);
+    if (reader.jz)
+      for (const k of ex.jz) {
+        try {
+          const p = await reader.jz(k);
+          if (!p) continue;
+          const e = p.mine.edit || {};
+          const bits = [e.title !== undefined ? e.title : p.arr.title, e.body !== undefined ? e.body : p.arr.body, ((e.pen !== undefined ? e.pen : p.arr.pen) || {}).text || ""]
+            .concat(p.mine.texts.map((t) => t.m))
+            .filter(Boolean)
+            .join("\n")
+            .replace(/\[\[|\]\]/g, "");
+          if (bits && who !== "him") docs.push({ k, rank: 2, label: "手帐上写的", text: bits, moods: [] });
+        } catch (x) {}
       }
+    if (reader.notes)
+      for (const k of ex.notes.keys()) {
+        try {
+          (await reader.notes(k)).forEach((n) => {
+            if (who === "both" || who === n.who) docs.push({ k, rank: 3, label: n.who === "her" ? "她的批注" : "你的批注", text: n.text, moods: [] });
+          });
+        } catch (x) {}
+      }
+  }
+  docs.sort((a, b) => (a.k === b.k ? a.rank - b.rank : a.k < b.k ? 1 : -1));
+  const hits = [];
+  let total = 0;
+  for (const d of docs) {
+    const hay = `${d.moods.length ? "心情：" + d.moods.join("、") + "\n" : ""}${d.text}`.toLowerCase();
+    if (!lower.every((t) => hay.includes(t))) continue;
+    total++;
+    if (hits.length >= HIT_MAX) continue;
+    const low = d.text.toLowerCase();
+    const at = lower.map((t) => low.indexOf(t)).filter((i) => i >= 0).sort((a, b) => a - b)[0];
+    let piece;
+    if (at === undefined) piece = `心情：${d.moods.join("、")}`;
+    else {
+      const w = span(d.text, at - AROUND, at + AROUND + terms[0].length);
+      piece = `${w.a > 0 ? "……" : ""}${oneLine(w.s)}${w.b < d.text.length ? "……" : ""}`;
     }
+    hits.push(`${shortDay(d.k, now)} ${d.label}：${piece}`);
   }
   const note = `搜了日记 · ${query.length > 12 ? clip(query, 12) + "…" : query}`;
   const scope = who === "her" ? "她写的日记里" : who === "him" ? "你写的日记里" : "整本日记里";
   if (!total) return { out: `${scope}没找到“${query}”。`, note };
   const more = total > hits.length ? `，只列了最新的 ${hits.length} 处` : "";
   return { out: `在${scope}找“${query}”：一共 ${total} 处${more}（新的在前）\n${hits.join("\n")}\n\n要看哪天的全文，调 diary_read。`, note };
+}
+
+// 他留一条批注（写的：别的三样只读）。编号用他调的那一样的编号：同一步替他办两回（两台设备），也只留一条
+async function noteOn(input, reader, now, id) {
+  const k = dayOf(input.date);
+  const text = clip(String(input.text || "").trim(), NOTE_MAX);
+  if (!k) return { err: true, out: `看不懂是哪一天：“${clip(oneLine(input.date || ""), 20)}”。日子写成 2026-10-12 这样。`, note: "想留批注，没留成" };
+  if (k > dayKeyOf(now)) return { err: true, out: `${fullDay(k)}还没到，批注留不上。`, note: "想留批注，没留成" };
+  if (!text) return { err: true, out: "批注的话是空的：text 里写上要留的那一句。", note: "想留批注，没留成" };
+  if (!reader.addNote) return { err: true, out: "这会儿留不了批注（开封府这边还没接上）。", note: "想留批注，没留成" };
+  const part = PART_KEYS.includes(input.part) ? input.part : "";
+  await reader.addNote(k, { id: String(id || ""), who: "him", text, at: now.getTime(), part });
+  return { out: `留好了：${fullDay(k)}${part ? `的手帐上，${partName(part)}旁边` : "那一天底下"}多了你这一条批注，她在闲笔集里看得到。`, note: `批注了日记 · ${shortDay(k, now)}` };
 }
 
 // 替他把这一步里翻日记的那几样翻完（别的工具不碰，原样留着；已经翻过的不再翻）。回新的一份 calls
@@ -312,9 +392,16 @@ export async function runDiaryCalls(calls, reader, now = new Date()) {
     const input = c.input && typeof c.input === "object" ? c.input : {};
     let r;
     try {
-      r = c.name === "diary_list" ? await list(input, reader, now) : c.name === "diary_read" ? await read(input, reader, now) : await search(input, reader, now);
+      r =
+        c.name === "diary_list"
+          ? await list(input, reader, now)
+          : c.name === "diary_read"
+          ? await read(input, reader, now)
+          : c.name === "diary_note"
+          ? await noteOn(input, reader, now, c.id)
+          : await search(input, reader, now);
     } catch (e) {
-      r = { err: true, out: "这会儿翻不开日记本（开封府没取到），跟她说一声，过一会儿再试。", note: "想翻日记，没翻成" };
+      r = c.name === "diary_note" ? { err: true, out: "这会儿批注没存上（开封府没存成），跟她说一声，过一会儿再试。", note: "想留批注，没留成" } : { err: true, out: "这会儿翻不开日记本（开封府没取到），跟她说一声，过一会儿再试。", note: "想翻日记，没翻成" };
     }
     out.push({ id: c.id, name: c.name, input, out: r.out, err: !!r.err, note: r.note, card: [] });
   }

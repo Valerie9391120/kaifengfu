@@ -4,6 +4,60 @@ import { dayKeyOf, ymKeyOf, parseDayKey, MOODS, moodOf, heatLevel, monthCells } 
 import { SERIF, T, glass, chip, chipPrimary, field, fill, HAIR, HAIRLINE } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { Glows, IconBtn } from "../ui/parts.jsx";
+import { JzPage, JzCard } from "../jz/JzPage.jsx";
+import { NOTE_MAX } from "../jz/model.js";
+import { newId } from "../util.js";
+
+// 那一天的批注（手帐上的、他翻日记的时候留的，都在这儿；见 jz/model.js）：一条一条摆着，底下能再留一条；
+// 长按不好找，删就在每一条后头摆一个“删”，点两下才删（跟删日记一样）
+function DayNotes({ notes, onAdd, onDrop }) {
+  const [text, setText] = useState("");
+  const [open, setOpen] = useState(false);
+  const [armed, setArmed] = useState("");
+  return (
+    <div className="kfs-day-notes" style={{ marginTop: 12 }}>
+      {notes.map((n) => (
+        <div key={n.id} className="kfs-day-note" data-who={n.who} style={{ fontSize: 13.5, lineHeight: 1.65, color: T.ink, padding: "8px 0 8px 10px", borderLeft: `2px solid ${n.who === "her" ? "#e3c35a" : T.dai}`, marginTop: 6 }}>
+          <span style={{ fontSize: 11, color: T.inkSoft, marginRight: 6 }}>{n.who === "her" ? "卿卿批" : "光义批"}</span>
+          {n.text}
+          <button
+            onClick={() => (armed === n.id ? (onDrop(n.id), setArmed("")) : setArmed(n.id))}
+            className="kfs-tap kfs-day-notedrop"
+            style={{ fontSize: 11, color: armed === n.id ? T.red : T.inkFaint, marginLeft: 8 }}
+          >
+            {armed === n.id ? "再点一次删掉" : "删"}
+          </button>
+        </div>
+      ))}
+      {open ? (
+        <div style={{ marginTop: 10 }}>
+          <textarea className="kfs-field kfs-day-notein" value={text} onChange={(e) => setText(e.target.value.slice(0, NOTE_MAX))} rows={2} placeholder="在这一天留一句" style={{ ...field, resize: "none", lineHeight: 1.6 }} />
+          <div className="flex" style={{ gap: 8, marginTop: 8 }}>
+            <button
+              onClick={() => {
+                if (!text.trim()) return;
+                onAdd(text.trim());
+                setText("");
+                setOpen(false);
+              }}
+              className="kfs-tap kfs-day-noteok"
+              style={chipPrimary}
+            >
+              留下
+            </button>
+            <button onClick={() => setOpen(false)} className="kfs-tap" style={chip}>
+              取消
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setOpen(true)} className="kfs-tap kfs-day-noteadd" style={{ ...chip, marginTop: 10, fontSize: 12.5 }}>
+          留一条批注
+        </button>
+      )}
+    </div>
+  );
+}
 
 function MoodChips({ value = [], onToggle, readOnly }) {
   return (
@@ -37,7 +91,7 @@ function MoodChips({ value = [], onToggle, readOnly }) {
   );
 }
 
-export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHis }) {
+export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHis, jz = null }) {
   const todayKey = dayKeyOf(now);
   const [ym, setYm] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [month, setMonth] = useState({});
@@ -47,6 +101,26 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
   const [writing, setWriting] = useState(false);
   const [err, setErr] = useState("");
   const [armed, setArmed] = useState(null);
+  // 闲笔集里掺的手帐（见 jz/）：这一天有没有一页、几条批注；点开的是哪一天
+  const [jzInfo, setJzInfo] = useState({ day: "", page: null, notes: [], hero: null }); // day：读的是哪一天（换了一天、还没读完的时候不摆上一天的）
+  const [jzOpen, setJzOpen] = useState(null);
+  const [jzTick, setJzTick] = useState(0);
+  useEffect(() => {
+    if (!jz || !sel) return;
+    let alive = true;
+    (async () => {
+      const [page, notes] = await Promise.all([jz.loadPage(sel), jz.loadNotes(sel)]);
+      let hero = null;
+      if (page && page.arr.photos.length) {
+        const h = page.arr.photos.find((x) => x.role === "hero") || page.arr.photos[0];
+        hero = await jz.getImg(h.id);
+      }
+      if (alive) setJzInfo({ day: sel, page, notes, hero });
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [sel, jzTick]);
 
   useEffect(() => {
     loadDays().then((c) => setCounts(c || {}));
@@ -314,6 +388,27 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               </button>
             )}
             {err && <div style={{ fontSize: 12, color: T.red, marginTop: 10 }}>{err}</div>}
+
+            {jz && jzInfo.day === sel ? (
+              <>
+                <div style={{ height: 1, background: HAIR, margin: "18px 0 16px" }} />
+                <div style={{ fontSize: 12.5, color: T.dai, marginBottom: 10 }}>手帐和批注</div>
+                <JzCard page={jzInfo.page} notes={jzInfo.notes} heroSrc={jzInfo.hero} onOpen={() => setJzOpen(sel)} />
+                <DayNotes
+                  notes={jzInfo.notes}
+                  onAdd={async (text) => {
+                    const day = sel;
+                    const list = await jz.addNote(day, { id: newId(), who: "her", text, at: Date.now(), part: "" });
+                    if (list) setJzInfo((x) => (x.day === day ? { ...x, notes: list } : x));
+                  }}
+                  onDrop={async (id) => {
+                    const day = sel;
+                    const list = await jz.dropNote(day, id);
+                    if (list) setJzInfo((x) => (x.day === day ? { ...x, notes: list } : x));
+                  }}
+                />
+              </>
+            ) : null}
           </div>
         ) : (
           <div className="text-center" style={{ ...card, marginTop: 12, fontSize: 13, color: T.inkSoft }}>
@@ -321,6 +416,17 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
           </div>
         )}
       </div>
+      {jzOpen && jz ? (
+        <JzPage
+          day={jzOpen}
+          diary={month[jzOpen] || {}}
+          api={jz}
+          onBack={() => {
+            setJzOpen(null);
+            setJzTick((t) => t + 1);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

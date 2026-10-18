@@ -11,7 +11,7 @@ from playwright.sync_api import sync_playwright
 from mailkit import *
 
 errors = []
-D = ["diary_list", "diary_read", "diary_search"]  # 翻日记的三样（日记共读，10 月 18 日起随时带着，见 src/diaryTools.js）
+D = ["diary_list", "diary_read", "diary_search", "diary_note"]  # 翻日记的四样（日记共读，10 月 18 日起随时带着；第四样留批注是掺手帐那回加的，见 src/diaryTools.js）
 GD = ["new_game", "roll", "game_action", "game_info"] + D
 CARDS = "[...document.querySelectorAll('.kfs-game-card')].map((e) => e.innerText)"
 STRIP = "(() => { const e = document.querySelector('.kfs-game-strip'); return e ? e.innerText.replace(/\\n/g, ' | ') : null; })()"
@@ -70,7 +70,7 @@ with sync_playwright() as p:
         cs = calls()[n0:]
         b0, b1 = cs[0]["body"], cs[1]["body"]
         ok([t.get("name") for t in b0.get("tools", [])] == GD and "【江湖棋局】" in sys_text(b0) and "主持人口吻与AI玩家角色口吻要清楚区分" in sys_text(b0),
-           "这段对话寄的：带着四样工具（后面跟着翻日记的三样，10 月 18 日起随时带着），名帖里多一段【江湖棋局】（后面跟着游戏自带的主持规矩）")
+           "这段对话寄的：带着四样工具（后面跟着翻日记的四样，10 月 18 日起随时带着），名帖里多一段【江湖棋局】（后面跟着游戏自带的主持规矩）")
         ok(board_line(b0) == ["【棋盘】还没开局（还没调 new_game）。"], f"【此刻】里多一行棋盘：还没开局（{board_line(b0)}）")
         cid, msgs = chat_of(pa)
         his = [m for m in msgs if m["role"] == "him"]
@@ -208,7 +208,7 @@ with sync_playwright() as p:
         # （照她说的那一句认：前面按停掐掉的那一回压着的工夫到了才记上，可能排在这一回后面）
         said = lambda c: any(b.get("type") == "text" and b.get("text") == "你好" for b in (c["body"]["messages"][-1]["content"] if isinstance(c["body"]["messages"][-1]["content"], list) else []))
         nb = [c for c in calls()[n7:] if said(c)][-1]["body"]
-        ok([t.get("name") for t in nb.get("tools", [])] == D and "【江湖棋局】" not in sys_text(nb) and not board_line(nb), "平常的对话：不带棋局那四样（只带翻日记的三样），名帖里没有【江湖棋局】，【此刻】里没有棋盘")
+        ok([t.get("name") for t in nb.get("tools", [])] == D and "【江湖棋局】" not in sys_text(nb) and not board_line(nb), "平常的对话：不带棋局那四样（只带翻日记的四样），名帖里没有【江湖棋局】，【此刻】里没有棋盘")
         pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
         pa.get_by_role("button", name=re.compile("^南衙")).click(); time.sleep(0.6)
         sub = pa.locator(".kfs-nanya-row", has_text="江湖棋局").inner_text().split("\n")[-1]
