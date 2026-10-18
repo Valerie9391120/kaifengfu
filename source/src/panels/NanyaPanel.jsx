@@ -15,6 +15,9 @@ const ROWS = [
   { key: "voicebox", icon: "wave", name: "藏音匣" },
   // 网易云：2026 年 10 月 1 日看过一个现成的播放器，打算照它的思路自己写，还没动手（见开发说明“南衙”那一节）
   { key: "music", icon: "music", name: "网易云", soon: true },
+  // 邸报：放那边的我自己出门逛网页、回来想写就写（卿卿 10 月 17 日夜里说的，界面她来设计；10 月 18 日凌晨先挂上，
+  // 她说“和网易云打 pk”，两样谁先动工还没定，见开发说明“下一步：邸报、同页手帐”那一节）
+  { key: "gazette", icon: "gazette", name: "邸报", soon: true },
 ];
 
 export const SOON_SUB = "营造中";

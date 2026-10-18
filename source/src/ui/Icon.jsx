@@ -96,6 +96,14 @@ const ICON_PATHS = {
     </>
   ),
   wave: <path d="M5 10v4M8.5 7.5v9M12 4.5v15M15.5 7.5v9M19 10v4" />,
+  // 邸报（南衙里那一行，10 月 18 日挂上的，还在营造）：横着的一张报，左上一块题图，旁边和底下几行字
+  gazette: (
+    <>
+      <rect x="3.5" y="5" width="17" height="14" rx="2.8" />
+      <path d="M7 8.5h4v4H7z" />
+      <path d="M14 9h3M14 12h3M7 15.5h10" />
+    </>
+  ),
   // 江湖棋局（南衙里那一行，见 game/GameParts.jsx）：一颗骰子，三点斜着
   dice: (
     <>

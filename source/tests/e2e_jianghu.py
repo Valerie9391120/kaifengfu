@@ -56,7 +56,7 @@ with sync_playwright() as p:
         pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
         pa.get_by_role("button", name="南衙").click(); time.sleep(0.6)
         rows = pa.evaluate("[...document.querySelectorAll('.kfs-nanya-row')].map((e) => e.innerText.replace(/\\n/g, ' | '))")
-        ok(rows[:2] == ["闲笔集 | 今天还没写", "江湖棋局 | 还没开局"] and len(rows) == 4, f"南衙里多一行“江湖棋局”，排在闲笔集后面，还没开局（{rows}）")
+        ok(rows[:2] == ["闲笔集 | 今天还没写", "江湖棋局 | 还没开局"] and len(rows) == 5, f"南衙里多一行“江湖棋局”，排在闲笔集后面，还没开局（{rows}）")
         pa.locator(".kfs-nanya-row", has_text="江湖棋局").click(); time.sleep(0.6)
         sheet = pa.locator(".kfs-jianghu").inner_text()
         ok(pa.locator(".kfs-jianghu-go").count() == 0 and pa.locator(".kfs-jianghu-new").count() == 1 and pa.locator(".kfs-jianghu-here").count() == 0 and "开新的一局会另开一段对话" in sheet and "开局”就开" not in sheet,
