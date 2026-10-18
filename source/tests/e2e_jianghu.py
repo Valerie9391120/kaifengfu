@@ -54,7 +54,7 @@ with sync_playwright() as p:
         first_time(pa)
         # ================= 南衙里那一行、点开那一张 =================
         pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
-        pa.get_by_role("button", name="南衙").click(); time.sleep(0.6)
+        pa.get_by_role("button", name=re.compile("^南衙")).click(); time.sleep(0.6)
         rows = pa.evaluate("[...document.querySelectorAll('.kfs-nanya-row')].map((e) => e.innerText.replace(/\\n/g, ' | '))")
         ok(rows[:2] == ["闲笔集 | 今天还没写", "江湖棋局 | 还没开局"] and len(rows) == 5, f"南衙里多一行“江湖棋局”，排在闲笔集后面，还没开局（{rows}）")
         pa.locator(".kfs-nanya-row", has_text="江湖棋局").click(); time.sleep(0.6)
@@ -210,7 +210,7 @@ with sync_playwright() as p:
         nb = [c for c in calls()[n7:] if said(c)][-1]["body"]
         ok([t.get("name") for t in nb.get("tools", [])] == D and "【江湖棋局】" not in sys_text(nb) and not board_line(nb), "平常的对话：不带棋局那四样（只带翻日记的三样），名帖里没有【江湖棋局】，【此刻】里没有棋盘")
         pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
-        pa.get_by_role("button", name="南衙").click(); time.sleep(0.6)
+        pa.get_by_role("button", name=re.compile("^南衙")).click(); time.sleep(0.6)
         sub = pa.locator(".kfs-nanya-row", has_text="江湖棋局").inner_text().split("\n")[-1]
         ok(sub == f"第一章 · 第{bd['her'][0]}格", f"南衙那一行的小字：最近那一局下到哪了（{sub}）")
         pa.locator(".kfs-nanya-row", has_text="江湖棋局").click(); time.sleep(0.6)
@@ -221,7 +221,7 @@ with sync_playwright() as p:
         # ================= 在平常对话里摆开棋盘、收棋（10 月 16 日）=================
         def jianghu_sheet(page):
             page.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
-            page.get_by_role("button", name="南衙").click(); time.sleep(0.6)
+            page.get_by_role("button", name=re.compile("^南衙")).click(); time.sleep(0.6)
             page.locator(".kfs-nanya-row", has_text="江湖棋局").click(); time.sleep(0.6)
         def ons(page):
             return json.loads(page.evaluate(KV, "kfs2:jhon") or "[]")
@@ -278,7 +278,7 @@ with sync_playwright() as p:
         if not os.environ.get("KFS_OLD_PATH"):
             def to_game(page):
                 page.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
-                page.get_by_role("button", name="南衙").click(); time.sleep(0.6)
+                page.get_by_role("button", name=re.compile("^南衙")).click(); time.sleep(0.6)
                 page.locator(".kfs-nanya-row", has_text="江湖棋局").click(); time.sleep(0.6)
                 page.locator(".kfs-jianghu-go").click(); time.sleep(0.8)
             def nudge(page):
