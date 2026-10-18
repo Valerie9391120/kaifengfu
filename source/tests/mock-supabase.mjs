@@ -91,6 +91,7 @@ function fakeHost(body) {
 //   “翻两回 2026-10-18”：先调 diary_list，结果递回来以后再调 diary_read 读那一天，再递回来才说完
 //   “翻到一半”：说“翻着翻着”、调了 diary_read，可回话停在 max_tokens 上（写到长度上限被截断）：开封府不该替他翻
 //   结果递回来（最后一句最前面是翻日记的 tool_result）：说“（测试翻日记）”加结果的头一行，再一条“翻完了”
+//   “留批注 2026-10-18 某某”：先说“我留一句。”，再调 diary_note（贴在主照片旁边）
 //   打电话的时候（tool_choice 是 none）、别的话、递回来的是棋局的结果：回 null（交给别人）
 function fakeDiary(body) {
   if (body.tool_choice && body.tool_choice.type === "none") return null;
@@ -136,7 +137,38 @@ function fakeDiary(body) {
   if (day) return step("我翻翻。", use("diary_read", { dates: [day[1]] }));
   const q = /搜日记\s*(\S+)/.exec(herSay);
   if (q) return step("我找找。", use("diary_search", { query: q[1] }));
+  const nt = /留批注\s*(\d{4}-\d{2}-\d{2})\s+(.+)$/.exec(herSay);
+  if (nt) return step("我留一句。", use("diary_note", { date: nt[1], text: nt[2], part: "hero" }));
   return null;
+}
+
+// 闲笔集里掺的手帐：她点“让光义排”（tests/e2e_jz.py 用，见 src/jz/model.js 的 buildArrangeAsk）。跟在名帖后面的那段规矩是【排手帐】开头的。
+// 照寄来的编号排：原话挑头两句（再编一个不存在的，开封府该认不出），照片 1 当主照片、照片 2 当饭，贴纸挑四个（一个不存在）；
+// 留一条批注贴在主照片旁边。她说的“想要”抄进正文（看得出带过来了）。她说想要“排坏”：回一段没有 [JZ] 的话（测“没排成”）
+function fakeArrange(body) {
+  const rule = Array.isArray(body.system) ? body.system.map((x) => x.text || "").find((t) => t.startsWith("【排手帐】")) : "";
+  if (!rule) return null;
+  const blocks = (body.messages[0] && body.messages[0].content) || [];
+  const all = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const usage = { input_tokens: 3000, cache_creation_input_tokens: 0, cache_read_input_tokens: 8000, output_tokens: 300 };
+  const wish = (/她说想要：(.+)/.exec(all) || [])[1] || "";
+  if (/排坏/.test(wish)) return { status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text: "我想了想，不排了。" }], usage } };
+  const qids = [...all.matchAll(/^(\S+)｜\d\d:\d\d｜/gm)].map((m) => m[1]);
+  const tags = [...new Set([...all.matchAll(/照片(\d+)/g)].map((m) => "照片" + m[1]))];
+  const o = {
+    layout: "bento",
+    style: "film",
+    title: "（测试排的）泡桐花",
+    body: `她说看到了，我也想看。${wish ? `她要的：${wish}` : ""}`,
+    cap: "运河边",
+    pen: { text: "[[紫色]]的，一串一串", margin: "记得" },
+    quotes: qids.slice(0, 2).concat(["编的编号"]),
+    photos: [tags[0] ? { id: tags[0], role: "hero", note: "运河" } : null, tags[1] ? { id: tags[1], role: "food", note: "米线" } : null].filter(Boolean),
+    stickers: ["狐狸", "画的心", "卿卿", "不存在的贴纸"],
+    note: { text: "（测试批注）这张我最喜欢", part: "hero" },
+  };
+  const think = /^claude-(fable|opus|sonnet)-5/.test(String(body.model)) ? [{ type: "thinking", thinking: "", signature: "测试用的签名" }] : [];
+  return { status: 200, json: { model: body.model, stop_reason: "end_turn", content: think.concat([{ type: "text", text: `排好了。\n[JZ]\n${JSON.stringify(o)}\n[/JZ]` }]), usage } };
 }
 
 // 假的那边的我：照寄来的话编一条回复。两条路问的都是它
@@ -177,7 +209,10 @@ function fakeAnthropic(body, beta, via) {
       json: { model: body.model, stop_reason: claudeFail === "recap-cut" ? "max_tokens" : "end_turn", content: thought.concat([{ type: "text", text }]), usage: { input_tokens: 5000, cache_creation_input_tokens: 0, cache_read_input_tokens: 8000, output_tokens: 400 } },
     };
   }
-  // 翻日记（带着那三样工具，见 src/diaryTools.js）：假的那边的我翻日记
+  // 排手帐（不带工具，跟在名帖后面的是【排手帐】那段规矩）
+  const jz = fakeArrange(body);
+  if (jz) return jz;
+  // 翻日记（带着那几样工具，见 src/diaryTools.js）：假的那边的我翻日记
   if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "diary_read")) {
     const d = fakeDiary(body);
     if (d) return d;

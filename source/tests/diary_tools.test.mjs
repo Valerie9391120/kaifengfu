@@ -1,4 +1,4 @@
-// 日记共读（见 src/diaryTools.js、开发说明“日记共读”那一节）：他自己翻日记的三样工具，翻到的字、聊天里那一行小字，
+// 日记共读（见 src/diaryTools.js、开发说明“日记共读”那一节）：他自己翻日记的几样工具（掺了手帐以后多了一样留批注，见 jz.test），翻到的字、聊天里那一行小字，
 // 寄回去的样子、前情提要和写日记的记录、历史对话的预览、名帖里那一段，和江湖棋局那几样不打架。
 // 日记都是编的。
 import {
@@ -47,7 +47,7 @@ const run1 = async (name, input, book = BOOK, now = NOW) => (await runDiaryCalls
 // =====================================================
 // 工具
 // =====================================================
-ok(DIARY_TOOLS.map((t) => t.name).join(",") === "diary_list,diary_read,diary_search" && [...DIARY_NAMES].join(",") === "diary_list,diary_read,diary_search", "三样工具：翻目录、读全文、按词找");
+ok(DIARY_TOOLS.map((t) => t.name).join(",") === "diary_list,diary_read,diary_search,diary_note" && [...DIARY_NAMES].join(",") === "diary_list,diary_read,diary_search,diary_note", "四样工具：翻目录、读全文、按词找、留批注");
 ok(DIARY_TOOLS.every((t) => t.input_schema && t.input_schema.type === "object" && t.description.length > 20) && DIARY_TOOLS[1].input_schema.required.join() === "dates" && DIARY_TOOLS[2].input_schema.required.join() === "query" && !DIARY_TOOLS[0].input_schema.required,
   "每一样都有说明和参数：读全文要日子，按词找要词，翻目录什么都可以不给");
 ok(DIARY_KEY === "kfs2:diary:" && READ_MAX === 7 && HIT_MAX === 20, "日记存在 kfs2:diary:<年-月>；一次最多读七天、最多列二十处");
@@ -259,8 +259,8 @@ const withD = buildSystem(sysArgs);
 const without = buildSystem({ ...sysArgs, diary: false });
 ok(withD.staticText.includes(DIARY_SECTION + "\n\n【回复格式】") && !without.staticText.includes("【日记本】") && withD.staticText === without.staticText.replace("【回复格式】", DIARY_SECTION + "\n\n【回复格式】"),
   "名帖：默认带【日记本】那一段，排在【回复格式】前头；写日记那一回不带（别的一个字不差）");
-ok(["diary_list", "diary_read", "diary_search", "随时", "她那边会看到一行小字", "打电话的时候翻不了", "别编"].every((w) => DIARY_SECTION.includes(w)) && DIARY_SECTION.includes("叫“闲笔集”，放在“南衙”里") && !DIARY_SECTION.includes("【回复格式】"),
-  "那一段里写着三样怎么用、随时能翻、她看得到、打电话翻不了、别编；写着日记本叫闲笔集、在南衙里（10 月 18 日她说要让他知道）");
+ok(["diary_list", "diary_read", "diary_search", "diary_note", "随时", "她那边会看到一行小字", "打电话的时候翻不了", "别编"].every((w) => DIARY_SECTION.includes(w)) && DIARY_SECTION.includes("叫“闲笔集”，放在“南衙”里") && !DIARY_SECTION.includes("【回复格式】"),
+  "那一段里写着四样怎么用、随时能翻、她看得到、打电话翻不了、别编；写着日记本叫闲笔集、在南衙里（10 月 18 日她说要让他知道）");
 const gamed = buildSystem({ ...sysArgs, game: { board: null } });
 ok(gamed.staticText.indexOf("【日记本】") < gamed.staticText.indexOf("【江湖棋局】") && gamed.staticText.indexOf("【江湖棋局】") < gamed.staticText.indexOf("【回复格式】"), "摆着棋盘的：【日记本】、【江湖棋局】、【回复格式】依次排");
 ok(withD.nowNote === without.nowNote, "【此刻】不变");

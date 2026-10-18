@@ -126,6 +126,14 @@ const s2tName = await side("src/cangyin/s2t.js", "s2t", {
   footer: { js: "/*!\n" + openccLic + "\n*/" },
 });
 define.__KFS_S2T__ = JSON.stringify(`./${s2tName}`);
+// 手帐贴纸里 Fluent Emoji 那几栏的图（src/jz/stickers.js 照 vendor/fluent-emoji/ 里的 SVG 原文打进来）：单独一包，头一回打开手帐才取。
+// 两份 MIT 的授权写在包头上，原文见 vendor/fluent-emoji/LICENSE.md
+const jzstkName = await side("src/jz/stickers.js", "jzstk", {
+  loader: { ".svg": "text" },
+  charset: "utf8",
+  banner: { js: "/*! Fluent Emoji (MIT License, Copyright (c) Microsoft Corporation) via fluentui-emoji (MIT License, Copyright (c) 2022 Mohammad Abu Mattar); license texts: vendor/fluent-emoji/LICENSE.md in the kaifengfu repository */" },
+});
+define.__KFS_JZSTK__ = JSON.stringify(`./${jzstkName}`);
 
 if (TEST_URL) {
   define.__KFS_SUPABASE_URL__ = JSON.stringify(TEST_URL);
@@ -194,7 +202,7 @@ for (const e of ENTRANCES) {
   );
 }
 
-// 只许连 Supabase 和表情包仓库；万一页面里混进了坏东西，也送不出去
+// 只许连 Supabase、表情包仓库和手帐的天气（Open-Meteo）；万一页面里混进了坏东西，也送不出去
 const csp = [
   "default-src 'self'",
   "script-src 'self'",
@@ -204,7 +212,8 @@ const csp = [
   "media-src 'self' blob:",
   // 打电话的实时听写（ElevenLabs 的 WebSocket，见 src/call/hear.js）：不写这一句连不上，电话退回手机自带的听写。
   // 测试的时候连的是假 Supabase 上的假的（同一个地址，ws:// 开头）
-  `connect-src 'self' ${SUPABASE_URL} ${TEST_URL ? TEST_URL.replace(/^http/, "ws") : "wss://api.elevenlabs.io"} https://raw.githubusercontent.com`,
+  // 手帐上的天气（Open-Meteo，见 src/jz/weather.js）：找城市、取那一天的天气，只寄城市的经纬度和日子
+  `connect-src 'self' ${SUPABASE_URL} ${TEST_URL ? TEST_URL.replace(/^http/, "ws") : "wss://api.elevenlabs.io"} https://raw.githubusercontent.com https://geocoding-api.open-meteo.com https://api.open-meteo.com https://archive-api.open-meteo.com`,
   "font-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
@@ -264,5 +273,6 @@ console.log(`  ${lotusName}  ${size(`${OUT}/assets/${lotusName}`)}`);
 console.log(`  ${jianghuName}  ${size(`${OUT}/assets/${jianghuName}`)}`);
 console.log(`  ${cangyinName}  ${size(`${OUT}/assets/${cangyinName}`)}`);
 console.log(`  ${s2tName}  ${size(`${OUT}/assets/${s2tName}`)}`);
+console.log(`  ${jzstkName}  ${size(`${OUT}/assets/${jzstkName}`)}`);
 console.log(`  ${jinhuiCssName} + ${jinhuiDir}/（${jinhui.slices.length} 块，${(jinhuiBufs.reduce((n, b) => n + b.length, 0) / 1024).toFixed(0)} KB）`);
 console.log(`  连接：${SUPABASE_URL}`);
