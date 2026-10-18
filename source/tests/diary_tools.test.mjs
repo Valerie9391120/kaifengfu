@@ -71,7 +71,7 @@ ok(daysLabel(["2026-09-29", "2026-09-30", "2026-10-01"], NOW) === "9月29日到1
 // =====================================================
 const l1 = await run1("diary_list", { month: "2026-10" });
 ok(!l1.err && l1.note === "翻了日记目录 · 10月" && l1.card.length === 0, `翻十月的目录：那一行小字写“翻了日记目录 · 10月”（${l1.note}）`);
-ok(l1.out.startsWith("日记本目录：2026年10月（今天是 10月18日）") && l1.out.includes("有日记的 6 天") && !l1.out.includes("不该被认出来"), "目录开头写哪个月、今天几号、有日记的几天；认不出的钥匙不算");
+ok(l1.out.startsWith("日记本目录：2026年10月（今天是 10月18日）") && l1.out.includes("有日记的 5 天") && !l1.out.includes("不该被认出来") && !l1.out.includes("未来的一天"), "目录开头写哪个月、今天几号、有日记的几天；认不出的钥匙不算；还没到的日子不列（读全文也不读）");
 ok(l1.out.includes("10月12日 星期一｜她：心情 开心、甜；“今天在运河边看到泡桐花，紫色的，一串一串挂着。想起巩义。”｜你：心情 平静；“她说看到泡桐花了。我没见过运河边的泡桐，可我知道那个颜色。”"),
   "一天一行：她的心情、开头一句，他的心情、开头一句（不长的整句）");
 ok(l1.out.includes("10月13日 星期二｜她：心情 累；“面试准备了一整天，好累。”｜你：没写") && l1.out.includes("10月15日 星期四｜她：只选了心情 焦虑，没写字｜你：没写") && l1.out.includes("10月16日 星期五｜她：没写｜你：心情 平静；"),
@@ -125,8 +125,29 @@ const huge = { "2026-10": {} };
 for (let d = 1; d <= 7; d++) huge["2026-10"][`2026-10-0${d}`] = { her: { text: "满".repeat(3900) }, him: { text: "也满".repeat(1900) } };
 const r11 = await run1("diary_read", { dates: Object.keys(huge["2026-10"]) }, huge);
 ok(!r11.err && r11.out.length < 30000 && /这一回递的字够多了：10月\d+日.*没读，要看再调一回。$/.test(r11.out) && !r11.note.includes("7日"), `一回递的字够多了就不往下读，写明哪几天没读（${r11.note}）`);
+const both = { "2026-10": {} };
+for (let d = 1; d <= 9; d++) both["2026-10"][`2026-10-0${d}`] = { her: { text: "满".repeat(3900) }, him: { text: "也满".repeat(1900) } };
+const r13 = await run1("diary_read", { dates: Object.keys(both["2026-10"]) }, both);
+ok(/这一回递的字够多了：10月\d+日.*没读，要看再调一回。\n\n一次最多读 7 天：10月8日、9日这一回没读，要看再调一回。$/.test(r13.out), "两样上限都碰上（要了九天、头七天里又有字够多了没读的）：两样都写明，一天也不悄悄漏掉");
 const r12 = await run1("diary_read", { dates: ["2025-11-20"] });
 ok(r12.note === "翻了日记 · 2025年11月20日" && r12.out.startsWith("【2025年11月20日 星期四】"), "去年的日子照样读");
+
+// 表情占两格：截的地方正好落在一个表情中间，两头都不能留半个（半个表情寄过去，那边整段话都不认，这段对话就一直问不成）
+const lone = (s) => /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+const emo = "🌸";
+const eBook = {
+  "2026-10": {
+    "2026-10-01": { her: { text: "一".repeat(29) + emo + "后面还有字", moods: [] } },
+    "2026-10-02": { her: { text: "长".repeat(3999) + emo + "尾巴", moods: [] } },
+    "2026-10-03": { her: { text: emo + "啊".repeat(39) + "泡桐" + "啊".repeat(39) + emo + "后面", moods: [] } },
+  },
+};
+const e1 = await run1("diary_list", { month: "2026-10" }, eBook);
+const e2 = await run1("diary_read", { dates: ["2026-10-02"] }, eBook);
+const e3 = await run1("diary_search", { query: "泡桐" }, eBook);
+const e4 = await run1("diary_search", { query: "一二三四五六七八九十一" + emo }, eBook);
+ok(![e1, e2, e3, e4].some((r) => lone(r.out) || lone(r.note)) && e1.out.includes("“" + "一".repeat(29) + "……”") && e2.out.includes("长".repeat(3999) + "……（后面还有 ") && e3.out.includes(emo + "啊") && e3.out.includes("啊" + emo) && e4.note === "搜了日记 · 一二三四五六七八九十一…",
+  "截开头一句、截四千字、搜到的前后一小段、小字里的词：落在表情中间的都不劈开（少截一格或者多带一格）");
 
 // =====================================================
 // 按词找

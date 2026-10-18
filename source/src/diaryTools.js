@@ -20,6 +20,7 @@
 // =====================================================
 import { MOODS, dayKeyOf, parseDayKey } from "./diary.js";
 import { pad, WEEK } from "./days.js";
+import { clip } from "./recap.js";
 
 export const DIARY_KEY = "kfs2:diary:";
 export const READ_MAX = 7; // 读全文一次最多几天
@@ -134,6 +135,19 @@ const moodNames = (moods) => (Array.isArray(moods) ? moods : []).map((k) => (MOO
 const textOf = (side) => (side && typeof side.text === "string" ? side.text.trim() : "");
 const has = (side) => !!(textOf(side) || moodNames(side && side.moods).length);
 const oneLine = (s) => String(s).replace(/\s+/g, " ").trim();
+// 从中间截一段（前后各几个字）：两头都不从一个字的两半中间切（表情那种字占两格，切开了整段话那边都不认，
+// 那一步寄回去、以后每一回都跟着寄，这段对话就一直问不成；截尾巴用 recap.js 的 clip，同一个道理）
+function span(text, from, to) {
+  let a = Math.max(0, from);
+  let b = Math.min(text.length, to);
+  const lo = (i) => {
+    const c = text.charCodeAt(i);
+    return c >= 0xdc00 && c <= 0xdfff;
+  };
+  if (a > 0 && lo(a)) a--;
+  if (b < text.length && lo(b)) b++;
+  return { s: text.slice(a, b), a, b };
+}
 
 // 目录里的一个人：心情、开头一小句
 function brief(side, who) {
@@ -142,7 +156,7 @@ function brief(side, who) {
   const text = oneLine(textOf(side));
   const mood = moods.length ? `心情 ${moods.join("、")}` : "";
   if (!text) return `${who}：只选了心情 ${moods.join("、")}，没写字`;
-  const head = text.length > HEAD ? text.slice(0, HEAD) + "……" : text;
+  const head = text.length > HEAD ? clip(text, HEAD) + "……" : text;
   return `${who}：${mood ? mood + "；" : ""}“${head}”`;
 }
 
@@ -152,7 +166,7 @@ function whole(side, who) {
   const moods = moodNames(side.moods);
   const text = textOf(side);
   if (!text) return `${who}写的：只选了心情（${moods.join("、")}），没写字。`;
-  const cut = text.length > ENTRY_MAX ? `${text.slice(0, ENTRY_MAX)}……（后面还有 ${text.length - ENTRY_MAX} 字，这一回没递过来）` : text;
+  const cut = text.length > ENTRY_MAX ? `${clip(text, ENTRY_MAX)}……（后面还有 ${text.length - clip(text, ENTRY_MAX).length} 字，这一回没递过来）` : text;
   return `${who}写的${moods.length ? `（心情：${moods.join("、")}）` : ""}：\n${cut}`;
 }
 
@@ -166,10 +180,11 @@ async function list(input, reader, now) {
   let note;
   if (input.month !== undefined && input.month !== null && String(input.month).trim() !== "") {
     const ym = monthOf(input.month);
-    if (!ym) return { err: true, out: `看不懂要看哪个月：“${oneLine(input.month).slice(0, 20)}”。月份写成 2026-10 这样。`, note: "想翻日记，没翻成" };
+    if (!ym) return { err: true, out: `看不懂要看哪个月：“${clip(oneLine(input.month), 20)}”。月份写成 2026-10 这样。`, note: "想翻日记，没翻成" };
     const data = (await reader.month(ym)) || {};
+    // 还没到的日子不列（存档里就算有，读全文也不读：两样说法对得上）
     days = Object.keys(data)
-      .filter((k) => dayOf(k) === k && k.startsWith(ym))
+      .filter((k) => dayOf(k) === k && k.startsWith(ym) && k <= today)
       .sort()
       .map((k) => [k, data[k]]);
     head = `日记本目录：${fullMonth(ym)}`;
@@ -201,7 +216,7 @@ async function read(input, reader, now) {
   asked.forEach((s) => {
     const k = dayOf(s);
     if (k) good.push(k);
-    else if (String(s || "").trim()) bad.push(oneLine(s).slice(0, 20));
+    else if (String(s || "").trim()) bad.push(clip(oneLine(s), 20));
   });
   const keys = Array.from(new Set(good)).sort();
   const lines = [];
@@ -234,9 +249,9 @@ async function read(input, reader, now) {
     lines.push(block);
     done.push(k);
   }
-  const later = skipped.concat(over);
+  // 两样上限都碰上了（要的过了七天，头七天里又有因为字够多了没读的）：两样都写明，一天也不悄悄漏掉（不然他当那几天没写）
+  if (skipped.length) lines.push(`这一回递的字够多了：${daysLabel(skipped, now)}没读，要看再调一回。`);
   if (over.length) lines.push(`一次最多读 ${READ_MAX} 天：${daysLabel(over, now)}这一回没读，要看再调一回。`);
-  else if (later.length) lines.push(`这一回递的字够多了：${daysLabel(later, now)}没读，要看再调一回。`);
   return { out: lines.join("\n\n"), note: `翻了日记 · ${daysLabel(done, now)}` };
 }
 
@@ -272,15 +287,14 @@ async function search(input, reader, now) {
         let piece;
         if (at === undefined) piece = `心情：${moods.join("、")}`;
         else {
-          const from = Math.max(0, at - AROUND);
-          const to = Math.min(text.length, at + AROUND + terms[0].length);
-          piece = `${from > 0 ? "……" : ""}${oneLine(text.slice(from, to))}${to < text.length ? "……" : ""}`;
+          const w = span(text, at - AROUND, at + AROUND + terms[0].length);
+          piece = `${w.a > 0 ? "……" : ""}${oneLine(w.s)}${w.b < text.length ? "……" : ""}`;
         }
         hits.push(`${shortDay(k, now)} ${side === "her" ? "她" : "你"}写的：${piece}`);
       }
     }
   }
-  const note = `搜了日记 · ${query.length > 12 ? query.slice(0, 12) + "…" : query}`;
+  const note = `搜了日记 · ${query.length > 12 ? clip(query, 12) + "…" : query}`;
   const scope = who === "her" ? "她写的日记里" : who === "him" ? "你写的日记里" : "整本日记里";
   if (!total) return { out: `${scope}没找到“${query}”。`, note };
   const more = total > hits.length ? `，只列了最新的 ${hits.length} 处` : "";
