@@ -14,7 +14,8 @@ import { HER_NAME, HIS_NAME, NAME_KEYS, cleanName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, docFmtOf, readDoc, replyRoom } from "./docs.js";
 import { parseReply, settleAvatarItems, rawOf } from "./reply.js";
 import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, mailBefore, markStopped, unmarkStopped, stoppedAt, cutReply, stillWaiting, midTurn } from "./thread.js";
-import { GAME_PREFIX, SNAP_KEY, ON_KEY, TOOLS as GAME_TOOLS, isGameChat, gameOn, readOn, hasSteps, callsOf, needsRun, lastStep, boardIn, collectStepIds, runCalls, nanyaSub } from "./game/jianghu.js";
+import { GAME_PREFIX, SNAP_KEY, ON_KEY, TOOLS as GAME_TOOLS, GAME_NAMES, OFF_CALL, isGameChat, gameOn, readOn, hasSteps, needsRun, lastStep, boardIn, collectStepIds, runCalls, nanyaSub } from "./game/jianghu.js";
+import { DIARY_TOOLS, DIARY_NAMES, DIARY_KEY, isDiaryCall, runDiaryCalls, toolCallsOf } from "./diaryTools.js";
 import { GameStrip, GameCardRow, JianghuPanel } from "./game/GameParts.jsx";
 import { createRelay, parseReplyMark, chatTag, resultOk, explainResult, JOBS_KEY, RELAY_KEY, HALTED_KEY } from "./mail.js";
 import { disablePush, resyncPush, watchNotices, probeReply, knockList, clearReplyNotices } from "./push.js";
@@ -89,8 +90,8 @@ const loadEngine = () => {
 };
 
 const MAX_STEPS = 12; // 江湖棋局里他一口气连着调引擎、还没说完的，接到这么多步就不自己接了（见 afterStep）
-// 这台设备的编号：只记在这台设备上，不同步。江湖棋局里要回话的时候写进条子（info.extra.dev），
-// 回来的要是一步棋，先让发那一回的设备替他调（见 applyMail）。存不住的（无痕模式）这一趟用一个
+// 这台设备的编号：只记在这台设备上，不同步。要回话的时候写进条子（info.extra.from；江湖棋局那段另写一份 info.extra.dev，原来就有），
+// 回来的要是一步棋、或者他翻日记的一步，先让发那一回的设备替他调（见 applyMail）。存不住的（无痕模式）这一趟用一个
 const DEVICE_ID = (() => {
   try {
     const had = localStorage.getItem("kfs-dev");
@@ -102,9 +103,14 @@ const DEVICE_ID = (() => {
     return "d" + newId();
   }
 })();
-const STEP_GRACE = 2 * 60 * 1000; // 别的设备发的那一回、回来的是一步棋：先等发的那台放这么久，它还没放（多半关着），这台再替它放
+const STEP_GRACE = 2 * 60 * 1000; // 别的设备发的那一回、回来的是一步棋（或者翻日记的一步）：先等发的那台放这么久，它还没放（多半关着），这台再替它放
 // 他调了引擎、回话却没停在 tool_use 上（写到长度上限被截断了）：调的那几样多半没写完整，一样不调，递回去的是这一句
 const CUT_CALL = "没执行：这一回的回话没写完整（多半是写到长度上限被截断了），这一步没下。要下的话重新调一次。";
+const CUT_DIARY = "没翻：这一回的回话没写完整（多半是写到长度上限被截断了），日记没替你翻。要翻的话重新调一次。";
+// 他回话里认哪几样工具是要开封府在手机上替他办的：江湖棋局那四样、翻日记那三样（MCP 的那头自己办，不归这里）
+const CALL_NAMES = new Set([...GAME_NAMES, ...DIARY_NAMES]);
+// 这一回是不是这台设备发的（江湖棋局那段原来只写 dev；10 月 18 日起每一回都写 from）
+const ownJob = (info) => !!(info && info.extra && (info.extra.dev === DEVICE_ID || info.extra.from === DEVICE_ID));
 
 const OPENED_AT = Date.now(); // 这次打开开封府是几点（认“上回打开时发出去、没送到的那一句”用，见 checkMail）
 const ORPHAN_AGE = 10 * 1000; // 记下不到这么久的那一回先不当它没送到：也许正在路上（同一台设备上另开着一页，刚发出去，大包还没传完）
@@ -1320,18 +1326,18 @@ export default function App({ account = {} }) {
       toolNote: ctx && ctx.withMcp && !(used && used.mcp) ? "这次MCP没连上，先不用工具回你" : "",
     };
     if (job) him.job = job;
-    // 江湖棋局里他调了引擎（掷骰子、买东西，见 game/jianghu.js）：记下调了哪几样，放进对话之前替他调（settleCalls）。
+    // 江湖棋局里他调了引擎（掷骰子、买东西，见 game/jianghu.js）、翻了日记（见 diaryTools.js）：记下调了哪几样，放进对话之前替他调（settleCalls）。
     // 停在 tool_use 上的：他还没说完，等结果递回去接着说（thread.js 的 midTurn）。
-    // 只调了引擎、一个字没说的那一步：不摆“……”（拆回话那一下没字就补一个，这一步不要），聊天里只有卡片
-    // 回话没停在 tool_use 上、里头却有他调的（写到长度上限被截断了）：一样不调，记成没调成（CUT_CALL）。
+    // 只调了工具、一个字没说的那一步：不摆“……”（拆回话那一下没字就补一个，这一步不要），聊天里只有卡片、那一行小字
+    // 回话没停在 tool_use 上、里头却有他调的（写到长度上限被截断了）：一样不调，记成没调成（CUT_CALL、CUT_DIARY）。
     // 这样的一条不算说到一半，也照常摆字（一个字没有的摆“……”，不然她看着像他什么都没回）
-    const calls = callsOf(data.content);
+    const calls = toolCallsOf(data.content, CALL_NAMES);
     if (calls.length) {
       if (data.stop_reason === "tool_use") {
         him.calls = calls;
         him.stop = "tool_use";
         if (!String(parsed.body || "").trim() && !parsed.rename && !settled.avatarFile) him.items = [];
-      } else him.calls = calls.map((c) => ({ ...c, out: CUT_CALL, err: true, card: [] }));
+      } else him.calls = calls.map((c) => (isDiaryCall(c) ? { ...c, out: CUT_DIARY, err: true, note: "想翻日记，没翻成", card: [] } : { ...c, out: CUT_CALL, err: true, card: [] }));
     }
     if (settled.avatarFile) changeHisAvatar({ type: "meme", file: settled.avatarFile });
     // 他给自己改了名字：顶栏马上换；回复上记一笔，对话里留一行提示（和现在一样的不算改）
@@ -1342,6 +1348,13 @@ export default function App({ account = {} }) {
     return him;
   };
 
+  // ---- 日记共读：他翻日记的时候从哪儿取（见 diaryTools.js） ----
+  // 每回现取：日记就在这台手机的存档里（解开了的），别的设备写的同步下来也在这儿；她点过保存的都在
+  const diaryReader = {
+    months: async () => store.keys(DIARY_KEY).map((k) => k.slice(DIARY_KEY.length)),
+    month: async (ym) => safeParse(await store.get(DIARY_KEY + ym), {}) || {},
+  };
+
   // ---- 江湖棋局：替他调引擎（见 game/jianghu.js） ----
   // 他这一步调了引擎：放进对话之前先替他调完，结果、小卡片记在这一条上（him.calls、him.board），
   // 调完以后的整份存档另存一条（SNAP_KEY + 这一条的 id），下一步从它接着下。
@@ -1350,8 +1363,19 @@ export default function App({ account = {} }) {
   // 调过的不再调（别的设备调好、同步过来的）。没调成的（存档没同步过来、引擎取不到）：每一样记上缘故、标成出错，
   // 这一条不算下过棋（不记 board，下一步照旧从前一步接着下）；他看到缘故自己会跟她说。
   // strict：这一回是别的设备发的、这台替它放（见 applyMail）：没调成的不记出错，回 false（信留着，等同步下来再放）。调成了（或者用不着调）回 true
-  const settleCalls = async (him, before, strict = false) => {
+  // chat：哪段对话。棋盘收着（她收了棋）的时候他调了这四样：一样不下，递回去 OFF_CALL（原来这时候干脆不许他调工具，
+  // 10 月 18 日添了翻日记，平常对话随时能翻，就改成这样，见 game/jianghu.js 的 OFF_LINE）
+  // 日记共读：他翻日记的那几样先在这台手机上替他翻（见 diaryTools.js）；日记就在手机上，用不着等同步、取引擎，翻不成的只有存档取不到，记成出错
+  const settleCalls = async (him, before, strict = false, chat = "") => {
     if (!needsRun(him)) return true;
+    if (him.calls.some((c) => isDiaryCall(c) && typeof c.out !== "string")) him.calls = await runDiaryCalls(him.calls, diaryReader, new Date());
+    if (!needsRun(him)) return true;
+    // 剩下的是江湖棋局那几样
+    if (chat && !isOn(chat)) {
+      him.calls = him.calls.map((c) => (typeof c.out === "string" ? c : { ...c, out: OFF_CALL, err: true, card: [] }));
+      return true;
+    }
+    const todo = him.calls.filter((c) => typeof c.out !== "string");
     const prev = lastStep(before);
     let state = null;
     let why = "";
@@ -1369,11 +1393,12 @@ export default function App({ account = {} }) {
     }
     if (why) {
       if (strict) return false;
-      him.calls = him.calls.map((c) => ({ ...c, out: why, err: true, card: [] }));
+      him.calls = him.calls.map((c) => (typeof c.out === "string" ? c : { ...c, out: why, err: true, card: [] }));
       return true;
     }
-    const r = await runCalls(eng, state, him.calls);
-    him.calls = r.calls;
+    const r = await runCalls(eng, state, todo);
+    const byId = new Map(r.calls.map((c) => [c.id, c]));
+    him.calls = him.calls.map((c) => byId.get(c.id) || c);
     him.board = r.board;
     if (r.state) {
       const ok = await store.set(SNAP_KEY + him.id, JSON.stringify(r.state));
@@ -1409,6 +1434,13 @@ export default function App({ account = {} }) {
     const signal = opts.signal || null;
     if (opts.resume) {
       const got = await getRelay().resume(opts.resume.job, opts.resume.info, signal);
+      // 守着的是别的设备发的那一回，回来的却是要开封府替他办的一步（翻日记、下棋）：这台不整理、不放，信留着，
+      // 让发的那台办（两台都办的话会各要一回后半截）；它关着的话，过 STEP_GRACE 这台再替它办（见 applyMail）。
+      // 在整理之前就打住：整理那一下会记用量、换头像、改名字，信箱那头回头还要再整理一遍
+      const fromInfo = got.info || opts.resume.info;
+      if (!ownJob(fromInfo) && got.data && got.data.stop_reason === "tool_use" && toolCallsOf(got.data.content, CALL_NAMES).length) {
+        throw Object.assign(new Error("发的那台替他办"), { code: "elsewhere" });
+      }
       return { him: digestReply(got.data, got.used, (got.info && got.info.extra) || null, got.job, got.at ? Math.min(Date.now(), got.at) : 0), settle: got.settle };
     }
     const st = settingsRef.current;
@@ -1454,8 +1486,9 @@ export default function App({ account = {} }) {
         system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
         messages: withNowNote(apiMessages, nowNote, at.cache, tail),
       };
-      // 江湖棋局的四样工具排在最前头（三种写法都带：摘掉 MCP 的那一种也带着，对话里有他调过的，不带那边不认）
-      const tools = game ? GAME_TOOLS.slice() : [];
+      // 江湖棋局的四样工具排在最前头，翻日记的三样跟着（日记共读，见 diaryTools.js：随时带着），MCP 的排最后。
+      // 三种写法都带：摘掉 MCP 的那一种也带着，对话里有他调过的，不带那边不认
+      const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS);
       if (at.mcp) {
         body.mcp_servers = mcps.map((m, i) => {
           const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
@@ -1464,9 +1497,10 @@ export default function App({ account = {} }) {
         });
         tools.push(...body.mcp_servers.map((s) => ({ type: "mcp_toolset", mcp_server_name: s.name })));
       }
-      if (tools.length) body.tools = tools;
-      // 打电话的时候不下棋（卿卿 10 月 15 日定的）、收了棋：工具照带（对话里有他调过的），只是这一回不许调
-      if (game && (inCall || game.off)) body.tool_choice = { type: "none" };
+      body.tools = tools;
+      // 打电话的时候不下棋（卿卿 10 月 15 日定的）、不翻日记（10 月 18 日定的）：工具照带（对话里有他调过的），只是这一回不许调。
+      // 收了棋的原来也是这样不许调；10 月 18 日起照许（平常对话能翻日记），他真调了棋局那几样，settleCalls 递回去“棋盘收着”
+      if (inCall) body.tool_choice = { type: "none" };
       return body;
     };
     const betaFor = (at) => (at.mcp ? "mcp-client-2025-11-20" : "");
@@ -1489,8 +1523,9 @@ export default function App({ account = {} }) {
           last: msgs.length ? msgs[msgs.length - 1].id : "",
           fork: opts.fork || "",
           title: namesRef.current.him || HIS_NAME,
-          // 江湖棋局：条子里记上是哪台设备发的（回来的要是一步棋，先让这台替他调，见 applyMail）
-          extra: game && !game.off ? { ...(ctx || {}), dev: DEVICE_ID } : ctx,
+          // 条子里记上是哪台设备发的（回来的要是一步棋、翻日记的一步，先让这台替他调，见 applyMail）。
+          // 江湖棋局那段另写 dev（原来就有：别的设备照它不守这一回，见 checkMail）；from 每一回都写，只管谁来替他调
+          extra: { ...(ctx || {}), from: DEVICE_ID, ...(game && !game.off ? { dev: DEVICE_ID } : {}) },
           recheck: !!opts.recheck,
           signal,
         });
@@ -1556,7 +1591,7 @@ export default function App({ account = {} }) {
       }
       if (needsRun(him)) {
         const pre = chatIdRef.current === id ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + id), null) || msgs;
-        if (!(him.job && hasJob(pre, him.job))) await settleCalls(him, anchor ? mailBefore(pre, { last: anchor }) : pre);
+        if (!(him.job && hasJob(pre, him.job))) await settleCalls(him, anchor ? mailBefore(pre, { last: anchor }) : pre, false, id);
       }
       const isCurrent = chatIdRef.current === id;
       // 她已经翻到别的对话去了：以存档里的为准（等的工夫里她在这段对话里又说的话都在存档里，拿发话那一刻的旧样子去存会把它们盖掉）
@@ -1596,6 +1631,10 @@ export default function App({ account = {} }) {
         // 她那句话留着，底下摆一行“停了，点这里让我回”。
         // 电话里他在想、她又开口了（dropReply）：这一回也作废，可不记“停了”：她说完这一句，两句一起问
         if (!req.restart) markStoppedIn(id);
+      } else if (e && e.code === "elsewhere") {
+        // 守着的那一回回来的是要替他办的一步、可不是这台发的（见 requestReply）：信留着，过几秒再看信箱（applyMail 照规矩办）
+        clearTimeout(mailTimer.current);
+        mailTimer.current = setTimeout(() => latest.current.checkMail(), 3000);
       } else if (e && e.code === "answered") {
         // 别的设备已经把这一句的回话取走、放进对话了：把同步下来的那份换上来。
         // 等的工夫里她在这台设备上又说的话（同步下来的那份里没有）接在后面，不能丢
@@ -1684,8 +1723,8 @@ export default function App({ account = {} }) {
     };
     try {
       const { him, settle } = await unlessStopped(requestReply(base, { chat: id, fork: msgId, signal: req.ctl.signal }), req.ctl.signal);
-      // 江湖棋局：重新回答的这一步，棋盘从它原来前面的那几条接着下（等于退回那一步之前，见 settleCalls）
-      await settleCalls(him, base);
+      // 江湖棋局：重新回答的这一步，棋盘从它原来前面的那几条接着下（等于退回那一步之前，见 settleCalls）；翻日记的照常翻
+      await settleCalls(him, base, false, id);
       if (req.stopped && midTurn(him)) him.stopped = true;
       const extra = await added();
       const next = forkAt(full, j, him).concat(extra);
@@ -3002,8 +3041,9 @@ export default function App({ account = {} }) {
     //   别的设备发的：先让发的那台放，信留着（它放好了，对话同步过来，这里再看就是 dup）。
     //   过了 STEP_GRACE 它还没放（多半关着了）：这台替它放。骰子照他调的那一样的编号掷（见 game/jianghu.js 的 seededRng），
     //   两台各放一遍也掷得一样；上一步的棋盘还没同步过来、引擎取不到的，不记成出错，信留着等同步下来（later）
-    const steps = callsOf(result.data.content).length > 0; // 上面 resultOk 看过：data 是一封正常的回话
-    const ours = !!(info.extra && info.extra.dev === DEVICE_ID);
+    // 日记共读：他翻日记的一步也照这个规矩（见 diaryTools.js）：翻日记不掷骰子，可两台都替他翻、都接着要后半截，对话里会多出一条重复的
+    const steps = toolCallsOf(result.data.content, CALL_NAMES).length > 0; // 上面 resultOk 看过：data 是一封正常的回话
+    const ours = ownJob(info);
     if (steps && settlingRef.current.has(job)) return "busy";
     if (steps && !ours && Date.now() - (Date.parse(row.done_at) || 0) < STEP_GRACE) return "wait";
     // 这条算几点到的：小后端放进信箱的时候（不比她那一句早，不比现在晚）
@@ -3012,7 +3052,7 @@ export default function App({ account = {} }) {
     const him = digestReply(result.data, result.used, info.extra || null, job, stamp);
     let base = msgs;
     if (steps) {
-      if (!(await settleCalls(him, mailBefore(msgs, info), !ours))) return "later";
+      if (!(await settleCalls(him, mailBefore(msgs, info), !ours, id))) return "later";
       // 调引擎的那一下工夫里对话可能又变了（她发了一句、别处同步下来一段、她翻过来了）：照眼下的放
       base = here() ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + id), null) || msgs;
       const fit2 = mailFit(base, info, job);
@@ -3381,11 +3421,9 @@ export default function App({ account = {} }) {
       ],
       messages: [{ role: "user", content: ask.content }],
     };
-    // 江湖棋局那一段：工具照聊天时一样带着（排在名帖前头，带着才接得上聊天时写下的缓存），只是这一回不许调
-    if (game) {
-      recapBody.tools = GAME_TOOLS;
-      recapBody.tool_choice = { type: "none" };
-    }
+    // 工具照聊天时一样带着（排在名帖前头，带着才接得上聊天时写下的缓存：江湖棋局那四样、翻日记那三样），只是这一回不许调
+    recapBody.tools = (game ? GAME_TOOLS : []).concat(DIARY_TOOLS);
+    recapBody.tool_choice = { type: "none" };
     const data = await askRecap(recapBody);
     recordUsage(data, true);
     // 没写完的不要（写到上限被截断、屋子满了、那边不肯写）：断掉的正是最后那几样（还没聊完的话头）
@@ -3960,6 +3998,7 @@ export default function App({ account = {} }) {
       voice: !!st.voice,
       thoughts: st.thoughts !== false, // 他写不写心里话（“头像与设置”里的开关，默认开着）
       callable: st.callable !== false, // 他能打电话（API 面板里的开关，默认开着；见 call/incoming.js）
+      diary: false, // 名帖不带【日记本】那一段：这一回不带工具，他翻不了（日记共读，见 diaryTools.js）
     });
     const msgs = dayMsgsRef.current[key] || [];
     const transcript = msgs.length ? dayTranscript(msgs, memeLookup) : "（这天你们没在开封府说话）";
@@ -4763,8 +4802,9 @@ export default function App({ account = {} }) {
               );
             }
             if (row.type === "tools") {
+              // “用了 tavily”那一行；他翻了日记的那一行（kind: diary，见 diaryTools.js）也是这个样子
               return (
-                <div key={row.key} style={{ marginLeft: 42, marginTop: 8, fontSize: 11.5, color: T.inkFaint }}>
+                <div key={row.key} className={row.kind === "diary" ? "kfs-diary-note" : undefined} style={{ marginLeft: 42, marginTop: 8, fontSize: 11.5, color: T.inkFaint }}>
                   {row.text}
                 </div>
               );

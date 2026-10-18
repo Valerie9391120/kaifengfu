@@ -66,8 +66,10 @@ export function dayTranscript(msgs, memeLookup, maxChars = 9000) {
         .replace(NAME_RE(), "")
         .replace(/\s*\[SPLIT\]\s*/g, " ")
         .trim();
-      // 江湖棋局里这一步下了什么（聊天里那几张小卡片，见 game/jianghu.js）：写在他这一句后面；只调了引擎没说话的，只写这个
-      const board = stepLines(m).join(" ");
+      // 江湖棋局里这一步下了什么（聊天里那几张小卡片，见 game/jianghu.js）：写在他这一句后面；只调了引擎没说话的，只写这个。
+      // 他翻了日记（聊天里那一行小字，见 diaryTools.js）也一样：“[光义翻了日记 · 10月12日]”
+      const notes = (m.calls || []).filter((c) => c && c.note).map((c) => `[光义${c.note}]`);
+      const board = stepLines(m).concat(notes).join(" ");
       if (board) return raw ? `光义：${raw} ${board}` : board;
       if (!raw && m.calls && m.calls.length) return ""; // 只调了引擎（查看棋盘）、一个字没说的那一步：不写
       return `光义：${raw || "……"}`;

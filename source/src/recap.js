@@ -127,7 +127,7 @@ export function askThick(m) {
   }
   const items = Array.isArray(m.items) && m.items.length ? m.items : null;
   // 江湖棋局里的一步：记录里每张小卡片一行（见 prompt/recap.js 的 hisLines）
-  const cards = (m.calls || []).reduce((a, c) => a + (c.card || []).reduce((b, line) => b + 10 + len(line), 0), 0);
+  const cards = (m.calls || []).reduce((a, c) => a + (c.card || []).reduce((b, line) => b + 10 + len(line), 0) + (c.note ? 10 + len(c.note) : 0), 0);
   if (!items) return THICK.row + Math.min(ROW_HEAD, len(m.raw)) + cards;
   return items.reduce((a, it) => a + (it && it.type === "doc" ? 60 + Math.min(HIS_DOC_HEAD, len(it.text)) : it && it.type === "text" ? Math.min(ROW_HEAD, len(it.text)) + 4 : 30), THICK.row) + cards;
 }

@@ -33,10 +33,12 @@ export function makePreview(msgs) {
   }
   const t = (last.items || []).find((it) => it.type === "text");
   if (t) return plainOf(t.text);
-  // 江湖棋局里只调了引擎、一个字没说的那一步：写它那一步头一张卡片（见 game/jianghu.js）
+  // 江湖棋局里只调了引擎、一个字没说的那一步：写它那一步头一张卡片（见 game/jianghu.js）。
+  // 只翻了日记、一个字没说的那一步：写那一行小字（见 diaryTools.js）
   if (!(last.items || []).length && last.calls && last.calls.length) {
     const card = last.calls.flatMap((c) => c.card || [])[0];
-    return card ? `[棋局] ${card.replace(/^〔[^〕]*〕/, "")}` : "[棋局]";
+    const note = last.calls.map((c) => c.note).find(Boolean);
+    return card ? `[棋局] ${card.replace(/^〔[^〕]*〕/, "")}` : note ? `[${note}]` : "[棋局]";
   }
   if ((last.items || []).some((it) => it.type === "voice")) return "[语音]";
   if ((last.items || []).some((it) => it.type === "call")) return "[来电]";

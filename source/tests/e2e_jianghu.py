@@ -11,6 +11,8 @@ from playwright.sync_api import sync_playwright
 from mailkit import *
 
 errors = []
+D = ["diary_list", "diary_read", "diary_search"]  # 翻日记的三样（日记共读，10 月 18 日起随时带着，见 src/diaryTools.js）
+GD = ["new_game", "roll", "game_action", "game_info"] + D
 CARDS = "[...document.querySelectorAll('.kfs-game-card')].map((e) => e.innerText)"
 STRIP = "(() => { const e = document.querySelector('.kfs-game-strip'); return e ? e.innerText.replace(/\\n/g, ' | ') : null; })()"
 HIS = "[...document.querySelectorAll(\"[data-kfs-bubble='him']\")].map((e) => e.innerText)"
@@ -67,8 +69,8 @@ with sync_playwright() as p:
         n0 = say_and_wait(pa, "开局", 2)
         cs = calls()[n0:]
         b0, b1 = cs[0]["body"], cs[1]["body"]
-        ok([t.get("name") for t in b0.get("tools", [])] == ["new_game", "roll", "game_action", "game_info"] and "【江湖棋局】" in sys_text(b0) and "主持人口吻与AI玩家角色口吻要清楚区分" in sys_text(b0),
-           "这段对话寄的：带着四样工具，名帖里多一段【江湖棋局】（后面跟着游戏自带的主持规矩）")
+        ok([t.get("name") for t in b0.get("tools", [])] == GD and "【江湖棋局】" in sys_text(b0) and "主持人口吻与AI玩家角色口吻要清楚区分" in sys_text(b0),
+           "这段对话寄的：带着四样工具（后面跟着翻日记的三样，10 月 18 日起随时带着），名帖里多一段【江湖棋局】（后面跟着游戏自带的主持规矩）")
         ok(board_line(b0) == ["【棋盘】还没开局（还没调 new_game）。"], f"【此刻】里多一行棋盘：还没开局（{board_line(b0)}）")
         cid, msgs = chat_of(pa)
         his = [m for m in msgs if m["role"] == "him"]
@@ -206,7 +208,7 @@ with sync_playwright() as p:
         # （照她说的那一句认：前面按停掐掉的那一回压着的工夫到了才记上，可能排在这一回后面）
         said = lambda c: any(b.get("type") == "text" and b.get("text") == "你好" for b in (c["body"]["messages"][-1]["content"] if isinstance(c["body"]["messages"][-1]["content"], list) else []))
         nb = [c for c in calls()[n7:] if said(c)][-1]["body"]
-        ok("tools" not in nb and "【江湖棋局】" not in sys_text(nb) and not board_line(nb), "平常的对话：不带工具，名帖里没有【江湖棋局】，【此刻】里没有棋盘")
+        ok([t.get("name") for t in nb.get("tools", [])] == D and "【江湖棋局】" not in sys_text(nb) and not board_line(nb), "平常的对话：不带棋局那四样（只带翻日记的三样），名帖里没有【江湖棋局】，【此刻】里没有棋盘")
         pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
         pa.get_by_role("button", name="南衙").click(); time.sleep(0.6)
         sub = pa.locator(".kfs-nanya-row", has_text="江湖棋局").inner_text().split("\n")[-1]
@@ -236,7 +238,7 @@ with sync_playwright() as p:
            "摆开了：那一张收起来，顶上一条“还没开局”，前面聊的都在，单子里记上了这段对话")
         n8 = say_and_wait(pa, "改名开局", 2)
         b8 = said_by("改名开局", n8)[0]["body"]
-        ok([t.get("name") for t in b8.get("tools", [])] == ["new_game", "roll", "game_action", "game_info"] and "这段对话原来是你们平常聊天" in sys_text(b8) and board_line(b8) == ["【棋盘】还没开局（还没调 new_game）。"] and "tool_choice" not in b8
+        ok([t.get("name") for t in b8.get("tools", [])] == GD and "这段对话原来是你们平常聊天" in sys_text(b8) and board_line(b8) == ["【棋盘】还没开局（还没调 new_game）。"] and "tool_choice" not in b8
            and any(blk.get("type") == "text" and blk.get("text") == "你好" for m in b8["messages"] if m["role"] == "user" and isinstance(m["content"], list) for blk in m["content"]),
            "摆开以后寄的：带着四样工具，名帖里是换了说法的那一段（原来是平常聊天），【此刻】里一行棋盘，前面聊的照样寄")
         ok(last_chat(pa) == plain_id and pa.evaluate(CARDS)[-1:] == ["〔局〕开局 · 阿卿选了商贾"] and pa.evaluate(STRIP) == "第一章 · 中原风起 | 阿卿 第1格 45两 ｜ 晋哥 第1格 45两",
@@ -251,9 +253,17 @@ with sync_playwright() as p:
         ok(pa.evaluate(STRIP) is None and plain_id not in ons(pa) and pa.evaluate(CARDS)[-1:] == ["〔局〕开局 · 阿卿选了商贾"], "收棋：顶上那条没了，单子里拿掉了，下过的卡片还在")
         n9 = say_and_wait(pa, "收棋以后", 1)
         b9 = said_by("收棋以后", n9)[0]["body"]
-        ok([t.get("name") for t in b9.get("tools", [])] == ["new_game", "roll", "game_action", "game_info"] and b9.get("tool_choice") == {"type": "none"} and "【江湖棋局】" not in sys_text(b9) and board_line(b9) and board_line(b9)[0].startswith("【棋盘】收起来了"),
-           "收了棋再说话：四样工具照带（对话里有他调过的）、这一回不许调；名帖里没有【江湖棋局】，【此刻】里写着收起来了")
+        ok([t.get("name") for t in b9.get("tools", [])] == GD and "tool_choice" not in b9 and "【江湖棋局】" not in sys_text(b9) and board_line(b9) and board_line(b9)[0].startswith("【棋盘】收起来了"),
+           "收了棋再说话：四样工具照带（对话里有他调过的）；10 月 18 日起这一回照许调（他能翻日记）；名帖里没有【江湖棋局】，【此刻】里写着收起来了")
         ok("收到：收棋以后" in pa.evaluate(HIS) and pa.evaluate(STRIP) is None, "他照平常聊天回")
+        # 收着棋他还是调了棋局那几样：一样不下，递回去“棋盘收着”
+        cards_off = len(pa.evaluate(CARDS))
+        n9b = say_and_wait(pa, "收着棋帮我扔", 2)
+        offstep = [m for m in chat_by(pa, plain_id) if m["role"] == "him" and m.get("calls")][-1]
+        oc = offstep["calls"][0]
+        ok(oc["name"] == "roll" and oc.get("err") and oc["out"].startswith("棋盘收着，这一步没下") and "board" not in offstep and len(pa.evaluate(CARDS)) == cards_off and pa.evaluate(STRIP) is None and plain_id not in ons(pa),
+           "收着棋他调了 roll：一样不下（递回去“棋盘收着”、标成出错），没有卡片，顶上那条还是没有，单子里也没记上")
+        ok(any(x.startswith("（测试主持）没成：棋盘收着") for x in pa.evaluate(HIS)), "他接着说的时候看得到没下成")
         jianghu_sheet(pa)
         pa.locator(".kfs-jianghu-here").click(); time.sleep(0.8)
         ok(pa.evaluate(STRIP) == "第一章 · 中原风起 | 阿卿 第1格 45两 ｜ 晋哥 第1格 45两" and plain_id in ons(pa), "再摆开：接着原来那一局（顶上那条还是那一局）")

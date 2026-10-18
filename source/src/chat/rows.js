@@ -93,6 +93,13 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId
           text: m.rename === HIS_NAME ? "光义把名字改回来了" : "光义改了名字",
         });
       }
+      // 他翻了日记（见 diaryTools.js）：一样一行小字，跟“用了 tavily”一个样子（卿卿 10 月 18 日说的），跟在他这一步的话后面。
+      // 这一步正一条一条蹦的时候不摆，蹦完了才冒出来
+      if (!revealing && m.calls) {
+        m.calls.forEach((c, k) => {
+          if (c && c.note) rows.push({ type: "tools", kind: "diary", key: `${m.id}-d${k}`, msg: m, text: c.note });
+        });
+      }
       // 江湖棋局里这一步下了什么（见 game/jianghu.js）：一张卡片一行，跟在他这一步的话后面（掷了几点、走到哪、花了几两）。
       // 这一步正一条一条蹦的时候不摆，蹦完了才冒出来
       if (!revealing && m.calls) {
