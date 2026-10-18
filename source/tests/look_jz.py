@@ -1,7 +1,7 @@
 # 闲笔集掺的手帐：拍样张给她看（不是测试，不判对错）。
 #   一页编好的手帐（字、照片都是编的：照片是 PIL 画的色块），直接放进这台手机的本地存档（IndexedDB 的 kv，跟开封府自己存的一样，
 #   dirty 着，开封府自己会加密了推上云端），重新打开开封府，再去闲笔集里点开拍：
-#   每个主题：闲笔集那一天底下的卡片和批注、改的时候的样子；头一个主题再拍六种版式 × 八种风格各一张，外加每种版式一张八拼的小样。
+#   每个主题：闲笔集的日历（掺过手帐的那天有个 🏷️）、那一天底下的卡片和批注、改的时候的样子；头一个主题再拍六种版式 × 八种风格各一张，外加每种版式一张八拼的小样。
 #
 # 先在 source/ 里 npm run build:test，起好假 Supabase（8787）和测试网页（8080），再：
 #   python3 tests/look_jz.py 输出目录 [主题 ...]      主题不写就是三套：qinglv dingxiang heiye
@@ -231,6 +231,7 @@ def tour(browser, theme, matrix):
     page.locator(".kfs-nanya-row", has_text="闲笔集").click()
     page.locator(".kfs-page").wait_for(timeout=10000)
     page.locator(".kfs-jz-open").wait_for(timeout=10000); time.sleep(0.8)
+    shot("jz_00_calendar", 0.4)  # 日历上掺过手帐的那天有个 🏷️
     page.locator(".kfs-jz-open").scroll_into_view_if_needed(); time.sleep(0.4)
     page.evaluate("(() => { const e = document.querySelector('.kfs-jz-open'); e.scrollIntoView({ block: 'center' }); })()")
     shot("jz_01_day_card", 0.8)
@@ -275,6 +276,6 @@ def tour(browser, theme, matrix):
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])
     for i, th in enumerate(themes):
-        tour(browser, th, i == 0)
+        tour(browser, th, i == 0 and not os.environ.get("JZ_NO_MATRIX"))  # JZ_NO_MATRIX=1：只拍各主题那几张，不拍四十八张样子
     browser.close()
 print("拍好了：", out)

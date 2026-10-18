@@ -106,6 +106,18 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
   const [jzInfo, setJzInfo] = useState({ day: "", page: null, notes: [], hero: null }); // day：读的是哪一天（换了一天、还没读完的时候不摆上一天的）
   const [jzOpen, setJzOpen] = useState(null);
   const [jzTick, setJzTick] = useState(0);
+  // 掺过手帐的那几天：日历格子左上角标一个 🏷️（卿卿 10 月 18 日早上要的）。点开手帐再出来（jzTick）重新看一遍
+  const [jzDays, setJzDays] = useState(() => new Set());
+  useEffect(() => {
+    if (!jz || !jz.days) return;
+    let alive = true;
+    jz.days()
+      .then((list) => alive && setJzDays(new Set(list || [])))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [jzTick]);
   useEffect(() => {
     if (!jz || !sel) return;
     let alive = true;
@@ -250,6 +262,11 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                     opacity: future ? 0.32 : 1,
                   }}
                 >
+                  {jzDays.has(key) ? (
+                    <span className="kfs-jz-tag" aria-hidden="true" style={{ position: "absolute", top: 2, left: 3, fontSize: 9, lineHeight: 1 }}>
+                      🏷️
+                    </span>
+                  ) : null}
                   {e.her && e.her.text ? (
                     <span style={{ position: "absolute", top: 4, right: 5, width: 5, height: 5, borderRadius: "50%", background: T.dai }} />
                   ) : null}

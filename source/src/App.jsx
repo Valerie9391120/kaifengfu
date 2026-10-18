@@ -4161,6 +4161,8 @@ export default function App({ account = {} }) {
   };
   // 手帐那一层要的几样（存档、照片、天气、问他），交给闲笔集，再交给 JzPage
   const jzApi = {
+    // 掺过手帐的那几天（闲笔集的日历格子上标一个 🏷️）：删了的不算
+    days: async () => store.keys(JZ_KEY).filter((k) => store.peek(k)).map((k) => k.slice(JZ_KEY.length)),
     loadPage: async (day) => {
       const t = await store.get(JZ_KEY + day);
       return t ? readPage(t, day) : null;
