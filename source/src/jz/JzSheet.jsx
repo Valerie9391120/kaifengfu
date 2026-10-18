@@ -44,6 +44,13 @@ export function JzSheet({ v, notes = {}, editing = false, emoji = null, onPart, 
   const H = headOf(v.day);
   const blocks = blocksOf(v);
   const tap = (k) => (onPart ? () => onPart(k) : undefined);
+  // 主照片底下那一行：裹在照片那一块里，点它改它自己（不再往外冒成点了照片）
+  const tapCap = onPart
+    ? (e) => {
+        e.stopPropagation();
+        onPart("cap");
+      }
+    : undefined;
   const badge = (k) => {
     const n = notes[k];
     if (!n || !(n.her + n.him)) return null;
@@ -65,7 +72,11 @@ export function JzSheet({ v, notes = {}, editing = false, emoji = null, onPart, 
       <span className="jz-frame">
         <img src={p.src} alt="" draggable={false} />
       </span>
-      {withCap ? <figcaption className="jz-cap">{v.cap}</figcaption> : null}
+      {withCap ? (
+        <figcaption className="jz-cap" data-part="cap" onClick={tapCap}>
+          {v.cap}
+        </figcaption>
+      ) : null}
     </figure>
   );
 
@@ -255,7 +266,11 @@ export function JzSheet({ v, notes = {}, editing = false, emoji = null, onPart, 
               </div>
             </div>
           )}
-          {v.has("cap") ? <div className="jz-cap" style={{ marginTop: "3cqw" }}>{v.cap}</div> : null}
+          {v.has("cap") ? (
+            <div className="jz-cap" data-part="cap" onClick={tapCap} style={{ marginTop: "3cqw" }}>
+              {v.cap}
+            </div>
+          ) : null}
         </div>
       );
     if (b.t === "scroll")
@@ -315,10 +330,11 @@ export function JzSheet({ v, notes = {}, editing = false, emoji = null, onPart, 
     );
   };
   const arrN = v.arrStickers || 0;
+  const reach = Math.max(0, ...v.stickers.map((s) => s.y), ...v.texts.map((t) => t.y));
 
   return (
     <div className="jz-wrap" ref={sheetRef}>
-      <div className="jz-sheet" data-layout={v.layout} data-style={v.style} data-editing={editing ? "1" : undefined}>
+      <div className="jz-sheet" data-layout={v.layout} data-style={v.style} data-editing={editing ? "1" : undefined} style={reach ? { minHeight: `calc(${reach} * 100cqw + 12cqw)` } : undefined}>
         {v.style === "kraft" ? <div className="jz-sheet-stitch" /> : null}
         {blocks.map(block)}
         {v.stickers.map((s, i) => (i < arrN ? sticker(s, "arr", i) : sticker(s, "mine", i - arrN)))}

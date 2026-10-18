@@ -14,7 +14,8 @@ import { Icon } from "../ui/Icon.jsx";
 import { IconBtn, Sheet } from "../ui/parts.jsx";
 import { fileToPhoto } from "../images.js";
 import { newId } from "../util.js";
-import { LAYOUTS, STYLES, LAYOUT_KEYS, STYLE_KEYS, emptyPage, viewOf, roll, partName, pickQuotes, QUOTE_MAX, PHOTO_MAX, PHOTO_ROLES, layoutOf, styleOf, wxLine, NOTE_MAX, headOf } from "./model.js";
+import { LAYOUTS, STYLES, LAYOUT_KEYS, STYLE_KEYS, emptyPage, viewOf, roll, partName, pickQuotes, mergeQuotes, QUOTE_MAX, PHOTO_MAX, PHOTO_ROLES, layoutOf, styleOf, wxLine, NOTE_MAX, headOf } from "./model.js";
+import { clip } from "../recap.js"; // 输入框截字不劈开表情
 import { partsShown } from "./sheet.js";
 import { JzSheet, StickerArt } from "./JzSheet.jsx";
 import { TABS } from "./stickerList.js";
@@ -47,7 +48,9 @@ export function JzPage({ day, diary = {}, api, onBack }) {
   const [sheet, setSheet] = useState(""); // 冒出来的是哪一张：part / layout / style / stickers / text / stuff / him / more / notes / city / edit
   const [focus, setFocus] = useState(""); // 点了哪一块
   const [sel, setSel] = useState(null); // 选中的贴纸 { layer, idx }
-  const [busy, setBusy] = useState(""); // him：他在排；wx：在取天气
+  const [himBusy, setHimBusy] = useState(false); // 他在排
+  const [wxBusy, setWxBusy] = useState(false); // 在取天气
+  const arranging = useRef(false); // 他在排（同步的那一份：连点两下“交给他”也只问一回）
   const [toast, setToast] = useState("");
   const [cfg, setCfg] = useState(null);
   const sheetRef = useRef(null);
@@ -184,16 +187,18 @@ export function JzPage({ day, diary = {}, api, onBack }) {
     const now = pageRef.current.arr.quotes;
     const ids = now.some((x) => x.id === q.id) ? now.filter((x) => x.id !== q.id).map((x) => x.id) : now.map((x) => x.id).concat([q.id]);
     if (ids.length > QUOTE_MAX) return say(`一页最多摆 ${QUOTE_MAX} 句`);
-    setArr({ quotes: pickQuotes(ids, mats.quotes) });
+    setArr({ quotes: pickQuotes(ids, mergeQuotes(pageRef.current.arr.quotes, mats.quotes)) });
   };
 
   // ---- 贴纸、字 ----
+  // 新贴的放在屏幕当中那一高；纸短（刚掺的一页只有日子）就放在纸底往上一点，贴上去就在纸上，不跑到纸外头
   const centerY = () => {
     const el = sheetRef.current;
     if (!el) return 0.6;
     const r = el.getBoundingClientRect();
-    const mid = Math.max(0, window.innerHeight / 2 - r.top);
-    return Math.max(0.1, mid / Math.max(1, r.width));
+    const w = Math.max(1, r.width);
+    const mid = Math.max(0, window.innerHeight / 2 - r.top) / w;
+    return Math.max(0.1, Math.min(mid, r.height / w - 0.14));
   };
   const addSticker = (k) => {
     const s = { k, x: 0.5 + (Math.random() - 0.5) * 0.3, y: centerY() + (Math.random() - 0.5) * 0.2, r: Math.round((Math.random() - 0.5) * 24), s: 1 };
@@ -203,7 +208,7 @@ export function JzPage({ day, diary = {}, api, onBack }) {
     setSheet("");
   };
   const addText = (m) => {
-    const t = { id: newId(), m: m.slice(0, 200), x: 0.5, y: centerY(), r: -3, s: 1 };
+    const t = { id: newId(), m: clip(m, 200), x: 0.5, y: centerY(), r: -3, s: 1 };
     const list = pageRef.current.mine.texts.concat([t]);
     setMine({ texts: list });
     setSel({ layer: "text", idx: list.length - 1 });
@@ -248,7 +253,7 @@ export function JzPage({ day, diary = {}, api, onBack }) {
     const it = layerList(layer)[idx];
     if (!it) return;
     setSel({ layer, idx });
-    drag.current = { layer, idx, x0: e.clientX, y0: e.clientY, sx: it.x, sy: it.y, w, moved: false };
+    drag.current = { layer, idx, x0: e.clientX, y0: e.clientY, sx: it.x, sy: it.y, w, maxY: Math.max(it.y, el.getBoundingClientRect().height / w - 0.06), moved: false };
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch (x) {}
@@ -261,7 +266,7 @@ export function JzPage({ day, diary = {}, api, onBack }) {
     if (Math.abs(dx) + Math.abs(dy) > 0.004) d.moved = true;
     const list = layerList(d.layer).slice();
     if (!list[d.idx]) return;
-    list[d.idx] = { ...list[d.idx], x: Math.min(1.05, Math.max(-0.05, d.sx + dx)), y: Math.max(0, d.sy + dy) };
+    list[d.idx] = { ...list[d.idx], x: Math.min(1.05, Math.max(-0.05, d.sx + dx)), y: Math.min(d.maxY, Math.max(0, d.sy + dy)) };
     // 挪的时候只改画面，松手再存
     const p = pageRef.current;
     const next = d.layer === "arr" ? { ...p, arr: { ...p.arr, stickers: list } } : d.layer === "mine" ? { ...p, mine: { ...p.mine, stickers: list } } : { ...p, mine: { ...p.mine, texts: list } };
@@ -285,7 +290,7 @@ export function JzPage({ day, diary = {}, api, onBack }) {
 
   // ---- 天气 ----
   const fetchWx = async (pg, city, quiet = false) => {
-    setBusy("wx");
+    setWxBusy(true);
     try {
       const wx = await api.weather(city, day);
       if (gone.current) return;
@@ -297,49 +302,82 @@ export function JzPage({ day, diary = {}, api, onBack }) {
       } else commit({ ...base, wx }, true);
       if (!quiet) say(`取到了：${wxLine(wx)}`);
     } catch (e) {
-      if (!quiet) say(`天气没取到（${String(e.message || e).slice(0, 30)}）`);
+      if (!quiet) say(`天气没取到（${clip(String(e.message || e), 30)}）`);
     }
-    setBusy("");
+    if (!gone.current) setWxBusy(false);
   };
 
   // ---- 他排 ----
+  // 她放上去的照片、写的字一样都不丢：他没挑的照片留在页上、挪到最后（“别的”），他一张都没挑就照原样；
+  // 她自己拼的那一页上她写的标题、正文、主照片底下那一行、红笔，挪到她那一层（照她写的摆，他写的垫在底下，点那一块“用他写的”换过来）；
+  // 他一句原话都没挑，原来摆的照旧。聊天里的照片他挑了的另存一份（一页最多 PHOTO_MAX 张：她原来的不让位，新挑的放得下几张算几张）
   const askHim = async (wish) => {
+    if (arranging.current) return;
+    arranging.current = true;
     setSheet("");
-    setBusy("him");
+    setHimBusy(true);
+    const adopted = []; // 这一回另存的聊天照片：没用上（她退出去了、删了这一页、出了岔子）就删掉
+    let done = false;
     try {
       const p = pageRef.current;
-      const r = await api.arrange(day, p, mats, wish);
+      const r = await api.arrange(day, p, { ...mats, quotes: mergeQuotes(p.arr.quotes, mats.quotes) }, wish);
       if (gone.current) return;
-      // 他挑的聊天里的照片：另存一份
-      const photos = [];
+      const had = pageRef.current.arr.photos;
+      const room = Math.max(0, PHOTO_MAX - had.length);
+      const picked = [];
       for (const x of r.arr.photos) {
+        if (gone.current) break;
         if (x.chat) {
+          if (adopted.length >= room) continue;
           try {
             const id = await adoptChat(x.chat);
-            photos.push({ id, role: x.role, note: x.note, from: x.chat });
+            adopted.push(id);
+            picked.push({ id, role: x.role, note: x.note, from: x.chat });
           } catch (e) {}
-        } else photos.push({ id: x.id, role: x.role, note: x.note });
+        } else {
+          const old = had.find((y) => y.id === x.id);
+          if (old) picked.push({ ...old, role: x.role, note: x.note || old.note || "" });
+        }
       }
-      // 她原来放的（连等他的工夫里新放的）、他这回没挑的照片：图删掉（他挑了的另算）
-      const keepIds = new Set(photos.map((x) => x.id));
-      pageRef.current.arr.photos.forEach((x) => !keepIds.has(x.id) && api.dropImg(x.id));
-      const next = { ...pageRef.current, arr: { ...r.arr, photos }, layout: r.layout || pageRef.current.layout, style: r.style || pageRef.current.style };
+      if (gone.current) return;
+      const cur = pageRef.current;
+      const mine = new Set(picked.map((x) => x.id));
+      const left = cur.arr.photos.filter((x) => !mine.has(x.id)).map((x) => ({ ...x, role: "more" }));
+      const photos = picked.length ? picked.concat(left) : cur.arr.photos;
+      const edit = { ...cur.mine.edit };
+      if (cur.arr.by === "her") ["title", "body", "cap", "pen"].forEach((k) => edit[k] === undefined && cur.arr[k] && (edit[k] = cur.arr[k]));
+      const next = {
+        ...cur,
+        arr: { ...r.arr, photos, quotes: r.arr.quotes.length ? r.arr.quotes : cur.arr.quotes },
+        mine: { ...cur.mine, edit, at: Date.now() },
+        layout: r.layout || cur.layout,
+        style: r.style || cur.style,
+      };
       commit(next, true);
+      done = true;
       if (r.note) {
         const ns = await api.addNote(day, { id: newId(), who: "him", text: r.note.text, at: Date.now(), part: r.note.part });
-        if (ns) setNotes(ns);
+        if (ns && !gone.current) setNotes(ns);
       }
-      say("他排好了");
+      if (!gone.current) say("他排好了");
     } catch (e) {
-      say(`没排成（${String(e.message || e).slice(0, 40)}）`);
+      if (!gone.current) say(`没排成（${clip(String(e.message || e), 40)}）`);
+    } finally {
+      if (!done) adopted.forEach((id) => api.dropImg(id));
+      arranging.current = false;
+      if (!gone.current) setHimBusy(false);
     }
-    setBusy("");
+  };
+  // 她改过的那一块换回他写的（她那一层里那一样拿掉）
+  const useHis = (k) => {
+    const { [k]: _drop, ...rest } = pageRef.current.mine.edit;
+    setMine({ edit: rest });
   };
 
   // ---- 批注 ----
   // 加一条、删一条都现读现写（见 App.jsx 的 addJzNote）：他翻日记时刚留的那条不会被这边手里的旧单子盖掉
   const addNote = async (text, part) => {
-    const t = text.trim().slice(0, NOTE_MAX);
+    const t = clip(text.trim(), NOTE_MAX);
     if (!t) return;
     const ns = await api.addNote(day, { id: newId(), who: "her", text: t, at: Date.now(), part: part || "" });
     if (ns) setNotes(ns);
@@ -378,7 +416,8 @@ export function JzPage({ day, diary = {}, api, onBack }) {
     const k = focus;
     const acts = [];
     if (TEXT_PARTS.includes(k)) acts.push(["改字", () => setSheet("edit")]);
-    if (["hero", "pair", "food", "more", "cap"].includes(k)) acts.push(["换照片", () => setSheet("stuff")]);
+    if (TEXT_PARTS.includes(k) && page.arr.by === "him" && page.mine.edit[k] !== undefined && page.arr[k]) acts.push(["用他写的", () => (useHis(k), setSheet(""), say("换成他写的了"))]);
+    if (["hero", "pair", "food", "more"].includes(k)) acts.push(["换照片", () => setSheet("stuff")]);
     if (k === "quote") acts.push(["挑原话", () => setSheet("stuff")]);
     if (k === "her" || k === "him") acts.push(["日记在闲笔集里改", () => setSheet("")]);
     if (k === "wx") {
@@ -471,7 +510,7 @@ export function JzPage({ day, diary = {}, api, onBack }) {
 
       {/* 纸 */}
       <div className="relative flex-1 overflow-y-auto kfs-scroll kfs-jz-scroll" style={{ padding: "12px 12px 120px" }} onClick={() => setSel(null)}>
-        {busy === "him" ? (
+        {himBusy ? (
           <div className="text-center kfs-jz-busy" style={{ fontSize: 12.5, color: T.inkSoft, margin: "0 0 10px" }}>
             光义在排……
           </div>
@@ -522,7 +561,7 @@ export function JzPage({ day, diary = {}, api, onBack }) {
         <DockBtn icon="sticker" label="贴纸" onClick={() => setSheet("stickers")} cls="kfs-jz-addsticker" />
         <DockBtn icon="pen" label="写字" onClick={() => setSheet("text")} cls="kfs-jz-addtext" />
         <DockBtn icon="doc" label="排的东西" onClick={() => setSheet("stuff")} cls="kfs-jz-stuff" />
-        <DockBtn icon="smile" label={busy === "him" ? "在排……" : "让光义排"} onClick={() => setSheet("him")} busy={busy === "him"} cls="kfs-jz-him" />
+        <DockBtn icon="smile" label={himBusy ? "在排……" : "让光义排"} onClick={() => setSheet("him")} busy={himBusy} cls="kfs-jz-him" />
         <DockBtn icon="sliders" label="更多" onClick={() => (setArmed(false), setSheet("more"))} cls="kfs-jz-more" />
       </div>
 
@@ -582,8 +621,8 @@ export function JzPage({ day, diary = {}, api, onBack }) {
               天气在哪儿{cfg && cfg.city ? `：${cfg.city.name}` : "（还没填）"}
             </button>
             {cfg && cfg.city ? (
-              <button onClick={() => (setSheet(""), fetchWx(null, cfg.city))} disabled={busy === "wx"} className="kfs-tap text-left" style={{ ...glass(0.5, 12), borderRadius: 16, padding: "13px 16px", fontSize: 15, color: T.ink }}>
-                {busy === "wx" ? "在取天气……" : page.wx ? `重新取天气（${wxLine(page.wx)}）` : "取这一天的天气"}
+              <button onClick={() => (setSheet(""), fetchWx(null, cfg.city))} disabled={wxBusy} className="kfs-tap text-left" style={{ ...glass(0.5, 12), borderRadius: 16, padding: "13px 16px", fontSize: 15, color: T.ink }}>
+                {wxBusy ? "在取天气……" : page.wx ? `重新取天气（${wxLine(page.wx)}）` : "取这一天的天气"}
               </button>
             ) : null}
             {page.mine.hide.length ? (
@@ -619,11 +658,11 @@ function EditSheet({ k, v, onSave, onClose }) {
   const max = k === "title" ? 40 : k === "cap" ? 80 : k === "pen" ? 300 : 2000;
   return (
     <Sheet title={`改${partName(k)}`} onClose={onClose}>
-      <textarea className="kfs-field kfs-jz-edit" value={text} onChange={(e) => setText(e.target.value.slice(0, max))} rows={k === "body" ? 6 : 3} style={{ ...field, resize: "none", lineHeight: 1.6 }} />
+      <textarea className="kfs-field kfs-jz-edit" value={text} onChange={(e) => setText(clip(e.target.value, max))} rows={k === "body" ? 6 : 3} style={{ ...field, resize: "none", lineHeight: 1.6 }} />
       {isPen ? (
         <>
           <div style={{ fontSize: 12, color: T.inkSoft, margin: "10px 0 6px" }}>要划线的字用 [[ ]] 包起来；页边一句（可以不写）</div>
-          <input className="kfs-field" value={margin} onChange={(e) => setMargin(e.target.value.slice(0, 40))} style={field} />
+          <input className="kfs-field" value={margin} onChange={(e) => setMargin(clip(e.target.value, 40))} style={field} />
         </>
       ) : null}
       <div className="flex" style={{ gap: 8, marginTop: 12 }}>
@@ -642,6 +681,8 @@ function EditSheet({ k, v, onSave, onClose }) {
 function StickerSheet({ emoji, onPick, onClose }) {
   const [tab, setTab] = useState(TABS[0].k);
   const [carve, setCarve] = useState("");
+  // 打字的时候不截（拼音还没选字就截会打断输入法），刻的时候取头四个字（照字数，表情算一个）
+  const seal = Array.from(carve.replace(/\s/g, "")).slice(0, 4).join("");
   const cur = TABS.find((t) => t.k === tab) || TABS[0];
   return (
     <Sheet title="贴纸" onClose={onClose}>
@@ -654,8 +695,8 @@ function StickerSheet({ emoji, onPick, onClose }) {
       </div>
       {tab === "印章" ? (
         <div className="flex" style={{ gap: 8, marginBottom: 12 }}>
-          <input className="kfs-field" value={carve} onChange={(e) => setCarve(Array.from(e.target.value.replace(/\s/g, "")).slice(0, 4).join(""))} placeholder="自己刻一枚（最多四个字）" style={{ ...field, flex: 1 }} />
-          <button onClick={() => carve && onPick(`s:${carve}`)} className="kfs-tap kfs-jz-carve" style={chipPrimary}>
+          <input className="kfs-field" value={carve} onChange={(e) => setCarve(clip(e.target.value, 40))} placeholder="自己刻一枚（最多四个字）" style={{ ...field, flex: 1 }} />
+          <button onClick={() => seal && onPick(`s:${seal}`)} className="kfs-tap kfs-jz-carve" style={chipPrimary}>
             刻
           </button>
         </div>
@@ -687,7 +728,7 @@ function TextSheet({ onAdd, onClose }) {
   const [t, setT] = useState("");
   return (
     <Sheet title="在页上写几个字" onClose={onClose}>
-      <input className="kfs-field kfs-jz-textin" value={t} onChange={(e) => setT(e.target.value.slice(0, 200))} placeholder="写什么都行，写完按住能挪" style={field} />
+      <input className="kfs-field kfs-jz-textin" value={t} onChange={(e) => setT(clip(e.target.value, 200))} placeholder="写什么都行，写完按住能挪" style={field} />
       <div className="flex" style={{ gap: 8, marginTop: 12 }}>
         <button onClick={() => t.trim() && onAdd(t.trim())} className="kfs-tap kfs-jz-textok" style={chipPrimary}>
           贴上去
@@ -704,15 +745,18 @@ function StuffSheet({ page, v, mats, imgs, matImgs, loadMatImg, onText, onAddCha
   const [title, setTitle] = useState(v.title);
   const [body, setBody] = useState(v.body);
   const [pen, setPen] = useState((v.pen && v.pen.text) || "");
+  const [cap, setCap] = useState(v.cap);
   useEffect(() => {
     mats.photos.forEach((p) => loadMatImg(p.imgId));
   }, []);
   const label = { fontSize: 12, color: T.inkSoft, margin: "16px 0 8px" };
   const picked = new Set(page.arr.quotes.map((q) => q.id));
+  // 能挑的原话：那天聊天里的，加上这一页上已经摆着的（那段对话删了、这台设备上没有，摆着的也照样列着、能拿掉）
+  const quotes = mergeQuotes(page.arr.quotes, mats.quotes);
   return (
     <Sheet title="排的东西" onClose={onClose}>
       <div style={{ ...label, marginTop: 0 }}>标题</div>
-      <input className="kfs-field kfs-jz-title-in" value={title} onChange={(e) => setTitle(e.target.value.slice(0, 40))} onBlur={() => title !== v.title && onText("title", title.trim())} placeholder="这一天叫什么" style={field} />
+      <input className="kfs-field kfs-jz-title-in" value={title} onChange={(e) => setTitle(clip(e.target.value, 40))} onBlur={() => title !== v.title && onText("title", title.trim())} placeholder="这一天叫什么" style={field} />
 
       <div style={label}>照片（{page.arr.photos.length}/{PHOTO_MAX}）</div>
       {page.arr.photos.length ? (
@@ -750,19 +794,25 @@ function StuffSheet({ page, v, mats, imgs, matImgs, loadMatImg, onText, onAddCha
       <button onClick={() => fileRef.current && fileRef.current.click()} className="kfs-tap kfs-jz-addfile" style={{ ...chip, marginTop: 10 }}>
         从相册添一张
       </button>
+      {page.arr.photos.length ? (
+        <>
+          <div style={label}>主照片底下那一行（可以不写）</div>
+          <input className="kfs-field kfs-jz-cap-in" value={cap} onChange={(e) => setCap(clip(e.target.value, 80))} onBlur={() => cap !== v.cap && onText("cap", cap.trim())} placeholder="在哪儿、几点、谁拍的" style={field} />
+        </>
+      ) : null}
       <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => (onAddFile(e.target.files && e.target.files[0]), (e.target.value = ""))} />
 
       <div style={label}>
         聊天里的原话（{page.arr.quotes.length}/{QUOTE_MAX}，照原话摆，一个字不改）
       </div>
-      {mats.quotes.length ? (
+      {quotes.length ? (
         <div className="flex flex-col kfs-jz-quotes" style={{ gap: 6, maxHeight: 260, overflowY: "auto" }}>
-          {mats.quotes.map((q) => (
+          {quotes.map((q) => (
             <button key={q.id} onClick={() => onQuote(q)} className="kfs-tap text-left kfs-jz-quote-pick" data-on={picked.has(q.id) ? "1" : undefined} style={{ ...glass(picked.has(q.id) ? 0.85 : 0.4, 10), borderRadius: 12, padding: "8px 12px", fontSize: 13, color: T.ink, border: picked.has(q.id) ? `1px solid ${T.dai}` : HAIRLINE }}>
               <span style={{ fontSize: 11, color: T.inkSoft, marginRight: 6 }}>
                 {q.w === "her" ? "卿卿" : "光义"} {q.t}
               </span>
-              {q.p.length > 90 ? q.p.slice(0, 90) + "…" : q.p}
+              {q.p.length > 90 ? clip(q.p, 90) + "…" : q.p}
             </button>
           ))}
         </div>
@@ -771,9 +821,9 @@ function StuffSheet({ page, v, mats, imgs, matImgs, loadMatImg, onText, onAddCha
       )}
 
       <div style={label}>正文</div>
-      <textarea className="kfs-field kfs-jz-body-in" value={body} onChange={(e) => setBody(e.target.value.slice(0, 2000))} onBlur={() => body !== v.body && onText("body", body.trim())} rows={4} placeholder="想写就写几句（日记照旧在闲笔集里写）" style={{ ...field, resize: "none", lineHeight: 1.6 }} />
+      <textarea className="kfs-field kfs-jz-body-in" value={body} onChange={(e) => setBody(clip(e.target.value, 2000))} onBlur={() => body !== v.body && onText("body", body.trim())} rows={4} placeholder="想写就写几句（日记照旧在闲笔集里写）" style={{ ...field, resize: "none", lineHeight: 1.6 }} />
       <div style={label}>红笔（要划线的字用 [[ ]] 包起来，可以不写）</div>
-      <input className="kfs-field" value={pen} onChange={(e) => setPen(e.target.value.slice(0, 300))} onBlur={() => pen !== ((v.pen && v.pen.text) || "") && onText("pen", pen.trim() ? { text: pen.trim(), margin: (v.pen && v.pen.margin) || "" } : null)} style={field} />
+      <input className="kfs-field" value={pen} onChange={(e) => setPen(clip(e.target.value, 300))} onBlur={() => pen !== ((v.pen && v.pen.text) || "") && onText("pen", pen.trim() ? { text: pen.trim(), margin: (v.pen && v.pen.margin) || "" } : null)} style={field} />
     </Sheet>
   );
 }
@@ -787,10 +837,15 @@ function HimSheet({ page, onGo, onClose }) {
       <div style={{ fontSize: 13, lineHeight: 1.7, color: T.inkSoft }}>
         他会看这一天的照片、聊天、你们俩的日记，挑版式和风格、主照片和几句原话，起个标题、写一小段。
         {kept ? "你藏起来的、自己改的字、写的字、贴的贴纸都留着。" : ""}
-        {page.arr.by === "him" ? "（这一页他排过一回，再排会换成新的一版。）" : page.arr.photos.length || page.arr.quotes.length ? "（你挑的照片和原话会换成他挑的。）" : ""}
+        {page.arr.by === "him"
+          ? "（这一页他排过一回，再排会换成新的一版；他这回没挑的照片挪到最后，不会丢。）"
+          : page.arr.photos.length || page.arr.title || page.arr.body || page.arr.pen
+          ? "（你放的照片他没挑的挪到最后，不会丢；你写的字照你写的摆，想换成他写的，点那一块“用他写的”。）"
+          : ""}
+        排的时候别退出这一页：退出去这一版就不要了。
       </div>
       <div style={{ fontSize: 12, color: T.inkSoft, margin: "14px 0 6px" }}>想要什么样（可以不写）</div>
-      <input className="kfs-field kfs-jz-wish" value={wish} onChange={(e) => setWish(e.target.value.slice(0, 120))} placeholder="比如：要那张饭、标题凶一点" style={field} />
+      <input className="kfs-field kfs-jz-wish" value={wish} onChange={(e) => setWish(clip(e.target.value, 120))} placeholder="比如：要那张饭、标题凶一点" style={field} />
       <div className="flex" style={{ gap: 8, marginTop: 14 }}>
         <button onClick={() => onGo(wish.trim())} className="kfs-tap kfs-jz-go" style={chipPrimary}>
           交给他
@@ -837,7 +892,7 @@ function NotesSheet({ notes, shown, part, onAdd, onDrop, onClose }) {
           </button>
         ))}
       </div>
-      <textarea className="kfs-field kfs-jz-notein" value={text} onChange={(e) => setText(e.target.value.slice(0, NOTE_MAX))} rows={3} placeholder="留一句" style={{ ...field, resize: "none", lineHeight: 1.6 }} />
+      <textarea className="kfs-field kfs-jz-notein" value={text} onChange={(e) => setText(clip(e.target.value, NOTE_MAX))} rows={3} placeholder="留一句" style={{ ...field, resize: "none", lineHeight: 1.6 }} />
       <div className="flex" style={{ gap: 8, marginTop: 10 }}>
         <button
           onClick={() => {
@@ -876,7 +931,7 @@ function CitySheet({ cfg, api, onPick, onClose }) {
         填一个城市，手帐上的天气照它取（Open-Meteo，只寄城市的经纬度和日子）。只记在你这儿，换了城市以后掺的页照新的取。{cfg && cfg.city ? ` 现在是：${cfg.city.name}。` : ""}
       </div>
       <div className="flex" style={{ gap: 8 }}>
-        <input className="kfs-field kfs-jz-cityin" value={q} onChange={(e) => setQ(e.target.value.slice(0, 40))} onKeyDown={(e) => e.key === "Enter" && find()} placeholder="城市" style={{ ...field, flex: 1 }} />
+        <input className="kfs-field kfs-jz-cityin" value={q} onChange={(e) => setQ(clip(e.target.value, 40))} onKeyDown={(e) => e.key === "Enter" && find()} placeholder="城市" style={{ ...field, flex: 1 }} />
         <button onClick={find} className="kfs-tap kfs-jz-cityfind" style={chipPrimary}>
           找
         </button>

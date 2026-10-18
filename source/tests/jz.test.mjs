@@ -1,7 +1,7 @@
 // 闲笔集里掺的手帐（见 src/jz/、开发说明“闲笔集掺手帐”那一节）：存档收拾、两层合起来、原料、他排的那一段怎么拆、
 // 各版式排成哪几块、贴纸栏、翻日记的工具看得到手帐和批注、他留批注。数据都是编的。
 import {
-  emptyPage, readPage, viewOf, penParts, headOf, materialsOf, pickQuotes, quoteSpan, wxName, wxLine, readNotes, buildArrangeAsk, parseArrange, scatter,
+  emptyPage, readPage, viewOf, penParts, headOf, materialsOf, pickQuotes, mergeQuotes, quoteSpan, wxName, wxLine, readNotes, buildArrangeAsk, parseArrange, scatter,
   pageText, roll, LAYOUT_KEYS, STYLE_KEYS, LAYOUTS, STYLES, PART_KEYS, photoTag, QUOTE_MAX, PHOTO_MAX,
 } from "../src/jz/model.js";
 import { blocksOf, partsShown } from "../src/jz/sheet.js";
@@ -79,6 +79,11 @@ ok(mats.quotes.map((q) => q.id).join() === "m1,m3#0,m3#2,m4" && mats.quotes[1].p
 const picked = pickQuotes(["m4", "m1", "不认得", "m1"], mats.quotes);
 ok(picked.map((q) => q.id).join() === "m1,m4" && picked[0].p === "今天看到泡桐花了", "照编号挑原话：认不出的不要、挑两回只算一回、照时间排，字照原话抄");
 ok(pickQuotes(mats.quotes.concat(mats.quotes.map((q, i) => ({ ...q, id: "x" + i }))).map((q) => q.id), mats.quotes.concat(mats.quotes.map((q, i) => ({ ...q, id: "x" + i })))).length === QUOTE_MAX, `最多 ${QUOTE_MAX} 句`);
+const savedQ = [{ id: "gone1", w: "her", t: "09:47", p: "那段对话删了，这句还摆着" }, { id: "m1", w: "her", t: "09:46", p: "页上那份" }];
+const mq = mergeQuotes(savedQ, mats.quotes);
+ok(mq.map((q) => q.id).join() === "m1,gone1,m3#0,m3#2,m4" && mq[0].p === "页上那份" && mergeQuotes([], mats.quotes).length === 4 && mergeQuotes(savedQ, []).map((q) => q.id).join() === "m1,gone1",
+  "能挑的原话：页上摆着的（聊天里没了的也在）插进那天聊天的原话里，照几点排；同一句页上那份为准");
+ok(pickQuotes(["gone1", "m4"], mq).map((q) => q.id).join() === "gone1,m4", "挑别的那一句的时候，聊天里没了的那句不会被弄丢");
 ok(quoteSpan(mats.quotes) === "09:46 – 10:02" && quoteSpan([mats.quotes[0]]) === "09:46" && quoteSpan([]) === "", "原话卡头上的钟点");
 ok(wxName(0).t === "晴" && wxName(3).i === "cloud" && wxName(63).i === "rain" && wxName(73).t === "雪" && wxName(95).i === "storm" && wxName(45).i === "fog", "天气编号 → 中文和小图");
 ok(wxLine({ code: 61, hi: 15.4, lo: 9.6, mm: 3.2 }) === "小雨 10–15°C · 雨 3 mm" && wxLine({ code: 0, hi: 20, lo: 10, mm: 0 }) === "晴 10–20°C" && wxLine(null) === "", "天气那一行");
@@ -94,18 +99,30 @@ ok(ask.text.includes("m1｜09:46｜卿卿｜今天看到泡桐花了") && ask.te
 ok(ask.text.includes("她藏起来的：心情") && ask.text.includes("她自己改过的：正文") && ask.text.includes("“好看”") && ask.text.includes(NAMES_FOR_HIM[0]), "她动过的写明（别碰）；能贴的贴纸名字");
 const reply = `好的
 [JZ]
-{"layout":"bento","style":"film","title":"泡桐花开了","body":"她说看到了。","cap":"运河边","pen":{"text":"[[紫色]]的","margin":"记得"},"quotes":["m4","m1","编的"],"photos":[{"id":"照片1","role":"hero","note":"运河"},{"id":"照片2","role":"hero"},{"id":"照片9","role":"food"},{"id":"照片3","role":"pair"}],"stickers":["狐狸","不存在的贴纸","画的心","卿卿"],"note":{"text":"这张我最喜欢","part":"hero"}}
+{"layout":"bento","style":"film","title":"泡桐花开了","body":"她说看到了。","cap":"运河边","pen":{"text":"[[紫色]]的","margin":"记得"},"quotes":["m4","m1","编的"],"photos":[{"id":"照片1","role":"hero","note":"运河"},{"id":"照片2","role":"hero"},{"id":"照片9","role":"food"},{"id":"照片3","role":"pair"},{"id":"照片1","role":"food"}],"stickers":["狐狸","不存在的贴纸","画的心","卿卿"],"note":{"text":"这张我最喜欢","part":"hero"}}
 [/JZ]`;
 const parsed = parseArrange(reply, mats.quotes, { 照片1: "jzA", 照片2: "chat:img1", 照片3: "jzC" }, stickerByName, seq([0.5]), 99);
 ok(parsed.layout === "bento" && parsed.style === "film" && parsed.arr.by === "him" && parsed.arr.at === 99 && parsed.arr.title === "泡桐花开了" && parsed.arr.pen.text === "[[紫色]]的", "拆出来：版式、风格、标题、红笔，记着是他排的");
 ok(parsed.arr.quotes.map((q) => q.id).join() === "m1,m4" && parsed.arr.quotes[1].p === "紫色的", "原话只认编号，编的那个不要，字照原话抄");
-ok(parsed.arr.photos.map((x) => `${x.id}:${x.role}`).join() === "jzA:hero,chat:img1:more,jzC:more", "照片照编号对上；主照片多了的挪去“别的”；双联照只有一张也挪去“别的”；没有的编号不要");
+ok(parsed.arr.photos.map((x) => `${x.id}:${x.role}`).join() === "jzA:hero,chat:img1:more,jzC:more", "照片照编号对上；同一张挑两回只算头一回；主照片多了的挪去“别的”；双联照只有一张也挪去“别的”；没有的编号不要");
 ok(parsed.arr.stickers.map((s) => s.k).join() === "e:fox,d:heart,s:卿卿" && parsed.arr.stickers.every((s) => s.s === 1), "贴纸照名字认，认不出的不要，摆在纸边上");
 ok(parsed.note.text === "这张我最喜欢" && parsed.note.part === "hero", "他要留的批注");
 let threw = 0;
 try { parseArrange("没有那一段", [], {}); } catch (e) { threw++; }
 try { parseArrange("[JZ]{坏的[/JZ]", [], {}); } catch (e) { threw++; }
 ok(threw === 2, "拆不出来、看不懂：抛错（JzPage 报“没排成”）");
+const errOf = (s) => {
+  try {
+    parseArrange(s, mats.quotes, { 照片1: "jzA" }, stickerByName);
+    return "";
+  } catch (e) {
+    return e.message;
+  }
+};
+ok(errOf("[JZ]\n{}\n[/JZ]").includes("空的") && errOf("[JZ][][/JZ]").includes("看不懂") && errOf('[JZ]{"quotes":["编的"],"photos":[{"id":"照片9"}],"stickers":["不存在"]}[/JZ]').includes("空的"),
+  "排了个空的（{}、只有对不上的编号）、回的是一串（[]）：都算没排成，这一页不动");
+const strs = parseArrange('[JZ]{"title":"x","photos":["照片1",{"id":"constructor"},{"id":"__proto__"}]}[/JZ]', mats.quotes, { 照片1: "jzA" }, stickerByName);
+ok(strs.arr.photos.map((x) => `${x.id}:${x.role}`).join() === "jzA:more", "照片写成一串编号也认（当“别的”）；constructor 那种编号不认、不出错");
 const bare = parseArrange('{"title":"只有字","layout":"不认得"}', [], {}, () => "");
 ok(bare.arr.title === "只有字" && bare.layout === "" && bare.note === null && bare.arr.photos.length === 0, "没夹 [JZ] 的一整段 JSON 也认；版式不认得回空（不换）");
 ok(scatter(["a", "b"], () => 0.5).map((s) => [s.k, s.x, s.y, s.r].join()).join("|") === "a,0.86,0.2,0|b,0.12,0.62,0", "他的贴纸摆在纸边、角上");
@@ -198,6 +215,15 @@ ok(nf.err && ne.err && nr.err && nf.note === "想留批注，没留成" && nr.ou
 const [n0] = await runDiaryCalls([call("diary_note", { date: "2026-10-13", text: "没有手帐的一天也能留", part: "坏的" })], reader, NOW);
 ok(!n0.err && NOTES["2026-10-13"][0].part === "" && n0.out.includes("那一天底下"), "没有手帐的那天也能留（留在那一天上）；认不出的零件不贴");
 ok(pageText(null, []) === "" && pageText(null, ns).startsWith("批注 2 条："), "给工具看的字：什么都没有回空；只有批注就只写批注");
+// 表情占两格：截在表情中间的不能留半个（存进去、给他看的、寄给他的都是）
+const lone = (s) => /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
+const emo = "🌸";
+const longQ = { id: "q9", w: "her", t: "10:00", p: "啊".repeat(59) + emo + "后面" };
+const ep = readPage({ arr: { title: "题".repeat(39) + emo, body: "x", quotes: [longQ] }, mine: { texts: [{ m: "字".repeat(199) + emo }] } }, "2026-10-12");
+const en = readNotes(JSON.stringify([{ id: "n", who: "her", text: "批".repeat(299) + emo, at: 1 }]));
+const ea = buildArrangeAsk({ label: "x", quotes: [{ ...longQ, p: "说".repeat(159) + emo }], photos: [], diary: {} });
+ok(![ep.arr.title, ep.mine.texts[0].m, en[0].text, pageText(ep, en, {}), ea.text].some(lone) && ep.arr.title === "题".repeat(39) && en[0].text === "批".repeat(299),
+  "标题四十字、页上的字两百、批注三百、给他看的原话六十、寄给他的原话一百六十：截在表情中间的少截一格，不留半个");
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);
 process.exit(failN ? 1 : 0);
