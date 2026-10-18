@@ -37,7 +37,7 @@ const STYLE_VARS = {
     title: SERIF, body: SERIF, num: SERIF, mono: SERIF, hand: HAND, receipt: "rgba(255,252,243,0.6)", tape: "",
   },
   kraft: {
-    paper: "#c7a479", tex: `${noise(0.16, 0.9, 4)}`, ink: "#33241a", ink2: "#5a3d24", soft: "rgba(51,36,26,0.62)", accent: "#fbf4e6",
+    paper: "#c7a479", tex: `${noise(0.16, 0.9, 4)}`, ink: "#33241a", ink2: "#5a3d24", soft: "rgba(51,36,26,0.62)", accent: "#fbf4e6", accentText: "#7a3a1c",
     rule: "rgba(51,36,26,0.25)", ruleStrong: "rgba(51,36,26,0.7)", card: "#f6ecdb", cardShadow: "0 8px 18px -12px rgba(51,36,26,0.6)",
     frame: "#f8f1e4", framePad: "1.8cqw", photoRadius: "0", photoShadow: "0 10px 18px -12px rgba(51,36,26,0.7)", pen: "#8c2b1f",
     title: SANS, body: SANS, num: SANS, mono: MONO, hand: HAND, receipt: "#fbf6ec", tape: "rgba(255,255,255,0.62)",
@@ -49,6 +49,7 @@ const STYLE_VARS = {
     title: SERIF, body: SERIF, num: MONO, mono: MONO, hand: HAND, receipt: "#fbf8f1", tape: "",
   },
   night: {
+    receiptInk: "#2b2620", receiptInk2: "#6e5226", receiptSoft: "rgba(43,38,32,0.6)",
     paper: "#111a2c", tex: `${noise(0.08, 0.9)}, linear-gradient(170deg, #16213a 0%, #0d1424 100%)`, ink: "#ece6d8", ink2: "#d6b56e", soft: "rgba(236,230,216,0.58)", accent: "#d6b56e",
     rule: "rgba(236,230,216,0.18)", ruleStrong: "rgba(214,181,110,0.7)", card: "rgba(255,255,255,0.06)", cardShadow: "inset 0 0 0 1px rgba(214,181,110,0.25)",
     frame: "#ece6d8", framePad: "1.6cqw", photoRadius: "0.6cqw", photoShadow: "0 12px 26px -14px rgba(0,0,0,0.9)", pen: "#f2917c",
@@ -78,7 +79,7 @@ const STYLE_VARS = {
 
 const varsOf = (k) => {
   const v = STYLE_VARS[k];
-  return `.jz-sheet[data-style="${k}"]{--jz-paper:${v.paper};--jz-tex:${v.tex};--jz-tex-size:${v.texSize || "auto"};--jz-ink:${v.ink};--jz-ink2:${v.ink2};--jz-soft:${v.soft};--jz-accent:${v.accent};--jz-rule:${v.rule};--jz-rule-strong:${v.ruleStrong};--jz-card:${v.card};--jz-card-shadow:${v.cardShadow};--jz-frame:${v.frame};--jz-frame-pad:${v.framePad};--jz-photo-radius:${v.photoRadius};--jz-photo-shadow:${v.photoShadow};--jz-pen:${v.pen};--jz-title-font:${v.title};--jz-body-font:${v.body};--jz-num-font:${v.num};--jz-mono-font:${v.mono};--jz-hand-font:${v.hand};--jz-receipt:${v.receipt};--jz-tape:${v.tape || "none"}}`;
+  return `.jz-sheet[data-style="${k}"]{--jz-paper:${v.paper};--jz-tex:${v.tex};--jz-tex-size:${v.texSize || "auto"};--jz-ink:${v.ink};--jz-ink2:${v.ink2};--jz-soft:${v.soft};--jz-accent:${v.accent};--jz-accent-text:${v.accentText || v.accent};--jz-receipt-ink:${v.receiptInk || v.ink};--jz-receipt-ink2:${v.receiptInk2 || v.ink2};--jz-receipt-soft:${v.receiptSoft || v.soft};--jz-rule:${v.rule};--jz-rule-strong:${v.ruleStrong};--jz-card:${v.card};--jz-card-shadow:${v.cardShadow};--jz-frame:${v.frame};--jz-frame-pad:${v.framePad};--jz-photo-radius:${v.photoRadius};--jz-photo-shadow:${v.photoShadow};--jz-pen:${v.pen};--jz-title-font:${v.title};--jz-body-font:${v.body};--jz-num-font:${v.num};--jz-mono-font:${v.mono};--jz-hand-font:${v.hand};--jz-receipt:${v.receipt};--jz-tape:${v.tape || "none"}}`;
 };
 
 export const JZ_CSS = `
@@ -129,14 +130,20 @@ export const JZ_CSS = `
 .jz-quote{position:relative;background:var(--jz-card);box-shadow:var(--jz-card-shadow);padding:4.4cqw 4.8cqw;border-radius:1cqw}
 .jz-quote::before{content:"";position:absolute;top:-2.4cqw;left:12%;width:18cqw;height:4.8cqw;transform:rotate(-4deg);background:var(--jz-tape);opacity:.9}
 .jz-sheet:not([data-style="kraft"]):not([data-style="washi"]) .jz-quote::before{display:none}
+/* 点缀色分两样：--jz-accent 是纸上画的（标题底下那一笔、手绘贴纸），--jz-accent-text 是写字的（小标题、原话卡里“光义”那一行）。
+   牛皮纸的点缀是米白，卡也是米白：卡上（原话卡、格子便当的每一格）画的也改用写字的那一色，不然看不见。
+   饭的小票是另一张纸（夜航那种是浅的），上面的字照小票的颜色（格子便当里小票的底拿掉了，照格子的）。
+   字看不看得清有 tests/e2e_jz_ink.py 挨个量。 */
+.jz-quote,.jz-sheet[data-layout="bento"] .jz-cell{--jz-accent:var(--jz-accent-text)}
+.jz-sheet:not([data-layout="bento"]) .jz-food{--jz-ink:var(--jz-receipt-ink);--jz-ink2:var(--jz-receipt-ink2);--jz-soft:var(--jz-receipt-soft)}
 .jz-qh{display:flex;justify-content:space-between;font:400 2.8cqw/1.4 var(--jz-mono-font);letter-spacing:.14em;color:var(--jz-soft);padding-bottom:2.4cqw;border-bottom:1px dashed var(--jz-rule)}
 .jz-q{margin-top:2.8cqw;font-size:3.9cqw;line-height:1.6;color:var(--jz-ink);word-break:break-word}
 .jz-q .w{display:inline-block;margin-right:1.8cqw;font:500 2.7cqw/1 var(--jz-mono-font);letter-spacing:.14em;color:var(--jz-soft)}
-.jz-q.him .w{color:var(--jz-accent)}
+.jz-q.him .w{color:var(--jz-accent-text)}
 .jz-qmore{display:block;width:100%;margin-top:3cqw;padding-top:2.4cqw;border-top:1px dashed var(--jz-rule);font:400 3.2cqw/1 var(--jz-body-font);color:var(--jz-soft);background:none;border-left:0;border-right:0;border-bottom:0;text-align:center}
 
 /* 日记、正文 */
-.jz-diary h4,.jz-label{margin:0 0 2.4cqw;font:500 2.9cqw/1.4 var(--jz-mono-font);letter-spacing:.24em;color:var(--jz-accent)}
+.jz-diary h4,.jz-label{margin:0 0 2.4cqw;font:500 2.9cqw/1.4 var(--jz-mono-font);letter-spacing:.24em;color:var(--jz-accent-text)}
 .jz-diary p,.jz-body p{margin:0;font:400 4.1cqw/1.9 var(--jz-body-font);white-space:pre-wrap;word-break:break-word;color:var(--jz-ink)}
 .jz-diary.him p{color:var(--jz-ink2)}
 .jz-body p{font-size:4.2cqw}
