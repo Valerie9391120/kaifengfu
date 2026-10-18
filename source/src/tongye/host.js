@@ -446,6 +446,9 @@ export const TY_PHOTO_MAX = 10; // 寄给他看几张（长边 512）
 export const TY_QUOTE_MAX = 8; // 一页最多摆几句原话（同页的原话便签最多摆八句）
 export const TY_STALE = 10 * 60 * 1000; // 排了十分钟还没排完：当排到一半断了（开封府被关了）
 export const TY_WAIT = 5 * 60 * 1000; // 问他那一回最多等五分钟（比上面那个短：这一台自己先说没排成）
+// 这一本从哪天写起：同页搬进开封府、上线的那一天（她 10 月 18 日定的“就从今天开始”）。本子首页那一句“从 10.18 写到今天，第几天”照它算；
+// 同页原来写的是今天往前 120 天那一天（它首页那一张格子从那一天排起，格子照旧）
+export const TY_START = "2026-10-18";
 export const tyTag = (i) => `照片${i + 1}`;
 const ROLES = ["hero", "pair", "sh"];
 // 他留批注能贴的几块（同页的零件）
@@ -839,7 +842,7 @@ export function makeServer({ store, dayMsgs, chatImg, onClose, onReady, onFail, 
         const v = store.peek(k);
         if (v != null) ls[k] = v;
       }
-      return { today: todayFor(day, now), ls, heat: heat || {}, open: { day, mode }, safe: safe || null };
+      return { today: todayFor(day, now), ls, heat: heat || {}, open: { day, mode }, safe: safe || null, start: TY_START };
     },
   };
 }
