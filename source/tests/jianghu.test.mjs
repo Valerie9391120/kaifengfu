@@ -216,7 +216,8 @@ ok(String(half.board.names) === "卿卿,晋哥" && String(r1.board.names) === "�
 const onSet = readOn(JSON.stringify(["mgplain", 3, "", null]));
 ok(ON_KEY === "kfs2:jhon" && onSet.size === 1 && onSet.has("mgplain") && readOn("坏了").size === 0 && readOn(null).size === 0, "摆着棋盘的那份单子：只认对话编号，读不出来当空的");
 ok(gameOn("jhabc", null) && gameOn("jhabc", new Set()) && gameOn("mgplain", onSet) && !gameOn("mgother", onSet) && !gameOn("", onSet), "摆没摆着棋盘：专门下棋的那种一直摆着，平常对话看单子");
-ok(hasSteps([{ role: "her" }, { role: "him", calls: [{ id: "x" }] }]) && !hasSteps([{ role: "him", calls: [] }, { role: "her", calls: [{ id: "x" }] }]) && !hasSteps(null), "对话里他调过引擎没有");
+ok(hasSteps([{ role: "her" }, { role: "him", calls: [{ id: "x", name: "roll" }] }]) && !hasSteps([{ role: "him", calls: [] }, { role: "her", calls: [{ id: "x", name: "roll" }] }]) && !hasSteps(null) && !hasSteps([{ role: "him", calls: [{ id: "y", name: "diary_read" }] }]),
+  "对话里他调过引擎没有（只认棋局那四样：10 月 18 日起他翻日记的那几步也记在 calls 里，那不算下过棋）");
 ok(GAME_SECTION === gameSection(false) && gameSection(true) !== GAME_SECTION && gameSection(true).includes("这段对话原来是你们平常聊天，她在这里摆开了《江湖棋局》") && gameSection(true).includes("她收棋以后") && gameSection(true).endsWith(HOST_RULES) && !GAME_SECTION.includes("平常聊天"),
   "平常对话里摆开的：【江湖棋局】那一段开头换个说法、多一条收棋的，后面照样跟着主持规矩；专门下棋的那一段不变");
 

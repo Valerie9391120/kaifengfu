@@ -39,8 +39,9 @@ export function readOn(text) {
 // 这段对话眼下摆没摆着棋盘：专门下棋的那种一直摆着；平常对话看她摆开了没有（onSet 是上面那份单子）
 export const gameOn = (id, onSet) => isGameChat(id) || !!(id && onSet && onSet.has(id));
 
-// 眼前这一支里他调过引擎没有（收了棋的平常对话：调过的话，寄过去还得带着四样工具，不带那边不认）
-export const hasSteps = (msgs) => (msgs || []).some((m) => m && m.role === "him" && m.calls && m.calls.length);
+// 眼前这一支里他调过引擎没有（收了棋的平常对话：调过的话，寄过去还得带着四样工具，不带那边不认）。
+// 只认这四样：他翻日记的那几步也记在 calls 里（见 diaryTools.js），那不算下过棋
+export const hasSteps = (msgs) => (msgs || []).some((m) => m && m.role === "him" && (m.calls || []).some(isGameCall));
 
 // ---------- 寄给那边的我的 ----------
 
@@ -107,6 +108,9 @@ export const TOOLS = [
   },
 ];
 const TOOL_NAMES = new Set(TOOLS.map((t) => t.name));
+export const GAME_NAMES = TOOL_NAMES;
+// 这一样是不是棋局的（一步里也可能有他翻日记的那几样，见 diaryTools.js）
+export const isGameCall = (c) => !!(c && TOOL_NAMES.has(c.name));
 
 // 名帖后面那一段（只有摆着棋盘的那段对话里有；放在名帖那一大段里，跟着名帖一起缓存）。
 // mixed：是她在平常对话里摆开的（前面是平常聊天），开头那句换个说法、多一条
@@ -131,8 +135,11 @@ ${HOST_RULES}`;
 }
 export const GAME_SECTION = gameSection(false);
 
-// 摆开过又收起来的平常对话：【此刻】里写这一句（四样工具照带，这一回不许调）
+// 摆开过又收起来的平常对话：【此刻】里写这一句（四样工具照带）。
+// 原来这一回不许调工具（tool_choice: none）；10 月 18 日添了翻日记，平常对话随时能翻，就不能整个不许了：
+// 他真调了这四样，一样不下，递回去 OFF_CALL（见 App.jsx 的 settleCalls）
 export const OFF_LINE = "【棋盘】收起来了：她在这段对话里收了棋，这会儿不下（前面下过的那几步还在对话里）。她想接着下，会在南衙里再摆开。";
+export const OFF_CALL = "棋盘收着，这一步没下：她在这段对话里收了棋。她想接着下，会在南衙里再摆开。";
 
 // 【此刻】里添的那一行：棋盘眼下什么样（board 见 boardOf；还没开局是 null）。call：正在打电话
 export function nowLine(board, call = false) {
@@ -154,7 +161,8 @@ export function apiBlocks(m) {
   const calls = (m && m.calls) || [];
   const uses = calls.map((c) => ({ type: "tool_use", id: c.id, name: c.name, input: c.input && typeof c.input === "object" ? c.input : {} }));
   const results = calls.map((c) => {
-    const r = { type: "tool_result", tool_use_id: c.id, content: typeof c.out === "string" && c.out ? c.out : "（这一步没有结果：开封府没来得及替你调引擎。）" };
+    const none = TOOL_NAMES.has(c.name) ? "（这一步没有结果：开封府没来得及替你调引擎。）" : "（这一步没有结果：开封府没来得及替你办。）";
+    const r = { type: "tool_result", tool_use_id: c.id, content: typeof c.out === "string" && c.out ? c.out : none };
     if (c.err || typeof c.out !== "string") r.is_error = true;
     return r;
   });
@@ -191,12 +199,13 @@ export function boardIn(msgs) {
   return s ? s.board || null : null;
 }
 
-// 这一支里所有分支下过棋的回话的 id（删对话时，连同存档一起删）
+// 这一支里所有分支下过棋的回话的 id（删对话时，连同存档一起删；只翻了日记的那几步没有存档，不算）
 export function collectStepIds(msgs, out = []) {
+  const played = (m) => m && m.role === "him" && (m.calls || []).some(isGameCall);
   (msgs || []).forEach((m) => {
-    if (m && m.role === "him" && m.calls && m.calls.length) out.push(m.id);
+    if (played(m)) out.push(m.id);
     (m.alts || []).forEach((a) => {
-      if (a.node && a.node.role === "him" && a.node.calls && a.node.calls.length) out.push(a.node.id);
+      if (played(a.node)) out.push(a.node.id);
       collectStepIds(a.after || [], out);
     });
   });

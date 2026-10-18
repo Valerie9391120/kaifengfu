@@ -212,6 +212,8 @@ with sync_playwright() as p:
         now_note = [t for t in texts if t.startswith("【此刻】")]
         ok(f"[开封府提示：你们开始打电话了，你接起来先说了一句“{hi1}”]" in texts and "喂，你在吗" in texts and now_note and now_note[0].endswith("\n\n" + CALL_NOTE_TEXT),
            "寄过去的：“开始打电话了，你接起来先说了一句……”那行提示、她说的话；【此刻】后面附着【通话】那一段（一个字不差是她 16:27 改的那样）")
+        ok([t.get("name") for t in body.get("tools", [])] == ["diary_list", "diary_read", "diary_search"] and body.get("tool_choice") == {"type": "none"},
+           "打电话的时候：翻日记的三样照带（对话里有他调过的，不带那边不认），这一回不许调（电话里不翻日记，10 月 18 日定的，见 e2e_diary.py）")
         # 心里话开着（默认）：打电话的时候名帖照关着拼（她 10 月 15 日要的：等于开关自动拨到关着），开关本身不动
         call_sys = sys_text(body)
         h_on, r_on, t_on = rules_of(sys_text(before))

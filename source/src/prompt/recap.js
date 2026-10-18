@@ -53,6 +53,10 @@ function hisLines(m, memeLookup) {
   });
   // 江湖棋局里这一步下了什么（聊天里那几张小卡片，见 game/jianghu.js）：掷了几点、走到哪、花了几两
   out.push(...steps);
+  // 他翻了日记（聊天里那一行小字，见 diaryTools.js）：只记翻了哪天、搜了什么，翻到的字不抄（要用他再翻）
+  ((m && m.calls) || []).forEach((c) => {
+    if (c && c.note) out.push(`[${HIS_NAME}${c.note}]`);
+  });
   return out;
 }
 

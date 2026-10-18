@@ -84,6 +84,61 @@ function fakeHost(body) {
   return null;
 }
 
+// 日记共读的假的那边的我（tests/e2e_diary.py 用；带着翻日记那三样的时候，见 src/diaryTools.js）。照她最后说的那句话：
+//   “翻日记 2026-10-18”：先说“我翻翻。”，再调 diary_read 读那一天
+//   “翻日记目录”：一个字不说，只调 diary_list（不给月份）
+//   “搜日记 某某”：先说“我找找。”，再调 diary_search
+//   “翻两回 2026-10-18”：先调 diary_list，结果递回来以后再调 diary_read 读那一天，再递回来才说完
+//   “翻到一半”：说“翻着翻着”、调了 diary_read，可回话停在 max_tokens 上（写到长度上限被截断）：开封府不该替他翻
+//   结果递回来（最后一句最前面是翻日记的 tool_result）：说“（测试翻日记）”加结果的头一行，再一条“翻完了”
+//   打电话的时候（tool_choice 是 none）、别的话、递回来的是棋局的结果：回 null（交给别人）
+function fakeDiary(body) {
+  if (body.tool_choice && body.tool_choice.type === "none") return null;
+  const msgs = body.messages || [];
+  const blocksOf = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || []);
+  const lastUser = msgs[msgs.length - 1];
+  const results = lastUser && lastUser.role === "user" ? blocksOf(lastUser).filter((b) => b.type === "tool_result") : [];
+  let herAt = -1;
+  let herSay = "";
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role !== "user") continue;
+    const t = blocksOf(msgs[i])
+      .filter((b) => b.type === "text" && !b.text.startsWith("【") && !b.text.startsWith("[开封府提示"))
+      .map((b) => b.text)
+      .join(" / ");
+    if (t.trim()) {
+      herAt = i;
+      herSay = t;
+      break;
+    }
+  }
+  const used = msgs.slice(herAt + 1).filter((m) => m.role === "assistant").flatMap((m) => blocksOf(m).filter((b) => b.type === "tool_use"));
+  const think = /^claude-(fable|opus|sonnet)-5/.test(String(body.model)) ? [{ type: "thinking", thinking: "", signature: "测试用的签名" }] : [];
+  const usage = { input_tokens: 60, cache_creation_input_tokens: 0, cache_read_input_tokens: 9000, output_tokens: 50 };
+  const use = (name, input) => ({ type: "tool_use", id: "toolu_diary_" + ++toolSeq, name, input });
+  const step = (text, call) => ({ status: 200, json: { model: body.model, stop_reason: "tool_use", content: think.concat(text ? [{ type: "text", text }] : [], [call]), usage } });
+  const say = (text) => ({ status: 200, json: { model: body.model, stop_reason: "end_turn", content: think.concat([{ type: "text", text }]), usage } });
+  const text = (r) => String((r && (typeof r.content === "string" ? r.content : JSON.stringify(r.content))) || "");
+  if (results.length) {
+    const ids = new Set(used.filter((u) => /^diary_/.test(u.name)).map((u) => u.id));
+    if (!results.some((r) => ids.has(r.tool_use_id))) return null; // 递回来的是棋局的结果
+    if (/翻两回/.test(herSay) && used.length < 2) {
+      const day = (/(\d{4}-\d{2}-\d{2})/.exec(herSay) || [])[1] || "2026-10-01";
+      return step("再看看那天。", use("diary_read", { dates: [day] }));
+    }
+    if (replyQueue.length) return say(replyQueue.shift());
+    return say(`（测试翻日记）${results[0].is_error ? "没翻成：" : ""}${text(results[0]).split("\n")[0].slice(0, 40)}\n[SPLIT]\n翻完了`);
+  }
+  const day = /翻日记\s*(\d{4}-\d{2}-\d{2})/.exec(herSay);
+  if (/翻到一半/.test(herSay)) return { status: 200, json: { model: body.model, stop_reason: "max_tokens", content: think.concat([{ type: "text", text: "翻着翻着" }, use("diary_read", { dates: ["2026-10-01"] })]), usage } };
+  if (/翻两回/.test(herSay)) return step("先看看目录。", use("diary_list", {}));
+  if (/翻日记目录/.test(herSay)) return step("", use("diary_list", {}));
+  if (day) return step("我翻翻。", use("diary_read", { dates: [day[1]] }));
+  const q = /搜日记\s*(\S+)/.exec(herSay);
+  if (q) return step("我找找。", use("diary_search", { query: q[1] }));
+  return null;
+}
+
 // 假的那边的我：照寄来的话编一条回复。两条路问的都是它
 function fakeAnthropic(body, beta, via) {
   claudeLog.push({ body, beta, via });
@@ -121,6 +176,11 @@ function fakeAnthropic(body, beta, via) {
       status: 200,
       json: { model: body.model, stop_reason: claudeFail === "recap-cut" ? "max_tokens" : "end_turn", content: thought.concat([{ type: "text", text }]), usage: { input_tokens: 5000, cache_creation_input_tokens: 0, cache_read_input_tokens: 8000, output_tokens: 400 } },
     };
+  }
+  // 翻日记（带着那三样工具，见 src/diaryTools.js）：假的那边的我翻日记
+  if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "diary_read")) {
+    const d = fakeDiary(body);
+    if (d) return d;
   }
   // 江湖棋局那一段（带着四样工具，见 src/game/jianghu.js）：假的主持人
   if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "roll")) {
