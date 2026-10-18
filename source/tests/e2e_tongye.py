@@ -407,7 +407,7 @@ with sync_playwright() as p:
         ftap(f, "#trashList [data-tr]")
         ok(gone(pa), "找回：关上回闲笔集")
         R = kvj(pa, f"kfs2:ty:day/{fday}")
-        ok(R and R["title"] == "泡桐花" and kvj(pa, "kfs2:ty:notes/nold1") and not trash_keys(pa), f"找回来了：那一页、批注都在，废纸篓空了（点开就起的那一页空的直接盖掉，没进废纸篓：{trash_keys(pa)}）")
+        ok(R and R["title"] == "泡桐花" and kvj(pa, "kfs2:ty:notes/nold1") and not trash_keys(pa), f"找回来了：那一页、批注都在，废纸篓空了（点开那一下什么都没写，没多出一页空的进废纸篓：{trash_keys(pa)}）")
         ok("泡桐花" in pa.locator(".kfs-jz-open").inner_text() and pa.locator(".kfs-page .kfs-jz-tag").count() == 2, "闲笔集里昨天的卡片、🏷️ 都回来了")
 
         # ================= 云端只有乱码 =================
