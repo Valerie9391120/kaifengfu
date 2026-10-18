@@ -42,7 +42,7 @@ const newTok = () => {
   }
 };
 
-export function TongyeFrame({ day, mode, heat, dayMsgs, chatImg, onFail, onClose }) {
+export function TongyeFrame({ day, mode, heat, dayMsgs, chatImg, onFail, onAsk, onClose }) {
   const box = useRef(null);
   // 同页还没摆好（那一页 6.5 MB 还在下载、没网取不到）：这边摆一颗回去的，不然她被这一层挡住出不去
   const [ready, setReady] = useState(false);
@@ -56,7 +56,7 @@ export function TongyeFrame({ day, mode, heat, dayMsgs, chatImg, onFail, onClose
         if (frame && frame.contentWindow) frame.contentWindow.postMessage({ kfsTy: 1, ...msg }, "*");
       } catch (e) {}
     };
-    const server = makeServer({ store, dayMsgs, chatImg, onFail, onClose: () => onClose(), onReady: () => setReady(true), cfgKey: JZCFG_KEY, geocode, weather: dayWeather, day });
+    const server = makeServer({ store, dayMsgs, chatImg, onFail, onAsk, onClose: () => onClose(), onReady: () => setReady(true), cfgKey: JZCFG_KEY, geocode, weather: dayWeather, day });
     const onMsg = async (e) => {
       if (!frame || e.source !== frame.contentWindow) return;
       const d = e.data;

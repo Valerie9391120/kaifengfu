@@ -34,7 +34,9 @@ export function TyCard({ info, notes = [], onOpen }) {
         <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 2 }}>
           {busy
             ? "正在打开……"
-            : `${info.sub}${info.by === "him" ? " · 他排的" : ""}${notes.length ? ` · 批注 ${notes.length}` : ""}`}
+            : info.making
+              ? "光义正在排……"
+              : `${info.sub}${info.by === "him" ? " · 他排的" : ""}${notes.length ? ` · 批注 ${notes.length}` : ""}`}
         </div>
       </div>
       <Icon name="chevR" size={17} color={T.inkSoft} />

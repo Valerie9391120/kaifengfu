@@ -36,6 +36,8 @@ const today = () => new Date(T0);
 const TOK = ON && typeof INIT.tok === "string" ? INIT.tok : "";
 // 同页里几处“今天”（本子首页的日子、热力图的最后一格……）照这个（tools/tongye.mjs 换的）
 window.__kfsToday = today;
+// 点开不写（那一天的那一屏点“自己拼”，同页当场写一页空的 day：tools/tongye.mjs 换的那一句问这里），她头一回动手才起
+window.__kfsLazy = ON;
 
 // ---------- 字：同页原来从 Google Fonts 现取，开封府自己带着（tools/tyfonts.mjs；卿卿 10 月 18 日定的“放到开封府自己这儿”） ----------
 // <head> 里那几张（底下那三种字）tools/tongye.mjs 已经写进页里了。换风格的时候同页的 loadFonts 叫这里（它自己先看过这一种风格取没取过）：
@@ -416,8 +418,11 @@ window.__kfsWorth = (R) => {
 
 // ---------- 页面摆好以后 ----------
 const CSS = [
-  // 交给枫（同页自己的聊天那一屏）：开封府这边光义排一页的路子下一步再接
-  "#toChat{display:none!important}",
+  // 那一天的那一屏：“几样吃的”（开封府没有吃了什么的记录）
+  "#dayFound>span:nth-child(3){display:none!important}",
+  // 交给光义：“在排”那一栏里没排成的那一步（打个叉，不转、不打勾）
+  ".log .r.fail i{box-shadow:inset 0 0 0 1.5px #C0533F}",
+  ".log .r.fail i::after{content:'×';position:absolute;inset:0;display:grid;place-items:center;font:600 12px/1 system-ui,sans-serif;color:#C0533F}",
   // 拆零件（给做页面的人对照用）、去家里拿颜文字
   "section:has(>#xray){display:none!important}",
   "#xray{display:none!important}",
@@ -549,6 +554,52 @@ async function openChatPhotos() {
     });
   };
 }
+
+// ---------- 交给光义（同页的「交给」那一屏；开封府另问他一回，见 host.js 的 tyArrangeAsk、App.jsx 的 tyArrange） ----------
+// 那一天的那一屏（本子首页点一天、闲笔集点“掺一页手帐”）：那一天的页上没有照片的时候，照片那一栏摆她那天在聊天里发的照片
+// （「交给光义」那一屏照这一栏先挑四张，她能拿掉、能从相册再添）；“几句聊天”照那天的原话数（同页的 renderDay 叫这里）
+const chatRefs = new Map(); // blob 地址 → 聊天里那一张的编号
+const dayAsked = new Set();
+window.__bzDay = async (md) => {
+  if (!ON || dayAsked.has(md)) return;
+  dayAsked.add(md);
+  const full = fullOf(md, today());
+  if (!full) return;
+  try {
+    const [src, list] = await Promise.all([ask("sources", { date: full }), ask("chatPhotos", { date: full })]);
+    const chat = src && Array.isArray(src.chat) ? src.chat.filter((x) => x && x.p).map((x) => ({ w: x.w, t: x.t || "", p: x.p, src: "原话" })) : [];
+    const urls = (Array.isArray(list) ? list : []).map((p) => {
+      const u = URL.createObjectURL(dataToBlob(p.data));
+      chatRefs.set(u, p.id);
+      return u;
+    });
+    // 同页那一屏的照片、原话在它自己那一段里（摸不着），交给 tools/tongye.mjs 摆的那个口子：那一天还没有的才摆，还是那一天就再摆一回
+    // （它再摆一回又会叫这里：取过的不再取）。那个口子还没摆好（同页刚打开）：等一会儿；等不到，下回再取
+    for (let i = 0; i < 50 && !(window.__kfsShell && window.__kfsShell.dayIn); i++) await sleep(100);
+    if (window.__kfsShell && window.__kfsShell.dayIn) window.__kfsShell.dayIn(md, urls, chat);
+    else dayAsked.delete(md);
+  } catch (e) {
+    dayAsked.delete(md);
+  }
+};
+// 寄给他的照片（同页写进 ask 的 photos，tools/tongye.mjs 换的那一句问这里）：框里的 blob: 地址换成开封府认得的编号。
+// 她刚从相册传的、页上原来的是 kfsimg:<编号>，聊天里的是 kfschat:<编号>；别的原样（同页自己会把 blob:、data: 的拿掉）
+window.__kfsAskRef = (u) => {
+  const s = String(u || "");
+  if (chatRefs.has(s)) return "kfschat:" + chatRefs.get(s);
+  if (owners.has(s)) return IMG + owners.get(s);
+  return s;
+};
+// “光义刚更新了这一页”（同页收 day 的时候，tools/tongye.mjs 换的那一句问这里）：只在他真的排好了一回的时候说。
+// 同页每收一回 day 就把每一天都再收一遍：打开以前排好的、同一回排好的说过了的、他正排着、没排成放回原样的，都不说
+const OPENED_AT = Date.now();
+const hisSaid = new Map();
+window.__kfsHisNew = (R) => {
+  if (!R || R.by !== "me" || R.status !== "done" || !(Number(R.ts) > OPENED_AT) || (R.steps || []).some((s) => s && s.fail)) return false;
+  if (hisSaid.get(R.day) === R.ts) return false;
+  hisSaid.set(R.day, R.ts);
+  return true;
+};
 
 // ---------- 天气在哪儿：设置里多一节（她填一回，掺新的一页就自己取那一天的天气） ----------
 function citySection() {

@@ -68,8 +68,26 @@ export const PATCHES = [
     "没有天气的时候",
   ],
   ["Object.entries(LIB[cat].items).filter(([k,it])=>!it.hide)", 'Object.entries(LIB[cat].items).filter(([k,it])=>!it.hide&&(cat!=="wx"||WX[wxDay]))', 1, "没有天气就不摆天气贴纸"],
-  // “光义刚更新了这一页”：只在他排的页更新的时候说（开封府替她取了天气、写进她自己拼的那一页，不算他）
-  ['toast2(nmMe()+"刚更新了这一页")', 'R.by!=="her"&&toast2(nmMe()+"刚更新了这一页")', 1, "不冒充他"],
+  // “光义刚更新了这一页”：只在他真的排好了一回的时候说（同页收 day 的时候每一天都再收一遍：别的哪一天变了、开封府替她取了天气、
+  // 他正排着、没排成放回原样，都不算他更新了这一页；见 bridge.js 的 __kfsHisNew）
+  ['toast2(nmMe()+"刚更新了这一页")', '(window.__kfsHisNew?__kfsHisNew(R):R.by!=="her")&&toast2(nmMe()+"刚更新了这一页")', 1, "不冒充他"],
+  // 交给光义：寄给他的照片同页只认网上的地址（框里的 blob: 不要）。开封府这边照片都在框里是 blob:，换成开封府认得的编号再寄（见 bridge.js 的 __kfsAskRef）
+  [
+    "photos:ph.map(x=>PH[x]||x).filter(x=>!/^(data|blob):/.test(String(x)))",
+    "photos:ph.map(x=>PH[x]||x).map(x=>window.__kfsAskRef?__kfsAskRef(x):x).filter(x=>!/^(data|blob):/.test(String(x)))",
+    1,
+    "交给光义的照片",
+  ],
+  // 他没排成、那一天原来又没有页（开封府记一个 status 是 failed 的 day，什么都没有）：同 making 一样，不当一页
+  [
+    'if(R.status==="making"&&!(R.photos||[]).length&&!(R.text||{}).p1)return;',
+    'if((R.status==="making"||R.status==="failed")&&!(R.photos||[]).length&&!(R.text||{}).p1)return;',
+    1,
+    "没排成不起页",
+  ],
+  // “在排”那一栏：没排成的那一步画成没排成（不画成打勾、不一直转），也不冒“打开这一页”
+  ['<div class="r ${s2.ok===false?"run":"ok"}">', '<div class="r ${s2.fail?"fail":s2.ok===false?"run":"ok"}">', 1, "没排成的那一步"],
+  ['if(r&&r.status==="done"&&!log.dataset.done){', 'if(r&&r.status==="done"&&!(r.steps||[]).some(x=>x&&x.fail)&&!log.dataset.done){', 1, "没排成不冒打开这一页"],
   // 刚打开那一下同页按它自带的 9.26 摆过一遍：从“没在哪一天”开始，打开哪一天（9.26 也算）都真的换过去
   ['let CURDAY="9.26";', 'let CURDAY="";', 1, "从哪一天都不是开始"],
   // 换到要看的那一天（PAGE_DAY 换过来那一下）以后，才许存页上的东西（之前的是 9.26 的样子，见 bridge.js）
@@ -113,13 +131,31 @@ export const PATCHES = [
     1,
     "收齐了",
   ],
+  // 回本子再点开同一天（比如交给光义、他排好了点“打开这一页”）：同页只在换了一天的时候才照那一天的 day 重摆、套版式风格，
+  // 不在编辑器里的那一会儿那一天变了（他排好了、另一台设备改了），点开看到的还是旧的。开封府这边点开同一天也重摆一回
+  [" if(changed)journalSetDay(k,fillDay);", " if(changed)journalSetDay(k,fillDay);else if(window.__kfsLazy&&EDATA[k]){try{fillDay(k);setTimeout(()=>{try{drawUL();drawBars();drawPen();drawPins()}catch(e){}},60)}catch(e){}}", 1, "点开同一天也重摆"],
+  [
+    ' if(changed&&mode!=="chat")try{applyLayout(lay,{instant:true});applyStyle(sty,{instant:true})}catch(e){}}',
+    ' if((changed||window.__kfsLazy)&&mode!=="chat")try{applyLayout(lay,{instant:true});applyStyle(sty,{instant:true})}catch(e){}}',
+    1,
+    "点开同一天也重摆",
+  ],
+  // 那一天的那一屏点“自己拼”：同页当场写一页空的 day；开封府这边点开不写，她头一回动手才起（见 bridge.js 的 touch、host.js 的 ensureDay）
+  ['try{const db=window.__jdb;db&&db.collection("day").doc(day).set(R)}catch(_){}', 'try{const db=window.__jdb;db&&!window.__kfsLazy&&db.collection("day").doc(day).set(R)}catch(_){}', 1, "自己拼点开不写"],
+  // 那一天的那一屏：没有天气的日子同页说“会从照片里读出来”（它的后端读照片里的地点）；开封府的天气是照她填的“天气在哪儿”取的
+  ['"这天的地点和天气，会从照片里读出来"', '"这天还没有天气"', 1, "天气从哪儿来"],
   // 开封府要打开某一天：本子的那一段里摆一个口子（同“自己拼”那一颗：这一天还没有页就先在这一页里起一页空的（不存，她动手了才存，见 bridge.js），
-  // 那一天取过天气的带上，天气签照它画；再进编辑器）
+  // 那一天取过天气的带上，天气签照它画；再进编辑器）。还没掺过的那一天（mode 是 day）：同本子首页点那一天，打开那一天的那一屏（交给光义、自己拼）
   [
     "\nhome();\n})();",
     '\nwindow.__kfsShell={open:function(k,mode){day=k;var n=0;(function t(){if(!DONE[k]&&!window.__kfsDaysIn&&++n<40){setTimeout(t,150);return}' +
+      'if(mode==="day"&&!DONE[k]){try{openDay(k)}catch(e){console.warn(e)}return}' +
       'if(!DONE[k]){var w=null;try{w=(G("WX")||{})[k]}catch(_){}try{ingestDay(Object.assign({day:k,status:"done",by:"her",title:"",ts:Date.now()},w&&w.code!=null?{wx:w,at:w.at||""}:{}))}catch(_){}}' +
-      'try{openEditor(document.body,mode||"view")}catch(e){console.warn(e)}})()},home:function(){try{home()}catch(e){}}};\nhome();\n})();',
+      'try{openEditor(document.body,mode==="day"?"view":mode||"view")}catch(e){console.warn(e)}})()},home:function(){try{home()}catch(e){}},' +
+      // 那一天的那一屏要的照片、原话（开封府取来的：她那天在聊天里发的照片、聊的原话，见 bridge.js 的 __bzDay）：那一天还没有的才摆上，还是那一天就再摆一回
+      // （那一屏滑进来是下一帧才算“on”，不看它）
+      'dayIn:function(k,ph,chat){try{if(ph&&ph.length&&!(PHOTOS[k]||[]).length){ph.forEach(function(u){PH[u]=u});PHOTOS[k]=ph}var C=G("CHATLOG");if(C&&chat&&chat.length&&!(C[k]||[]).length)C[k]=chat;' +
+      'if(day===k)renderDay()}catch(e){console.warn(e)}}};\nhome();\n})();',
     1,
     "开封府打开某一天",
   ],
@@ -127,6 +163,19 @@ export const PATCHES = [
 
 // 一段脚本的指纹（写进这一页的安全规矩：只有这几段跑得了）
 const sha = (s) => "'sha256-" + createHash("sha256").update(s, "utf8").digest("base64") + "'";
+
+// 同页的版式、风格各叫什么、什么样（它自己写在 LAYOUTS、STYLES 里的一句 tag）：叫他排一页的时候列给他挑（host.js 的 tyArrangeAsk）。
+// 回 { layouts: [[id, 名字, 一句话]], styles: [...] }；认不全就停下来
+export function tyKit(src) {
+  const pick = (re) => [...src.matchAll(re)].map((m) => [m[1], m[2], m[3]]);
+  const layouts = pick(/\{"id": "([a-z0-9]+)", "name": "([^"]+)", "en": "[^"]*", "tag": "([^"]*)"/g);
+  const styles = pick(/\{"id": "([a-z0-9]+)", "name": "([^"]+)", "en": "[^"]*", "src": "[^"]*", "tag": "([^"]*)"/g);
+  const nL = (src.match(/"areas": \[/g) || []).length;
+  const nS = (src.match(/"fonts": \[/g) || []).length;
+  if (!layouts.length || layouts.length !== nL) throw new Error(`同页的版式认不全：认出 ${layouts.length} 种，写着 areas 的有 ${nL} 处`);
+  if (!styles.length || styles.length !== nS) throw new Error(`同页的风格认不全：认出 ${styles.length} 种，写着 fonts 的有 ${nS} 处`);
+  return { layouts, styles };
+}
 
 // fonts：tools/tyfonts.mjs 打好的字（baseHrefs：<head> 里那几张样式表，相对这一页）；不给就不放（单测里）
 export function makeTongye(src, bridgeJs, fonts = null) {

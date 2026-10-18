@@ -5,6 +5,7 @@
 #   换版式风格、打字、聊天里的照片、相册的照片、批注、存一代、存长图；
 #   关上再开都在；打完字马上关也存上了；闲笔集里留、删批注；照片库多了六十张，点开照片照样摆齐、没动手一笔不存；
 #   第二台设备同步过去照样；他翻日记看得到这一本、他留的批注贴在页上；删掉一页（同页「存」最底下）、找回来；
+#   交给光义（那一天的那一屏 →「交给光义」→ 他排好了，她那一层一样不动；没排成说一声、不起页）；
 #   框里不带暗号来问的一概不理；云端只有乱码；框里的安全规矩没拦它自己的脚本。
 # 同页的框是隔开的（sandbox），Playwright 往里点有时点歪（框在手机模式下的坐标），框里的点都直接发给那个元素（ftap）。
 # 先在 source/ 里 npm run build:test，起好假 Supabase（8787）和测试网页（8080，用 tests/serve.py 起：照 GitHub Pages 带 Access-Control-Allow-Origin，
@@ -69,6 +70,26 @@ def fx(page, wait=25):
             pass
         time.sleep(0.3)
     return None
+
+def day_screen(page, wait=30):
+    # 框里那一页摆好了、停在那一天的那一屏（同页本子首页点一天的那一屏：交给光义、自己拼）
+    end = time.time() + wait
+    while time.time() < end:
+        try:
+            el = page.query_selector("iframe.kfs-ty-frame")
+            f = el.content_frame() if el else None
+            if f and f.evaluate("!!window.__kfsShell && document.getElementById('sDay').classList.contains('on')"):
+                time.sleep(0.8)
+                return f
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return None
+
+def self_page(page, f):
+    # 那一天的那一屏点“自己拼”：进编辑器
+    ftap(f, "#toSelf")
+    return fx(page)
 
 def ftap(f, sel, i=0):
     f.evaluate("([s, i]) => { const e = document.querySelectorAll(s)[i]; if (!e) throw new Error('没有 ' + s); e.click(); }", [sel, i])
@@ -243,15 +264,21 @@ with sync_playwright() as p:
         pick_day(pa, td)
         ok(pa.locator(".kfs-jz-open").inner_text().strip() == "掺一页手帐", "今天还没掺：卡片是“掺一页手帐”")
         pa.locator(".kfs-jz-open").click()
-        f = fx(pa)
-        ok(f is not None and "自己拼" in f.evaluate("document.querySelector('.top h1').innerText"), "点开：同页的编辑器，“自己拼”")
+        f = day_screen(pa)
+        ok(f is not None and f.evaluate("document.getElementById('toChat').offsetParent !== null && document.getElementById('toSelf').offsetParent !== null")
+           and "交给光义" in f.evaluate("document.getElementById('toChat').innerText"), "点开：同页那一天的那一屏（本子首页点一天的那一屏），「交给光义」「自己拼」两颗")
+        ok(fwait(f, "document.querySelectorAll('#dayThumbs img').length === 2 && [...document.querySelectorAll('#dayThumbs img')].every((i) => i.naturalWidth > 0)")
+           and re.search(r"2\s*张照片", f.evaluate("document.getElementById('dayFound').innerText")) and not re.search(r"样吃的", f.evaluate("document.getElementById('dayFound').innerText")),
+           f"照片那一栏是她今天在聊天里发的两张，聊了几句照今天的原话数（“几样吃的”开封府没有，不摆）（{f.evaluate('document.getElementById(\'dayFound\').innerText')!r}，{f.evaluate('[...document.querySelectorAll(\'#dayThumbs img\')].map((i) => i.naturalWidth)')}）")
+        f = self_page(pa, f)
+        ok(f is not None, "点“自己拼”：进同页的编辑器")
         close_ty(pa, f)
         ok(kvj(pa, f"kfs2:ty:day/{today}") is None and kvj(pa, f"kfs2:ty:page/{today}") is None and pa.locator(".kfs-jz-open").inner_text().strip() == "掺一页手帐",
            "什么都没动就关了：这一页不留（同原来那一版“点开不动不存”），卡片还是“掺一页手帐”")
 
         # ================= 天气在哪儿 =================
         pa.locator(".kfs-jz-open").click()
-        f = fx(pa)
+        f = self_page(pa, day_screen(pa))
         ftap(f, "#cfgBtn"); time.sleep(0.4)
         ok(fwait(f, "document.querySelector('.kfs-city-now') && /还没填/.test(document.querySelector('.kfs-city-now').innerText)"), "同页的设置里多了一节“天气在哪儿”：还没填")
         f.evaluate("(() => { const i = document.querySelector('.kfs-city-in'); i.value = '某城'; })()")
@@ -434,7 +461,7 @@ with sync_playwright() as p:
            "昨天变回“掺一页手帐”；那一页连批注挪进废纸篓（同页的 trash）")
         ok(pa.locator(".kfs-page .kfs-jz-tag").count() == 1, "日历上昨天的 🏷️ 没了（原来那一版的存档还在，也不再挪一回）")
         pa.locator(".kfs-jz-open").click()
-        f = fx(pa)
+        f = self_page(pa, day_screen(pa))
         ftap(f, "#saveBtn")
         ok(fwait(f, "document.querySelectorAll('#trashList [data-tr]').length === 1"), "再点开昨天（一页空的）、「存」最底下：最近删掉的有一页")
         ftap(f, "#trashList [data-tr]")
@@ -443,10 +470,86 @@ with sync_playwright() as p:
         ok(R and R["title"] == "泡桐花" and kvj(pa, "kfs2:ty:notes/nold1") and not trash_keys(pa), f"找回来了：那一页、批注都在，废纸篓空了（点开那一下什么都没写，没多出一页空的进废纸篓：{trash_keys(pa)}）")
         ok("泡桐花" in pa.locator(".kfs-jz-open").inner_text() and pa.locator(".kfs-page .kfs-jz-tag").count() == 2, "闲笔集里昨天的卡片、🏷️ 都回来了")
 
+        # ================= 交给光义：另问他一回，不进聊天；她那一层一样不动 =================
+        P_before = kvj(pa, f"kfs2:ty:page/{today}")
+        look_before = kvj(pa, f"kfs2:tyls:journalLook:{today}")
+        _, msgs_before = chat_of(pa)
+        pick_day(pa, td)
+        pa.locator(".kfs-jz-open").click()
+        f = fx(pa)
+        ftap(f, ".backhome"); time.sleep(0.8)
+        ftap(f, "#shToday")
+        ok(fwait(f, "document.getElementById('sDay').classList.contains('on')"), "编辑器回本子、点今天：那一天的那一屏")
+        n0 = len(calls())
+        ftap(f, "#toChat")
+        ok(fwait(f, "document.getElementById('sChat').classList.contains('on') && /交给我吧/.test(document.getElementById('msgs').innerText)"), "「交给光义」：同页原来的那一屏（他开场那一句是同页原来的）")
+        ok(fwait(f, "document.querySelectorAll('#att .ap img').length === 2 && [...document.querySelectorAll('#att .ap img')].every((i) => i.naturalWidth > 0)"),
+           "先挑上她今天在聊天里发的那两张（她能拿掉、能从相册再添）")
+        f.evaluate("(() => { const t = document.getElementById('chIn'); t.value = '安安静静的，标题带尖括号'; })()")
+        ftap(f, "#chSend")
+        ok(fwait(f, "!!document.querySelector('#msgs .done')", 40), "发出去：“在排”那一栏一步一步亮，排好了冒出“打开这一页”")
+        log = f.evaluate("[...document.querySelectorAll('#msgs .log .r')].map((r) => r.className + '|' + r.innerText.replace(/\\n/g, ' '))")
+        ok(len(log) == 2 and all(" ok|" in x for x in log) and "看了这天的照片和聊天" in log[0] and "2 张照片" in log[0] and "排好了" in log[1] and "照你挑的版式风格" in log[1],
+           f"“在排”那一栏：看了这天的照片和聊天、排好了（她自己挑过版式风格，照她的）（{log}）")
+        arr = [c for c in calls()[n0:] if any(str(x.get("text", "")).startswith("【排手帐】") for x in (c["body"].get("system") or []) if isinstance(x, dict))]
+        ok(len(arr) == 1, f"另问了他一回（{len(arr)}）")
+        body = arr[0]["body"] if arr else {}
+        utext = "\n".join(b.get("text", "") for b in (body.get("messages") or [{}])[0].get("content", []) if b.get("type") == "text")
+        imgs = [b for b in (body.get("messages") or [{}])[0].get("content", []) if b.get("type") == "image"]
+        ok("她说想要：安安静静的，标题带尖括号" in utext and "照片1（她发过来的" in utext and "照片2（她发过来的" in utext and len(imgs) == 2 and "｜卿卿｜今天看到泡桐花了" in utext
+           and "她自己挑的版式、风格：拍立得墙 × 牛皮纸" in utext and "“泡桐花开了”" in utext and "天气：小雨" in utext and not body.get("tools"),
+           "寄给他的：她想要的、她挑的两张照片（图跟着）、今天的原话（带编号）、她动过的（挑的版式风格、页上打的字）、天气；不带工具")
+        _, msgs_after = chat_of(pa)
+        ok(len(msgs_after) == len(msgs_before), "不进聊天（聊天里一条都没多）")
+        R = kvj(pa, f"kfs2:ty:day/{today}")
+        ok(R and R["by"] == "me" and R["status"] == "done" and R["title"] == "（测试排的）＜b＞泡桐花＜/b＞" and R["layout"] == "bento" and R["style"] == "film" and R.get("at") == "某城" and R["wx"]["code"] == 61,
+           f"今天的 day 换成他排的：标题里的尖括号换成全角的、他挑的版式风格记着、天气在哪儿带上（{ {k: R.get(k) for k in ['by', 'title', 'layout', 'style']} if R else None}）")
+        ok(R and [p["role"] for p in R["photos"]] == ["hero", ""] and all(p["src"].startswith("kfsimg:") and pa.evaluate(KV, "kfs2:jzimg:" + p["src"][7:]) for p in R["photos"]),
+           "照片：他挑的两张（一张主照片，只挑了一张双联照不成对），从聊天里另存一份（编的那一张不要）")
+        ok(R and len(R["chat"]) == 2 and all(q["p"] and q["p"] != "编的编号" for q in R["chat"]), "原话：照编号抄两句（编的编号认不出，不要）")
+        ok(kvj(pa, f"kfs2:ty:page/{today}") == P_before and kvj(pa, f"kfs2:tyls:journalLook:{today}") == look_before, "她那一层一样没动：她贴的、打的字、藏的，她挑的版式风格")
+        mine_note = [kvj(pa, k) for k in pa.evaluate(TYKEYS) if k.startswith("kfs2:ty:notes/")]
+        ok(any(n and n["who"] == "me" and n["text"] == "（测试批注）这张我最喜欢" and n["b"] == "he" and n["day"] == today for n in mine_note), "他顺手留的一条批注：贴在主照片旁边")
+        asks = [kvj(pa, k) for k in pa.evaluate(TYKEYS) if k.startswith("kfs2:ty:ask/")]
+        ok(len(asks) == 1 and asks[0]["status"] == "done" and asks[0]["day"] == today and len(asks[0]["photos"]) == 2 and all(x.startswith("kfschat:") for x in asks[0]["photos"]),
+           f"她发的那一张 ask：寄的照片是开封府认得的编号（聊天里的），排好了记成 done（{asks}）")
+        ftap(f, "#msgs .done")
+        ok(fwait(f, "document.documentElement.classList.contains('app-mode')", 15), "点“打开这一页”：进编辑器")
+        time.sleep(1.5)
+        st = page_state(f)
+        ok(st["layout"] == "polaroid" and st["style"] == "kraft" and "（测试排的）＜b＞泡桐花＜/b＞" in (st["title"] or "") and f.evaluate("!document.querySelector('.title h2 b')")
+           and len(st["pics"]) == 3 and "text:泡桐花开了" in st["stk"] and st["pins"] == 3,
+           f"那一页：照她挑的拍立得墙、牛皮纸；题签是他起的（尖括号照字摆，没当成加粗）；她放的三张照片、打的字都在；批注三颗（{st}）")
+        ftap(f, ".backhome"); time.sleep(0.8)
+        f.evaluate("(() => { try { window.__kfsShell.home(); } catch (e) {} })()"); time.sleep(0.6)
+        ok(f.evaluate("[...document.querySelectorAll('#rec .card b')].some((b) => b.textContent.includes('（测试排的）＜b＞泡桐花') && !b.querySelector('b'))"),
+           "本子首页那一列：他起的标题照字摆（同页那儿是直接当 HTML 画的，尖括号换成全角就画不成别的）")
+        close_ty(pa, f)
+        card = pa.locator(".kfs-jz-open").inner_text()
+        ok("（测试排的）＜b＞泡桐花＜/b＞" in card and "拍立得墙 × 牛皮纸" in card and "他排的" in card, f"闲笔集今天的卡片：他起的标题、她挑的版式风格、他排的（{card!r}）")
+
+        # ================= 交给光义，没排成：说一声，不起页 =================
+        f3 = td - timedelta(days=3)
+        pick_day(pa, f3)
+        ok(pa.locator(".kfs-jz-open").inner_text().strip() == "掺一页手帐", "三天前还没掺")
+        pa.locator(".kfs-jz-open").click()
+        f = day_screen(pa)
+        ok(f is not None and fwait(f, "/还没传照片/.test(document.getElementById('dayThumbs').innerText)"), "那一天的那一屏：那天聊天里没有照片，照同页说一句")
+        ftap(f, "#toChat")
+        ok(fwait(f, "document.getElementById('sChat').classList.contains('on')") and f.evaluate("document.querySelectorAll('#att .ap').length") == 0, "「交给光义」：没有照片可挑")
+        f.evaluate("(() => { const t = document.getElementById('chIn'); t.value = '排坏'; })()")
+        ftap(f, "#chSend")
+        ok(fwait(f, "!!document.querySelector('#msgs .log .r.fail')", 30) and "没排成" in f.evaluate("document.querySelector('#msgs .log .r.fail').innerText") and not f.evaluate("!!document.querySelector('#msgs .done')"),
+           "他回的看不懂：“在排”那一栏说没排成（打叉），不冒“打开这一页”")
+        R3 = kvj(pa, f"kfs2:ty:day/{f3.isoformat()}")
+        ok(R3 and R3["status"] == "failed" and not R3.get("title") and not R3.get("photos"), "那一天记的是没排成（什么都没有）")
+        close_ty(pa, f)
+        ok(pa.locator(".kfs-jz-open").inner_text().strip() == "掺一页手帐" and pa.locator(f".kfs-page button[data-day='{f3.isoformat()}'] .kfs-jz-tag").count() == 0, "闲笔集里还是“掺一页手帐”，日历上不标")
+
         # ================= 云端只有乱码 =================
         rows = mock("/__debug/rows")
         flat = json.dumps(rows, ensure_ascii=False)
-        leaks = [w for w in ["泡桐花", "蹲着拍的", "那天真好", "某城", "kraft", "polaroid", "journalLook", "kfsimg", "kfs2:ty"] if w in flat]
+        leaks = [w for w in ["泡桐花", "蹲着拍的", "那天真好", "某城", "kraft", "polaroid", "journalLook", "kfsimg", "kfs2:ty", "测试排的", "kfschat", "安安静静的"] if w in flat]
         ok(not leaks, f"云端只有乱码（字、城市、版式风格、键名都看不见：{leaks}）")
     except Exception as e:
         import traceback; traceback.print_exc()

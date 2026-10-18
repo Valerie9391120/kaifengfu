@@ -129,6 +129,8 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
       alive = false;
     };
   }, [sel, jzTick]);
+  // 那一本里哪一天变了（他排好了、正排着、没排成）：重看一遍（小卡片上的“光义正在排”跟着换）
+  useEffect(() => (jz && jz.watch ? jz.watch(() => setJzTick((t) => t + 1)) : undefined), []);
 
   useEffect(() => {
     loadDays().then((c) => setCounts(c || {}));

@@ -142,10 +142,10 @@ function fakeDiary(body) {
   return null;
 }
 
-// 闲笔集里掺的手帐：她点“让光义排”（tests/e2e_jz.py 用，见 src/jz/model.js 的 buildArrangeAsk）。跟在名帖后面的那段规矩是【排手帐】开头的。
-// 照寄来的编号排：原话挑头两句（再编一个不存在的，开封府该认不出），头一张照片当主照片、最后一张当饭（只有一张就只挑它），
-// 贴纸挑四个（一个不存在）；留一条批注贴在主照片旁边。她说的“想要”抄进正文（看得出带过来了）。
-// 她说想要“排坏”：回一段没有 [JZ] 的话；“排空”：[JZ] 里是 {}（两样都该“没排成”，这一页原样不动）
+// 闲笔集里的手帐（同页那一本）：她在「交给光义」那一屏点了发送（tests/e2e_tongye.py 用，见 src/tongye/host.js 的 tyArrangeAsk）。
+// 跟在名帖后面的那段规矩是【排手帐】开头的。照寄来的编号排：原话挑头两句（再编一个不存在的，开封府该认不出），
+// 头一张照片当主照片、第二三张当双联照（有的话），再编一张不存在的当截图；留一条批注贴在主照片旁边。她说的“想要”抄进正文（看得出带过来了）。
+// 她说想要“排坏”：回一段没有 [JZ] 的话；“排空”：[JZ] 里是 {}（两样都该“没排成”）；“尖括号”：标题里夹一段 <b>…</b>（开封府该换成全角的）
 function fakeArrange(body) {
   const rule = Array.isArray(body.system) ? body.system.map((x) => x.text || "").find((t) => t.startsWith("【排手帐】")) : "";
   if (!rule) return null;
@@ -156,18 +156,17 @@ function fakeArrange(body) {
   if (/排坏/.test(wish)) return { status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text: "我想了想，不排了。" }], usage } };
   if (/排空/.test(wish)) return { status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text: "[JZ]\n{}\n[/JZ]" }], usage } };
   const qids = [...all.matchAll(/^(\S+)｜\d\d:\d\d｜/gm)].map((m) => m[1]);
-  const tags = [...new Set([...all.matchAll(/照片(\d+)/g)].map((m) => "照片" + m[1]))];
+  const tags = [...new Set([...all.matchAll(/照片(\d+)（/g)].map((m) => "照片" + m[1]))];
   const o = {
     layout: "bento",
     style: "film",
-    title: "（测试排的）泡桐花",
-    body: `她说看到了，我也想看。${wish ? `她要的：${wish}` : ""}`,
+    title: /尖括号/.test(wish) ? "（测试排的）<b>泡桐花</b>" : "（测试排的）泡桐花",
+    p1: `她说看到了，我也想看。${wish ? `她要的：${wish}` : ""}`,
     cap: "运河边",
     pen: { text: "[[紫色]]的，一串一串", margin: "记得" },
     quotes: qids.slice(0, 2).concat(["编的编号"]),
-    photos: [tags[0] ? { id: tags[0], role: "hero", note: "运河" } : null, tags.length > 1 ? { id: tags[tags.length - 1], role: "food", note: "米线" } : null].filter(Boolean),
-    stickers: ["狐狸", "画的心", "卿卿", "不存在的贴纸"],
-    note: { text: "（测试批注）这张我最喜欢", part: "hero" },
+    photos: [tags[0] ? { id: tags[0], role: "hero", note: "运河" } : null, tags[1] ? { id: tags[1], role: "pair" } : null, tags[2] ? { id: tags[2], role: "pair" } : null, { id: "照片99", role: "sh" }].filter(Boolean),
+    note: { text: "（测试批注）这张我最喜欢", b: "he" },
   };
   const think = /^claude-(fable|opus|sonnet)-5/.test(String(body.model)) ? [{ type: "thinking", thinking: "", signature: "测试用的签名" }] : [];
   return { status: 200, json: { model: body.model, stop_reason: "end_turn", content: think.concat([{ type: "text", text: `排好了。\n[JZ]\n${JSON.stringify(o)}\n[/JZ]` }]), usage } };

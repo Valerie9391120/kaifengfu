@@ -31,7 +31,7 @@ import { Icon } from "./ui/Icon.jsx";
 import { HIS_DEFAULT, Avatar } from "./ui/Avatar.jsx";
 import { Glows, IconBtn, SHEET_TITLE, Sheet, Toggle, RoundBtn } from "./ui/parts.jsx";
 import { buildSystem, withNowNote } from "./prompt/system.js";
-import { sameAv, buildMessages } from "./prompt/messages.js";
+import { sameAv, buildMessages, dataUrlBlock } from "./prompt/messages.js";
 import { buildRecapAsk, buildMergeAsk } from "./prompt/recap.js";
 import { DaysCard, Tile, HistoryCard } from "./side/Cards.jsx";
 import { ChatMenu } from "./side/ChatMenu.jsx";
@@ -45,7 +45,7 @@ import { SplashByTheme } from "./Splash.jsx";
 import { NickTitle } from "./panels/NickTitle.jsx";
 import { MdView } from "./panels/MdView.jsx";
 import { DiaryPage } from "./panels/DiaryPage.jsx";
-import { JZCFG_KEY } from "./jz/model.js";
+import { JZCFG_KEY, materialsOf } from "./jz/model.js";
 import { dayWeather } from "./jz/weather.js";
 import { HistoryPage } from "./panels/HistoryPage.jsx";
 import { HisAvatarCard, AvatarSection } from "./panels/AvatarSection.jsx";
@@ -69,7 +69,36 @@ import { createEchoProbe, ECHO_LINE, ECHO_KEY } from "./call/echo.js";
 import { EchoProbe } from "./call/EchoProbe.jsx";
 import { pendingCall, ringLeft, CALL_RING_MS } from "./call/incoming.js";
 import { createBarge, echoOf, ackOnly, cutPlan, cutItems } from "./call/barge.js";
-import { TY_IMG, madeDays, infoOf, notesOf, addNoteTo, dropNoteOf, openMode, migrateAll, fillWeather, tyReader } from "./tongye/host.js";
+import {
+  TY_IMG,
+  TY_KV,
+  TY_LS,
+  TY_LAYOUTS,
+  TY_STYLES,
+  TY_PHOTO_MAX,
+  TY_STALE,
+  madeDays,
+  infoOf,
+  notesOf,
+  addNoteTo,
+  dropNoteOf,
+  openMode,
+  migrateAll,
+  fillWeather,
+  tyReader,
+  dayRecOf,
+  pageRecOf,
+  herLookOf,
+  tyArrangeAsk,
+  parseTyArrange,
+  makingDay,
+  failedDay,
+  arrangedDay,
+  settleStale,
+  tyTag,
+  tyChanged,
+  onTyChanged,
+} from "./tongye/host.js";
 import { IncomingCall } from "./call/IncomingCall.jsx";
 import { isCallMark } from "./call/marks.js";
 
@@ -4062,12 +4091,217 @@ export default function App({ account = {} }) {
       if (await tySync()) await migrateAll(store);
     } catch (e) {}
   };
+  // ---- 光义排一页（同页的「交给光义」，见 tongye/host.js 的 tyArrangeAsk） ----
+  // 她在那一屏挑照片、说一句想要什么样，点了发送（同页写了一张 ask/<编号>，makeServer 交过来）：另问他一回，跟让他写日记一样不进聊天、不进前情提要。
+  // 那一天的 day 记着进度（同页“在排”那一栏、本子首页“光义在做”照着亮）；排好了写成他排的那一页；没排成放回原样，“在排”那一栏说一声。
+  // 这台设备上同一天正排着、另一台设备十分钟以内起的还在排：不再起一回（那一张记成 busy）
+  const tyBusy = useRef(new Set());
+  // 一道保险：十分钟里最多排六回（同页那一页要是出了岔子一直写 ask，不会一直花钱）
+  const tyRuns = useRef([]);
+  const tyArrange = async (ask) => {
+    const day = ask.day;
+    const key = `${TY_KV}day/${day}`;
+    const askKey = `${TY_KV}ask/${ask.id}`;
+    const markAsk = (status) => {
+      const a = safeParse(store.peek(askKey), null);
+      if (a && typeof a === "object") store.set(askKey, JSON.stringify({ ...a, status, end: Date.now() })).catch(() => {});
+    };
+    const prev = dayRecOf(store, day);
+    if (tyBusy.current.has(day) || (prev && prev.status === "making" && prev.mk && Date.now() - (Number(prev.mk.at) || 0) < TY_STALE)) {
+      markAsk("busy");
+      return;
+    }
+    tyBusy.current.add(day);
+    const write = async (R) => {
+      if (!(await store.set(key, JSON.stringify(R)))) {
+        markStorageFail();
+        throw Object.assign(new Error("存不进去"), { why: "存不进去（存档满了？），腾出地方再交给我一回" });
+      }
+      tyChanged([key]);
+    };
+    const t0 = Date.now();
+    tyRuns.current = tyRuns.current.filter((t) => t0 - t < 10 * 60 * 1000);
+    if (tyRuns.current.length >= 6) {
+      try {
+        await write(failedDay(makingDay(prev, day, [], t0), day, [{ a: "没排成", b: "这一会儿交给我太多回了，过几分钟再来", fail: 1 }], t0));
+      } catch (e) {}
+      tyBusy.current.delete(day);
+      markAsk("busy");
+      return;
+    }
+    tyRuns.current.push(t0);
+    let steps = [{ a: "在读这天的照片和聊天", ok: false }];
+    let making = makingDay(prev, day, steps);
+    try {
+      await write(making);
+    } catch (e) {
+      tyBusy.current.delete(day);
+      markAsk("failed");
+      return;
+    }
+    try {
+      // 原料：那一天的原话、照片（她发过来的在前，再是这一页上原来的、那天聊天里的），最多十张，长边 512
+      if (!dayMsgsRef.current[day]) await loadDays();
+      const mats = materialsOf(dayMsgsRef.current[day] || []);
+      const chatT = (imgId) => (mats.photos.find((p) => p.imgId === imgId) || {}).t || "";
+      const cands = [];
+      const add = (ref, from, t) => {
+        if (cands.length < TY_PHOTO_MAX && !cands.some((c) => c.ref === ref)) cands.push({ ref, from, t });
+      };
+      ask.photos.forEach((r) => {
+        // 聊天里的只认这一天的
+        if (r.startsWith("kfschat:") && !mats.photos.some((p) => p.imgId === r.slice(8))) return;
+        add(r, "asked", r.startsWith("kfschat:") ? chatT(r.slice(8)) : "");
+      });
+      const was = making.mk.prev;
+      ((was && was.photos) || []).forEach((p) => p && typeof p.src === "string" && /^kfsimg:[A-Za-z0-9_-]+$/.test(p.src) && add(p.src, "page", p.t || ""));
+      mats.photos.forEach((p) => add("kfschat:" + p.imgId, "chat", p.t));
+      const shown = [];
+      const blocks = [];
+      for (const c of cands) {
+        const data = c.ref.startsWith("kfsimg:") ? await store.get(TY_IMG + c.ref.slice(7)) : imgsRef.current[c.ref.slice(8)] || (await store.get("kfs2:img:" + c.ref.slice(8)));
+        if (typeof data !== "string" || !data.startsWith("data:image/")) continue;
+        let thumb = data;
+        try {
+          thumb = await urlToThumb(data, 512);
+        } catch (e) {}
+        const blk = dataUrlBlock(thumb);
+        if (!blk) continue;
+        const tag = tyTag(shown.length);
+        shown.push({ ...c, tag, data });
+        blocks.push({ type: "text", text: tag }, blk);
+      }
+      steps = [
+        { a: "看了这天的照片和聊天", b: `${shown.length} 张照片 · ${mats.quotes.length} 句原话`, ok: true },
+        { a: "在排", b: "挑照片、挑原话、起标题", ok: false },
+      ];
+      making = { ...making, steps };
+      await write(making);
+
+      // 问他：名帖照写日记那一回（不带工具，不带【日记本】那一段），后面跟【排手帐】
+      const st = settingsRef.current;
+      const model = st.model || DEFAULT_MODEL;
+      const d = parseDayKey(day);
+      const label = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 星期${WEEK[d.getDay()]}`;
+      const docs = memFilesRef.current.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
+      const { staticText, nowNote } = buildSystem({
+        now: new Date(),
+        memeList: allMemes,
+        hisAvatarName: avatarName(avatarsRef.current.him),
+        memDocs: docs,
+        mcpNames: [],
+        voice: !!st.voice,
+        thoughts: st.thoughts !== false,
+        callable: st.callable !== false,
+        diary: false,
+      });
+      const diary = ((await loadMonth(day.slice(0, 7))) || {})[day] || {};
+      const P = pageRecOf(store, day) || {};
+      const keep = {
+        hide: (P.hide || []).filter((k) => typeof k === "string"),
+        texts: (P.stk || []).filter((o) => o && o.c === "text" && !o.me1 && typeof o.m === "string" && o.m.trim()).map((o) => o.m.trim()),
+        title: (was && was.herTitle) || "",
+        look: herLookOf(store, day, was),
+      };
+      const wxRec = (was && was.wx) || safeParse(store.peek(`${TY_KV}wx/${day}`), null);
+      const wx = wxRec && Number.isFinite(wxRec.code) ? wxRec : null;
+      const at = (was && was.at) || (wxRec && wxRec.at) || "";
+      const q = tyArrangeAsk({ label, her: namesRef.current.her || HER_NAME, quotes: mats.quotes, photos: shown, diary, wx, at, wish: ask.text, keep });
+      let data;
+      try {
+        data = await callClaude({
+          model,
+          max_tokens: thinksFirst(model) ? 8000 : 3000,
+          system: [
+            { type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } },
+            { type: "text", text: q.rule },
+          ],
+          messages: [{ role: "user", content: [{ type: "text", text: `${q.text}\n\n${nowNote}` }].concat(blocks) }],
+        });
+      } catch (e) {
+        throw Object.assign(new Error(String((e && e.message) || e)), { why: "没连上，等一会儿再交给我一回" });
+      }
+      recordUsage(data);
+      const said = (data.content || [])
+        .filter((b) => b.type === "text")
+        .map((b) => b.text)
+        .join("\n");
+      const A = parseTyArrange(said, mats.quotes, shown.map((x) => x.tag));
+
+      // 他挑的聊天里的照片另存一份（长边 1000，同“聊天里的照片”放上纸那条路；聊天删了它还在）
+      const srcOf = {};
+      for (const p of A.photos) {
+        const c = shown.find((x) => x.tag === p.tag);
+        if (!c) continue;
+        if (c.ref.startsWith("kfsimg:")) {
+          srcOf[p.tag] = c.ref;
+          continue;
+        }
+        let img = c.data;
+        try {
+          img = await urlToThumb(c.data, 1000);
+        } catch (e) {}
+        const id = "ty" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        if (!(await store.set(TY_IMG + id, img))) {
+          markStorageFail();
+          throw Object.assign(new Error("存不进去"), { why: "存不进去（存档满了？），腾出地方再交给我一回" });
+        }
+        srcOf[p.tag] = "kfsimg:" + id;
+      }
+      const nPh = A.photos.filter((p) => srcOf[p.tag]).length;
+      const look = `${A.layout ? TY_LAYOUTS[A.layout] : "版式本子挑"} × ${A.style ? TY_STYLES[A.style] : "风格本子挑"}`;
+      const done = [steps[0], { a: "排好了", b: `${keep.look ? "照你挑的版式风格" : look} · 照片 ${nPh} 张 · 原话 ${A.quotes.length} 句`, ok: true }];
+      // 排的这一会儿她自己起了标题：照她起的（读这会儿的那一份）
+      const cur = dayRecOf(store, day);
+      const herTitle = (cur && cur.herTitle) || (was && was.herTitle) || "";
+      await write(
+        arrangedDay(herTitle, A, {
+          day,
+          src: (tag) => srcOf[tag],
+          time: (tag) => (shown.find((x) => x.tag === tag) || {}).t || "",
+          wx,
+          at,
+          now: Date.now(),
+          steps: done,
+        })
+      );
+      // 这一页同页记着的版式风格要是她没改过（离开那一天的时候自动记的），拿掉：照他挑的摆
+      if (!keep.look && store.peek(`${TY_LS}journalLook:${day}`) != null) {
+        await store.del(`${TY_LS}journalLook:${day}`);
+        tyChanged([`${TY_LS}journalLook:${day}`]);
+      }
+      // 他想留一句批注
+      if (A.note) {
+        const id = "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+        const n = { id, day, who: "me", text: A.note.text, at: Date.now(), re: null, b: A.note.b, fx: 0.9, fy: A.note.b ? 0.12 : 0.06 };
+        if (await store.set(`${TY_KV}notes/${id}`, JSON.stringify(n))) tyChanged([`${TY_KV}notes/${id}`]);
+      }
+      markAsk("done");
+    } catch (e) {
+      const why = (e && e.why) || "没排出来，再交给我一回试试";
+      try {
+        await write(failedDay(making, day, [...steps.filter((s) => s.ok !== false), { a: "没排成", b: why, fail: 1 }]));
+      } catch (x) {}
+      markAsk("failed");
+    } finally {
+      tyBusy.current.delete(day);
+    }
+  };
   const tyApi = {
-    // 掺过手帐的那几天（闲笔集的日历格子上标一个 🏷️）。原来那一版掺的页先挪过来（挪过的不再挪；对过云端才挪）
+    // 掺过手帐的那几天（闲笔集的日历格子上标一个 🏷️）。原来那一版掺的页先挪过来（挪过的不再挪；对过云端才挪）；
+    // 排到一半断了的（开封府被关了），当没排成
     days: async () => {
       await tyMigrate();
+      try {
+        await settleStale(store, tyBusy.current);
+      } catch (e) {}
       return madeDays(store);
     },
+    // 那一天有变化（他排好了、另一台设备改了）：闲笔集重看一遍
+    watch: (fn) =>
+      onTyChanged((keys) => {
+        if (keys.some((k) => k.startsWith(`${TY_KV}day/`) || k.startsWith(`${TY_KV}notes/`))) fn();
+      }),
     info: async (day) => {
       const i = infoOf(store, day);
       if (!i) return null;
@@ -4090,7 +4324,8 @@ export default function App({ account = {} }) {
         return null;
       }
     },
-    // 点开之前：先跟云端对一回（见上面 tySync），掺过了是看、没掺是自己拼；点开的时候什么都不写（她头一回动手才起那一天的 day，见 host.js 的 ensureDay）。
+    // 点开之前：先跟云端对一回（见上面 tySync），掺过了是看、没掺是打开那一天的那一屏（交给光义、自己拼）；
+    // 点开的时候什么都不写（她头一回动手才起那一天的 day，见 host.js 的 ensureDay）。
     // 她填过天气在哪儿、这一天还没取过，取一回（取到了告诉框里）
     prepare: async (day) => {
       await tyMigrate();
@@ -4114,6 +4349,8 @@ export default function App({ account = {} }) {
         },
         chatImg: async (imgId) => imgsRef.current[imgId] || (await store.get("kfs2:img:" + imgId)) || null,
         onFail: markStorageFail,
+        // 她在「交给光义」那一屏点了发送
+        onAsk: (ask) => tyArrange(ask),
       };
     },
   };
