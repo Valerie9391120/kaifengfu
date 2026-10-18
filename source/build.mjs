@@ -4,7 +4,7 @@ import { build } from "esbuild";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import { makeTongye } from "./tools/tongye.mjs";
+import { makeTongye, tyKit } from "./tools/tongye.mjs";
 import { makeTyFonts } from "./tools/tyfonts.mjs";
 
 const OUT = process.env.KFS_OUT || "dist";
@@ -155,6 +155,8 @@ const tyBridge = await build({
   define: { __KFS_TYFONTS__: JSON.stringify(tyFonts.manifest) },
 });
 const ty = makeTongye(tySrc, tyBridge.outputFiles[0].text, tyFonts);
+// 同页的版式、风格各叫什么、什么样：叫他排一页的时候列给他挑（tongye/host.js 的 tyArrangeAsk）
+define.__KFS_TYKIT__ = JSON.stringify(tyKit(tySrc));
 const tyBuf = Buffer.from(
   ty.html.replace(
     "<!doctype html>",

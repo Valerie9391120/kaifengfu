@@ -6,6 +6,8 @@
 //   kfs2:tyls:<键>          同页存在“这台设备上”的那几样（这一天挑的版式风格、常用的贴纸……），也跟着云端走
 //   kfs2:jzimg:<编号>       照片（跟原来那版手帐同一处）
 import { materialsOf, readPage as readOldPage, readNotes as readOldNotes, JZ_KEY, JZN_KEY } from "../jz/model.js";
+import { MOODS } from "../diary.js";
+import { clip } from "../recap.js";
 import { yearAgoOf } from "./dates.js";
 
 export const TY_KV = "kfs2:ty:";
@@ -103,6 +105,8 @@ export function infoOf(store, day) {
     sub: `${TY_LAYOUTS[layout] || layout} × ${TY_STYLES[style] || style}`,
     by: R.by === "me" ? "him" : "her",
     heroId,
+    // 交给他排了、他正排着
+    making: R.status === "making",
   };
 }
 
@@ -117,14 +121,16 @@ export async function dropNoteOf(store, day, id) {
   return notesOf(store, day);
 }
 
-// 点开是看（view，掺过了）还是自己拼（self）：点开的时候什么都不写
-export const openMode = (store, day) => (madeOf(store, day) ? "view" : "self");
+// 点开是看（view，掺过了）还是打开那一天的那一屏（day：同页本子首页点那一天，交给光义、自己拼两颗）：点开的时候什么都不写
+export const openMode = (store, day) => (madeOf(store, day) ? "view" : "day");
 
 // 她在那一页上头一回真的动了（同页要存那一页、存一代，见 bridge.js 的 touch）：那一天还没有 day，起一个空的（同同页的“自己拼”），
 // 那一天取过的天气一起写进去（天气签照它画）。点开不动就不起：什么都不写，也就没有要收拾的（同原来那版“点开不动不存”），
-// 另一台设备做好、这台还没同步下来的那一页，也不会被这边起的空页盖掉、被收拾的时候删掉。起了回 true
+// 另一台设备做好、这台还没同步下来的那一页，也不会被这边起的空页盖掉、被收拾的时候删掉。起了回 true。
+// 交给他排、没排成的那一天（status 是 failed，什么都没有）当没有 day
 export async function ensureDay(store, day, now = Date.now()) {
-  if (dayRecOf(store, day)) return false;
+  const had = dayRecOf(store, day);
+  if (had && had.status !== "failed") return false;
   const R = { day, status: "done", by: "her", title: "", ts: now };
   const w = parse(store.peek(`${TY_KV}wx/${day}`));
   if (w && Number.isFinite(w.code)) {
@@ -412,6 +418,234 @@ export function chatOf(msgs) {
   return materialsOf(msgs).quotes.map((q) => ({ w: q.w === "him" ? "me" : "her", t: q.t, p: q.p }));
 }
 
+// ---------- 光义排一页（同页的「交给光义」） ----------
+// 她在那一屏挑几张照片、说一句想要什么样，点发送：同页写一张 ask/<编号>（makeServer 的 set 看见了交给 App.jsx 的 tyArrange），
+// 开封府另问他一回（跟让他写日记一样不进聊天、不进前情提要），他回一段 JSON，这里照规矩收拾成那一天的 day（他排的那一份）。
+// 规矩照同页给 agent 的说明（vendor/tongye/server/AGENT.md）和上一版定的（开发说明“闲笔集掺手帐”那一节第 8 条）：
+//   原话只认编号、字照原话抄；照片只认编号；没有的不编（照片里没有地点就不画路线、没有天气就空着）；
+//   她那一层（page/<日子>：她贴的、打的字、藏的零件）一样不碰；她自己起的标题、自己挑过的版式风格照她的。
+// 排的时候 day 里记着进度：status 是 making，steps 一步一步写（同页“在排”那一栏、本子首页“光义在做”照着亮），
+// mk 里记着排之前那一份（没排成放回去）。
+
+// 同页的版式、风格各是什么样（build.mjs 从同页那一页里抄出来的，tools/tongye.mjs 的 tyKit）；单测里没有，只给名字。
+// 路线图那一种不给他挑：开封府的照片里没有地点，路线画不出来，那一种最上面会空着
+/* global __KFS_TYKIT__ */
+const KIT = typeof __KFS_TYKIT__ !== "undefined" ? __KFS_TYKIT__ : null;
+export const tyKitList = (kind) =>
+  ((KIT && KIT[kind]) || Object.entries(kind === "layouts" ? TY_LAYOUTS : TY_STYLES).map(([id, name]) => [id, name, ""])).filter(([id]) => id !== "routemap");
+
+export const TY_PHOTO_MAX = 10; // 寄给他看几张（长边 512）
+export const TY_QUOTE_MAX = 8; // 一页最多摆几句原话（同页的原话便签最多摆八句）
+export const TY_STALE = 10 * 60 * 1000; // 排了十分钟还没排完：当排到一半断了（开封府被关了）
+export const tyTag = (i) => `照片${i + 1}`;
+const ROLES = ["hero", "pair", "sh"];
+// 他留批注能贴的几块（同页的零件）
+const NOTE_BLOCKS = ["ti", "wx", "p1", "he", "pa", "sh", "pe", "an", "p2", "qu"];
+
+// 他写的字：同页有几处把标题、地名直接当 HTML 画（本子首页那一列），尖括号、& 换成全角的；控制字符去掉（换行留着）；截到上限
+export function tyClean(s, n) {
+  if (typeof s !== "string") return "";
+  const t = s
+    .replace(/[<>&]/g, (c) => ({ "<": "＜", ">": "＞", "&": "＆" })[c])
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ")
+    .trim();
+  return clip(t, n).trim();
+}
+
+// 她自己挑过这一页的版式、风格没有：同页离开一天的时候把眼下的版式风格记下来（journalLook），跟那一页本来的一样的算没挑过
+export function herLookOf(store, day, R) {
+  const L = lookOf(store, day);
+  if (!L || (!L.layout && !L.style)) return null;
+  const n = ((R && R.photos) || []).filter((p) => p && p.src).length;
+  const lay = (R && R.layout) || (n >= 4 ? "polaroid" : n ? "cover" : "column");
+  const sty = (R && R.style) || "qingmo";
+  const look = { layout: L.layout || lay, style: L.style || sty };
+  return look.layout === lay && look.style === sty ? null : look;
+}
+
+// 叫他排这一天的那一回寄什么。回 { rule, text }：rule 跟在名帖后面；text 是寄去的字（图在 App.jsx 里接在后面）
+//   label   哪天（“2026年10月18日 星期日”）；her 她叫什么
+//   quotes  那天的原话（materialsOf 的 quotes：{ id, w, t, p }）
+//   photos  寄给他看的那几张：[{ tag, from, t }]（from：asked 她发过来的、page 这一页上原来的、chat 聊天里的）
+//   diary   那天的日记 { her: { text, moods }, him: { text, moods } }
+//   wx、at  天气、在哪儿（有就带）
+//   wish    她说想要什么样
+//   keep    她动过的：{ hide: [零件], texts: [她打的字], title: 她起的标题, look: { layout, style } }
+export function tyArrangeAsk({ label, her = "她", quotes = [], photos = [], diary = {}, wx = null, at = "", wish = "", keep = {} }) {
+  const moods = (side) =>
+    ((side && side.moods) || [])
+      .map((k) => (MOODS.find((m) => m.k === k) || {}).t)
+      .filter(Boolean)
+      .join("、");
+  const list = (kind) =>
+    tyKitList(kind)
+      .map(([id, name, tag]) => `${id}（${name}${tag ? "：" + tag : ""}）`)
+      .join("；");
+  const rule = `【排手帐】
+这次不是聊天。${her}在闲笔集的手帐本子里点了「交给你」，要你把${label}排成一页。手帐是哪天有心情就掺进去的一页，排的是那天现成的东西：照片、聊天里的原话、你们俩的日记和心情、天气。
+你要做的：
+- 挑照片：主照片一张（hero）；有合适的再挑双联照两张（pair）、一张截图放进手机框（sh）。挑你记得她在意的那几张，不是挑最清楚、最热闹的。她发过来的那几张是她挑的，先看那几张。照片只写编号（照片1、照片2……），不放照片也行。
+- 挑话：从这天聊天里的原话里挑几句（最多八句），挑拍照前后、跟照片里的东西有关的。只写编号，字由开封府照原话抄，一个字都不会改；挑不出合适的就不挑，不要编一句像原话的话。
+- 写字：用你的口气写给她看，短一点。标题二十个字以内；正文 p1 一百字以内；主照片底下那一行 cap 十几个字。截图说明 p2、双联照底下那一行 ann、红笔 pen（一两句话，要划线的那几个字用 [[ ]] 包起来，margin 是页边一句，十个字以内），可以写，也可以不写。
+- 版式、风格：各挑一种，只能用下面列着的；拿不准就不写，本子照照片多少自己挑。
+- 想在某一块旁边留一句批注的，写 note（text 是那一句，b 是贴在哪一块：ti 题签、wx 天气签、p1 正文、he 主照片、pa 双联照、sh 截图、pe 红笔），不想留就不写。
+- 没有的东西不编：照片里没有地点、拍摄参数，不写路线、参数；没有天气就空着。
+- 她已经动过的别碰：她藏起来的零件不会摆回来，她在页上打的字、她自己起的标题、她自己挑的版式风格，都照她的，你写的盖不掉。
+- 版式：${list("layouts")}。
+- 风格：${list("styles")}。
+只回一段 JSON，夹在单独一行的 [JZ] 和单独一行的 [/JZ] 中间，前后不要别的话，不要 <thinking>，不要 [SPLIT]、[MEME] 这些记号。样子：
+[JZ]
+{"layout":"polaroid","style":"xuan","title":"……","p1":"……","cap":"……","pen":{"text":"……[[……]]……","margin":"……"},"quotes":["q3","q7"],"photos":[{"id":"照片2","role":"hero","note":"……"},{"id":"照片1","role":"pair"},{"id":"照片3","role":"pair"}],"note":{"text":"……","b":"he"}}
+[/JZ]
+role 只有 hero（主照片，一张）、pair（双联照，两张）、sh（截图，一张）。`;
+  const lines = [`这一天：${label}`];
+  if (wx && Number.isFinite(wx.code)) lines.push(`天气：${WX_WORD(wx.code)}${Number.isFinite(wx.lo) && Number.isFinite(wx.hi) ? ` ${Math.round(wx.lo)}–${Math.round(wx.hi)}°C` : ""}${at ? `（${at}）` : ""}`);
+  const herM = moods(diary.her);
+  const himM = moods(diary.him);
+  lines.push(diary.her && (diary.her.text || herM) ? `\n她这天的日记${herM ? `（心情：${herM}）` : ""}：\n${(diary.her && diary.her.text) || "（只选了心情，没写字）"}` : "\n她这天没写日记。");
+  lines.push(diary.him && diary.him.text ? `\n你这天的日记${himM ? `（心情：${himM}）` : ""}：\n${diary.him.text}` : "\n你这天没写日记。");
+  if (quotes.length) {
+    lines.push(`\n这天聊天里的原话（编号｜几点｜谁｜原话）：`);
+    quotes.forEach((q) => lines.push(`${q.id}｜${q.t}｜${q.w === "her" ? her : "你"}｜${clip(String(q.p).replace(/\s+/g, " "), 160)}`));
+  } else lines.push("\n这天你们没在开封府聊天。");
+  const FROM = { asked: "她发过来的", page: "这一页上原来的", chat: "聊天里的" };
+  if (photos.length) lines.push(`\n照片 ${photos.length} 张，图附在最后，照顺序是：${photos.map((x) => `${x.tag}（${FROM[x.from] || ""}${x.t ? " " + x.t : ""}）`).join("、")}。`);
+  else lines.push("\n这天没有照片。");
+  if (typeof wish === "string" && wish.trim()) lines.push(`\n她说想要：${clip(wish.trim().replace(/\s+/g, " "), 300)}`);
+  const bits = [];
+  if (keep.hide && keep.hide.length) bits.push(`她藏起来的：${keep.hide.map((k) => TY_BLOCKS[k] || k).join("、")}（不会摆出来）`);
+  if (keep.texts && keep.texts.length) bits.push(`她自己在页上打的字：${keep.texts.map((t) => `“${clip(one(t), 80)}”`).join("、")}`);
+  if (keep.title) bits.push(`她自己起的标题：“${keep.title}”（照她起的摆，你起的盖不掉）`);
+  if (keep.look) bits.push(`她自己挑的版式、风格：${TY_LAYOUTS[keep.look.layout] || keep.look.layout} × ${TY_STYLES[keep.look.style] || keep.look.style}（照她挑的摆）`);
+  if (bits.length) lines.push(`\n这一页她已经动过：${bits.join("；")}。`);
+  lines.push("\n排吧。");
+  return { rule, text: lines.join("\n") };
+}
+
+// 他回的那一段拆出来、照规矩收拾好（tags：寄给他看的那几张的编号；quotes：那天的原话）。
+// 回 { layout, style, title, text, quotes, photos: [{ tag, role, note }], note }；拆不出来、什么都没排抛错（e.why：没排成的时候跟她说的那一句）
+export function parseTyArrange(said, quotes = [], tags = []) {
+  const fail = (why) => Object.assign(new Error(why), { why });
+  const m = /\[JZ\]\s*([\s\S]*?)\s*\[\/JZ\]/i.exec(said || "") || /(\{[\s\S]*\})/.exec(said || "");
+  if (!m) throw fail("回的里头没有排好的那一段，再交给我一回试试");
+  // 他有时候会把那一段再包一层 ```json …```，或者前后多一两句话：剥掉包的那一层，再不行就取里头头一个 { 到最后一个 }
+  const body = m[1].trim().replace(/^```[a-zA-Z]*\s*/, "").replace(/\s*```$/, "");
+  let o = null;
+  try {
+    o = JSON.parse(body);
+  } catch (e) {
+    const a = body.indexOf("{");
+    const b = body.lastIndexOf("}");
+    try {
+      o = a >= 0 && b > a ? JSON.parse(body.slice(a, b + 1)) : null;
+    } catch (x) {
+      o = null;
+    }
+  }
+  if (!o || typeof o !== "object" || Array.isArray(o)) throw fail("回的那一段看不懂，再交给我一回试试");
+  const text = {};
+  const p1 = tyClean(o.p1 != null ? o.p1 : o.body, 600);
+  if (p1) text.p1 = p1;
+  for (const [k, n] of [
+    ["cap", 80],
+    ["p2", 200],
+    ["ann", 200],
+  ]) {
+    const v = tyClean(o[k], n);
+    if (v) text[k] = v;
+  }
+  if (o.pen && typeof o.pen === "object") {
+    const t = tyClean(o.pen.text, 200);
+    if (t) text.pen = { text: t, margin: tyClean(o.pen.margin, 30) };
+  }
+  const want = new Set((Array.isArray(o.quotes) ? o.quotes : []).map(String));
+  const qs = (quotes || []).filter((q) => want.has(String(q.id))).slice(0, TY_QUOTE_MAX);
+  const known = new Set(tags);
+  const photos = [];
+  (Array.isArray(o.photos) ? o.photos : []).forEach((x0) => {
+    const x = typeof x0 === "string" ? { id: x0 } : x0;
+    const tag = x && typeof x === "object" ? String(x.id || "").replace(/\s/g, "") : "";
+    if (!known.has(tag) || photos.some((p) => p.tag === tag)) return;
+    photos.push({ tag, role: ROLES.includes(x.role) ? x.role : "", note: tyClean(x.note, 60) });
+  });
+  // 主照片一张、截图一张、双联照两张（只挑了一张的不成对，当没挑角色）
+  let hero = 0;
+  let sh = 0;
+  let pair = 0;
+  photos.forEach((p) => {
+    if (p.role === "hero" && ++hero > 1) p.role = "";
+    if (p.role === "sh" && ++sh > 1) p.role = "";
+    if (p.role === "pair" && ++pair > 2) p.role = "";
+  });
+  if (pair === 1) photos.forEach((p) => p.role === "pair" && (p.role = ""));
+  const has = (obj, k) => typeof k === "string" && Object.prototype.hasOwnProperty.call(obj, k);
+  const layout = has(TY_LAYOUTS, o.layout) && o.layout !== "routemap" ? o.layout : "";
+  const style = has(TY_STYLES, o.style) ? o.style : "";
+  const title = tyClean(o.title, 40);
+  const n = o.note && typeof o.note === "object" ? o.note : null;
+  const nt = n ? tyClean(n.text, 300) : "";
+  const note = nt ? { text: nt, b: NOTE_BLOCKS.includes(n.b) ? n.b : "" } : null;
+  // 什么都没排（{}、只有对不上的编号）：不算排好，那一天原样不动
+  if (!title && !Object.keys(text).length && !qs.length && !photos.length && !layout && !style) throw fail("什么都没排出来，再交给我一回试试");
+  return { layout, style, title, text, quotes: qs, photos, note };
+}
+
+// 交给他了：那一天的 day 记上“在排”。排之前有页的照旧摆着（同页照 steps 亮“在排”），那一份记在 mk.prev（没排成放回去）
+export function makingDay(prev, day, steps, now = Date.now()) {
+  const was = prev && prev.status !== "failed" && prev.status !== "making" ? prev : null;
+  return { ...(was || { day, by: "me", title: "", ts: now }), status: "making", steps, mk: { at: now, prev: was } };
+}
+// 没排成：排之前有页的放回去（记一步“没排成”，同页“在排”那一栏照着说）；没有的记一个 failed（什么都没有，日历上不标、同页不起页）
+export function failedDay(making, day, steps, now = Date.now()) {
+  const was = making && making.mk ? making.mk.prev : null;
+  if (was) return { ...was, steps };
+  return { day, status: "failed", by: "me", title: "", ts: now, steps };
+}
+// 他排好的那一份写成那一天的 day（同页 BACKEND.md 的样子）：他排的、排好的、这会儿的钟点。
+// src(tag)、time(tag)：照片寄过去的编号 → 存档里的 kfsimg:<编号>、几点；她自己起的标题（herTitle）留着
+export function arrangedDay(herTitle, A, { day, src, time = () => "", wx = null, at = "", now = Date.now(), steps = [] }) {
+  const order = { hero: 0, pair: 1, sh: 2, "": 3 };
+  const photos = A.photos
+    .slice()
+    .sort((a, b) => order[a.role] - order[b.role])
+    .map((p) => ({ src: src(p.tag) || "", role: p.role, t: time(p.tag) || "", note: p.note }))
+    .filter((p) => p.src);
+  const R = { day, status: "done", by: "me", ts: now, title: A.title, text: A.text, photos, chat: A.quotes.map((q) => ({ w: q.w === "him" ? "me" : "her", t: q.t || "", p: q.p })) };
+  if (A.layout) R.layout = A.layout;
+  if (A.style) R.style = A.style;
+  if (wx && Number.isFinite(wx.code)) R.wx = { code: wx.code, hi: wx.hi, lo: wx.lo, mm: wx.mm || 0, wind: wx.wind || 0, sun: wx.sun || "—", src: wx.src || "open-meteo" };
+  const where = tyClean(at, 40);
+  if (where) R.at = where;
+  if (herTitle) R.herTitle = herTitle;
+  if (steps.length) R.steps = steps;
+  return R;
+}
+
+// 排到一半开封府被关了（划掉了、没电了）：day 一直记着“在排”。排了十分钟还在排的（这台设备上没在排），当没排成
+export async function settleStale(store, busy = new Set(), now = Date.now()) {
+  const out = [];
+  for (const k of store.keys(`${TY_KV}day/`)) {
+    const day = k.slice(`${TY_KV}day/`.length);
+    if (busy.has(day)) continue;
+    const R = parse(store.peek(k));
+    if (!R || R.status !== "making" || !R.mk || now - (Number(R.mk.at) || 0) < TY_STALE) continue;
+    const steps = [...(R.steps || []).filter((s) => s && s.ok !== false), { a: "没排成", b: "排到一半断了，再交给我一回", fail: 1 }];
+    await ok(store.set(k, JSON.stringify(failedDay(R, day, steps, now))));
+    out.push(day);
+  }
+  if (out.length) tyChanged(out.map((d) => `${TY_KV}day/${d}`));
+  return out;
+}
+
+// 同页写进来的一张 ask（她点了发送）：只认刚写的、看得懂的那一张。照片只认开封府给的编号（她刚传的、页上的 kfsimg:，聊天里的 kfschat:）
+const ASK_KEY = /^kfs2:ty:ask\/([A-Za-z0-9_-]{1,64})$/;
+export function askOf(id, o) {
+  if (!o || typeof o !== "object" || o.status !== "new" || !okDate(o.day)) return null;
+  if (o.text != null && typeof o.text !== "string") return null;
+  const photos = (Array.isArray(o.photos) ? o.photos : []).filter((s) => typeof s === "string" && /^kfs(img|chat):[A-Za-z0-9_-]{1,64}$/.test(s)).slice(0, 12);
+  return { id, day: o.day, text: clip(String(o.text || ""), 500), photos };
+}
+
 // ---------- 框里那一页能找外面要的（bridge.js 的 ask）：只有这一本手帐自己的几样 ----------
 // 同页关在隔开的框里（sandbox，碰不到开封府），一问一答都走这儿，每一样都先看清楚要的是不是这一本的东西：
 //   get / set / del / list   只认 kfs2:ty:、kfs2:tyls: 开头的键
@@ -420,6 +654,7 @@ export function chatOf(msgs) {
 //   city / geocode / setCity 天气在哪儿
 //   touch                    她在那一天头一回真的动了：还没有 day 就起一个（点开的时候什么都不写，见 ensureDay）
 //   close / ready            关上；页面摆好了
+// set 写的是一张新的 ask/<编号>（她在「交给光义」那一屏点了发送）：存好以后交给 onAsk（App.jsx 的 tyArrange，另问他一回）
 // 别的一概不认（回“不认得”）
 export const okKey = (k) => typeof k === "string" && k.length < 300 && (k.startsWith(TY_KV) || k.startsWith(TY_LS)) && !/[\u0000-\u001f]/.test(k);
 export const okId = (id) => typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id);
@@ -449,7 +684,7 @@ export function todayFor(day, now = Date.now()) {
   return d <= yearAgoOf(now) ? new Date(+m[1], +m[2] - 1, +m[3], 12).getTime() : now;
 }
 
-export function makeServer({ store, dayMsgs, chatImg, onClose, onReady, onFail, cfgKey, geocode, weather, day }) {
+export function makeServer({ store, dayMsgs, chatImg, onClose, onReady, onFail, onAsk, cfgKey, geocode, weather, day }) {
   const put = async (k, v) => {
     const r = await store.set(k, v);
     if (r === false && onFail) onFail();
@@ -480,7 +715,20 @@ export function makeServer({ store, dayMsgs, chatImg, onClose, onReady, onFail, 
       return true;
     },
     get: ({ k }) => (okKey(k) ? store.peek(k) : null),
-    set: ({ k, v }) => (okKey(k) && typeof v === "string" && v.length <= 4000000 ? put(k, v) : false),
+    set: async ({ k, v }) => {
+      if (!(okKey(k) && typeof v === "string" && v.length <= 4000000)) return false;
+      const m = ASK_KEY.exec(k);
+      const fresh = !!m && store.peek(k) == null;
+      const r = await put(k, v);
+      if (r && fresh && onAsk) {
+        const a = askOf(m[1], parse(v));
+        if (a)
+          Promise.resolve()
+            .then(() => onAsk(a))
+            .catch(() => {});
+      }
+      return r;
+    },
     del: async ({ k }) => {
       if (okKey(k)) await store.del(k);
       return true;

@@ -8,11 +8,12 @@ import { fullOf, mdOf, toFull, toMd, pathToStore, idFromStore, lsKeyToStore, lsK
 import {
   TY_KV, TY_LS, TY_IMG, TY_BLOCKS, TOOL_PART, madeOf, madeDays, infoOf, notesOf, addNoteTo, dropNoteOf, ensureDay, openMode, quotesOfStk,
   migrateOld, migrateAll, fillWeather, chatOf, makeServer, okKey, okId, okDate, pageTextOf, dayTextOf, pageBitsOf, extrasOf, addHisNote, tyReader, onTyChanged, todayFor,
+  TY_LAYOUTS, TY_STYLES, TY_STALE, tyClean, tyKitList, herLookOf, tyArrangeAsk, parseTyArrange, makingDay, failedDay, arrangedDay, settleStale, askOf, tyTag, dayRecOf,
 } from "../src/tongye/host.js";
 import { DIARY_TOOLS, DIARY_NAMES, NOTE_PARTS, runDiaryCalls } from "../src/diaryTools.js";
 import { DIARY_SECTION } from "../src/prompt/system.js";
 import { JZ_KEY, JZN_KEY } from "../src/jz/model.js";
-import { PATCHES, makeTongye } from "../tools/tongye.mjs";
+import { PATCHES, makeTongye, tyKit } from "../tools/tongye.mjs";
 import { TY_FONT_PKGS, parseSpec, tyFontNeeds, makeTyFonts } from "../tools/tyfonts.mjs";
 
 let pass = 0, failN = 0;
@@ -79,7 +80,7 @@ ok(lsKeyToStore("journalPage:9.27", T0) === "journalPage:2026-09-27" && lsKeyToS
 // =====================================================
 const D = "2026-10-12";
 const s1 = mkStore();
-ok(openMode(s1, D) === "self" && s1.keys(TY_KV).length === 0, "这一天还没有页：点开是“自己拼”，什么都不写");
+ok(openMode(s1, D) === "day" && s1.keys(TY_KV).length === 0, "这一天还没有页：点开是那一天的那一屏（交给光义、自己拼），什么都不写");
 let pushed = [];
 const offP = onTyChanged((keys) => pushed.push(...keys));
 s1.m.set(`${TY_KV}wx/${D}`, J({ at: "某城", code: 61, hi: 15.4, lo: 9.6, mm: 3, wind: 20, sun: "18:21", src: "open-meteo" }));
@@ -87,7 +88,7 @@ ok((await ensureDay(s1, D, 1000)) === true && P(s1, `${TY_KV}day/${D}`).by === "
   "她头一回动手：起那一天的 day（她自己拼的），取过的天气一起写进去（天气签照它画），告诉开着的框");
 ok((await ensureDay(s1, D, 2000)) === false && P(s1, `${TY_KV}day/${D}`).ts === 1000, "已经有了：不再起，不盖");
 offP();
-ok(!madeOf(s1, D) && eq(madeDays(s1), []) && infoOf(s1, D) === null && pageTextOf(s1, D) === "" && openMode(s1, D) === "self", "空的一页（只有天气）不算掺了：日历上不标、没有卡片、他翻日记也看不到");
+ok(!madeOf(s1, D) && eq(madeDays(s1), []) && infoOf(s1, D) === null && pageTextOf(s1, D) === "" && openMode(s1, D) === "day", "空的一页（只有天气）不算掺了：日历上不标、没有卡片、他翻日记也看不到");
 s1.m.set(`${TY_KV}page/${D}`, J({ stk: [{ c: "kao", k: "٩(ˊᗜˋ*)و", who: "me", x: 1, y: 2, me1: 1 }] }));
 ok(!madeOf(s1, D), "同页点开的时候替他放的那一张（me1）不算掺了东西");
 s1.m.set(`${TY_KV}page/${D}`, J({ stk: [{ c: "kao", k: "x", who: "me", me1: 1 }, { c: "stamp", k: "feng", who: "me", x: 1, y: 2 }] }));
@@ -338,6 +339,122 @@ ok(srv.init({ day: "2024-05-01", mode: "view", now: t0 }).today === new Date(202
 ok(okKey(`${TY_KV}day/x`) && !okKey("kfs2:tyx") && !okKey(`${TY_KV}a\nb`) && okId("toolu_01AbC-9") && !okId("") && !okId("a.b") && okDate(D) && !okDate("2026-1-1"), "键、编号、日子的规矩");
 
 // =====================================================
+// 光义排一页（同页的「交给光义」）：寄什么、他回的怎么收拾、排的时候 day 里记什么、没排成怎么办
+// =====================================================
+ok(tyClean("  <b>泡桐花</b> & 运河\u0007\n边  ", 40) === "＜b＞泡桐花＜/b＞ ＆ 运河 \n边" && tyClean(3, 10) === "" && tyClean("一二三四五六", 4) === "一二三四",
+  "他写的字：尖括号、& 换成全角（同页有几处当 HTML 画），控制字符去掉、换行留着，截到上限");
+const kL = tyKitList("layouts");
+ok(kL.length === Object.keys(TY_LAYOUTS).length - 1 && !kL.some(([id]) => id === "routemap") && tyKitList("styles").length === Object.keys(TY_STYLES).length,
+  "给他挑的版式风格：照同页的全套，路线图那一种不给（照片里没有地点，画不出路线）");
+const AD = "2026-10-15";
+const QS = [
+  { id: "m1", w: "her", t: "16:02", p: "今天看到泡桐花了" },
+  { id: "m2#0", w: "him", t: "16:03", p: "拍给我看" },
+  { id: "m3", w: "her", t: "16:05", p: "风好大 拍糊了" },
+];
+const PHS = [
+  { tag: tyTag(0), from: "asked", t: "16:01" },
+  { tag: tyTag(1), from: "page", t: "" },
+  { tag: tyTag(2), from: "chat", t: "16:04" },
+];
+const AQ = tyArrangeAsk({
+  label: "2026年10月15日 星期四",
+  her: "卿卿",
+  quotes: QS,
+  photos: PHS,
+  diary: { her: { text: "运河边走了一圈", moods: ["happy"] }, him: { text: "" } },
+  wx: { code: 61, hi: 15.4, lo: 9.6 },
+  at: "某城",
+  wish: "安安静静的",
+  keep: { hide: ["ro", "su"], texts: ["那天真好"], title: "泡桐花开了", look: { layout: "letter", style: "washi" } },
+});
+ok(AQ.rule.startsWith("【排手帐】") && AQ.rule.includes("卿卿在闲笔集的手帐本子里点了「交给你」") && AQ.rule.includes("[JZ]") && AQ.rule.includes("xuan（宣纸") && !AQ.rule.includes("routemap") && AQ.rule.includes("只写编号"),
+  "跟在名帖后面的【排手帐】：她点了交给你、照片原话只写编号、版式风格列着（没有路线图）、只回 [JZ] 那一段");
+ok(AQ.text.includes("这一天：2026年10月15日 星期四") && AQ.text.includes("天气：小雨 10–15°C（某城）") && AQ.text.includes("她这天的日记") && AQ.text.includes("运河边走了一圈") && AQ.text.includes("你这天没写日记")
+  && AQ.text.includes("m1｜16:02｜卿卿｜今天看到泡桐花了") && AQ.text.includes("m2#0｜16:03｜你｜拍给我看") && AQ.text.includes("照片1（她发过来的 16:01）、照片2（这一页上原来的）、照片3（聊天里的 16:04）")
+  && AQ.text.includes("她说想要：安安静静的") && AQ.text.includes("她藏起来的：路线、快门条") && AQ.text.includes("“那天真好”") && AQ.text.includes("她自己起的标题：“泡桐花开了”") && AQ.text.includes("信纸 × 和纸"),
+  "寄去的：哪天、天气、两个人的日记、原话（编号｜几点｜谁）、照片（哪来的）、她想要的、她动过的（藏的、打的字、起的标题、挑的版式风格）");
+ok(tyArrangeAsk({ label: "x" }).text.includes("这天你们没在开封府聊天") && tyArrangeAsk({ label: "x" }).text.includes("这天没有照片") && !tyArrangeAsk({ label: "x" }).text.includes("她已经动过"), "什么都没有的一天：照实说，不编");
+
+const TAGS = PHS.map((x) => x.tag);
+const say = (o) => `排好了。\n[JZ]\n${JSON.stringify(o)}\n[/JZ]`;
+const A1 = parseTyArrange(
+  say({ layout: "polaroid", style: "xuan", title: "<i>泡桐花</i>", p1: "运河边", cap: "风大", pen: { text: "[[紫色]]的", margin: "记得" }, quotes: ["m3", "编的", "m1"], photos: [{ id: "照片 2", role: "hero", note: "这张" }, { id: "照片1", role: "hero" }, { id: "照片9", role: "pair" }, { id: "照片3", role: "pair" }], note: { text: "我喜欢这张", b: "he" } }),
+  QS,
+  TAGS
+);
+ok(A1.layout === "polaroid" && A1.style === "xuan" && A1.title === "＜i＞泡桐花＜/i＞" && eq(A1.text, { p1: "运河边", cap: "风大", pen: { text: "[[紫色]]的", margin: "记得" } }),
+  "他回的那一段：版式风格认得的才要，字照规矩收拾（尖括号换全角）");
+ok(eq(A1.quotes.map((q) => q.id), ["m1", "m3"]) && A1.quotes[0].p === "今天看到泡桐花了", "原话只认编号、照原话抄（编的不要），照那天的次序");
+ok(eq(A1.photos.map((p) => [p.tag, p.role]), [["照片2", "hero"], ["照片1", ""], ["照片3", ""]]) && A1.photos[0].note === "这张",
+  "照片只认寄过去的编号（多写了空格也认，没有的不要）；主照片只一张，双联照只挑了一张不成对");
+ok(eq(A1.note, { text: "我喜欢这张", b: "he" }), "他想留的批注：贴在主照片旁边");
+const A2 = parseTyArrange("```json\n" + JSON.stringify({ body: "只写了正文", layout: "routemap", style: "宣纸", photos: ["照片1", "照片2"], note: { text: "x", b: "zz" } }) + "\n```", QS, TAGS);
+ok(A2.text.p1 === "只写了正文" && A2.layout === "" && A2.style === "" && A2.photos.length === 2 && A2.note.b === "", "没夹 [JZ]、包了 ```json 的也认；写成 body 的当正文；路线图、认不出的风格不要；批注贴的地方认不出就贴页角");
+const why = (f) => {
+  try {
+    f();
+    return "";
+  } catch (e) {
+    return e.why || "";
+  }
+};
+ok(why(() => parseTyArrange("我想了想，不排了。", QS, TAGS)).includes("没有排好的那一段") && why(() => parseTyArrange("[JZ]\n{}\n[/JZ]", QS, TAGS)).includes("什么都没排出来")
+  && why(() => parseTyArrange('[JZ]\n{"quotes":["编的"],"photos":[{"id":"照片7"}]}\n[/JZ]', QS, TAGS)).includes("什么都没排出来") && why(() => parseTyArrange("[JZ]\n[1,2]\n[/JZ]", QS, TAGS)).includes("看不懂"),
+  "拆不出来、什么都没排（{}、只有对不上的编号）：没排成，跟她说一句为什么");
+const many = parseTyArrange(say({ quotes: Array.from({ length: 12 }, (_, i) => "q" + i) }), Array.from({ length: 12 }, (_, i) => ({ id: "q" + i, w: "her", t: "10:00", p: "话" + i })), TAGS);
+ok(many.quotes.length === 8, "原话最多八句");
+
+const s9 = mkStore();
+const MK = makingDay(null, AD, [{ a: "在读", ok: false }], 5000);
+ok(MK.status === "making" && MK.by === "me" && MK.mk.prev === null && MK.mk.at === 5000 && MK.ts === 5000, "交给他了（那一天还没有页）：记一个“在排”的 day");
+s9.m.set(`${TY_KV}day/${AD}`, J(MK));
+const IM = infoOf(s9, AD);
+ok(madeOf(s9, AD) && IM && IM.making === true, "他正排着：算掺了一页（日历标着、卡片上写着在排）");
+const FD = failedDay(MK, AD, [{ a: "没排成", b: "网断了", fail: 1 }], 6000);
+s9.m.set(`${TY_KV}day/${AD}`, J(FD));
+ok(FD.status === "failed" && !madeOf(s9, AD) && infoOf(s9, AD) === null && openMode(s9, AD) === "day", "没排成（原来没有页）：记一个 failed，什么都没有：不标、没卡片，点开还是那一天的那一屏");
+ok((await ensureDay(s9, AD, 7000)) === true && P(s9, `${TY_KV}day/${AD}`).by === "her" && P(s9, `${TY_KV}day/${AD}`).status === "done", "没排成以后她自己拼：照常起她的那一页（failed 那一条盖掉）");
+const HER = { day: AD, status: "done", by: "her", title: "", ts: 100, herTitle: "她起的", photos: [], wx: { code: 3, hi: 20, lo: 10 } };
+const MK2 = makingDay(HER, AD, [{ a: "在读", ok: false }], 8000);
+ok(MK2.status === "making" && MK2.by === "her" && MK2.ts === 100 && MK2.herTitle === "她起的" && eq(MK2.mk.prev, HER), "原来有页：照旧摆着（钟点不变），排之前那一份记着");
+const FD2 = failedDay(MK2, AD, [{ a: "没排成", b: "网断了", fail: 1 }]);
+ok(eq({ ...FD2, steps: undefined }, { ...HER, steps: undefined }) && FD2.steps[0].fail === 1 && !FD2.mk, "没排成（原来有页）：放回原样，记一步“没排成”");
+ok(makingDay({ ...FD, steps: [] }, AD, [], 9000).mk.prev === null && makingDay(MK, AD, [], 9000).mk.prev === null, "没排成的、正排着的那一份不当“排之前那一份”");
+const AR = arrangedDay("她起的", A1, { day: AD, src: (t) => ({ 照片1: "kfsimg:a1", 照片2: "kfsimg:a2" })[t], time: (t) => (t === "照片1" ? "16:01" : ""), wx: { code: 61, hi: 15, lo: 9, sun: "18:21" }, at: "某<城>", now: 9999, steps: [{ a: "排好了", ok: true }] });
+ok(AR.status === "done" && AR.by === "me" && AR.ts === 9999 && AR.title === "＜i＞泡桐花＜/i＞" && AR.herTitle === "她起的" && AR.layout === "polaroid" && AR.style === "xuan" && AR.at === "某＜城＞" && AR.wx.sun === "18:21",
+  "他排好的那一份：他排的、排好了、这会儿的钟点；她起的标题留着；天气、在哪儿带上（在哪儿也换全角）");
+ok(eq(AR.photos.map((p) => [p.src, p.role, p.t]), [["kfsimg:a2", "hero", ""], ["kfsimg:a1", "", "16:01"]]) && eq(AR.chat, [{ w: "her", t: "16:02", p: "今天看到泡桐花了" }, { w: "her", t: "16:05", p: "风好大 拍糊了" }]),
+  "照片照存档里的编号写（没存成的那一张不要），主照片排头；原话照同页的样子（他是 me）");
+ok(!("herTitle" in arrangedDay("", A2, { day: AD, src: () => "" })) && !("layout" in arrangedDay("", A2, { day: AD, src: () => "" })), "没有的不写（她没起标题、他没挑版式）");
+
+// 排到一半断了（开封府被关了）
+const s10 = mkStore({ [`${TY_KV}day/${AD}`]: J(makingDay(HER, AD, [{ a: "看了", ok: true }, { a: "在排", ok: false }], 1000)), [`${TY_KV}day/2026-10-16`]: J(makingDay(null, "2026-10-16", [], 1000)), [`${TY_KV}day/2026-10-17`]: J(makingDay(null, "2026-10-17", [], 1000 + TY_STALE)) });
+const settled = await settleStale(s10, new Set(["2026-10-16"]), 1000 + TY_STALE + 1);
+const RS = P(s10, `${TY_KV}day/${AD}`);
+ok(eq(settled, [AD]) && RS.status === "done" && RS.by === "her" && RS.herTitle === "她起的" && eq(RS.steps.map((x) => x.a), ["看了", "没排成"]) && P(s10, `${TY_KV}day/2026-10-16`).status === "making" && P(s10, `${TY_KV}day/2026-10-17`).status === "making",
+  "排了十分钟还没排完：当没排成（原来的放回去）；这台设备上正排着的、还没到十分钟的不动");
+
+// 她点了发送：同页写一张 ask
+ok(eq(askOf("a1", { status: "new", day: AD, text: "安静点", photos: ["kfschat:i1", "kfsimg:j2", "blob:x", "https://x/y.jpg", 3] }), { id: "a1", day: AD, text: "安静点", photos: ["kfschat:i1", "kfsimg:j2"] }) && askOf("a1", { status: "done", day: AD }) === null && askOf("a1", { status: "new", day: "10.15" }) === null && askOf("a1", { status: "new", day: AD, text: 3 }) === null,
+  "一张 ask：只认新的、日子对的；照片只认开封府给的编号");
+const asked = [];
+const s11 = mkStore();
+const srvA = makeServer({ store: s11, onAsk: (a) => asked.push(a) });
+const askV = J({ id: "a9", day: AD, text: "帮我排", photos: ["kfschat:i1"], at: 1, who: "her", status: "new" });
+ok((await srvA.handle("set", { k: `${TY_KV}ask/a9`, v: askV })) === true && (await srvA.handle("set", { k: `${TY_KV}ask/a9`, v: askV })) === true && (await srvA.handle("set", { k: `${TY_KV}notes/a9`, v: askV })) === true, "写进去照常存");
+await new Promise((r) => setTimeout(r, 0));
+ok(asked.length === 1 && asked[0].id === "a9" && asked[0].text === "帮我排", "新写的一张 ask 交给开封府排一回（同一张再写、别处的不算）");
+await srvA.handle("set", { k: `${TY_KV}ask/b1`, v: J({ status: "new", day: "x" }) });
+await new Promise((r) => setTimeout(r, 0));
+ok(asked.length === 1, "看不懂的 ask 不排");
+
+// 她自己挑过版式风格没有
+const s12 = mkStore({ [`${TY_LS}journalLook:${AD}`]: J({ layout: "column", style: "qingmo" }) });
+ok(herLookOf(s12, AD, { photos: [] }) === null && herLookOf(s12, AD, { layout: "column", style: "qingmo" }) === null && eq(herLookOf(s12, AD, { layout: "bento", style: "film" }), { layout: "column", style: "qingmo" }) && herLookOf(mkStore(), AD, null) === null,
+  "她自己挑过的版式风格：跟那一页本来的一样的不算（同页离开一天自动记的）");
+
+// =====================================================
 // 照原样拿同页那一页：打补丁、安全规矩
 // =====================================================
 const SRC = fs.readFileSync(new URL("../vendor/tongye/app.html", import.meta.url), "utf8");
@@ -357,6 +474,12 @@ ok(!/googleapis|gstatic/.test(html) && !html.includes("<!--kfs:fonts-->") && !ht
 ok(html.includes("function savePage(){if(restoring)return;if(window.__kfsSaveOk&&!window.__kfsSaveOk())return;") && html.includes("window.__kfsPageIn&&window.__kfsPageIn(k);") && html.includes("window.__kfsMineIn=1;") && html.includes("window.__kfsFlush=()=>flushPage();") && html.includes("PAGE_DAY=k;window.__kfsOpened&&window.__kfsOpened(k);"),
   "同页自己存那一页之前问一声；那一页取回来了、照片库齐了、关之前存、换了天才许存，几处都接上了");
 ok(html.includes('"存好了，"+NM("me")+"翻日记的时候看得到"') && !html.includes("也送回家了"), "留了批注不说“送回家了”");
+ok(html.includes("map(x=>window.__kfsAskRef?__kfsAskRef(x):x)") && html.includes('(R.status==="making"||R.status==="failed")') && html.includes('s2.fail?"fail"') && html.includes("!(r.steps||[]).some(x=>x&&x.fail)")
+  && html.includes('(window.__kfsHisNew?__kfsHisNew(R):R.by!=="her")&&toast2') && html.includes('if(mode==="day"&&!DONE[k]){try{openDay(k)}') && html.includes("dayIn:function(k,ph,chat)") && html.includes('"这天还没有天气"'),
+  "交给光义那几处接上了：寄的照片换成开封府的编号、没排成不起页不冒“打开这一页”、“光义刚更新了这一页”只在他排好的时候说、开封府能打开某一天的那一屏、那一屏的照片原话");
+const KIT = tyKit(SRC);
+ok(KIT.layouts.length === 17 && KIT.styles.length === 26 && KIT.layouts.every(([id, n, t]) => TY_LAYOUTS[id] === n && t) && KIT.styles.every(([id, n, t]) => TY_STYLES[id] === n && t),
+  "同页的版式、风格（给他挑的那一份）照同页那一页抄：名字跟开封府这头记的对得上，每一种都有一句是什么样");
 ok(!html.includes("setTimeout(function(){location.reload()},900)") && html.split("setTimeout(function(){window.__kfsReload?__kfsReload():location.reload()},900)").length === 3 && html.includes('return w==="me"?"光义":"卿卿"'), "删掉这一页、找回以后不在框里重新载入（关上回闲笔集）");
 ok(PATCHES.every(([from, to, n]) => SRC.split(from).length - 1 === n && typeof to === "string"), `每一处补丁在原文里都找得到、处数对得上（${PATCHES.length} 处）`);
 const bad = (mut) => {
