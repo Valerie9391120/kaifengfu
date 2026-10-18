@@ -116,6 +116,7 @@ with sync_playwright() as p:
         pa.get_by_placeholder("这天发生了什么").fill(HER_DIARY)
         pa.get_by_role("button", name="保存").click(); time.sleep(0.6)
         ok(pa.locator(".kfs-jz-open").inner_text().strip() == "掺一页手帐" and pa.locator(".kfs-day-noteadd").count() == 1, "今天那一页底下多了“手帐和批注”：一个“掺一页手帐”，一个“留一条批注”")
+        ok(pa.locator(".kfs-page .kfs-jz-tag").count() == 0, "还没掺手帐：日历上没有 🏷️")
 
         # ================= 点开：空的一页 =================
         open_jz(pa)
@@ -368,6 +369,8 @@ with sync_playwright() as p:
         ok("她改的标题" in card and "格子便当 × 复古胶片" in card and "他排的" in card and "批注 2" in card and pa.locator(".kfs-jz-open img").count() == 1,
            f"闲笔集里那一天：一张小卡片（主照片、标题、版式风格、他排的、批注几条）（{card!r}）")
         ok(pa.locator(".kfs-day-note").count() == 2 and pa.locator(".kfs-day-note[data-who='him']").inner_text().startswith("光义批"), "两条批注也摆在那一天底下")
+        tag_day = pa.evaluate("(() => [...document.querySelectorAll('.kfs-page .kfs-jz-tag')].map((e) => [...e.closest('button').querySelectorAll('span')].map((s) => s.textContent.trim()).find((x) => /^\\d+$/.test(x))))()")
+        ok(tag_day == [str(d)], f"掺了手帐的那天（今天），日历格子上多一个 🏷️（{tag_day}）")
         pa.locator(".kfs-day-noteadd").click(); time.sleep(0.3)
         pa.locator(".kfs-day-notein").fill("闲笔集里留的一句")
         pa.locator(".kfs-day-noteok").click(); time.sleep(0.8)
@@ -401,7 +404,7 @@ with sync_playwright() as p:
         pa.reload(); kite(pa)
         open_xianbi(pa)
         card = pa.locator(".kfs-jz-open").inner_text()
-        ok("她改的标题" in card and "批注 3" in card and pa.locator(".kfs-day-note").count() == 3, "重新打开：卡片、三条批注都在")
+        ok("她改的标题" in card and "批注 3" in card and pa.locator(".kfs-day-note").count() == 3 and pa.locator(".kfs-page .kfs-jz-tag").count() == 1, "重新打开：卡片、三条批注、日历上的 🏷️ 都在")
         open_jz(pa)
         wait_js(pa, "!!document.querySelector(\".kfs-jz .jz-stk[data-k='e:fox'] svg\")", 10000)
         ok(look(pa) == ["bento", "film"] and pa.locator(".kfs-jz .jz-stk[data-k='s:泡桐花开']").count() == 1 and pa.locator(".kfs-jz .jz-stk.txt", has_text="好看").count() == 1 and pa.locator(".kfs-jz .jz-hero img").count() == 1 and pa.locator(".kfs-jz .jz-food img").count() == 1 and pa.locator(".kfs-jz .jz-more img").count() == 1,
@@ -433,6 +436,7 @@ with sync_playwright() as p:
         ok(page_of_day(pa, today) is None and pa.evaluate(IMGS) == [] and pa.locator(".kfs-jz-open").inner_text().strip() == "掺一页手帐",
            "删了以后他排好的那一版才回来：不再存（页没活过来），聊天里那张也没另存")
         ok(len(notes_of_day(pa, today)) == 3 and pa.locator(".kfs-day-note").count() == 3, "批注不跟着删（那一天底下还在）")
+        ok(pa.locator(".kfs-page .kfs-jz-tag").count() == 0, "删了这一页：日历上的 🏷️ 也没了")
         cid, msgs = chat_of(pa)
         ok(sum(1 for m in msgs if m.get("kind") == "photo") == 2, "聊天里那两张照片没动")
     except Exception as e:
