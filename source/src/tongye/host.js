@@ -6,6 +6,7 @@
 //   kfs2:tyls:<键>          同页存在“这台设备上”的那几样（这一天挑的版式风格、常用的贴纸……），也跟着云端走
 //   kfs2:jzimg:<编号>       照片（跟原来那版手帐同一处）
 import { materialsOf, readPage as readOldPage, readNotes as readOldNotes, JZ_KEY, JZN_KEY } from "../jz/model.js";
+import { yearAgoOf } from "./dates.js";
 
 export const TY_KV = "kfs2:ty:";
 export const TY_LS = "kfs2:tyls:";
@@ -54,22 +55,28 @@ export function notesOf(store, day) {
     .sort((a, b) => (a.at || 0) - (b.at || 0));
 }
 
-// 这一天算不算掺了一页：光点开（同页会替他在页上盖一个章、起一页空的）不算；
-// 有标题、正文、照片、原话、红笔，或者她在页上贴了、写了东西，才算
-export function madeOf(store, day) {
-  const R = dayRecOf(store, day);
-  if (!R) return false;
+// 那一天的 day 里有没有东西（标题、正文、照片、原话、红笔、票根……；他正排着也算）
+export function dayHasContent(R) {
+  if (!R || typeof R !== "object") return false;
   const T = R.text || {};
-  if (R.title || (R.photos || []).length || (R.chat || []).length || T.p1 || T.pen || T.cap || T.p2 || T.ann || T.quote || R.food) return true;
-  const P = pageRecOf(store, day);
-  return !!(P && (P.stk || []).some((o) => o && o.who === "her" && !o.d));
+  return !!(R.title || (R.photos || []).length || (R.chat || []).length || T.p1 || T.pen || T.cap || T.p2 || T.ann || T.quote || R.food || R.status === "making");
 }
 
+// 这一天算不算掺了一页（日历上的 🏷️、闲笔集的卡片、他翻日记看不看得到）：光点开不算（同页替他在页上放的那一张 me1 也不算）；
+// day 里有东西，或者她在页上贴了、写了、放了照片，藏了哪几块，存过几代，才算（同同页自己的 worth()，只是不看批注：只有批注的日子不标）
+export function madeOf(store, day) {
+  if (dayHasContent(dayRecOf(store, day))) return true;
+  const P = pageRecOf(store, day);
+  if (P && ((P.stk || []).some((o) => o && !o.me1) || (P.hide || []).length || P.ext)) return true;
+  const G = parse(store.peek(`${TY_KV}gens/${day}`));
+  return !!(G && (G.list || []).length);
+}
+
+// 掺过的那几天（day、page 两样里有那一天的都看）
 export function madeDays(store) {
-  return store
-    .keys(`${TY_KV}day/`)
-    .map((k) => k.slice(`${TY_KV}day/`.length))
-    .filter((d) => madeOf(store, d));
+  const days = new Set();
+  for (const col of ["day", "page", "gens"]) for (const k of store.keys(`${TY_KV}${col}/`)) days.add(k.slice(`${TY_KV}${col}/`.length));
+  return [...days].filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && madeOf(store, d)).sort();
 }
 
 // 闲笔集那张小卡片要的：标题、版式 × 风格、谁排的、主照片（编号）、几条批注
@@ -110,18 +117,22 @@ export async function dropNoteOf(store, day, id) {
   return notesOf(store, day);
 }
 
-// 要打开某一天：还没有页就起一页空的（同同页的“自己拼”），回 self；有了回 view
-export async function ensureDay(store, day, now = Date.now()) {
-  if (dayRecOf(store, day)) return madeOf(store, day) ? "view" : "self";
-  await ok(store.set(`${TY_KV}day/${day}`, JSON.stringify({ day, status: "done", by: "her", title: "", ts: now })));
-  return "self";
-}
+// 点开是看（view，掺过了）还是自己拼（self）：点开的时候什么都不写
+export const openMode = (store, day) => (madeOf(store, day) ? "view" : "self");
 
-// 点开没动就出来了：那一页不留（同原来那版手帐“点开不动不存”）。批注、那一天的天气、她挑的版式风格（同页存在“这台设备上”的）不删：
-// 同页删掉一页再找回来，版式风格也是照这样留着的
-export async function tidyDay(store, day) {
-  if (madeOf(store, day)) return false;
-  for (const col of ["day", "page", "gens"]) await store.del(`${TY_KV}${col}/${day}`);
+// 她在那一页上头一回真的动了（同页要存那一页、存一代，见 bridge.js 的 touch）：那一天还没有 day，起一个空的（同同页的“自己拼”），
+// 那一天取过的天气一起写进去（天气签照它画）。点开不动就不起：什么都不写，也就没有要收拾的（同原来那版“点开不动不存”），
+// 另一台设备做好、这台还没同步下来的那一页，也不会被这边起的空页盖掉、被收拾的时候删掉。起了回 true
+export async function ensureDay(store, day, now = Date.now()) {
+  if (dayRecOf(store, day)) return false;
+  const R = { day, status: "done", by: "her", title: "", ts: now };
+  const w = parse(store.peek(`${TY_KV}wx/${day}`));
+  if (w && Number.isFinite(w.code)) {
+    R.wx = { code: w.code, hi: w.hi, lo: w.lo, mm: w.mm || 0, wind: w.wind || 0, sun: w.sun || "—", src: w.src || "open-meteo" };
+    if (w.at) R.at = w.at;
+  }
+  await ok(store.set(`${TY_KV}day/${day}`, JSON.stringify(R)));
+  tyChanged([`${TY_KV}day/${day}`]);
   return true;
 }
 
@@ -145,6 +156,18 @@ export function notesForTools(store, day) {
   return notesOf(store, day).map((n) => ({ id: n.id, who: n.who === "me" ? "him" : "her", text: n.text, at: n.at || 0, re: n.re || null, part: TY_BLOCKS[n.b] || "" }));
 }
 
+// 她从引用栏贴到纸上的原话（同页的 qsel 贴纸：键是 C: 加上那几句原样的 JSON）。别的样子（c: 是按编号指着那天的聊天）这边认不出来，回 null
+export function quotesOfStk(o) {
+  if (!o || o.c !== "qsel" || typeof o.k !== "string" || !o.k.startsWith("C:")) return null;
+  try {
+    const A = JSON.parse(decodeURIComponent(o.k.slice(2)));
+    return Array.isArray(A) ? A.filter((x) => x && typeof x.p === "string" && x.p) : null;
+  } catch (e) {
+    return null;
+  }
+}
+const quoteLine = (q) => `${q.t || ""} ${q.w === "her" ? "卿卿" : "你"}：${cut(one(q.p), 60)}`.trim();
+
 // 他翻到那一天时，这一页手帐写成几行字（照片他看不见，写明几张、各是什么）
 export function pageTextOf(store, day) {
   if (!madeOf(store, day)) return "";
@@ -153,7 +176,8 @@ export function pageTextOf(store, day) {
   const info = infoOf(store, day) || {};
   const T = R.text || {};
   const hide = new Set(P.hide || []);
-  const stk = (P.stk || []).filter((o) => o && !o.d);
+  // 同页替他在页上放的那一张（me1）不算她贴的
+  const stk = (P.stk || []).filter((o) => o && !o.me1);
   const lines = [`手帐：有一页（${R.by === "me" ? "你排的" : "她自己拼的"}；版式 ${TY_LAYOUTS[info.layout] || info.layout}，风格 ${TY_STYLES[info.style] || info.style}）`];
   if (R.title && !hide.has("ti")) lines.push(`  标题：${one(R.title)}`);
   const wx = R.wx || parse(store.peek(`${TY_KV}wx/${day}`));
@@ -168,11 +192,17 @@ export function pageTextOf(store, day) {
     if (roles("sh").length) bits.push(`截图 ${roles("sh").length} 张`);
     const rest = ph.length - 1 - roles("pair").length - roles("sh").length;
     if (rest > 0) bits.push(`别的 ${rest} 张`);
-    if (pics.length) bits.push(`她贴上去的 ${pics.length} 张`);
+    if (pics.length) {
+      const caps = pics.map((o) => one(o.m)).filter(Boolean).map((t) => `“${cut(t, 40)}”`);
+      bits.push(`她贴上去的 ${pics.length} 张${caps.length ? `（底下写着：${caps.join("、")}）` : ""}`);
+    }
     lines.push(`  照片 ${ph.length + pics.length} 张：${bits.join("、")}`);
   }
   const chat = (R.chat || []).filter((x) => x && x.p);
-  if (chat.length) lines.push(`  摆的原话：${chat.map((q) => `${q.t || ""} ${q.w === "her" ? "卿卿" : "你"}：${cut(one(q.p), 60)}`).join("｜")}`);
+  if (chat.length) lines.push(`  摆的原话：${chat.map(quoteLine).join("｜")}`);
+  const herQ = stk.map(quotesOfStk);
+  const herQs = herQ.filter(Boolean).flat();
+  if (herQs.length) lines.push(`  她贴的原话：${herQs.map(quoteLine).join("｜")}`);
   const qu = T.quote || R.quote;
   if (qu && qu.p && !hide.has("qu")) lines.push(`  引言：${cut(one(qu.p), 80)}`);
   if (T.p1 && !hide.has("p1")) lines.push(`  正文：${one(T.p1)}`);
@@ -183,20 +213,28 @@ export function pageTextOf(store, day) {
   if (f && (f.items || []).length && !hide.has("tk")) lines.push(`  票根：${[f.meal, f.at].filter(Boolean).map(one).join(" ")}${f.meal || f.at ? "：" : ""}${f.items.map((x) => one(Array.isArray(x) ? x[0] : x)).filter(Boolean).join("、")}`);
   const said = stk.filter((o) => o.c === "text" && one(o.m)).map((o) => `“${cut(one(o.m), 80)}”`);
   if (said.length) lines.push(`  她在页上写的字：${said.join("、")}`);
-  const others = stk.filter((o) => o.c !== "text" && o.c !== "pic").length;
+  const unreadQ = stk.filter((o, i) => o.c === "qsel" && !herQ[i]).length;
+  if (unreadQ) lines.push(`  引用的便签 ${unreadQ} 张（这边认不出写的是哪几句）`);
+  const others = stk.filter((o) => o.c !== "text" && o.c !== "pic" && o.c !== "qsel").length;
   if (others) lines.push(`  贴纸 ${others} 张`);
   if (hide.size) lines.push(`  她藏起来的：${[...hide].map((k) => TY_BLOCKS[k] || k).join("、")}`);
   return lines.join("\n");
 }
 
-// 按词找的时候，这一页上写着的字（标题、正文、说明、红笔、她写的字）
+// 按词找的时候，这一页上写着的字（标题、正文、说明、红笔、她写的字、照片底下写的、她贴的原话）
 export function pageBitsOf(store, day) {
   if (!madeOf(store, day)) return "";
   const R = dayRecOf(store, day) || {};
   const P = pageRecOf(store, day) || {};
   const T = R.text || {};
   const qu = T.quote || R.quote;
-  return [R.title, T.p1, T.p2, T.cap, T.ann, T.pen && T.pen.text, qu && qu.p, ...(P.stk || []).filter((o) => o && o.c === "text").map((o) => o.m)]
+  const stk = (P.stk || []).filter((o) => o && !o.me1);
+  const her = stk
+    .map(quotesOfStk)
+    .filter(Boolean)
+    .flat()
+    .map((q) => q.p);
+  return [R.title, T.p1, T.p2, T.cap, T.ann, T.pen && T.pen.text, qu && qu.p, ...stk.filter((o) => o.c === "text" || o.c === "pic").map((o) => o.m), ...her]
     .filter(Boolean)
     .join("\n")
     .replace(/\[\[|\]\]|<\/?her>/g, "");
@@ -322,25 +360,51 @@ export async function migrateAll(store, now = Date.now()) {
     await ok(store.set(`${TY_KV}moved/${day}`, JSON.stringify({ at: now, lost })));
     moved.push({ day, lost });
   }
+  // 上一版那几天只有批注、没有页的（她在闲笔集那一天底下留的、他翻日记留的、“点开不动不存”收掉了页的）：批注也挪过来。
+  // 编号已经有了的不再挪；挪过记一笔（同上），往后她在这边删了的，不会从上一版的存档里又冒出来
+  for (const k of store.keys(JZN_KEY)) {
+    const day = k.slice(JZN_KEY.length);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || store.peek(`${TY_KV}moved/${day}`) != null) continue;
+    const list = readOldNotes(store.peek(k));
+    if (!list.length) continue;
+    let n = 0;
+    for (const [i, x] of list.entries()) {
+      const id = /^[A-Za-z0-9_-]{1,64}$/.test(String(x.id || "")) ? String(x.id) : `jzn${day.replace(/-/g, "")}${i}`;
+      if (store.peek(`${TY_KV}notes/${id}`) != null) continue;
+      await ok(store.set(`${TY_KV}notes/${id}`, JSON.stringify({ id, day, who: x.who === "him" ? "me" : "her", text: x.text, at: x.at || now, re: null, b: "", fx: 0.9, fy: 0.08 })));
+      n++;
+    }
+    await ok(store.set(`${TY_KV}moved/${day}`, JSON.stringify({ at: now, lost: [], notes: n })));
+    moved.push({ day, lost: [], notes: n });
+  }
   return moved;
 }
 
-// ---------- 天气：她填过在哪儿（kfs2:jzcfg），这一天还没有就取一回，写进同页的 wx/<日子>，也写进那一天的页 ----------
+// ---------- 天气：她填过在哪儿（kfs2:jzcfg），这一天还没有就取一回，写进同页的 wx/<日子>；那一天有 day 的，也写进那一天的页 ----------
+// 取过了（wx 有了）就不再取；那一天的 day 是后起的（点开不动关了、删了又找回来、她头一回动手），没有天气的照取过的写进去。取了一回回那一条，没取回 null
 export async function fillWeather(store, day, cfg, fetchWx) {
-  const city = cfg && cfg.city;
-  if (!city || store.peek(`${TY_KV}wx/${day}`) != null) return null;
-  const w = await fetchWx(city, day);
-  const rec = { at: city.name, code: w.code, hi: w.hi, lo: w.lo, mm: w.mm || 0, wind: Number.isFinite(w.wind) ? w.wind : 0, sun: w.sun || "—", src: "open-meteo" };
-  await ok(store.set(`${TY_KV}wx/${day}`, JSON.stringify(rec)));
-  const R = dayRecOf(store, day);
-  if (R && !R.wx) {
-    // 同页收这一页的时候拿 R.wx 整个盖掉那一天的天气（不是合并）：日落也写进来，不然天气贴纸上的日落没了
-    R.wx = { code: rec.code, hi: rec.hi, lo: rec.lo, mm: rec.mm, wind: rec.wind, sun: rec.sun, src: "open-meteo" };
-    if (!R.at) R.at = city.name;
-    await ok(store.set(`${TY_KV}day/${day}`, JSON.stringify(R)));
+  let rec = parse(store.peek(`${TY_KV}wx/${day}`));
+  const keys = [];
+  let fetched = false;
+  if (!rec) {
+    const city = cfg && cfg.city;
+    if (!city) return null;
+    const w = await fetchWx(city, day);
+    rec = { at: city.name, code: w.code, hi: w.hi, lo: w.lo, mm: w.mm || 0, wind: Number.isFinite(w.wind) ? w.wind : 0, sun: w.sun || "—", src: "open-meteo" };
+    await ok(store.set(`${TY_KV}wx/${day}`, JSON.stringify(rec)));
+    keys.push(`${TY_KV}wx/${day}`);
+    fetched = true;
   }
-  tyChanged([`${TY_KV}wx/${day}`, `${TY_KV}day/${day}`]);
-  return rec;
+  const R = dayRecOf(store, day);
+  if (R && !R.wx && Number.isFinite(rec.code)) {
+    // 同页收这一页的时候拿 R.wx 整个盖掉那一天的天气（不是合并）：日落也写进来，不然天气贴纸上的日落没了
+    R.wx = { code: rec.code, hi: rec.hi, lo: rec.lo, mm: rec.mm || 0, wind: rec.wind || 0, sun: rec.sun || "—", src: rec.src || "open-meteo" };
+    if (!R.at && rec.at) R.at = rec.at;
+    await ok(store.set(`${TY_KV}day/${day}`, JSON.stringify(R)));
+    keys.push(`${TY_KV}day/${day}`);
+  }
+  if (keys.length) tyChanged(keys);
+  return fetched ? rec : null;
 }
 
 // 那一天聊天里的原话（同页的引用栏、他排的时候用）：her / me（同页管他叫 me）
@@ -353,6 +417,8 @@ export function chatOf(msgs) {
 //   get / set / del / list   只认 kfs2:ty:、kfs2:tyls: 开头的键
 //   img / imgPut / imgDel    只认 kfs2:jzimg:<编号>，放进来的得是图（data:image/…）
 //   sources / chatPhotos     某一天聊天里的原话、聊天里的照片（引用栏、放照片用）
+//   city / geocode / setCity 天气在哪儿
+//   touch                    她在那一天头一回真的动了：还没有 day 就起一个（点开的时候什么都不写，见 ensureDay）
 //   close / ready            关上；页面摆好了
 // 别的一概不认（回“不认得”）
 export const okKey = (k) => typeof k === "string" && k.length < 300 && (k.startsWith(TY_KV) || k.startsWith(TY_LS)) && !/[\u0000-\u001f]/.test(k);
@@ -378,10 +444,9 @@ const okCity = (c) =>
 export function todayFor(day, now = Date.now()) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day || ""));
   if (!m) return now;
-  const d = new Date(+m[1], +m[2] - 1, +m[3], 12);
-  const t = new Date(now);
-  const yearAgo = new Date(t.getFullYear() - 1, t.getMonth(), t.getDate(), 23, 59, 59);
-  return d.getMonth() === +m[2] - 1 && d <= yearAgo ? d.getTime() : now;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  if (d.getMonth() !== +m[2] - 1) return now;
+  return d <= yearAgoOf(now) ? new Date(+m[1], +m[2] - 1, +m[3], 12).getTime() : now;
 }
 
 export function makeServer({ store, dayMsgs, chatImg, onClose, onReady, onFail, cfgKey, geocode, weather, day }) {
@@ -403,8 +468,15 @@ export function makeServer({ store, dayMsgs, chatImg, onClose, onReady, onFail, 
       const c = { name: city.name, lat: city.lat, lon: city.lon, tz: city.tz || "auto", where: city.where || "" };
       const cfg = { ...cfgNow(), city: c };
       if (!(await put(cfgKey, JSON.stringify(cfg)))) return false;
-      // 换了城市：打开的这一天要是还没有天气，照新的取一回（取到了 fillWeather 会告诉框里）
-      if (day && weather) fillWeather(store, day, cfg, weather).catch(() => {});
+      // 换了城市：打开的这一天要是还没有天气，照新的取一回（取到了 fillWeather 会告诉框里）。
+      // 她这是真的动了手：那一天还没有 day 就起一个，天气签马上照新取的画出来（不用等她再动一下）
+      if (day && weather)
+        (async () => {
+          try {
+            await ensureDay(store, day);
+          } catch (e) {}
+          await fillWeather(store, day, cfg, weather);
+        })().catch(() => {});
       return true;
     },
     get: ({ k }) => (okKey(k) ? store.peek(k) : null),
@@ -429,6 +501,17 @@ export function makeServer({ store, dayMsgs, chatImg, onClose, onReady, onFail, 
     imgDel: async ({ id }) => {
       if (okId(id)) await store.del(TY_IMG + id);
       return true;
+    },
+    // 她在那一天头一回真的动了（同页要存那一页、存一代）：还没有 day 就起一个（见 ensureDay）
+    touch: async ({ date }) => {
+      if (!okDate(date)) return false;
+      try {
+        await ensureDay(store, date);
+        return true;
+      } catch (e) {
+        if (onFail) onFail();
+        return false;
+      }
     },
     sources: async ({ date }) => (okDate(date) ? { date, chat: chatOf(await dayMsgs(date)), book: [], health: [] } : { chat: [] }),
     chatPhotos: async ({ date }) => {

@@ -69,7 +69,7 @@ import { createEchoProbe, ECHO_LINE, ECHO_KEY } from "./call/echo.js";
 import { EchoProbe } from "./call/EchoProbe.jsx";
 import { pendingCall, ringLeft, CALL_RING_MS } from "./call/incoming.js";
 import { createBarge, echoOf, ackOnly, cutPlan, cutItems } from "./call/barge.js";
-import { TY_IMG, madeDays, infoOf, notesOf, addNoteTo, dropNoteOf, ensureDay, tidyDay, migrateAll, fillWeather, tyReader } from "./tongye/host.js";
+import { TY_IMG, madeDays, infoOf, notesOf, addNoteTo, dropNoteOf, openMode, migrateAll, fillWeather, tyReader } from "./tongye/host.js";
 import { IncomingCall } from "./call/IncomingCall.jsx";
 import { isCallMark } from "./call/marks.js";
 
@@ -4040,12 +4040,32 @@ export default function App({ account = {} }) {
 
   // ---- 同页那一本手帐（见 src/tongye/、开发说明“同页搬进来”那一节）：闲笔集里那张小卡片、批注、点开的那一层 ----
   // 框里那一页关在隔开的框里，能要的只有这一本自己的东西、某一天的原话和聊天里的照片（见 tongye/host.js 的 makeServer）
+  // 挪上一版的页、点开某一天之前，先跟云端对一回：开封府开门的时候同步是不等的，刚开门就点进来，另一台设备做好的页还没拉下来，
+  // 这边挪一回、存一回就把它盖了。二十秒里对过就不再对；没网、对不上（最多等五秒），回 false：这一回不挪（点开照样开）
+  const tySyncAt = useRef(0);
+  const tySync = async () => {
+    if (Date.now() - tySyncAt.current < 20000) return true;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return false;
+    let done = false;
+    try {
+      await Promise.race([store.syncNow().then(() => (done = true)), new Promise((r) => setTimeout(r, 5000))]);
+    } catch (e) {}
+    let st = {};
+    const off = store.onStatus((s) => (st = s || {}));
+    off();
+    if (!done || st.offline || st.error) return false;
+    tySyncAt.current = Date.now();
+    return true;
+  };
+  const tyMigrate = async () => {
+    try {
+      if (await tySync()) await migrateAll(store);
+    } catch (e) {}
+  };
   const tyApi = {
-    // 掺过手帐的那几天（闲笔集的日历格子上标一个 🏷️）。原来那一版掺的页先挪过来（挪过的不再挪）
+    // 掺过手帐的那几天（闲笔集的日历格子上标一个 🏷️）。原来那一版掺的页先挪过来（挪过的不再挪；对过云端才挪）
     days: async () => {
-      try {
-        await migrateAll(store);
-      } catch (e) {}
+      await tyMigrate();
       return madeDays(store);
     },
     info: async (day) => {
@@ -4070,19 +4090,14 @@ export default function App({ account = {} }) {
         return null;
       }
     },
-    // 点开之前：这一天还没有页就起一页空的；她填过天气在哪儿、这一天还没取过，取一回（取到了告诉框里）
+    // 点开之前：先跟云端对一回（见上面 tySync），掺过了是看、没掺是自己拼；点开的时候什么都不写（她头一回动手才起那一天的 day，见 host.js 的 ensureDay）。
+    // 她填过天气在哪儿、这一天还没取过，取一回（取到了告诉框里）
     prepare: async (day) => {
-      try {
-        await migrateAll(store);
-      } catch (e) {}
-      let mode = "self";
-      try {
-        mode = await ensureDay(store, day);
-      } catch (e) {
-        markStorageFail();
-      }
+      await tyMigrate();
+      const mode = openMode(store, day);
       const cfg = safeParse(await store.get(JZCFG_KEY), {}) || {};
-      fillWeather(store, day, cfg, dayWeather).catch(() => {});
+      // 天气等一小会儿（最多两秒半）：取到了再开，同页打开那一下天气签就画上了；取得慢的，取到了再告诉框里
+      await Promise.race([fillWeather(store, day, cfg, dayWeather).catch(() => {}), new Promise((r) => setTimeout(r, 2500))]);
       return mode;
     },
     // 框里要的几样：每一天聊了多少、某一天的话、聊天里的一张照片
@@ -4100,12 +4115,6 @@ export default function App({ account = {} }) {
         chatImg: async (imgId) => imgsRef.current[imgId] || (await store.get("kfs2:img:" + imgId)) || null,
         onFail: markStorageFail,
       };
-    },
-    // 关上的时候：点开什么都没动的那一页不留（删掉一页、找回一页在同页里：「存」最底下，30 天内能找回）
-    tidy: async (day) => {
-      try {
-        await tidyDay(store, day);
-      } catch (e) {}
     },
   };
   // ---- 测试连接 ----

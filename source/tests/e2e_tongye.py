@@ -2,8 +2,9 @@
 # 真的浏览器、假 Supabase，一台“手机”从头走到尾，再拿第二台对一下：
 #   原来那一版手帐掺的页（kfs2:jz:）挪过来；闲笔集日历上的 🏷️、那一天底下的卡片；点开是同页（隔开的框，碰不到开封府）；
 #   点开没动不留；天气在哪儿（Open-Meteo 用 page.route 假的）；换版式风格、打字、聊天里的照片、相册的照片、批注、存一代、存长图；
-#   关上再开都在；闲笔集里留、删批注；第二台设备同步过去照样；他翻日记看得到这一本、他留的批注贴在页上；
-#   删掉一页（同页「存」最底下）、找回来；云端只有乱码；框里的安全规矩没拦它自己的脚本。
+#   关上再开都在；打完字马上关也存上了；闲笔集里留、删批注；照片库多了六十张，点开照片照样摆齐、没动手一笔不存；
+#   第二台设备同步过去照样；他翻日记看得到这一本、他留的批注贴在页上；删掉一页（同页「存」最底下）、找回来；
+#   框里不带暗号来问的一概不理；云端只有乱码；框里的安全规矩没拦它自己的脚本。
 # 同页的框是隔开的（sandbox），Playwright 往里点有时点歪（框在手机模式下的坐标），框里的点都直接发给那个元素（ftap）。
 # 先在 source/ 里 npm run build:test，起好假 Supabase（8787）和测试网页（8080），再：python3 tests/e2e_tongye.py
 import base64, io, json, os, re, time
@@ -90,10 +91,14 @@ def pick_day(page, d):
         page.get_by_role("button", name="上个月").click(); time.sleep(0.5)
     page.locator(f".kfs-page button[data-day='{d.isoformat()}']").click(); time.sleep(0.8)
 
-def close_ty(page, f):
-    # 编辑器左上角回本子，再点本子左上角“闲笔集”
-    ftap(f, ".backhome"); time.sleep(0.8)
-    ftap(f, ".kfs-close"); time.sleep(1.5)
+def close_ty(page, f, fast=False):
+    # 编辑器左上角回本子，再点本子左上角“闲笔集”（关之前那一层先把没存的存了，等框拆了）。fast：两下连着点，不停
+    ftap(f, ".backhome"); time.sleep(0.05 if fast else 0.8)
+    ftap(f, ".kfs-close")
+    end = time.time() + 15
+    while time.time() < end and page.locator("iframe.kfs-ty-frame").count():
+        time.sleep(0.2)
+    time.sleep(1.0)
 
 def close_side(page):
     if page.locator("div.absolute.inset-0.z-30").count():
@@ -207,12 +212,12 @@ with sync_playwright() as p:
         ok(iso == {"parent": "blocked", "idb": "blocked", "ls": "blocked", "cookie": "blocked"}, f"框是隔开的：碰不到开封府的网页、存档、这台设备上的东西、cookie（{iso}）")
         sb = pa.evaluate("document.querySelector('iframe.kfs-ty-frame').getAttribute('sandbox')")
         ok(sb == "allow-scripts allow-downloads", f"框的 sandbox 只给跑脚本、存长图（{sb}）")
-        bad = f.evaluate("""async () => { const P = window.parent; const ask = (method, args) => new Promise((res) => { const id = 900000 + Math.floor(Math.random() * 1000);
+        bad = f.evaluate("""async () => { const P = window.parent; const ask = (method, args, tok) => new Promise((res) => { const id = 900000 + Math.floor(Math.random() * 1000);
             const h = (e) => { if (e.data && e.data.re === id) { removeEventListener('message', h); res(e.data); } }; addEventListener('message', h);
-            P.postMessage({ kfsTy: 1, id, method, args }, '*'); setTimeout(() => res('no answer'), 3000); });
-          return [await ask('get', { k: 'kfs2:settings' }), await ask('get', { k: 'kfs2:index' }), await ask('list', { prefix: 'kfs2:chat:' }), await ask('img', { id: '../img:x' }), await ask('set', { k: 'kfs2:settings', v: '{}' }), await ask('eval', {})]; }""")
-        ok(bad[0]["value"] is None and bad[1]["value"] is None and bad[2]["value"] == [] and bad[3]["value"] is None and bad[4]["value"] is False and bad[5]["ok"] is False,
-           f"框来要这一本以外的东西（设置、对话目录、聊天、别处的图、改设置、不认得的）：一样都不给（{[b.get('value') if isinstance(b, dict) else b for b in bad]}）")
+            P.postMessage({ kfsTy: 1, tok, id, method, args }, '*'); setTimeout(() => res('no answer'), 2500); });
+          return [await ask('get', { k: 'kfs2:ty:cfg/main' }), await ask('get', { k: 'kfs2:settings' }, 'guess'), await ask('list', { prefix: 'kfs2:ty:' }, ''), await ask('sources', { date: '2026-10-18' })]; }""")
+        ok(bad == ["no answer"] * 4, f"框里不带暗号来要东西（连这一本自己的都算上）：一样都不理（{bad}）")
+        ok(f.evaluate("window.name") == "" and f.evaluate("typeof window.__kfsTok") == "undefined", "开门带进去的东西（连暗号）读完就清了，框里别处拿不到")
         close_ty(pa, f)
         ok(pa.locator("iframe.kfs-ty-frame").count() == 0 and "泡桐花" in pa.locator(".kfs-jz-open").inner_text(), "回本子、再点“闲笔集”：框拆了，回到昨天那一天，卡片还在")
 
@@ -299,10 +304,41 @@ with sync_playwright() as p:
         st = page_state(f)
         ok(st["layout"] == "polaroid" and st["style"] == "kraft" and len(st["pics"]) == 3 and all(w > 0 for w in st["pics"]) and "text:泡桐花开了" in st["stk"] and st["pins"] == 2,
            f"再打开：拍立得墙、牛皮纸、三张照片都显示、写的字在、批注两颗（闲笔集里留的那条贴在页角）（{st}）")
-        close_ty(pa, f)
+        f.evaluate("window.journalAdd.text()"); time.sleep(0.8)
+        pa.keyboard.type("最后一笔")
+        close_ty(pa, f, fast=True)
+        P = kvj(pa, f"kfs2:ty:page/{today}")
+        ok(any(s["c"] == "text" and s.get("m") == "最后一笔" for s in P["stk"]), "打完字马上关（同页停手 0.7 秒才存）：最后一笔也存上了（关之前先存）")
         pa.locator(".kfs-day-notedrop").last.click(); time.sleep(0.2)
         pa.locator(".kfs-day-notedrop").last.click(); time.sleep(0.8)
         ok(pa.locator(".kfs-day-note").count() == 1, "删一条（点两下）：剩一条")
+
+        # ================= 照片库大了：点开那一下照片摆得齐；没动手一笔不存 =================
+        P0 = kvj(pa, f"kfs2:ty:page/{today}")
+        pics0 = [s for s in P0["stk"] if s["c"] == "pic"]
+        base = kvj(pa, "kfs2:ty:mine/" + pics0[0]["k"])
+        recs = []
+        for i in range(60):
+            m = dict(base)
+            m["id"] = f"mx{i}"; m["src"] = f"kfsimg:mximg{i}"; m["at"] = int(base.get("at") or 0) + i + 1
+            if "asset" in m:
+                m["asset"] = f"mximg{i}"
+            recs.append({"k": f"kfs2:ty:mine/mx{i}", "v": json.dumps(m, ensure_ascii=False), "dirty": 1, "del": 0})
+            recs.append({"k": f"kfs2:jzimg:mximg{i}", "v": data_url(((i * 37) % 255, 120, 200)), "dirty": 1, "del": 0})
+        pa.evaluate(PUT, recs)
+        pa.reload(); kite(pa)
+        open_xianbi(pa)
+        pick_day(pa, td)
+        pa.locator(".kfs-jz-open").click()
+        f = fx(pa, 40)
+        ok(f is not None and fwait(f, "[...document.querySelectorAll('#page .stk.placed[data-c=pic] img')].filter((i) => i.naturalWidth > 0).length === 3", 30),
+           "照片库里多了六十张：点开那一下她放的三张照片照样摆齐（等照片库取齐了才开）")
+        time.sleep(3)
+        P1 = kvj(pa, f"kfs2:ty:page/{today}")
+        ok(P1 and P1.get("ts") == P0.get("ts") and len([s for s in P1["stk"] if s["c"] == "pic"]) == 3, "没动手：那一页一笔没存（还是原来那一份，三张照片都在）")
+        close_ty(pa, f)
+        P2 = kvj(pa, f"kfs2:ty:page/{today}")
+        ok(P2 and P2.get("ts") == P0.get("ts"), "关上：也没存")
 
         # ================= 第二台设备 =================
         time.sleep(3)

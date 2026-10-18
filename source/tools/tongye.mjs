@@ -72,13 +72,32 @@ export const PATCHES = [
   ['toast2(nmMe()+"刚更新了这一页")', 'R.by!=="her"&&toast2(nmMe()+"刚更新了这一页")', 1, "不冒充他"],
   // 刚打开那一下同页按它自带的 9.26 摆过一遍：从“没在哪一天”开始，打开哪一天（9.26 也算）都真的换过去
   ['let CURDAY="9.26";', 'let CURDAY="";', 1, "从哪一天都不是开始"],
-  // 换到要看的那一天以后，才许存页上的东西（之前的是 9.26 的样子，见 bridge.js）
+  // 换到要看的那一天（PAGE_DAY 换过来那一下）以后，才许存页上的东西（之前的是 9.26 的样子，见 bridge.js）
+  ["\n PAGE_DAY=k;qDay=k;", "\n PAGE_DAY=k;window.__kfsOpened&&window.__kfsOpened(k);qDay=k;", 1, "换了天才许存"],
+  // 同页自己存那一页（savePage）之前问一声开封府那一层：那一天的页取回来了、她真的动过手、照片库齐了，才存（见 bridge.js 的 __kfsSaveOk）
+  ["function savePage(){if(restoring)return;", "function savePage(){if(restoring)return;if(window.__kfsSaveOk&&!window.__kfsSaveOk())return;", 1, "取回来之前、没动过手不存"],
+  // 那一天的页从存档里取回来了（有没有都算回来了）
   [
-    '$$("#page .stk.deco").forEach(x=>x.remove());decorate()}play($("#page"))}catch(e){console.warn(e)}},80);\n return true};',
-    '$$("#page .stk.deco").forEach(x=>x.remove());decorate()}play($("#page"))}catch(e){console.warn(e)}},80);\n window.__kfsOpened&&window.__kfsOpened(k);\n return true};',
+    "pageRef.get().then(sn=>{if(PAGE_DAY!==k||!sn.exists)return;",
+    "pageRef.get().then(sn=>{window.__kfsPageIn&&window.__kfsPageIn(k);if(PAGE_DAY!==k||!sn.exists)return;",
     1,
-    "换了天才许存",
+    "那一页取回来了",
   ],
+  // 她的照片库（mine）头一回收齐了：开封府等它齐了再打开那一天（不齐的时候她放的照片摆不出来）
+  ["mineCol.onSnapshot(q=>{const remote=", "mineCol.onSnapshot(q=>{window.__kfsMineIn=1;const remote=", 1, "照片库收齐了"],
+  // 关上之前把那一页马上存了（见 bridge.js 的 closeNow）
+  ["let pDirty=false;function flushPage(){", "let pDirty=false;window.__kfsFlush=()=>flushPage();function flushPage(){", 1, "关之前存"],
+  // 留了批注：同页是送回它家里的聊天，开封府这边没送，光义翻日记看得到（不说“送回家了”）
+  ['if(msg)msg.textContent="存好了，也送回家了，"+NM("me")+"那边看得到"', 'if(msg)msg.textContent="存好了，"+NM("me")+"翻日记的时候看得到"', 1, "不说送回家了"],
+  // 字体：同页从 Google Fonts 现取；开封府这一页的安全规矩只连自己（字体那一题她还没定）。连上 Google 的那两行拿掉，换风格的时候也不去取
+  ['<link rel="preconnect" href="https://fonts.googleapis.com">\n', "", 1, "不连 Google"],
+  [
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;600&family=IBM+Plex+Mono:wght@400;500&family=Long+Cang&display=swap">\n',
+    "",
+    1,
+    "不连 Google",
+  ],
+  ["function loadFonts(st,preview){", "function loadFonts(st,preview){return;", 1, "不连 Google"],
   // 每一天的页（day/<日子>）头一回收齐了，记一笔：开封府要打开某一天，等它收齐了再开
   [
     'db.collection("day").onSnapshot(q=>{q.docs.forEach(d=>ingestDay(d.data()));',
@@ -86,11 +105,12 @@ export const PATCHES = [
     1,
     "收齐了",
   ],
-  // 开封府要打开某一天：本子的那一段里摆一个口子（同“自己拼”那一颗：这一天还没有页就先起一页空的，再进编辑器）
+  // 开封府要打开某一天：本子的那一段里摆一个口子（同“自己拼”那一颗：这一天还没有页就先在这一页里起一页空的（不存，她动手了才存，见 bridge.js），
+  // 那一天取过天气的带上，天气签照它画；再进编辑器）
   [
     "\nhome();\n})();",
     '\nwindow.__kfsShell={open:function(k,mode){day=k;var n=0;(function t(){if(!DONE[k]&&!window.__kfsDaysIn&&++n<40){setTimeout(t,150);return}' +
-      'if(!DONE[k]){try{ingestDay({day:k,status:"done",by:"her",title:"",ts:Date.now()})}catch(_){}}' +
+      'if(!DONE[k]){var w=null;try{w=(G("WX")||{})[k]}catch(_){}try{ingestDay(Object.assign({day:k,status:"done",by:"her",title:"",ts:Date.now()},w&&w.code!=null?{wx:w,at:w.at||""}:{}))}catch(_){}}' +
       'try{openEditor(document.body,mode||"view")}catch(e){console.warn(e)}})()},home:function(){try{home()}catch(e){}}};\nhome();\n})();',
     1,
     "开封府打开某一天",
@@ -101,7 +121,8 @@ export const PATCHES = [
 const sha = (s) => "'sha256-" + createHash("sha256").update(s, "utf8").digest("base64") + "'";
 
 export function makeTongye(src, bridgeJs) {
-  let html = src;
+  // 换行一律照 \n（浏览器读进来的脚本就是这样的，脚本的指纹照这样算才对得上）
+  let html = src.replace(/\r\n?/g, "\n");
   for (const [from, to, n, why] of PATCHES) {
     const got = html.split(from).length - 1;
     if (got !== n) throw new Error(`同页的补丁对不上（${why}）：“${from.slice(0, 60)}”找到 ${got} 处，应该是 ${n} 处`);
