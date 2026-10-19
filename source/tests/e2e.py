@@ -1,5 +1,5 @@
 # 开封府端到端测试：两台“iPhone”，一个假 Supabase
-import json, re, time, urllib.request, os
+import json, re, time, urllib.request, urllib.parse, os
 from playwright.sync_api import sync_playwright
 
 # 先在 source/ 里：npm run build:test，再开两个服务：
@@ -478,6 +478,13 @@ with sync_playwright() as p:
     ok(pa.get_by_text(re.compile("主屏幕上的图标还是沙燕.*想换成小猪")).is_visible() and pa.get_by_role("button", name="复制丁香入口的网址").is_visible(),
        "换了主题以后提示：图标不会自己变，给出丁香入口的网址")
     ok(pa.evaluate("document.querySelector('meta[name=theme-color]').content") == "#EFE2EF", "顶上状态栏的颜色也跟着换")
+    # 黑夜 10 月 19 日有了自己的入口：提示和丁香一样，给出黑夜入口的网址，不再说“还没有自己的主屏幕图标”
+    pa.get_by_role("button", name="黑夜主题").click(); time.sleep(0.4)
+    ok(pa.evaluate(THEME)[0] == "heiye" and pa.get_by_text(re.compile("主屏幕上的图标还是沙燕.*想换成月亮")).is_visible()
+       and pa.get_by_role("button", name="复制黑夜入口的网址").is_visible() and pa.locator(".kfs-theme-noentry").count() == 0,
+       "换成黑夜：提示图标不会自己变，给出黑夜入口的网址")
+    shot(pa, "13a_heiye_account")
+    pa.get_by_role("button", name="丁香主题").click(); time.sleep(0.4)
     shot(pa, "13_dingxiang_account")
     pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
     pa.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.6)
@@ -757,6 +764,26 @@ with sync_playwright() as p:
        "丁香入口的清单：从这儿添加，以后打开的还是丁香的入口")
     shot(pc, "16_dingxiang_gate")
     C.close()
+
+    # 黑夜的入口（10 月 19 日添的）：从这儿添加到主屏幕，图标是她画的那一圈月相，头一回进去就是黑夜
+    D = browser.new_context(**iphone)
+    pd = D.new_page()
+    pd.on("pageerror", lambda e: errors.append("D: " + str(e)))
+    pd.goto(BASE + "heiye/")
+    pd.get_by_text("进门先报上名来").wait_for(timeout=15000)
+    info = pd.evaluate("""() => ({ theme: document.documentElement.getAttribute('data-kfs-theme'),
+        meta: document.querySelector('meta[name="theme-color"]').getAttribute('content'),
+        icon: document.querySelector('link[rel="apple-touch-icon"]').href, manifest: document.querySelector('link[rel="manifest"]').href,
+        wall: document.querySelector('img').currentSrc || document.querySelector('img').src })""")
+    man = json.loads(urllib.request.urlopen(info["manifest"]).read())
+    ok(info["theme"] == "heiye" and info["meta"] == "#060911" and "/icons-heiye/apple-touch-icon.png" in info["icon"] and info["wall"].endswith("/assets/wall-heiye.webp"),
+       "黑夜的入口：一打开就是黑夜，图标是月亮")
+    got = [urllib.request.urlopen(urllib.parse.urljoin(info["manifest"], i["src"])).status for i in man["icons"]]
+    ok(man["start_url"] == "./heiye/" and man["theme_color"] == "#060911" and len(man["icons"]) == 3 and all("icons-heiye" in i["src"] for i in man["icons"])
+       and got == [200, 200, 200] and urllib.request.urlopen(info["icon"]).status == 200,
+       "黑夜入口的清单：从这儿添加，以后打开的还是黑夜的入口，几张图标都取得到")
+    shot(pd, "16b_heiye_gate")
+    D.close()
 
     # 第二台退出登录
     pb.get_by_role("button", name="打开侧栏").click()

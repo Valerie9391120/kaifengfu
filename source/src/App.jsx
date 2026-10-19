@@ -4678,7 +4678,8 @@ export default function App({ account = {} }) {
               </button>
             ))}
           </div>
-          {/* 黑夜还没有自己的入口和图标（theme.js 里 entrance 是空的）：只说一句图标不变，不给网址 */}
+          {/* 还没有自己入口和图标的主题（theme.js 里 entrance 是空的）：只说一句图标不变，不给网址。
+              黑夜 10 月 19 日有了入口，眼下三套都有，这一块不出来；往后再添主题、还没挑图标的时候用得上 */}
           {theme !== entranceTheme() && !THEMES[theme].entrance && (
             <div style={{ ...glass(0.5, 16), borderRadius: 16, padding: "12px 14px", marginBottom: 22 }}>
               <p className="kfs-theme-noentry" style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.65 }}>

@@ -196,13 +196,15 @@ fs.renameSync(`${OUT}/assets/_app.css`, `${OUT}/assets/${cssName}`);
 const IMAGES = ["splash.webp", "kite.webp", "wall.webp", "splash-dingxiang.webp", "dx-heart.webp", "dx-blush.webp", "wall-dingxiang.webp", "wall-heiye.webp", "splash-heiye.webp"];
 for (const f of IMAGES) fs.copyFileSync(`static/${f}`, `${OUT}/assets/${f}`);
 
-// 两个入口：从哪个入口“添加到主屏幕”，图标就是哪个，头一回进去就是哪个主题（见 src/theme.js）。
+// 三个入口：从哪个入口“添加到主屏幕”，图标就是哪个，头一回进去就是哪个主题（见 src/theme.js）。
 // 苹果在添加那一刻把图标定死，所以想换图标只能删掉重新从另一个入口添加。
 //   ./            青绿，沙燕图标
 //   ./dingxiang/  丁香，小猪图标（页面里用 <base href="../">，资源还是从上一层拿）
+//   ./heiye/      黑夜，月亮图标（10 月 19 日添的，同丁香，也是 <base href="../">）
 const ENTRANCES = [
   { dir: "", icons: "icons", manifest: "manifest.webmanifest", color: "#D6DCCD", splash: "splash.webp" },
   { dir: "dingxiang", icons: "icons-dingxiang", manifest: "manifest-dingxiang.webmanifest", color: "#EFE2EF", splash: "splash-dingxiang.webp" },
+  { dir: "heiye", icons: "icons-heiye", manifest: "manifest-heiye.webmanifest", color: "#060911", splash: "splash-heiye.webp" },
 ];
 for (const e of ENTRANCES) {
   fs.mkdirSync(`${OUT}/${e.icons}`, { recursive: true });
@@ -290,7 +292,7 @@ ${e.dir ? '<base href="../">\n' : ""}<meta name="viewport" content="${VIEWPORT}"
   );
 }
 // 通知用的服务工作线程：原样放到根上，名字不带指纹（浏览器按这个固定的网址找它、查它更新没有）。
-// 它管得着的范围是它所在的目录，放在根上两个入口才都在里面
+// 它管得着的范围是它所在的目录，放在根上三个入口才都在里面
 fs.copyFileSync("src/sw.js", `${OUT}/sw.js`);
 
 fs.writeFileSync(`${OUT}/.nojekyll`, "");
