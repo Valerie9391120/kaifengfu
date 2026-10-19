@@ -1,9 +1,9 @@
 // =====================================================
-// 主题：青绿（沙燕）、丁香（小猪）、黑夜（10 月 13 日添的，还没有自己的入口和图标）
-// 颜色全写成 CSS 变量（input.css 里 :root 是青绿，html[data-kfs-theme="dingxiang"] 是丁香），
+// 主题：青绿（沙燕）、丁香（小猪）、黑夜（月亮；主题 10 月 13 日添的，入口和图标 10 月 19 日添的）
+// 颜色全写成 CSS 变量（input.css 里 :root 是青绿，html[data-kfs-theme="dingxiang"] 是丁香，"heiye" 是黑夜），
 // 换主题就是换 <html> 上的 data-kfs-theme，页面不用重画；图（聊天背景、开屏）跟着 useTheme() 换。
 // 主题记在这台手机上（localStorage），不跟着云端走：
-//   从哪个入口添加到主屏幕，头一回进去就是哪个主题（青绿的入口是 ./，丁香的入口是 ./dingxiang/）；
+//   从哪个入口添加到主屏幕，头一回进去就是哪个主题（青绿的入口是 ./，丁香的是 ./dingxiang/，黑夜的是 ./heiye/）；
 //   之后在账户面板里可以随时换，图标不跟着变（苹果在添加那一刻就把图标定死了）。
 // =====================================================
 import { useEffect, useState } from "react";
@@ -25,21 +25,21 @@ export const THEMES = {
     entrance: "./dingxiang/",
     icon: "小猪",
   },
-  // 黑夜（10 月 13 日添的，样子照并蒂莲）：还没有自己的入口和主屏幕图标，等她挑了图标再加；
-  // 眼下在账户面板里换过来就行，记在这台手机上，跟另两套一样
+  // 黑夜（10 月 13 日添的，样子照并蒂莲）。入口和主屏幕图标 10 月 19 日添的：图标是她自己画的那一圈月相
   heiye: {
     label: "黑夜",
     wall: "./assets/wall-heiye.webp",
     meta: "#060911",
-    entrance: null,
-    icon: null,
+    entrance: "./heiye/",
+    icon: "月亮",
   },
 };
 
 // 这次是从哪个入口进来的
 export function entranceTheme() {
   try {
-    return /\/dingxiang\/(index\.html)?$/.test(window.location.pathname) ? "dingxiang" : "qinglv";
+    const m = /\/(dingxiang|heiye)\/(index\.html)?$/.exec(window.location.pathname);
+    return m ? m[1] : "qinglv";
   } catch (e) {
     return "qinglv";
   }

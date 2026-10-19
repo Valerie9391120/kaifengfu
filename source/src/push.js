@@ -27,8 +27,8 @@ const local = {
 const coded = (code, message) => Object.assign(new Error(message), { code });
 const withTimeout = (promise, ms, message) => Promise.race([promise, new Promise((_, no) => setTimeout(() => no(coded("worker", message)), ms))]);
 
-// sw.js 在网站根上。丁香的入口在 ./dingxiang/ 底下，页面里有 <base href="../">，
-// 照 document.baseURI 算，两个入口算出来的是同一个文件、同一个范围
+// sw.js 在网站根上。丁香、黑夜的入口在 ./dingxiang/、./heiye/ 底下，页面里有 <base href="../">，
+// 照 document.baseURI 算，三个入口算出来的是同一个文件、同一个范围
 export const workerUrl = () => new URL("./sw.js", document.baseURI).href;
 export const workerScope = () => new URL("./", document.baseURI).href;
 
