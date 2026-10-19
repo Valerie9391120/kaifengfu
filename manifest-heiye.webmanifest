@@ -1,0 +1,29 @@
+{
+  "name": "开封府",
+  "short_name": "开封府",
+  "lang": "zh-CN",
+  "id": "./heiye/",
+  "start_url": "./heiye/",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#060911",
+  "theme_color": "#060911",
+  "icons": [
+    {
+      "src": "./icons-heiye/icon-192.png?v=d297c92532",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "./icons-heiye/icon-512.png?v=3b238f54af",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "./icons-heiye/icon-maskable-512.png?v=6c5095d935",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
