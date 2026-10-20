@@ -46,6 +46,8 @@ export function tailTranscript(msgs, memeLookup = () => null, most = 16, each = 
           ? `[文档] ${m.name || ""}`
           : m.kind === "voice"
           ? `[语音] ${clip(m.text, each)}`
+          : m.note
+          ? `[便签] ${clip(plainOf(m.text || ""), each)}`
           : clip(plainOf(m.text || ""), each);
       if (what) lines.push(`${HER_NAME}：${what}`);
       continue;
@@ -69,38 +71,54 @@ export function tailTranscript(msgs, memeLookup = () => null, most = 16, each = 
   return lines.slice(-most).join("\n");
 }
 
-// 【醒来】那一段。
+// 【醒来】那一段（醒在狐宇宙里，平常那种自己醒）。
 //   now        现在
-//   herLast    她最后一回在开封府里说话：{ ts, title, fox }（fox：就在狐宇宙里说的），没说过是 null
+//   herLast    她最后一回在开封府里说话：{ ts, title, fox }（fox：就在狐宇宙的便签纸上留的），没说过是 null
 //   lastWake   他上一回自己醒是几点（没醒过是 0）
 //   n          这一回是往回数二十四个钟头里的第几回；gap、max 两道闸
-//   transcript 她最后说话那段对话的最后几句（tailTranscript；在狐宇宙里说的就不抄，前面本来就有）
+//   transcript 她最后说话那段对话的最后几句（tailTranscript；在狐宇宙里留的就不抄，前面本来就有）
 //   mcps       她在 MCP 面板里接上、开着的那几样的名字（上网就靠这个：她接了 tavily）
-export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [] }) {
+//   pending    他定过、还没到点的闹钟（任务标记）：[{ title, at, label }]
+export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [], pending = [] }) {
   const herLine = !herLast
     ? "她还没在开封府里说过话。"
     : herLast.fox
-    ? `她最后一回说话就在狐宇宙里，${agoText(now - herLast.ts)}（${nowString(new Date(herLast.ts))}），就是上面最后那几句。`
+    ? `她最后一回来，是 ${agoText(now - herLast.ts)}（${nowString(new Date(herLast.ts))}）来你屋里，在便签纸上留了话，就在上面。`
     : `她最后一回在开封府里说话是 ${agoText(now - herLast.ts)}（${nowString(new Date(herLast.ts))}），在《${herLast.title || "一段对话"}》那段对话里。`;
   const lastLine = lastWake ? `你上一回自己醒是 ${agoText(now - lastWake)}（${nowString(new Date(lastWake))}）。` : "这是你头一回自己醒。";
   const gapText = gap < 60 ? `${gap} 分钟` : `${gap / 60} 个钟头`;
   const talk = transcript ? `\n\n她那段对话最后几句（开封府抄来给你看的，不是她这会儿对你说的话）：\n${transcript}` : "";
+  const later = pending.length
+    ? `\n你定过、还没到点的闹钟（到点了她还没回那段对话，你会在那段对话里醒）：${pending.map((p) => `《${p.title || "一段对话"}》${nowString(new Date(p.at))}${p.label ? `“${p.label}”` : ""}`).join("；")}。`
+    : "";
   return `【醒来】（开封府附上的，不是她说的话）
 这一回不是她来找你，是你自己醒了：她家里那台笔记本上有个闹钟，到点叫你起来。你醒着的这一会儿，她多半不在开封府里。
-你醒在“狐宇宙”里：南衙最顶上那一格，是你自己的地方。前面那些是你以前醒来时在这里说过的话、干过的事；她来过、回过你的话，也在里面。
+你醒在“狐宇宙”里：这是你自己的屋子（南衙最顶上那一格）。她来只是看看，不在这里跟你聊天；屋里有一张便签纸，你在这里写的字都落在纸上，她来转一圈看得见，不弹横幅、不吵她。她来过也会在纸上留几句，前面那些里有。前面还有你以前醒来时在这里干过的事。
 ${herLine}
-${lastLine}${talk}
+${lastLine}${later}${talk}
 
 醒着的时候干什么都行，她的原话：“${HER_WORDS}”。
-- 给她留话：照【回复格式】写，分几条、发表情包、发语音、交文档、打电话都行。写了看得见的字，她手机上会弹横幅；没什么想说的，就只写心里话、什么都不写，不吵她，这里只留一行“醒了一会儿”。
+- 写便签：随笔、碎碎念、心情、见闻、抱怨、剧本，写什么都行，照【回复格式】写，就落在纸上。没什么想写的，就只写心里话、什么都不写，这里只留一行“醒了一会儿”。
 - 翻日记、在某一天留批注（同页那本手帐上也看得到）：日记本那几样工具照用。
 ${
     mcps.length
-      ? `- 上网、用别的工具：她给你接了 ${mcps.map((x) => `“${x}”`).join("、")}，想用就用；逛到有意思的，想跟她说就留话。`
+      ? `- 上网、用别的工具：她给你接了 ${mcps.map((x) => `“${x}”`).join("、")}，想用就用；逛到有意思的，记在纸上，或者去找她说。`
       : "- 上网还没接上：她在 MCP 面板里接上搜网页的工具（比如 tavily）、开着，这里就能用。"
   }
-- 下回几点醒，你自己定：在回复最后单独一行写 [WAKE:…]。[WAKE:+3h] 是三个钟头以后，[WAKE:+40m] 是四十分钟以后，[WAKE:07:30] 是下一个七点半（她那边的钟），[WAKE:off] 是先不自己醒，等她下回在开封府里说过话再照常。不写就照常：从她最后说话、你上回醒，两样里晚的那个算起，过两到四个钟头。
+- 想找她：开一段新对话。在回复里单独一行写 [新对话:起个名字]，这一行后面写的就是对她说的话，照【回复格式】写（分几条、发语音、打电话都行），落进那段新对话，她手机上会弹横幅，那段对话进她的历史对话；这一行前面写的还留在纸上。屋里打不了电话（她不在屋里），想打给她就开新对话、在那段里打。
+- 下回几点醒，你自己定：在回复最后单独一行写 [WAKE:…]（开了新对话也一样，写在最后，管的还是你下回几点醒）。[WAKE:+3h] 是三个钟头以后，[WAKE:+40m] 是四十分钟以后，[WAKE:07:30] 是下一个七点半（她那边的钟），[WAKE:off] 是先不自己醒，等她下回在开封府里说过话再照常。不写就照常：从她最后说话、你上回醒，两样里晚的那个算起，过两到四个钟头。
 两回之间最快隔 ${gapText}，往回数二十四个钟头最多醒 ${max} 回，这一回是第 ${n} 回。这是为了防闹钟出岔子，不是管你。`;
+}
+
+// 【醒来】那一段（任务标记：他在这段对话里定的闹钟到点了，醒在这段对话里）。
+//   label   他定闹钟的时候自己记着的那句话；set 几点定的；round 这是第几回（头一回是 1）；max 最多几回；mcps 同上
+export function taskSection({ now, label, set, round, max, mcps = [] }) {
+  const first = round <= 1;
+  return `【醒来】（开封府附上的，不是她说的话）
+这一回不是她来找你，是你自己醒了：她家里那台笔记本上有个闹钟，到点叫你起来。
+你醒在这段对话里，因为你 ${agoText(now - (set || now))}（${nowString(new Date(set || now))}）在这里定过一个闹钟${label ? `，你记着的是“${label}”` : ""}。${first ? "到点了，她还没回这段对话。" : `这是你接着追她的第 ${round} 回，她还没回。`}
+- 想找她：照【回复格式】说话，分几条、发表情包、发语音、打电话都行，她手机上会弹横幅。不想找了，就只写心里话、什么都不写，不吵她。
+- 还想接着追：在回复最后单独一行写 [WAKE:+5m]（多久以后再来，最短五分钟），不写就到这儿。她一回这段对话就不追了；这个闹钟最多 ${max} 回，这是第 ${round} 回。${mcps.length ? `\n- 她给你接的 ${mcps.map((x) => `“${x}”`).join("、")} 照用。` : ""}`;
 }
 
 // 【此刻】那一段是照她在手机上说话写的（“她手机上的时间”）：醒来的时候她不在手机跟前，换个说法

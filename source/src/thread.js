@@ -34,10 +34,11 @@ export function switchAlt(msgs, i, t) {
 // 结果已经记在这一条上（calls），等着递回去让他接着说。他说完的那一条不记 stop
 export const midTurn = (m) => !!(m && m.role === "him" && m.stop === "tool_use" && m.calls && m.calls.length);
 
-// 最后一条（不算换头像提示）是她的话，就说明还欠她一个回复；是他说到一半的那一步（midTurn），也算欠着（欠的是后半截）
+// 最后一条（不算换头像提示）是她的话，就说明还欠她一个回复；是他说到一半的那一步（midTurn），也算欠着（欠的是后半截）。
+// 她在狐宇宙的便签纸上留的那一句（note，见 fox.js）不算：那不是跟他说话，不等回
 export function needsReply(msgs) {
   for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].role === "event") continue;
+    if (msgs[i].role === "event" || msgs[i].note) continue;
     return msgs[i].role === "her" || midTurn(msgs[i]);
   }
   return false;
@@ -74,7 +75,7 @@ export function unmarkStopped(msgs) {
 // 那一句后面有了回话、她又说了别的，这一笔就不作数了（不用特意擦掉）；她点了小字，这一笔当场擦掉（见 unmarkStopped）
 export function stoppedAt(msgs) {
   for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].role === "event") continue;
+    if (msgs[i].role === "event" || msgs[i].note) continue;
     return msgs[i].stopped ? msgs[i].id : ""; // 这一笔只往她的话、他说到一半的那一步上记（见 markStopped）
   }
   return "";

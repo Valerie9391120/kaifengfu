@@ -12,6 +12,13 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId
   // 聊天记录里他那几条字不摆标签（卿卿 10 月 14 日 12:21 定的；存着的原文不动，只是不显示，见 Bubble.jsx）
   let inCall = false;
   messages.forEach((m) => {
+    // 他自己醒、落在别的对话里的那一行（任务到点、开的新对话最前头，见 fox.js 的 hidden）她看不见：不摆，也不算进几点
+    // （算进去的话，他醒过来没说话的那一回，底下会孤零零冒一行时间；另一双眼睛挑出来的）
+    if (isWakeMark(m) && m.hidden) {
+      // 前情提要抄到的正好是这一行：那一行小字照摆（另一双眼睛挑出来的）
+      if (recap && recap.upto === m.id) rows.push({ type: "recap", key: "rc-" + m.id, msg: m, recap });
+      return;
+    }
     if (prevTs === null || m.ts - prevTs > 15 * 60 * 1000) {
       rows.push({ type: "sep", key: "sep-" + m.id, ts: m.ts });
     }
@@ -23,7 +30,7 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId
       inCall = m.phase === "start";
       rows.push({ type: "notice", key: m.id, msg: m, kind: "call", text: markText(m) });
     } else if (isWakeMark(m)) {
-      // 他自己醒了一回（狐宇宙，见 fox.js）：一行小字，前面是他的头像
+      // 他自己醒了一回（狐宇宙，见 fox.js）：一行小字，前面是他的头像（她看不见的那一行上面已经跳过了，只寄给他）
       rows.push({ type: "notice", key: m.id, msg: m, who: "him", kind: "wake", text: wakeText(m) });
     } else if (m.role === "event") {
       rows.push({

@@ -228,9 +228,10 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
         arr.push({ role: "user", content: blocks });
         return;
       }
+      // 她来狐宇宙（他的屋子）转了一圈，在便签纸上留的（fox.js 的 note）：不是跟他说话，照实告诉他
       arr.push({
         role: "user",
-        content: [{ type: "text", text: m.text || "……" }],
+        content: [{ type: "text", text: m.note ? `[开封府提示：她来你屋里转了一圈，在便签纸上留了一句：${m.text || ""}]` : m.text || "……" }],
       });
       return;
     }

@@ -1,9 +1,17 @@
 // =====================================================
-// 叫醒他一回（狐宇宙，见 src/fox.js）：照手机那头的样子拼好整段话（名帖、狐宇宙那段对话、【此刻】），
+// 叫醒他一回（狐宇宙，见 src/fox.js）：照手机那头的样子拼好整段话（名帖、那段对话、【此刻】），
 // 后面附上【醒来】那一段（note.js），交给 claude 函数；他回来的照手机那头的规矩整理（src/App.jsx 的 digestReply），
-// 他翻了日记就替他翻、递回去接着要；放进狐宇宙那段对话；他写了看得见的字，叫 push 函数敲她的手机。
-// 手机那头的零件（名帖怎么拼、对话怎么打包、回话怎么拆、日记怎么翻）一律照用，一个字不另写：
+// 他翻了日记就替他翻、递回去接着要。手机那头的零件（名帖怎么拼、对话怎么打包、回话怎么拆、日记怎么翻）一律照用，一个字不另写：
 // 寄出去的跟她手机寄的一个样子，那边的我分不出是她戳的还是闹钟戳的（只多了【醒来】那一段）。
+//
+// 醒在哪儿（她 10 月 20 日 20:03、22:04、22:11 定的）：
+//   askRoom  平常那种：醒在狐宇宙（他的屋子）。写的字落在屋里的便签纸上，不敲她；
+//            他单独一行写 [新对话:名字]，后面的话落进一段新开的对话（进她的历史对话），敲她
+//   askTask  任务标记到点：醒在他定闹钟的那段对话里，说的话落在那段对话里，敲她；狐宇宙里留一行“去《××》找你了”
+// 问到的回一包（bundle，还没放进存档）；放进存档的是 commitWake：
+//   puts   [{ chat, rows, title?, create? }]：放进哪几段对话、各放哪几行（create：新开的那一段）
+//   knocks [{ chat, texts }]：敲她的横幅（落在哪段对话、他每一步写的整段字）
+//   chase  （askTask）这个任务办到第几回、下回几点再追
 // =====================================================
 import { buildSystem, withNowNote } from "../src/prompt/system.js";
 import { buildMessages } from "../src/prompt/messages.js";
@@ -19,15 +27,17 @@ import { makePreview } from "../src/chat/overview.js";
 import { chatTag } from "../src/mail.js";
 import { newId } from "../src/util.js";
 import { needsReply, stoppedAt } from "../src/thread.js";
-import { FOX_CHAT, FOX_TITLE, FOX_DOORS, isWakeMark, gapOf, maxOf } from "../src/fox.js";
-import { lastMark } from "./plan.js";
-import { wakeSection, wakeNowNote, tailTranscript } from "./note.js";
+import { FOX_CHAT, FOX_TITLE, FOX_DOORS, FOX_TASK, TASK_MAX_ROUNDS, isWakeMark, gapOf, maxOf } from "../src/fox.js";
+import { lastMark, parseWake, nextChase, infoOf, splitWake } from "./plan.js";
+import { TOOLS as GAME_TOOLS, ON_KEY, readOn, gameOn, hasSteps } from "../src/game/jianghu.js";
+import { wakeSection, taskSection, wakeNowNote, tailTranscript } from "./note.js";
 
 // 他的默认头像（同 src/ui/Avatar.jsx 的 HIS_DEFAULT；那个文件带着界面，这里不引）
 const HIS_DEFAULT = { type: "meme", file: "fox_reading_book.jpg" };
 const MOST_STEPS = 4; // 一回醒着最多接着要几步（他翻了日记，结果递回去接着说）
 const CUT_DIARY = "没翻：这一回的回话没写完整（多半是写到长度上限被截断了），日记没替你翻。要翻的话重新调一次。"; // 同 App.jsx
 const mcpSlug = (name, i) => (name || "mcp").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `mcp-${i}`; // 同 App.jsx
+const chatKey = (id) => "kfs2:chat:" + id;
 
 const parse = (s, fb) => {
   try {
@@ -38,7 +48,7 @@ const parse = (s, fb) => {
   }
 };
 
-// 要往上接着写的那几样（狐宇宙那段对话、目录）：没有就是空的；有、却不是一串（坏了），不接着写（不然写上去的是只有新几行的一份，会把好好的那份盖掉）
+// 要往上接着写的那几样（对话、目录）：没有就是空的；有、却不是一串（坏了），不接着写（不然写上去的是只有新几行的一份，会把好好的那份盖掉）
 function strict(text, what) {
   if (text == null) return [];
   const v = parse(text, null);
@@ -57,11 +67,11 @@ export async function fetchExtraMemes(fallback = []) {
   }
 }
 
-// 她最后一回在开封府里说话：最近动过的几段对话里，她说的最后一句。{ ts, id, title, fox }，没有回 null
+// 她最后一回在开封府里说话：最近动过的几段对话里，她说的最后一句（在狐宇宙便签纸上留的也算她来过）。{ ts, id, title, fox }，没有回 null
 export async function herLastOf(store, index) {
   let best = null;
   for (const c of (index || []).slice(0, 6)) {
-    const msgs = parse(await store.get("kfs2:chat:" + c.id), []);
+    const msgs = parse(await store.get(chatKey(c.id)), []);
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
       if (m && m.role === "her") {
@@ -71,6 +81,25 @@ export async function herLastOf(store, index) {
     }
   }
   return best;
+}
+
+// 他定过的任务（kfs2:fox:task:<编号>，手机记下的、闹钟办过的）
+export async function tasksOf(store) {
+  const out = [];
+  for (const key of store.keys(FOX_TASK)) {
+    const t = parse(await store.get(key), null);
+    if (t && typeof t === "object" && !Array.isArray(t)) out.push({ ...t, key, id: key.slice(FOX_TASK.length) });
+  }
+  return out;
+}
+
+// 一段对话眼下的样子（任务用）：没有、读出来不对回 null；有回 plan.js 的 infoOf（他定闹钟的那一条在第几条、那后面她说过话没有）
+export async function chatInfo(store, id) {
+  const text = await store.get(chatKey(id));
+  if (text == null) return null;
+  const msgs = parse(text, null);
+  if (!Array.isArray(msgs)) return null;
+  return infoOf(msgs);
 }
 
 // 醒一回要用的那些，从存档里取齐
@@ -88,14 +117,18 @@ export async function gather(store, extras = []) {
     if (t != null) memDocs.push({ name: f.name, content: t });
   }
   const index = parse(await store.get("kfs2:index"), []) || [];
-  const fox = parse(await store.get("kfs2:chat:" + FOX_CHAT), []) || [];
+  const fox = parse(await store.get(chatKey(FOX_CHAT)), []) || [];
   const recaps = normRecaps(parse(await store.get(RECAP_KEY + FOX_CHAT), []));
   const herLast = await herLastOf(store, index);
-  const wakes = fox.filter(isWakeMark).map((m) => m.ts || 0).sort((a, b) => a - b);
-  return { settings, names, avatars, memDocs, index, fox, recaps, herLast, wakes, mark: lastMark(fox), extras };
+  // 他醒过的那几回（几点醒的规矩用）；capWakes 是第二道闸数的（追她的那几回不算，她 20:08 定的）
+  const marks = fox.filter(isWakeMark);
+  const wakes = marks.map((m) => m.ts || 0).sort((a, b) => a - b);
+  const capWakes = marks.filter((m) => !(m.go && m.go.how === "task")).map((m) => m.ts || 0).sort((a, b) => a - b);
+  const tasks = await tasksOf(store);
+  return { settings, names, avatars, memDocs, index, fox, recaps, herLast, wakes, capWakes, mark: lastMark(fox), tasks, extras };
 }
 
-// 她在狐宇宙里发过的照片、文档：全文另存着，打包之前取出来（同手机那头的 loadImagesFor、loadDocsFor）
+// 那段对话里她发过的照片、文档：全文另存着，打包之前取出来（同手机那头的 loadImagesFor、loadDocsFor）
 async function attachmentsOf(store, msgs) {
   const imgs = {};
   const docs = {};
@@ -106,17 +139,66 @@ async function attachmentsOf(store, msgs) {
   return { imgLookup: (id) => imgs[id] || null, docLookup: (id) => docs[id] || null };
 }
 
-// 叫醒他一回：问他（这一步花钱），回来的整理好，回一包（还没放进存档，放的是 commitWake）：
-//   rows   要放进狐宇宙的那几行（醒了那一行加他的话）；quiet 这一回一个看得见的字都没留
-//   say    要敲横幅的（他每一步写的整段字）；title 横幅上的名字；newAvatar、newName 他换的头像、改的名字
-//   cost   花了多少（美元，算不出是 null）；steps 要了几步；wake 他定的下回几点醒
-// 没问成抛错（什么都没写）
-export async function askWake({ store, cloud, ctx, now = Date.now(), n = 1, log = () => {} }) {
+const mcpsOf = (st) => (st.mcps || []).filter((m) => m && m.enabled && m.url);
+const lookupOf = (ctx) => (file) => MEME_MAP[file] || (ctx.extras || []).find((m) => m.file === file) || null;
+
+// 他在屋里单独一行写的 [新对话:名字]：这一行前面的留在屋里，后面的落进新开的那段对话。没有回 null。
+// 心里话、文档块里写的不算（同 [WAKE:…]、改名字）：心里话里写了的话，从那儿切开，心里话后半截就露给她了（另一双眼睛挑出来的）。
+// 名字最长认八十个字，取头三十个；后面那几句里又写了一回的，摘掉不摆成字
+const NEW_CHAT = /^[ \t]*\[(?:新对话|NEWCHAT|newchat)[:：]([^\[\]\n]{1,80})\][ \t]*$/m;
+// 心里话、文档块那几截涂成空白（换行留着，一行一行的位置不变），只在剩下的里头找
+function unmasked(s) {
+  const blank = (t) => t.replace(/[^\n]/g, " ");
+  let out = s;
+  const m = /<thinking>[\s\S]*?<\/thinking>/.exec(out);
+  if (m) out = out.slice(0, m.index) + blank(m[0]) + out.slice(m.index + m[0].length);
+  else if (out.includes("<thinking>")) {
+    const i = out.indexOf("<thinking>");
+    out = out.slice(0, i) + blank(out.slice(i));
+  }
+  const open = /^[ \t]*\[(?:DOC|Doc|doc)[:：][^\[\]\n]*\][ \t]*\r?$/gm;
+  let d;
+  while ((d = open.exec(out)) !== null) {
+    const close = /^[ \t]*\[\/(?:DOC|Doc|doc)\][ \t]*\r?$/gm;
+    close.lastIndex = open.lastIndex;
+    const c = close.exec(out);
+    const end = c ? close.lastIndex : out.length;
+    out = out.slice(0, d.index) + blank(out.slice(d.index, end)) + out.slice(end);
+    open.lastIndex = end;
+    if (!c) break;
+  }
+  return out;
+}
+export function splitNewChat(text) {
+  const s = String(text || "");
+  const m = NEW_CHAT.exec(unmasked(s));
+  if (!m) return null;
+  const title = m[1].replace(/\s+/g, " ").trim().slice(0, 30);
+  if (!title) return null;
+  return { before: s.slice(0, m.index).replace(/\s+$/, ""), title, after: dropNewChat(s.slice(m.index + m[0].length).replace(/^\s*\n/, "")) };
+}
+// 不认 [新对话:…] 的地方（任务到点那一回、翻日记的半截、新对话里又写了一回）：那一行摘掉，不摆成字，寄回去的原话里也不留（翻日记那几样照旧）
+function dropNewChat(text) {
+  return String(text || "")
+    .replace(new RegExp(NEW_CHAT.source, "gm"), "")
+    .replace(/\n{3,}/g, "\n\n");
+}
+function withoutNewChat(step) {
+  if (!NEW_CHAT.test(step.text)) return step;
+  const him = { ...step.him, raw: dropNewChat(step.him.raw), items: (step.him.items || []).map((it) => (it.type === "text" ? { ...it, text: dropNewChat(it.text).trim() } : it)).filter((it) => it.type !== "text" || it.text) };
+  return { ...step, him, text: dropNewChat(step.text) };
+}
+
+// 问他一回（几步）。msgs 是寄过去的那段对话（最后一条是醒了那一行），section 是【此刻】后面附的【醒来】那一段。
+// game：那段对话里下过江湖棋局（同手机那头：摆开过又收了的平常对话，对话里有他调过引擎的，四样工具照带，不带那边不认）。
+//   闹钟不替他下棋（引擎在手机那头）：一律当收着棋（{ off: true }，【此刻】里写一句收起来了）；他真调了，这一步到此为止
+// 回 { steps: [{ him, text, quiet }], cost, newAvatar, newName, title, part }：part(text, step) 把某一步的一截字整理成那边的一条（拆新对话用，不再记钱）
+async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = null }) {
   const st = ctx.settings;
   const model = st.model || DEFAULT_MODEL;
   const maxTokens = st.maxTokens || 2048;
   const memes = MEME_DATA.concat(ctx.extras || []);
-  const memeLookup = (file) => MEME_MAP[file] || (ctx.extras || []).find((m) => m.file === file) || null;
+  const memeLookup = lookupOf(ctx);
   const memeKnown = (file) => !!memeLookup(file);
   const thumbLookup = (file) => store.peek("kfs2:memethumb:" + file) || null;
   const avatarName = (av) => {
@@ -124,10 +206,10 @@ export async function askWake({ store, cloud, ctx, now = Date.now(), n = 1, log 
     const m = memeLookup(av.file);
     return m ? `「${m.name}」（${av.file}）` : av.file;
   };
-  const mcps = (st.mcps || []).filter((m) => m && m.enabled && m.url);
+  const mcps = mcpsOf(st);
   const thoughts = st.thoughts !== false;
   const { staticText, nowNote } = buildSystem({
-    now: new Date(now),
+    now: new Date(),
     memeList: memes,
     hisAvatarName: avatarName(ctx.avatars.him),
     memDocs: ctx.memDocs,
@@ -138,29 +220,26 @@ export async function askWake({ store, cloud, ctx, now = Date.now(), n = 1, log 
     thoughts,
     callable: st.callable !== false,
     call: false,
-    game: null,
+    game,
   });
   const room = (sure) => roomFor(windowOf(model), staticText.length, maxTokens, sure);
   const tier = tierOf(st.recall, room(false), room(true));
-  const transcript = ctx.herLast && !ctx.herLast.fox ? tailTranscript(parse(await store.get("kfs2:chat:" + ctx.herLast.id), []), memeLookup) : "";
-  const lastWake = ctx.wakes.length ? ctx.wakes[ctx.wakes.length - 1] : 0;
-  const woke = wakeNowNote(nowNote) + "\n\n" + wakeSection({ now, herLast: ctx.herLast, lastWake, n, gap: gapOf(st), max: maxOf(st), transcript, mcps: mcps.map((m) => m.name) });
+  const woke = wakeNowNote(nowNote) + "\n\n" + section;
 
-  const event = { id: newId(), role: "event", who: "him", kind: "wake", ts: now };
-  const { imgLookup, docLookup } = await attachmentsOf(store, ctx.fox);
+  const { imgLookup, docLookup } = await attachmentsOf(store, msgs);
   const slugs = {};
   mcps.forEach((m, i) => {
     slugs[mcpSlug(m.name, i)] = m.name;
   });
-  const bodyFor = (msgs, at) => {
-    const { messages, tail } = buildMessages(msgs, ctx.avatars, memeLookup, imgLookup, thumbLookup, docLookup, { recaps: ctx.recaps, tier });
+  const bodyFor = (list, at) => {
+    const { messages, tail } = buildMessages(list, ctx.avatars, memeLookup, imgLookup, thumbLookup, docLookup, { recaps, tier });
     const body = {
       model,
       max_tokens: maxTokens,
       system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
       messages: withNowNote(messages, woke, at.cache, tail),
     };
-    const tools = DIARY_TOOLS.slice();
+    const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS);
     if (at.mcp) {
       body.mcp_servers = mcps.map((m, i) => {
         const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
@@ -175,36 +254,41 @@ export async function askWake({ store, cloud, ctx, now = Date.now(), n = 1, log 
   // 同手机那头：带缓存 → 不带缓存 → 不带 MCP，哪种通了用哪种
   const attempts = [{ cache: true, mcp: mcps.length > 0 }, { cache: false, mcp: mcps.length > 0 }];
   if (mcps.length) attempts.push({ cache: false, mcp: false });
-  const askHim = async (msgs) => {
+  const askHim = async (list) => {
     let lastErr = null;
     for (const at of attempts) {
       try {
-        const data = await cloud.callClaude(bodyFor(msgs, at), at.mcp ? "mcp-client-2025-11-20" : "");
+        const data = await cloud.callClaude(bodyFor(list, at), at.mcp ? "mcp-client-2025-11-20" : "");
         return { data, used: at };
       } catch (e) {
         lastErr = e;
-        if (e.code === "unreachable" || e.code === "auth") break;
+        if (e.code === "unreachable" || e.code === "auth" || e.code === "badlogin") break;
       }
     }
     throw lastErr || new Error("没有回应");
   };
 
-  // 他这一步回来的整理成对话里的一条（同 App.jsx 的 digestReply）
+  // 他这一步回来的整理成对话里的一条（同 App.jsx 的 digestReply）。text 给了就只整理这一截（拆新对话用，钱不再记一遍）
   let avatarNow = ctx.avatars.him;
   let nameNow = ctx.names.him || HIS_NAME;
   let newAvatar = null;
   let newName = null;
   let cost = null;
-  const digest = (data, used) => {
-    const u = data && data.usage;
-    const c = u ? costOf(data.model, u) : null;
-    if (c != null) cost = (cost || 0) + c;
+  const digest = (data, used, text = null) => {
+    if (text == null) {
+      const u = data && data.usage;
+      const c = u ? costOf(data.model, u) : null;
+      if (c != null) cost = (cost || 0) + c;
+    }
     const usedTools = Array.from(new Set((data.content || []).filter((b) => b.type === "mcp_tool_use").map((b) => slugs[b.server_name] || b.server_name || b.name)));
-    const text = (data.content || [])
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-    const parsed = parseReply(text);
+    const whole =
+      text != null
+        ? text
+        : (data.content || [])
+            .filter((b) => b.type === "text")
+            .map((b) => b.text)
+            .join("\n");
+    const parsed = parseReply(whole);
     if (data.stop_reason === "max_tokens") {
       const lastDoc = parsed.items.filter((it) => it.type === "doc").pop();
       if (lastDoc && parsed.items[parsed.items.length - 1] === lastDoc) lastDoc.cut = true;
@@ -221,7 +305,7 @@ export async function askWake({ store, cloud, ctx, now = Date.now(), n = 1, log 
       toolNote: mcps.length && !used.mcp ? "这次MCP没连上，先不用工具回你" : "",
     };
     if (parsed.wake != null) him.wake = parsed.wake;
-    const calls = toolCallsOf(data.content, DIARY_NAMES);
+    const calls = text == null ? toolCallsOf(data.content, DIARY_NAMES) : [];
     if (calls.length) {
       if (data.stop_reason === "tool_use") {
         him.calls = calls;
@@ -240,7 +324,7 @@ export async function askWake({ store, cloud, ctx, now = Date.now(), n = 1, log 
     }
     // 一个看得见的都没有：只写了心里话、只定了下回几点醒（换了头像、改了名字、翻了日记都算干了点什么）
     const quiet = !!parsed.quiet && !him.calls && !him.rename && !settled.avatarFile;
-    return { him, text, quiet };
+    return { him, text: whole, quiet, data, used };
   };
 
   // 他翻日记：日记、闲笔集里掺的手帐、批注都在这台电脑的存档里（同手机那头的 diaryReader）
@@ -252,8 +336,7 @@ export async function askWake({ store, cloud, ctx, now = Date.now(), n = 1, log 
 
   const steps = [];
   for (let i = 0; i < MOST_STEPS; i++) {
-    const msgs = ctx.fox.concat([event], steps.map((s) => s.him));
-    const { data, used } = await askHim(msgs);
+    const { data, used } = await askHim(msgs.concat(steps.map((s) => s.him)));
     const step = digest(data, used);
     steps.push(step);
     log(`第 ${i + 1} 步：${data.stop_reason || "?"}，${step.quiet ? "没留话" : "留了话"}`);
@@ -263,53 +346,189 @@ export async function askWake({ store, cloud, ctx, now = Date.now(), n = 1, log 
     }
     break;
   }
-
   // 四步用完了他还在翻日记：这一条当说完了。不然手机那头认成他说到一半（thread.js 的 midTurn），算欠着她一句，
   // 闹钟也照“她那句还没回上”一直等着（plan.js 规矩七）
   const tail = steps[steps.length - 1].him;
   if (tail.stop === "tool_use") delete tail.stop;
-  const quiet = steps.every((s) => s.quiet);
-  let rows;
-  if (quiet) {
-    // 一个字都没留：只留醒了那一行，他的心里话、定的几点醒记在这一行上（下回醒来他看得见自己上回想了什么、定了什么）
-    const last = steps[steps.length - 1].him;
-    rows = [{ ...event, quiet: true, ...(last.thinking ? { thinking: last.thinking } : {}), ...(last.wake != null ? { wake: last.wake } : {}) }];
-  } else rows = [event, ...steps.map((s) => s.him)];
-  const lastWakeMark = steps.map((s) => s.him.wake).filter((w) => w != null).pop();
   return {
-    at: now,
-    rows,
-    quiet,
-    // 敲横幅要的：每一步他写的整段字（一个字没写的那几步不敲）
-    say: steps.filter((s) => !s.quiet).map((s) => s.text),
-    title: nameNow,
-    newAvatar,
-    newName,
+    steps,
     cost,
-    steps: steps.length,
-    wake: lastWakeMark == null ? null : lastWakeMark,
+    get newAvatar() {
+      return newAvatar;
+    },
+    get newName() {
+      return newName;
+    },
+    get title() {
+      return nameNow;
+    },
+    part: (text, step) => digest(step.data, step.used, text),
   };
 }
 
-// 醒来要回来的那一包放进存档（狐宇宙那段对话、目录、他换的头像和名字、用量），再敲她的手机。
-// 放进狐宇宙那一步不成就抛错（闹钟把这一包封好记着，过一会儿只再放、不再问他一遍：钱已经花了）；
+// 屋里打不了电话（她不在这儿跟他聊，打了也是对着空屋子响；接起来还会往狐宇宙里说话）：打电话那一截留成纸上的字，
+// 字都没有的扔掉；一步里什么都不剩，这一步当没写字（另一双眼睛挑出来的）
+export function noCall(step) {
+  const items = step.him.items || [];
+  if (!items.some((it) => it.type === "call")) return step;
+  const kept = items.map((it) => (it.type === "call" ? { type: "text", text: String(it.text || "").trim() } : it)).filter((it) => it.type !== "text" || it.text);
+  if (kept.length) return { ...step, him: { ...step.him, items: kept } };
+  return { ...step, quiet: !step.him.calls && !step.him.rename, him: { ...step.him, items: [{ type: "text", text: "……" }] } };
+}
+
+// 一回醒来的几行里，看得见的字都没有的那几步收成醒了那一行（心里话、定的几点醒记在这一行上）
+function roomRows(event, steps) {
+  const quiet = steps.every((s) => s.quiet);
+  if (!quiet) return { rows: [event, ...steps.map((s) => s.him)], quiet };
+  const last = steps.length ? steps[steps.length - 1].him : {};
+  return { rows: [{ ...event, quiet: true, ...(last.thinking ? { thinking: last.thinking } : {}), ...(last.wake != null ? { wake: last.wake } : {}) }], quiet };
+}
+
+// 平常那种：醒在狐宇宙（他的屋子）
+export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log = () => {}, pending = [] }) {
+  const st = ctx.settings;
+  const memeLookup = lookupOf(ctx);
+  const transcript = ctx.herLast && !ctx.herLast.fox ? tailTranscript(parse(await store.get(chatKey(ctx.herLast.id)), []), memeLookup) : "";
+  const lastWake = ctx.wakes.length ? ctx.wakes[ctx.wakes.length - 1] : 0;
+  const section = wakeSection({ now, herLast: ctx.herLast, lastWake, n, gap: gapOf(st), max: maxOf(st), transcript, mcps: mcpsOf(st).map((m) => m.name), pending });
+  const event = { id: newId(), role: "event", who: "him", kind: "wake", ts: now };
+  const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section });
+  // 最后一步里单独一行写了 [新对话:名字]：那一行后面的字落进新开的一段对话（只认最后一步：前面几步是翻日记的半截）
+  const steps = r.steps.slice();
+  const last = steps[steps.length - 1];
+  const cut = splitNewChat(last.text);
+  let fresh = null;
+  // [WAKE:…] 写在 [新对话:…] 后面（照【醒来】里说的写在回复最后）：管的还是他下回几点醒，挪回屋里；不在那段新对话里定闹钟（另一双眼睛挑出来的）
+  let moved = null;
+  if (cut) {
+    const said = r.part(cut.after, last);
+    steps[steps.length - 1] = r.part(cut.before, last);
+    if (said.him.wake != null) {
+      moved = said.him.wake;
+      delete said.him.wake;
+    }
+    if (!said.quiet) fresh = { id: newId(), title: cut.title, step: said };
+    else log("他写了开新对话，后面没写字，不开");
+    // 拆之前整段已经认过一回（换了头像、改了名字都记下了），拆开的两截再认，名字跟现在的一样、头像也成了新的那张：
+    // 改名字的提示摆回写着 [NAME:…] 的那一截，换头像那一行记的“换之前那张”照整段认的那一回（另一双眼睛挑出来的）
+    const pieces = [steps[steps.length - 1].him].concat(fresh ? [fresh.step.him] : []);
+    if (last.him.rename) (fresh && parseReply(cut.after).rename ? fresh.step.him : pieces[0]).rename = last.him.rename;
+    const av = (last.him.items || []).find((it) => it.type === "avatar");
+    if (av) for (const h of pieces) h.items = (h.items || []).map((it) => (it.type === "avatar" ? { ...it, prev: av.prev } : it));
+  }
+  for (let i = 0; i < steps.length; i++) steps[i] = noCall(i < steps.length - 1 ? withoutNewChat(steps[i]) : steps[i]);
+  const ev = fresh ? { ...event, go: { chat: fresh.id, title: fresh.title, how: "new" } } : event;
+  const room = roomRows(ev, steps);
+  let rows = room.quiet && fresh ? room.rows.map((x) => (x.id === ev.id ? { ...x, quiet: undefined } : x)) : room.rows;
+  if (moved != null) rows = rows.map((x, i) => (i === rows.length - 1 ? { ...x, wake: moved } : x));
+  const puts = [{ chat: FOX_CHAT, rows }];
+  const knocks = [];
+  if (fresh) {
+    const head = { id: newId(), role: "event", who: "him", kind: "wake", ts: now, hidden: true };
+    puts.push({ chat: fresh.id, create: true, title: fresh.title, rows: [head, fresh.step.him] });
+    knocks.push({ chat: fresh.id, texts: [fresh.step.text] });
+  }
+  const roomWake = moved != null ? moved : steps.map((s) => s.him.wake).filter((w) => w != null).pop();
+  return {
+    v: 2,
+    at: now,
+    kind: "room",
+    puts,
+    knocks,
+    quiet: room.quiet && !fresh,
+    newChat: fresh ? { id: fresh.id, title: fresh.title } : null,
+    title: r.title,
+    newAvatar: r.newAvatar,
+    newName: r.newName,
+    cost: r.cost,
+    steps: r.steps.length,
+    wake: roomWake == null ? null : roomWake,
+  };
+}
+
+// 任务标记到点：醒在他定闹钟的那段对话里（chat：{ id, title, msgs }）
+export async function askTask({ store, cloud, ctx, now = Date.now(), log = () => {}, task, chat, minGap = undefined }) {
+  const round = (task.rounds || 0) + 1;
+  const label = splitWake(task.raw).label;
+  const head = { id: newId(), role: "event", who: "him", kind: "wake", ts: now, hidden: true, task: label || "" };
+  const recaps = normRecaps(parse(await store.get(RECAP_KEY + chat.id), []));
+  const section = taskSection({ now, label, set: task.set, round, max: TASK_MAX_ROUNDS, mcps: mcpsOf(ctx.settings).map((m) => m.name) });
+  // 下过江湖棋局的那段（她在平常对话里摆开过、对话里有他调过引擎的）：四样工具照带（见 askCore 的 game）
+  const game = gameOn(chat.id, readOn(await store.get(ON_KEY))) || hasSteps(chat.msgs) ? { off: true } : null;
+  const r = await askCore({ store, cloud, ctx, log, msgs: chat.msgs.concat([head]), recaps, section, game });
+  // 这一回不认开新对话（他人就在她那段对话里）：那一行摘掉
+  const steps = r.steps.map(withoutNewChat);
+  const there = roomRows(head, steps);
+  const visible = steps.filter((s) => !s.quiet).map((s) => s.text);
+  const said = steps.map((s) => s.him.wake).filter((w) => w != null).pop();
+  const fox = { id: newId(), role: "event", who: "him", kind: "wake", ts: now, go: { chat: chat.id, title: chat.title || "一段对话", how: "task" }, ...(there.quiet ? { quiet: true } : {}) };
+  return {
+    v: 2,
+    at: now,
+    kind: "task",
+    puts: [
+      { chat: chat.id, title: chat.title || "", rows: there.rows },
+      { chat: FOX_CHAT, rows: [fox] },
+    ],
+    knocks: visible.length ? [{ chat: chat.id, texts: visible }] : [],
+    quiet: there.quiet,
+    chase: { key: task.key, round, next: nextChase(said, Date.now(), minGap) },
+    title: r.title,
+    newAvatar: r.newAvatar,
+    newName: r.newName,
+    cost: r.cost,
+    steps: r.steps.length,
+    wake: said == null ? null : said,
+  };
+}
+
+// 头一版（只醒在狐宇宙）问到、还没放完的那一包：照新样子摆（屋里的动静不敲她：她 22:04 定的）
+export function normBundle(b) {
+  if (!b || b.v === 2) return b;
+  return { ...b, v: 2, kind: "room", puts: [{ chat: FOX_CHAT, rows: b.rows || [] }], knocks: [] };
+}
+// 头一版记的“办过哪几步”：放进去那一步叫 put，眼下叫 put0
+export function normDone(done) {
+  const d = { ...(done || {}) };
+  if (d.put && !d.put0) d.put0 = true;
+  return d;
+}
+
+// 问到的那一包放进存档，再敲她的手机。
+// 放进对话那几步不成就抛错（闹钟把这一包封好记着，过一会儿只再放、不再问他一遍：钱已经花了）；
 // 放进去以后的几样（头像、名字、用量、敲手机）不成只记日志，不算没醒成。
+// 要放的那段对话没了（她在他醒着的工夫里删了）：那段不放、不敲，狐宇宙里那一行“去《…》找你了”也不留（另一双眼睛挑出来的）。
 //   beforePut  拉完、放之前先办的（main.js 拿它先核对前几回放的：刚拉下来的那一份要是手机那头没看见就写的，先放回去，再接着放这一回的）
-//   onChat     狐宇宙那段对话一写上就叫一声（还没写目录），带着放之前原有的编号（main.js 马上记下“这一份是闹钟自己写的”）
+//   onChat     某段对话一写上就叫一声（还没写目录）：onChat(那段对话的编号, 放的那几行, 放之前原有的编号)，main.js 马上记下“这一份是闹钟自己写的”
 //   done、mark 哪几步办过了：每办完一步 mark 一下（main.js 记进封好的那一包），这一包要是再放一遍（办到一半关了机、
 //              断了网），办过的不再办：横幅不再敲一遍、用量不再记一遍、她后来改回去的头像名字不被再换一遍（另一双眼睛挑出来的）
 export async function commitWake({ store, cloud, bundle, log = () => {}, beforePut = null, onChat = null, done = {}, mark = async () => {} }) {
-  let base = done.base || [];
-  if (!done.put) {
+  const b = normBundle(bundle);
+  const d = normDone(done);
+  const fatal = (e) => !!e && (e.code === "badlogin" || e.code === "secret");
+  const bases = {};
+  const gone = new Set();
+  for (let i = 0; i < b.puts.length; i++) {
+    const p = b.puts[i];
+    if (d["put" + i] === "gone") gone.add(p.chat);
+    if (d["put" + i]) continue;
+    const rows = p.rows.filter((r) => !(r && r.go && gone.has(r.go.chat)));
+    if (!rows.length) {
+      await mark("put" + i, true);
+      continue;
+    }
     await store.pull();
     if (beforePut) await beforePut();
-    base = (await putRows(store, bundle.rows, onChat)).base;
-    await mark("put", true, { base });
+    const r = await putBlocks(store, p.chat, [rows], onChat ? (base) => onChat(p.chat, rows, base) : null, { title: p.title, create: !!p.create });
+    if (r.gone) {
+      log("要放进去的那段对话没了（她删了），这几行不放、不敲");
+      gone.add(p.chat);
+    } else bases[p.chat] = { base: r.base, rows };
+    await mark("put" + i, r.gone ? "gone" : true);
   }
   // 不成只记日志、不再办的几样；密码不对、凭据坏了这种照样往外抛（闹钟要停下，不当成“办过了”）
-  const fatal = (e) => !!e && (e.code === "badlogin" || e.code === "secret");
   const soft = async (what, step, fn) => {
-    if (done[step]) return;
+    if (d[step]) return;
     try {
       await fn();
     } catch (e) {
@@ -318,38 +537,42 @@ export async function commitWake({ store, cloud, bundle, log = () => {}, beforeP
     }
     await mark(step, true);
   };
-  if (bundle.newAvatar) await soft("换头像", "avatar", () => store.set("kfs2:avatar:guangyi", JSON.stringify(bundle.newAvatar)));
-  if (bundle.newName) await soft("改名字", "name", () => (bundle.newName === HIS_NAME ? store.del(NAME_KEYS.him) : store.set(NAME_KEYS.him, bundle.newName)));
-  if (bundle.cost != null) {
+  if (b.newAvatar) await soft("换头像", "avatar", () => store.set("kfs2:avatar:guangyi", JSON.stringify(b.newAvatar)));
+  if (b.newName) await soft("改名字", "name", () => (b.newName === HIS_NAME ? store.del(NAME_KEYS.him) : store.set(NAME_KEYS.him, b.newName)));
+  if (b.cost != null) {
     await soft("记用量", "usage", async () => {
-      const key = usageKey(new Date(bundle.at));
+      const key = usageKey(new Date(b.at));
       const prev = parse(await store.get(key), null);
       const was = prev && prev.month === key ? prev : { month: key, cost: 0, replies: 0 };
-      await store.set(key, JSON.stringify({ month: key, cost: was.cost + bundle.cost, replies: was.replies + bundle.steps }));
+      await store.set(key, JSON.stringify({ month: key, cost: was.cost + b.cost, replies: was.replies + b.steps }));
     });
   }
-  // 敲她的手机：他这一步写了看得见的字，一步一回（一个气泡一条横幅，push 函数自己拆）。敲过几回记着，再放一遍的时候接着敲没敲的
-  let knocked = done.knocked || 0;
-  const said = done.said || 0;
-  if (bundle.say.length > said && !done.knock) {
-    const doors = await doorsOf(store, cloud);
-    if (!doors.length) log("没有报上来的手机可敲（手机上“他自己醒”开着、开了通知的那台才报）");
-    else {
-      const tag = await chatTag((name) => store.nameFor(name), FOX_CHAT);
-      for (let i = said; i < bundle.say.length; i++) {
-        try {
-          const r = await cloud.push({ op: "notify", job: jobId(), tag, title: bundle.title, knock: doors, reply: bundle.say[i] });
-          knocked += (r && r.queued) || 0;
-        } catch (e) {
-          if (fatal(e)) throw e;
-          log("敲手机没成：" + String((e && e.message) || e));
-        }
-        await mark("said", i + 1, { knocked });
-      }
+  // 敲她的手机：落在哪段对话就敲那段（点了回到那段），他每一步写的一回（一个气泡一条横幅，push 函数自己拆）。敲过几回记着，再放一遍的时候接着敲没敲的
+  let knocked = d.knocked || 0;
+  let doors = null;
+  for (const k of b.knocks || []) {
+    if (gone.has(k.chat)) continue;
+    const step = "said:" + k.chat;
+    const said = d[step] || 0;
+    if (said >= k.texts.length) continue;
+    if (doors == null) doors = await doorsOf(store, cloud);
+    if (!doors.length) {
+      log("没有报上来的手机可敲（手机上“他自己醒”开着、开了通知的那台才报）");
+      break;
     }
-    await mark("knock", true, { knocked });
+    const tag = await chatTag((name) => store.nameFor(name), k.chat);
+    for (let i = said; i < k.texts.length; i++) {
+      try {
+        const r = await cloud.push({ op: "notify", job: jobId(), tag, title: b.title, knock: doors, reply: k.texts[i] });
+        knocked += (r && r.queued) || 0;
+      } catch (e) {
+        if (fatal(e)) throw e;
+        log("敲手机没成：" + String((e && e.message) || e));
+      }
+      await mark(step, i + 1, { knocked });
+    }
   }
-  return { knocked, base };
+  return { knocked, bases, gone: [...gone] };
 }
 
 // 敲哪几台：手机报上来的那几个门牌号（kfs2:fox:doors，{ 设备编号: { e: 门牌号, at: 几点报的 } }），
@@ -368,12 +591,12 @@ export async function doorsOf(store, cloud) {
   return [...new Set(rows.filter((r) => !known || known.has(r.e)).map((r) => r.e))].slice(0, 5);
 }
 
-// 狐宇宙里还没回上的那一句是几点说的：最后一条（不算醒了那几行、换头像提示）是她的话，或者是他说到一半的那一步；
+// 狐宇宙里还没回上的那一句是几点说的：最后一条（不算醒了那几行、换头像提示、她在便签纸上留的）是她的话，或者是他说到一半的那一步；
 // 她按了停的不算（同手机那头 App.jsx 的 owes：按了停就不会有回话了）。没有回 0（plan.js 规矩七）
 export function owedOf(msgs) {
   const list = Array.isArray(msgs) ? msgs : [];
   if (!needsReply(list) || stoppedAt(list)) return 0;
-  for (let i = list.length - 1; i >= 0; i--) if (list[i] && list[i].role !== "event") return list[i].ts || 1;
+  for (let i = list.length - 1; i >= 0; i--) if (list[i] && list[i].role !== "event" && !list[i].note) return list[i].ts || 1;
   return 0;
 }
 
@@ -390,11 +613,11 @@ export function idsDeep(msgs, out = new Set()) {
   return out;
 }
 
-// 回头核对（main.js 的 recheck）：狐宇宙后来被别人写过了，照写的那一份（cur）看前几回放的那几包（list，每包 { ids, base }），
+// 回头核对（main.js 的 recheck）：某段对话后来被别人写过了，照写的那一份（cur）看前几回放的那几包（list，每包 { ids, base }），
 // 回要放回去的那几包：
 //   里面有这一包的（哪怕一行；翻过去的那几支里的也算）：写的那头看过，少了的是她删的，不放
 //   一行都没有，放之前原有的（base）还有在的：是没看见这一包就写的，放回去
-//   一行都没有，原有的一个不在（删了又重开的），或者放之前狐宇宙是空的（分不清是不是删了重开）：不放
+//   一行都没有，原有的一个不在（删了又重开的），或者放之前那段对话是空的（分不清是不是删了重开）：不放
 export function toRescue(list, cur) {
   const deep = idsDeep(cur);
   return (list || []).filter((x) => x && !(x.ids || []).some((id) => deep.has(id)) && (x.base || []).length > 0 && x.base.some((id) => deep.has(id)));
@@ -407,25 +630,29 @@ export function jobId() {
   return Array.from(b, (x) => abc[x % abc.length]).join("");
 }
 
-// 把这几行放进狐宇宙那段对话（已经在的不重复放，翻过去的那几支里有的也算在），目录里那一条跟着改。
-// rows 是一回醒来的那几行：挨在一起放，按头一行（醒了那一行）的时间插进去。她在他醒着的工夫里说了一句（手机上看得见“醒着”），
-// 那句排在他这几行后面，不被夹在中间：夹在中间的话，她那句后面就有了他的话，手机认成那句回过了，信箱里那封回话会被扔掉（另一双眼睛挑出来的）。
-// onChat：那段对话一写上就叫（目录还没写），带着 base。
-// 回 { added: 放进去了几行, base: 放之前那段对话里原有的编号（最后两百个，不算这几行自己）}：
-// base 是 main.js 回头核对用的——后来写那段对话的那一份里，原有的一个都不在了，是她删了重开的，不是没看见
+// 把这几行放进狐宇宙那段对话（测试、头一版的写法；同 putBlocks(store, FOX_CHAT, [rows], onChat)）
 export async function putRows(store, rows, onChat = null) {
-  return putBlocks(store, [rows], onChat);
+  return putBlocks(store, FOX_CHAT, [rows], onChat);
 }
 
-// 好几回醒来的几块（回头核对时放回去的），一块一块照上面的样子放
-export async function putBlocks(store, blocks, onChat = null) {
-  const key = "kfs2:chat:" + FOX_CHAT;
-  const cur = strict(await store.get(key), "狐宇宙那段对话");
+// 把几块放进某段对话（已经在的不重复放，翻过去的那几支里有的也算在），目录里那一条跟着改。
+// 一块是一回醒来的那几行：挨在一起放，按头一行（醒了那一行）的时间插进去。她在他醒着的工夫里说了一句，那句排在他这几行后面，
+// 不被夹在中间：夹在中间的话，她那句后面就有了他的话，手机认成那句回过了，信箱里那封回话会被扔掉（另一双眼睛挑出来的）。
+// create：新开的那段对话（没有也照放，目录里的名字是 title）；不是新开的、那段对话却没了（她删了）：不放，回 gone。
+// onChat：那段对话一写上就叫（目录还没写），带着 base。
+// 回 { added: 放进去了几行, base: 放之前那段对话里原有的编号（最后两百个，不算这几块自己）, gone }：
+// base 是 main.js 回头核对用的——后来写那段对话的那一份里，原有的一个都不在了，是她删了重开的，不是没看见
+export async function putBlocks(store, chatId, blocks, onChat = null, { title = "", create = false } = {}) {
+  const key = chatKey(chatId);
+  const text = await store.get(key);
+  if (text == null && !create && chatId !== FOX_CHAT) return { added: 0, base: [], gone: true };
+  const cur = strict(text, chatId === FOX_CHAT ? "狐宇宙那段对话" : "那段对话");
   const have = idsDeep(cur);
   const mine = new Set(blocks.flat().map((r) => r && r.id));
   const base = [...have].filter((id) => !mine.has(id)).slice(-200);
   let next = cur;
   let added = 0;
+  let shown = 0; // 放进去的里头她看得见的几行（她看不见的那一行不算：只添了那一行，对话不往前挪，见下面目录）
   for (const block of blocks) {
     const add = (block || []).filter((r) => r && !have.has(r.id));
     if (!add.length) continue;
@@ -436,18 +663,23 @@ export async function putBlocks(store, blocks, onChat = null) {
     next.splice(at, 0, ...add);
     add.forEach((r) => have.add(r.id));
     added += add.length;
+    shown += add.filter((r) => !(isWakeMark(r) && r.hidden)).length;
   }
   if (added) {
     await store.set(key, JSON.stringify(next));
     if (onChat) await onChat(base);
   }
-  // 目录：放了新的，或者上一回放进去了、目录没跟上（写到一半断了网），都补上
+  // 目录：放了新的，或者上一回放进去了、目录没跟上（写到一半断了网），都补上。名字：原来有的照旧；狐宇宙叫狐宇宙；别的照递来的（新开的是他起的名字）。
+  // 只添了她看不见的那一行（任务到点他醒过来、没说话）：那段对话不往前挪（她的历史对话里不该无缘无故跳到最上面，另一双眼睛挑出来的）
   const index = strict(await store.get("kfs2:index"), "对话目录");
-  const old = index.find((c) => c && c.id === FOX_CHAT);
+  const old = index.find((c) => c && c.id === chatId);
   const preview = makePreview(next);
-  if (added || !old || old.preview !== preview) {
-    const entry = { id: FOX_CHAT, title: (old && old.title) || FOX_TITLE, preview, updatedAt: Date.now() };
-    await store.set("kfs2:index", JSON.stringify([entry].concat(index.filter((c) => c && c.id !== FOX_CHAT))));
+  if (shown || !old || old.preview !== preview) {
+    const name = old && old.title ? old.title : chatId === FOX_CHAT ? FOX_TITLE : title || "新对话";
+    const up = shown > 0 || !old;
+    const entry = { id: chatId, title: name, preview, updatedAt: up ? Date.now() : old.updatedAt || Date.now() };
+    const list = up ? [entry].concat(index.filter((c) => c && c.id !== chatId)) : index.map((c) => (c && c.id === chatId ? entry : c));
+    await store.set("kfs2:index", JSON.stringify(list));
   }
-  return { added, base };
+  return { added, base, gone: false };
 }

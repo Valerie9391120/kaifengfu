@@ -7,6 +7,8 @@
 //     她在手机上删了他的一句、改了自己的话（后面的收进翻过去的那一支），不放回去；
 //     后台在跑的时候手敲 wake：交给后台叫；问到了却一时放不进存档，封好记着，过一会儿只再放、不再问他一遍、横幅不重敲；
 //     她在狐宇宙里说的那句还没回上（回话在信箱里）：不叫他；
+//     任务标记：到点在定闹钟的那段对话里醒、找她、接着追、不追了就收；没到点她先回来了，作废；
+//   想找她：开一段新对话（敲她，点了进那段）；醒在屋里写的字不敲她；
 //     这台电脑上记着的（state.json）、日志里，一个他说的字都没有；
 //   后台在跑的时候重装：叫旧的自己停、换新的跑起来；
 //   卸干净（后台那一个也停了）。
@@ -159,18 +161,36 @@ ok(step2.role === "him" && step2.items.map((x) => x.text).join("|") === "醒了�
 const ask2 = (await get("/__debug/claude")).slice(-2);
 ok(ask2[1].body.messages.some((m) => m.role === "user" && m.content.some((b) => b.type === "tool_result")) && ask2[1].body.messages[ask2[1].body.messages.length - 1].content.some((b) => (b.text || "").includes("【醒来】")) && ask2[0].body.messages.some((m) => m.content.some((b) => (b.text || "").includes("[开封府提示：") && b.text.includes("你自己醒了一回，那一回什么也没说"))),
   "再叫醒一回：接着要的那一回带着翻到的结果，【醒来】那一段还在；上一回他什么也没说，这一回他看得见（一行开封府提示）");
-await sleep(3500);
-const pushes = (await get("/__debug/push")).delivered.slice(n0);
-const tag = (await rowKeyFor(vault, "notice:hyz")).slice(2);
-ok(pushes.length === 3 && pushes.map((d) => d.json.notification.body).join("|") === "我翻翻。|醒了，翻了翻你昨天写的|泡桐花好看吗" && pushes.every((d) => d.endpoint === phone.endpoint && d.json.notification.title === "光义"),
-  `敲手机：他写了看得见的字，一个气泡一条横幅（心里话、[WAKE:…] 不上横幅），敲的是手机报上来的那一台（${pushes.length} 条）`);
-ok(pushes.every((d) => d.json.notification.navigate.startsWith(`http://127.0.0.1:8080/#n=r.${tag}.`)), "敲手机：点了回到狐宇宙那段对话（网址里是狐宇宙的那串字，手机认得）");
+await sleep(2500);
+ok((await get("/__debug/push")).delivered.length === n0, "醒在自己屋里、写的字落在便签纸上：不敲她的手机（她 22:04 定的）");
 const usage = JSON.parse(await read(`kfs2:usage:${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`));
 ok(usage && usage.replies === 3 && usage.cost > 0, `用量：记进本月（醒了三步，约 $${usage && usage.cost.toFixed(4)}），手机上 API 那一格照常看得到`);
 // 刚叫完又敲一遍 wake（手抖、等不及）：两分钟以内不再叫
 const nAskGap = (await get("/__debug/claude")).length;
 const again2 = alarm(["wake"], { KFS_ALARM_MANUAL_GAP: "120000" });
 ok(again2.out.includes("他刚醒过") && (await get("/__debug/claude")).length === nAskGap, "刚叫完又敲一遍 wake：两分钟以内不再叫（不多花一回钱）");
+
+// ---------- 想找她：开一段新对话 ----------
+await get("/__debug/reply-queue?text=" + encodeURIComponent("<thinking>想她了</thinking>\n屋里写两句：今天风好大\n[新对话:想你了]\n在干嘛\n[SPLIT]\n理理我\n[WAKE:+2h]"));
+const nPushNew = (await get("/__debug/push")).delivered.length;
+const wNew = alarm(["wake"]);
+const idxNew = JSON.parse(await read("kfs2:index"));
+const newEntry = idxNew.find((c) => c.id !== "hyz" && c.id !== "c1");
+const newChat = newEntry ? JSON.parse((await read("kfs2:chat:" + newEntry.id)) || "[]") : [];
+fox = JSON.parse(await read("kfs2:chat:hyz"));
+const goNew = fox.find((m) => m.kind === "wake" && m.go && m.go.how === "new");
+const roomNote = fox[fox.length - 1];
+ok(wNew.code === 0 && wNew.out.includes("开了一段新对话") && newEntry && newEntry.title === "想你了" && newEntry.preview === "在干嘛" && newChat.length === 2 && newChat[0].hidden && newChat[1].items.map((x) => x.text).join("|") === "在干嘛|理理我",
+  "想找她：单独一行的 [新对话:想你了] 后面那几句落进一段新开的对话（名字他起的，进她的历史对话），最前头一行她看不见");
+ok(goNew && goNew.go.chat === newEntry.id && goNew.go.title === "想你了" && roomNote.role === "him" && roomNote.items.map((x) => x.text).join("|") === "屋里写两句：今天风好大" && roomNote.thinking === "想她了",
+  "想找她：狐宇宙里留一行“开了一段新对话《想你了》找你”，那一行前面写的留在屋里的便签纸上");
+ok(roomNote.wake === "+2h" && !("wake" in newChat[1]) && (await read("kfs2:fox:task:" + newChat[1].id)) == null,
+  "想找她：最后那一行 [WAKE:+2h] 管的还是他下回几点醒（记在屋里），不在新对话里定闹钟");
+await sleep(3000);
+const pushesNew = (await get("/__debug/push")).delivered.slice(nPushNew);
+const tagNew = (await rowKeyFor(vault, "notice:" + newEntry.id)).slice(2);
+ok(pushesNew.length === 2 && pushesNew.map((d) => d.json.notification.body).join("|") === "在干嘛|理理我" && pushesNew.every((d) => d.endpoint === phone.endpoint && d.json.notification.navigate.startsWith(`http://127.0.0.1:8080/#n=r.${tagNew}.`)),
+  `想找她：一个气泡一条横幅，点了进那段新对话（${pushesNew.length} 条）`);
 
 // ---------- 后台跑 ----------
 // 跟后台那一个说话的那根管子（测试的机器上是文件夹里的 alarm.sock）：问它是谁
@@ -210,9 +230,9 @@ const waitChat = async (cond, ms = 6000) => {
   return v;
 };
 
-// 手机那头差不多同时写了狐宇宙（它那一份还没有闹钟刚放的几行）：盖掉了
+// 手机那头差不多同时写了狐宇宙（它那一份还没有闹钟刚放的几行）：盖掉了；目录也拿旧的那份盖掉了（还没有他新开的那段）
 const before = JSON.parse(await read("kfs2:fox:state"));
-await put({ "kfs2:chat:hyz": JSON.stringify(fox.slice(0, 3)) });
+await put({ "kfs2:chat:hyz": JSON.stringify(fox.slice(0, 3)), "kfs2:index": JSON.stringify(idxNew.filter((c) => c.id !== newEntry.id)) });
 const child = spawn(process.execPath, [BUNDLE, "run"], { env: { ...env, KFS_ALARM_TICK: "500", KFS_ALARM_PULL: "500" }, stdio: "ignore" });
 let st2 = null;
 let back = null;
@@ -220,16 +240,24 @@ for (let i = 0; i < 40; i++) {
   await sleep(500);
   st2 = JSON.parse((await read("kfs2:fox:state")) || "null");
   back = JSON.parse((await read("kfs2:chat:hyz")) || "[]");
-  if (st2 && st2.at > before.at && back.length === 6) break;
+  if (st2 && st2.at > before.at && back.length === fox.length) break;
 }
-ok(st2 && st2.at > before.at && st2.next && Math.abs(st2.next - (step2.ts + 3 * 3600 * 1000)) < 5000 && !st2.off, `后台跑：心跳写上了，下回打算照他定的 +3h（${st2 && new Date(st2.next).toTimeString().slice(0, 5)}）`);
-ok(back.length === 6 && back.map((m) => m.id).join() === fox.map((m) => m.id).join(), "后台跑：手机那头没看见就把狐宇宙盖掉了（闹钟刚放的几行没了），放回去，次序照旧");
+ok(st2 && st2.at > before.at && st2.next && Math.abs(st2.next - (roomNote.ts + 2 * 3600 * 1000)) < 5000 && !st2.off, `后台跑：心跳写上了，下回打算照他定的 +2h（${st2 && new Date(st2.next).toTimeString().slice(0, 5)}）`);
+let idxBack = [];
+for (let i = 0; i < 20; i++) {
+  idxBack = JSON.parse((await read("kfs2:index")) || "[]");
+  if (idxBack.some((c) => c.id === newEntry.id)) break;
+  await sleep(250);
+}
+const relisted = idxBack.find((c) => c.id === newEntry.id);
+ok(relisted && relisted.title === "想你了", "后台跑：手机那头拿旧目录盖掉了，他新开的那段从历史对话里掉了：补回去（名字照旧）");
+ok(back.length === fox.length && back.map((m) => m.id).join() === fox.map((m) => m.id).join(), "后台跑：手机那头没看见就把狐宇宙盖掉了（闹钟后来放的两回都没了），放回去，次序照旧");
 
 // 她在手机上删了他的一句（手机那头是看见过这几行的）：不放回去
 await put({ "kfs2:chat:hyz": JSON.stringify(back.filter((m) => m.id !== step1.id)) });
 await sleep(2500);
 const afterDel = JSON.parse((await read("kfs2:chat:hyz")) || "[]");
-ok(afterDel.length === 5 && !afterDel.some((m) => m.id === step1.id), "后台跑：她在手机上删了他的一句（手机那头看见过这几行）：不放回去");
+ok(afterDel.length === fox.length - 1 && !afterDel.some((m) => m.id === step1.id), "后台跑：她在手机上删了他的一句（手机那头看见过这几行）：不放回去");
 
 // 后台在跑的时候手敲 wake：交给后台叫。问到了，一时放不进存档（库房不应）：封好记着，过一会儿只再放，不再问他一遍
 const nAsk = (await get("/__debug/claude")).length;
@@ -238,14 +266,15 @@ await get("/__debug/kv-fail?times=1&key=" + encodeURIComponent(await rowKeyFor(v
 const nPush3 = (await get("/__debug/push")).delivered.length;
 const w3 = alarm(["wake"]);
 const midState = fs.readFileSync(path.join(HOME, "state.json"), "utf8");
-const fox3 = await waitChat((v) => v.length === 8);
+const n3 = afterDel.length + 3; // 这一回：醒了那一行、翻日记那一步、说完的那一步
+const fox3 = await waitChat((v) => v.length === n3);
 await sleep(2500);
 const asks3 = (await get("/__debug/claude")).length - nAsk;
 const pushes3 = (await get("/__debug/push")).delivered.length - nPush3;
-// （她在狐宇宙里最后说的还是“翻日记 某天”，假的那边的我照样先翻一回：这一回醒是两步，两个气泡）
-const him3 = fox3[7] || {};
-ok(w3.code === 0 && w3.out.includes("交给它叫") && w3.out.includes("还没放进狐宇宙") && fox3.length === 8 && fox3[5].kind === "wake" && (fox3[6].items || []).map((x) => x.text).join() === "我翻翻。" && (him3.items || []).map((x) => x.text).join() === "又醒了一回，看看你在不在" && asks3 === 2 && pushes3 === 2,
-  `后台在跑的时候手敲 wake：交给后台叫；一时放不进存档，过一会儿放进去了，没再问他一遍、横幅没重敲（这一回两步：问了 ${asks3} 回、敲了 ${pushes3} 条，狐宇宙 ${fox3.length} 行）`);
+// （她在狐宇宙里最后说的还是“翻日记 某天”，假的那边的我照样先翻一回：这一回醒是两步）
+const him3 = fox3[n3 - 1] || {};
+ok(w3.code === 0 && w3.out.includes("交给它叫") && w3.out.includes("还没放进去") && fox3.length === n3 && fox3[n3 - 3].kind === "wake" && (fox3[n3 - 2].items || []).map((x) => x.text).join() === "我翻翻。" && (him3.items || []).map((x) => x.text).join() === "又醒了一回，看看你在不在" && asks3 === 2 && pushes3 === 0,
+  `后台在跑的时候手敲 wake：交给后台叫；一时放不进存档，过一会儿放进去了，没再问他一遍；醒在屋里不敲她（这一回两步：问了 ${asks3} 回、敲了 ${pushes3} 条，狐宇宙 ${fox3.length} 行）`);
 ok(!midState.includes("又醒了一回") && !midState.includes("又想她了"), "放不进去的那一包在这台电脑上只存密文");
 
 // 她在狐宇宙里又说了一句，回话还在信箱里（没放进来）：不叫他（不然她回来，手机认成那句回过了，信箱里那封就扔了）
@@ -261,10 +290,59 @@ const forked = forkAt(fox3, 1, { id: "hz1b", role: "her", ts: fox3[1].ts, text: 
 await put({ "kfs2:chat:hyz": JSON.stringify(forked) });
 await sleep(2500);
 const afterFork = JSON.parse((await read("kfs2:chat:hyz")) || "[]");
-ok(afterFork.length === 2 && afterFork[1].id === "hz1b" && afterFork[1].alts.length === 2 && afterFork[1].alts[0].after.length === 6, "后台跑：她改了自己的话（后面的收进翻过去的那一支）：不把那几行往外放");
+ok(afterFork.length === 2 && afterFork[1].id === "hz1b" && afterFork[1].alts.length === 2 && afterFork[1].alts[0].after.length === fox3.length - 2, "后台跑：她改了自己的话（后面的收进翻过去的那一支）：不把那几行往外放");
 
 const stateText = fs.readFileSync(path.join(HOME, "state.json"), "utf8");
 ok(!/泡桐花|她睡得正香|翻了翻|又醒了一回|又想她了|测试名帖/.test(stateText) && !stateText.includes(PASS), "这台电脑上记着的（state.json）：他说的话、心里话只存密文");
+
+// ---------- 任务标记：他在《周末去哪》里定了闹钟，到点她还没回那段对话，在那段对话里醒、找她 ----------
+const c1Before = JSON.parse(await read("kfs2:chat:c1"));
+await get("/__debug/reply-queue?text=" + encodeURIComponent("<thinking>她怎么还不来</thinking>\n睡醒了没\n[WAKE:+5m 再找]"));
+const nPushT = (await get("/__debug/push")).delivered.length;
+const nAskT = (await get("/__debug/claude")).length;
+await put({ "kfs2:fox:task:g1": JSON.stringify({ v: 1, chat: "c1", from: "g1", raw: "+1m 去找卿卿", set: Date.now() - 2 * 60 * 1000 }) });
+let c1 = [];
+for (let i = 0; i < 60; i++) {
+  await sleep(250);
+  c1 = JSON.parse((await read("kfs2:chat:c1")) || "[]");
+  if (c1.length === c1Before.length + 2) break;
+}
+await sleep(2500);
+const t1 = JSON.parse((await read("kfs2:fox:task:g1")) || "{}");
+const foxT = JSON.parse(await read("kfs2:chat:hyz"));
+const goT = foxT.find((m) => m.go && m.go.how === "task");
+const pushesT = (await get("/__debug/push")).delivered.slice(nPushT);
+const tagC1 = (await rowKeyFor(vault, "notice:c1")).slice(2);
+ok(c1.length === c1Before.length + 2 && c1[c1.length - 2].hidden && c1[c1.length - 1].items.map((x) => x.text).join() === "睡醒了没" && goT && goT.go.chat === "c1" && goT.go.title === "周末去哪",
+  "任务到点：醒在他定闹钟的那段对话里找她（她看不见的那一行在前面），狐宇宙里留一行“去《周末去哪》找你了”");
+ok(pushesT.length === 1 && pushesT[0].json.notification.body === "睡醒了没" && pushesT[0].json.notification.navigate.startsWith(`http://127.0.0.1:8080/#n=r.${tagC1}.`), "任务到点：敲她，点了进那段对话");
+ok(t1.state === "chase" && t1.rounds === 1 && t1.next > Date.now() + 4 * 60 * 1000, "任务到点：他说五分钟以后再找，记下来接着追");
+const askT = (await get("/__debug/claude")).slice(nAskT).pop().body;
+const lastT = askT.messages[askT.messages.length - 1].content.map((b) => b.text || "").join("\n");
+ok(lastT.includes("你记着的是“去找卿卿”") && JSON.stringify(askT.messages).includes("困了，先睡") && !JSON.stringify(askT.messages).includes("翻日记"), "任务到点：寄过去的是那段对话（看得见那段前面的话，不是狐宇宙），后面附着他定闹钟时记着的那句");
+const stT = JSON.parse(await read("kfs2:fox:state"));
+ok(stT.next === 0, "追着她的时候：平常那种自己醒先停着（南衙那一行不露任务几点）");
+// 装作过了五分钟：接着追第二回
+await get("/__debug/reply-queue?text=" + encodeURIComponent("还不理我？\n[WAKE:off]"));
+await put({ "kfs2:fox:task:g1": JSON.stringify({ ...t1, next: Date.now() - 1000, last: Date.now() - 6 * 60 * 1000 }) });
+let t2 = {};
+for (let i = 0; i < 60; i++) {
+  await sleep(250);
+  t2 = JSON.parse((await read("kfs2:fox:task:g1")) || "{}");
+  if (t2.state === "done") break;
+}
+c1 = JSON.parse(await read("kfs2:chat:c1"));
+ok(t2.state === "done" && t2.rounds === 2 && c1[c1.length - 1].items.map((x) => x.text).join() === "还不理我？", "接着追：第二回又找了她一句；他说不追了，这个任务就收了");
+// 又定了一个，没到点她先回来了：作废
+await put({ "kfs2:fox:task:g9": JSON.stringify({ v: 1, chat: "c1", from: c1[c1.length - 1].id, raw: "+30m", set: Date.now() - 60 * 1000 }) });
+await put({ "kfs2:chat:c1": JSON.stringify(c1.concat([{ id: "hC", role: "her", ts: Date.now(), text: "来了来了" }])) });
+let t9 = {};
+for (let i = 0; i < 60; i++) {
+  await sleep(250);
+  t9 = JSON.parse((await read("kfs2:fox:task:g9")) || "{}");
+  if (t9.state) break;
+}
+ok(t9.state === "void" && /先回来/.test(t9.why || ""), "任务：没到点她先回来了（那段对话里说了话），作废");
 
 const who = await pingSock();
 const again = alarm(["run"]);
@@ -282,7 +360,7 @@ ok(re.code === 0 && re.out.includes("后台原来那一个停了") && child.exit
   "重装：后台原来那一个自己停了（不是被杀的），换这一版在后台跑起来");
 
 const stat = alarm(["status"]);
-ok(stat.out.includes("在跑") && stat.out.includes("放进狐宇宙了"), "看看（status）：在跑、最近的日志");
+ok(stat.out.includes("在跑") && stat.out.includes("放进去了"), "看看（status）：在跑、最近的日志");
 const logText = fs.readFileSync(path.join(HOME, "alarm.log"), "utf8");
 ok(!/泡桐花|她睡得正香|翻了翻|又醒了一回|又想她了/.test(logText) && !logText.includes(PASS), "日志：只记几点干了什么，不记他说的话、她的暗号");
 

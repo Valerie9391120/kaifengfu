@@ -124,6 +124,10 @@ export function buildRecapAsk({ msgs, prev = null, thick = 0, memeLookup, imgLoo
       return;
     }
     if (m.role === "her") {
+      if (m.note) {
+        buf.push(`[${HER_NAME}在他屋里的便签纸上留了一句：${m.text || ""}]`);
+        return;
+      }
       if (m.kind === "photo") {
         if (withImg.has(i)) {
           buf.push(`${HER_NAME}：[照片，图跟在这一行后面]`);

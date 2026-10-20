@@ -58,8 +58,9 @@ import { NanyaPanel, soonToast } from "./panels/NanyaPanel.jsx";
 import { BOX_KEY, BOX_AUDIO, packEntry, keptText, listEntries, sameVoiceIds, findBySrc, boxSub } from "./cangyin/parts.js";
 import { CangyinPage, TRAD_KEY } from "./cangyin/CangyinPage.jsx";
 import { CallPage } from "./call/CallPage.jsx";
-import { FOX_CHAT, FOX_TITLE, FOX_STATE, FOX_DOORS, FOX_SEEN, FOX_HERE, isFoxChat, wakeOn, unseenOf, readFoxState, foxSub } from "./fox.js";
+import { FOX_CHAT, FOX_TITLE, FOX_STATE, FOX_DOORS, FOX_TASK, isFoxChat, wakeOn, readFoxState, foxSub, taskNote } from "./fox.js";
 import { FoxSection } from "./panels/FoxSection.jsx";
+import { FoxNotePad } from "./chat/FoxNotePad.jsx";
 import { createListener, pauseOf } from "./call/listen.js";
 import { createSayer, segmentsOfReply, segmentsOfItems } from "./call/say.js";
 import { emptySubs, herLive, herDone, hisSay } from "./call/subs.js";
@@ -388,10 +389,8 @@ export default function App({ account = {} }) {
   // 藏音匣借走了放声音的东西（见 boxAudio）：这边要停下它的时候（切到后台、来电话）告诉那一页一声
   const audioOwner = useRef(null);
   const [diaryToday, setDiaryToday] = useState({ her: false, him: false });
-  // 狐宇宙（见 fox.js）：闹钟写的那一份（醒着没有、下回几点醒、还活着没有），她还没看过他几回话
+  // 狐宇宙（见 fox.js）：闹钟写的那一份（醒着没有、下回几点醒、还活着没有）
   const [foxState, setFoxState] = useState(null);
-  const [foxUnseen, setFoxUnseen] = useState(0);
-  const foxSeenRef = useRef(0);
   const diaryCache = useRef({});
   const dayMsgsRef = useRef({});
   const [editing, setEditing] = useState(null);
@@ -614,18 +613,7 @@ export default function App({ account = {} }) {
     })();
   }, []);
 
-  // ---- 狐宇宙（见 fox.js）：她正看着那段对话，看到哪儿记下来（南衙那一格的小点收了） ----
-  useEffect(() => {
-    if (chatId !== FOX_CHAT) return;
-    const look = () => {
-      if (document.visibilityState === "visible") markFoxSeen(messagesRef.current);
-    };
-    look();
-    document.addEventListener("visibilitychange", look);
-    return () => document.removeEventListener("visibilitychange", look);
-  }, [chatId, messages]);
-
-  // ---- 狐宇宙：“他自己醒”开着的时候，这台手机报门牌号（他留了话敲这一台，同 push.js 的 knockList） ----
+  // ---- 狐宇宙：“他自己醒”开着的时候，这台手机报门牌号（他找她的时候敲这一台，同 push.js 的 knockList） ----
   // 存成 { 设备编号: { e: 门牌号, at: 几点报的 } }：好几台手机各报各的，谁也不顶掉谁（闹钟敲的时候新报的排前头，
   // 登记簿里已经没有的不敲，见 alarm/wake.js 的 doorsOf）。关了“他自己醒”、这台关了通知、门牌号换了（重新订过），
   // 回到眼前、收起面板的时候跟着改；没变不写（头一版存的是光一个门牌号，碰上了换成新样子）
@@ -687,8 +675,8 @@ export default function App({ account = {} }) {
       if (has(RECAP_KEY)) showRecaps(chatIdRef.current);
       // 藏音匣：别的设备存了、移出了
       if (has(BOX_KEY)) refreshBox();
-      // 狐宇宙：闹钟写了心跳、他醒来说了话、别的设备上看过了
-      if (has("kfs2:fox:") || keys.includes("kfs2:chat:" + FOX_CHAT)) refreshFox();
+      // 狐宇宙：闹钟写了心跳
+      if (has(FOX_STATE)) refreshFox();
       // 别的设备念好的语音同步下来了（这台设备上要念的那一条就不用再念了）
       if (has(VOICE_KEY) && speakerRef.current) speakerRef.current.synced(keys.filter((k) => k.startsWith(VOICE_KEY)));
       if (has("kfs2:memindex") || has("kfs2:mem:")) {
@@ -780,8 +768,12 @@ export default function App({ account = {} }) {
       const had = new Set(fk.full.map((m) => m.id));
       keep = fk.full.concat(msgs.filter((m) => !had.has(m.id)));
     }
+    // 这一回放进去的里面有他定的闹钟（任务标记）：存之前先记下原来那一份，看是不是头一回放进来（平常一条都没有，不多解一遍）
+    const marks = wakeOn(settingsRef.current) && keep.some((m) => m && m.role === "him" && typeof m.wake === "string");
+    const before = marks ? safeParse(store.peek("kfs2:chat:" + id), []) || [] : null;
     const ok = await store.set("kfs2:chat:" + id, JSON.stringify(keep));
     if (!ok) markStorageFail();
+    if (marks) noteTasks(id, before, keep);
     const prev = indexRef.current;
     const old = prev.find((c) => c.id === id);
     const entry = {
@@ -1235,22 +1227,30 @@ export default function App({ account = {} }) {
   };
 
   // ---- 狐宇宙（见 fox.js）----
-  // 闹钟写的那一份、她看到哪儿了、那段对话里他说了几回她还没看：都是引擎手里现成的，同步取
+  // 闹钟写的那一份：引擎手里现成的，同步取。（他在屋里的动静不亮红点：她 22:04 定的）
   const refreshFox = () => {
     setFoxState(readFoxState(store.peek(FOX_STATE)));
-    const seen = Number(store.peek(FOX_SEEN)) || 0;
-    foxSeenRef.current = Math.max(foxSeenRef.current, seen);
-    const msgs = chatIdRef.current === FOX_CHAT ? messagesRef.current : safeParse(store.peek("kfs2:chat:" + FOX_CHAT), []) || [];
-    setFoxUnseen(unseenOf(msgs, foxSeenRef.current));
   };
-  // 她正看着狐宇宙：看到哪儿记下来（跟着云端走，别的设备上那个小点也收了）。只往后挪，没变不写
-  const markFoxSeen = (msgs) => {
-    const last = (msgs || []).reduce((t, m) => Math.max(t, (m && m.ts) || 0), 0);
-    if (last > foxSeenRef.current) {
-      foxSeenRef.current = last;
-      store.set(FOX_SEEN, String(last));
+  // 她来他屋里转一圈，在便签纸上留了一句（FoxNotePad）：放进狐宇宙，记 note: true——不叫他、不等回话，他下回醒来看得见
+  const saveFoxNote = (text) => {
+    if (chatIdRef.current !== FOX_CHAT) return;
+    const next = messagesRef.current.concat([{ id: newId(), role: "her", ts: Date.now(), text, note: true }]);
+    messagesRef.current = next;
+    follow.pin();
+    setMessages(next);
+    saveChat(FOX_CHAT, next);
+  };
+  // 任务标记（见 fox.js）：他在平常的对话里写了 [WAKE:…]（拆出来记在他那一条的 wake 上），那一条头一回放进对话的时候，
+  // 记一个任务给家里的闹钟（一个任务一行：kfs2:fox:task:<他那一条的编号>）。她看不见。已经记过的不再记。
+  // placed：几点放进对话的。回话在信箱里搁到她回来才放进来的，放的时候也许已经过了点：她都回来了，闹钟就不办（alarm/plan.js）
+  const noteTasks = (id, prev, msgs) => {
+    if (isFoxChat(id) || isGameChat(id) || !wakeOn(settingsRef.current)) return;
+    const had = new Set((prev || []).map((m) => m && m.id));
+    for (const m of msgs) {
+      if (!m || m.role !== "him" || typeof m.wake !== "string" || had.has(m.id)) continue;
+      if (store.peek(FOX_TASK + m.id) != null) continue;
+      store.set(FOX_TASK + m.id, JSON.stringify({ v: 1, chat: id, from: m.id, raw: m.wake, set: m.ts || Date.now(), placed: Date.now() }));
     }
-    setFoxUnseen(0);
   };
 
   // ---- 藏音匣（见开发说明“藏音匣”那节、cangyin/）----
@@ -1565,8 +1565,9 @@ export default function App({ account = {} }) {
       call: inCall, // 正在打电话：【此刻】后面附上通话的规矩（见 call/）
       game,
     });
-    // 狐宇宙（见 fox.js）：【此刻】后面多一句，他知道这是他自己醒来的地方、现在是她来了。在记号后面，名帖一个字不动
-    const nowNote = isFoxChat(opts.chat) ? baseNote + "\n" + FOX_HERE : baseNote;
+    // 任务标记（见 fox.js）：“他自己醒”开着的时候，平常的对话里【此刻】后面附一段，他知道能定个闹钟到点来找她。在记号后面，名帖一个字不动
+    const tasks = wakeOn(st) && !isFoxChat(opts.chat) && !isGameChat(opts.chat);
+    const nowNote = tasks ? baseNote + "\n\n" + taskNote(namesRef.current.her || HER_NAME) : baseNote;
     // 这段对话抄过提要的：前面的不寄原话，换成提要（见 recap.js）
     const recapList = opts.chat ? await readRecaps(opts.chat) : [];
     const { messages: apiMessages, tail } = buildMessages(msgs, avatarsRef.current, memeLookup, imgLookup, thumbLookup, docLookup, { recaps: recapList, tier: recallTier(staticText) });
@@ -4908,8 +4909,7 @@ export default function App({ account = {} }) {
       return (
         <Sheet title="南衙" onClose={() => setSheet(null)}>
           <NanyaPanel
-            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, unseen: foxUnseen, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length) }}
-            dots={{ fox: foxUnseen > 0 }}
+            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length) }}
             open={{
               // 狐宇宙：菜单收起，翻到那段对话（他自己醒来说的话都在那儿，见 fox.js）
               fox: () => {
@@ -5047,8 +5047,8 @@ export default function App({ account = {} }) {
             {/* 第四个方块是“南衙”（卿卿 2026 年 10 月 11 日定的）：原来写“日记本”、点了直接进日记，现在点了从底下冒出一张菜单
                 （见 renderSheet 里的 nanya），日记是里面的头一行“闲笔集”。图标是恩师画的牡丹。
                 底下那行小字没动，还是今天的日记写了没 */}
-            {/* 狐宇宙里他留了话、她还没看：方块上亮个小点（10 月 20 日添的，见 fox.js） */}
-            <Tile icon="peony" label="南衙" sub={diarySub} dot={foxUnseen > 0} onClick={() => setSheet("nanya")} />
+            {/* 狐宇宙里他的动静不在这儿亮小点（她 10 月 20 日 22:04 定的：不弹横幅、不要红点） */}
+            <Tile icon="peony" label="南衙" sub={diarySub} onClick={() => setSheet("nanya")} />
           </div>
         </div>
         {/* 历史对话固定在最底下那排（头像、新对话）的正上方，不跟着上面那段滚（卿卿定的位置）。
@@ -5172,10 +5172,10 @@ export default function App({ account = {} }) {
               </p>
               {/* 字的颜色同中间那行字（--k-motto，实色）：这一块压在背景中间那一方深色上，淡墨在上面看不清 */}
               <p style={{ fontSize: 12.5, color: T.motto, lineHeight: 1.8, textAlign: "center", letterSpacing: "0.05em" }}>
-                他自己醒来想说的话，会留在这里
+                这是他的屋子：他自己醒来干了什么，都留在这里
                 <br />
                 <span className="kfs-fox-sub" style={{ opacity: 0.75 }}>
-                  {foxSub({ on: wakeOn(settings), state: foxState, unseen: 0, now: now.getTime() })}
+                  {foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() })}
                 </span>
               </p>
             </div>
@@ -5352,6 +5352,9 @@ export default function App({ account = {} }) {
             --kfs-sab 平时是底下横条要让的高度，iOS 底下空一条的时候是 0（见 input.css）。
             表情包面板开着的时候连在按钮底下、一起贴到屏幕最底（照微信，卿卿 10 月 17 日要的），横条那一截由面板自己让。
             打字的时候（键盘或者表情包面板开着）变成一行：左边加号，中间打字，右边笑脸和发送；模型、听写先收起来（她 10 月 17 日点的） */}
+        {isFoxChat(chatId) ? (
+          <FoxNotePad onSave={saveFoxNote} />
+        ) : (
         <div
           className="kfs-composer relative z-10 flex-shrink-0"
           data-compact={compact ? "" : undefined}
@@ -5566,6 +5569,7 @@ export default function App({ account = {} }) {
             </div>
           )}
         </div>
+        )}
         {/* 加号背后的文件框：照片，加上 Word、Markdown、文本。iPhone 的“选取文件”里只有这几种点得动 */}
         <input
           ref={photoInputRef}
@@ -5625,6 +5629,8 @@ export default function App({ account = {} }) {
           menu={menu}
           now={now}
           busy={loading}
+          // 狐宇宙是他的屋子（她只来看看、在便签纸上留话）：不给编辑、重新回答
+          room={isFoxChat(chatId)}
           heard={menu.row.role === "him" && menu.row.item.type === "voice" && heard.has(voiceKeyOf(menu.row.msg.id, menu.row.idx))}
           // 念不成、没人念的那种气泡上已经把字摆出来了：不给“转文字”
           hearable={!(menu.row.role === "him" && menu.row.item.type === "voice" && voiceAsText(menu.row))}

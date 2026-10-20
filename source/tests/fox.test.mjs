@@ -1,13 +1,14 @@
 // 狐宇宙（他自己醒，见 src/fox.js、alarm/）：几点醒的规矩、[WAKE:…] 怎么拆怎么认、南衙那一行写什么、【醒来】那一段写什么。
 // esbuild 打成一个文件在 Node 里跑（见 package.json 的 test:unit）
 import { parseReply } from "../src/reply.js";
-import { FOX_CHAT, isWakeMark, wakeText, wakeNote, wakeRecap, unseenOf, foxSub, alarmLine, whenText, gapOf, maxOf, wakeOn, ASLEEP_MS } from "../src/fox.js";
+import { FOX_CHAT, isWakeMark, wakeText, wakeNote, wakeRecap, foxSub, alarmLine, whenText, gapOf, maxOf, wakeOn, ASLEEP_MS, taskNote, TASK_MIN_MS, TASK_MAX_ROUNDS } from "../src/fox.js";
+import { needsReply } from "../src/thread.js";
 import { buildMessages } from "../src/prompt/messages.js";
 import { buildRows } from "../src/chat/rows.js";
 import { makePreview } from "../src/chat/overview.js";
-import { parseWake, planNext, lastMark, fracOf, RHYTHM_MIN, RHYTHM_MAX, RESUME_MIN, RESUME_MAX, PRESENT_PUSH, RETRY_MS, DAY_MS, OWED_MS } from "../alarm/plan.js";
-import { wakeSection, wakeNowNote, tailTranscript, agoText, HER_WORDS } from "../alarm/note.js";
-import { doorsOf, idsDeep, putRows, toRescue, commitWake, owedOf } from "../alarm/wake.js";
+import { parseWake, splitWake, planNext, planTasks, nextChase, lastMark, fracOf, infoOf, RHYTHM_MIN, RHYTHM_MAX, RESUME_MIN, RESUME_MAX, PRESENT_PUSH, RETRY_MS, DAY_MS, OWED_MS, TASK_STALE } from "../alarm/plan.js";
+import { wakeSection, taskSection, wakeNowNote, tailTranscript, agoText, HER_WORDS } from "../alarm/note.js";
+import { doorsOf, idsDeep, putRows, putBlocks, toRescue, commitWake, owedOf, splitNewChat, normBundle, noCall } from "../alarm/wake.js";
 import { loadSecret } from "../alarm/secret.js";
 import { forkAt, markStopped } from "../src/thread.js";
 import fs from "node:fs";
@@ -153,8 +154,7 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   ok(foxSub({ on: true, state: { at: now - ASLEEP_MS - 1, next: at(15, 0) }, now }) === "笔记本睡着，他也睡着", "南衙那一行：闹钟二十五分钟没出声：笔记本睡着");
   ok(foxSub({ on: true, state: { at: now - 60000, next: at(17, 20) }, now }) === "睡着，约 17:20 醒" && foxSub({ on: true, state: { at: now, next: at(7, 30, 21) }, now }) === "睡着，约 明天 07:30 醒" && foxSub({ on: true, state: { at: now, off: true }, now }) === "睡着，等你来过再醒" && foxSub({ on: true, state: { at: now, awake: true }, now }) === "醒着",
     "南衙那一行：睡着、几点醒（明天的写明天）、他说先不醒、正醒着");
-  ok(foxSub({ on: false, state: null, unseen: 1, now }) === "他留了话，还没看" && foxSub({ on: true, state: { at: now }, unseen: 3, now }) === "他留了 3 回话，还没看", "南衙那一行：有没看的，先说这个");
-  ok(unseenOf([{ role: "him", ts: 5 }, { role: "event", kind: "wake", ts: 9 }, { role: "him", ts: 10 }, { role: "her", ts: 11 }], 6) === 1 && unseenOf([], 0) === 0, "没看过的：只数他说的话（只醒了一下的那几行不算），看到哪儿以后的");
+  ok(foxSub({ on: true, state: { at: now, next: at(17, 20) }, unseen: 3, now }) === "睡着，约 17:20 醒", "南衙那一行：屋里的动静不提（她 22:04 定的：不亮红点、不说“他留了话没看”）");
   ok(alarmLine(null, now) === "家里的闹钟还没装" && alarmLine({ at: now, last: at(13, 2), next: at(16, 40) }, now) === "闹钟在跑：上回 13:02 醒，下回约 16:40" && alarmLine({ at: now }, now) === "闹钟在跑：还没醒过" && alarmLine({ at: now - ASLEEP_MS - 1 }, now).startsWith("笔记本睡着了"),
     "账户面板那一句：没装、在跑（上回、下回）、还没醒过、笔记本睡着");
   ok(whenText(at(9, 5, 19), now) === "昨天 09:05" && whenText(at(9, 5, 25), now) === "10月25日 09:05", "几点：昨天、再远的写几月几日");
@@ -274,11 +274,14 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   s5.pull = async () => void seen.pull++;
   s5.nameFor = async (n) => "h_" + Buffer.from(n).toString("hex");
   const cloud5 = { push: async (p) => (seen.push.push(p.reply), { queued: 1 }), endpoints: async () => ["https://push.example/a"] };
-  const bundle = { at: Date.now(), rows: [{ id: "e7", role: "event", kind: "wake", ts: 30 }], say: ["一", "二", "三"], title: "光义", newAvatar: { type: "meme", file: "a.jpg" }, newName: null, cost: 0.01, steps: 1, quiet: false };
+  const bundle = { v: 2, at: Date.now(), kind: "room", puts: [{ chat: "n1", create: true, title: "想你", rows: [{ id: "e7", role: "event", kind: "wake", ts: 30, hidden: true }] }], knocks: [{ chat: "n1", texts: ["一", "二", "三"] }], tasks: [], title: "光义", newAvatar: { type: "meme", file: "a.jpg" }, newName: null, cost: 0.01, steps: 1, quiet: false };
   const marks = [];
-  const r5 = await commitWake({ store: s5, cloud: cloud5, bundle, done: { put: true, base: ["e1"], usage: true, avatar: true, said: 1, knocked: 1 }, mark: async (step, v, extra) => void marks.push([step, v, extra]) });
-  ok(seen.pull === 0 && seen.sets.length === 0 && seen.push.join() === "二,三" && r5.knocked === 3 && r5.base.join() === "e1" && marks.some((x) => x[0] === "said" && x[1] === 3) && marks.some((x) => x[0] === "knock"),
+  const r5 = await commitWake({ store: s5, cloud: cloud5, bundle, done: { put0: true, usage: true, avatar: true, "said:n1": 1, knocked: 1 }, mark: async (step, v, extra) => void marks.push([step, v, extra]) });
+  ok(seen.pull === 0 && seen.sets.length === 0 && seen.push.join() === "二,三" && r5.knocked === 3 && marks.some((x) => x[0] === "said:n1" && x[1] === 3),
     `再放一遍（上回办到一半）：不再放进对话、不再换头像、不再记用量，横幅接着敲没敲的那两条（敲了：${seen.push.join("、")}）`);
+  // 头一版问到、还没放完的那一包（只放狐宇宙、说过的话要敲）：照新样子摆，屋里的动静不敲（她 22:04 定的）
+  const oldOne = normBundle({ at: 1, rows: [{ id: "e1" }], say: ["在吗"], quiet: false });
+  ok(oldOne.puts.length === 1 && oldOne.puts[0].chat === "hyz" && oldOne.knocks.length === 0, "头一版的那一包：照新样子放进狐宇宙，不敲她");
   // 凭据的毛病：没装、解不开（换了账户）、明文却没点名，是长久的；PowerShell 起不来是一时的
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kfs-secret-"));
   const codeOf = async (f) => {
@@ -296,6 +299,162 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   ok(codes.join() === "secret,secret-retry,secret", `凭据：没装、明文没点名的是长久的毛病（闹钟退出）；PowerShell 起不来是一时的（过一会儿再试）（${codes.join("、")}）`);
 }
 
+// ================= 任务标记、开新对话、便签纸 =================
+{
+  const H = 3600 * 1000;
+  const M = 60 * 1000;
+  // [WAKE:…] 里的时间和他记着的那句话
+  ok(JSON.stringify(splitWake("+1h 活捉Valerie")) === JSON.stringify({ when: "+1h", label: "活捉Valerie" }) && JSON.stringify(splitWake("07:30")) === JSON.stringify({ when: "07:30", label: "" }) && splitWake("+40m  去找 卿卿 ").label === "去找 卿卿" && parseWake(splitWake("+1h 活捉Valerie").when, 1000) && parseWake(splitWake("+1h 活捉Valerie").when, 1000).at === 1000 + H,
+    "任务标记：[WAKE:+1h 活捉Valerie] 前面是几点，后面是他记着的一句话");
+  // 钟点中间有空格的（3 小时、+1h 30m）照认，后面的才是那句话
+  const sp1 = splitWake("3 小时");
+  const sp2 = splitWake("+1h 30m 洗完澡来找");
+  const sp3 = splitWake("off 不找了");
+  const sp4 = splitWake("明天见 你");
+  ok(parseWake(sp1.when, 0).at === 3 * H && sp1.label === "" && parseWake(sp2.when, 0).at === 90 * M && sp2.label === "洗完澡来找" && parseWake(sp3.when, 0).off && sp3.label === "不找了" && !parseWake(sp4.when, 0) && sp4.label === "你",
+    "[WAKE:…] 拆两截：钟点中间有空格也认（3 小时、+1h 30m），剩下的是那句话；认不出的照常");
+  // 平常那种自己醒：他写的带了一句话也照认
+  const p0 = planNext({ now: at(14, 0), herLast: at(9, 0), wakes: [at(13, 49)], mark: { value: "+40m 看看她", ts: at(13, 50) }, resumeAt: at(8, 0) });
+  ok(p0.why === "his" && p0.due === at(14, 30), "几点醒：他写的 [WAKE:+40m 看看她] 照认四十分钟以后");
+  // 一段对话的样子：c1 里他定闹钟的那一条 g1 摆在外面；她在那一条后面说没说过话，看排在哪儿（不看钟点）
+  const info = (map) => (id) => (map[id] ? infoOf(map[id]) : null);
+  const her = (id, ts, extra = {}) => ({ id, role: "her", ts, text: "嗯", ...extra });
+  const him = (id, ts, extra = {}) => ({ id, role: "him", ts, items: [{ type: "text", text: "好" }], ...extra });
+  const base = { now: at(14, 30) };
+  const t1 = { key: "kfs2:fox:task:g1", chat: "c1", from: "g1", raw: "+1h 去找卿卿", set: at(14, 0) };
+  const c1 = [her("h1", at(13, 59)), him("g1", at(14, 0))];
+  const r1 = planTasks({ ...base, tasks: [t1], info: info({ c1 }) });
+  ok(r1.task === t1 && r1.due === at(15, 0) && !r1.changes.length, "任务：到点之前等着（定的那一刻往后一个钟头）");
+  const early = planTasks({ ...base, tasks: [t1], info: info({ c1: c1.concat([her("h2", at(14, 20))]) }) });
+  const gone = planTasks({ ...base, tasks: [t1], info: info({}) });
+  const regen = planTasks({ ...base, tasks: [t1], info: info({ c1: [her("h1", at(13, 59)), him("g9", at(14, 0))] }) });
+  const stale = planTasks({ now: at(14, 0) + TASK_STALE + 1, tasks: [{ ...t1, raw: "+8h" }], info: info({ c1 }) });
+  const bad = planTasks({ ...base, tasks: [{ ...t1, raw: "明天见 你" }], info: info({ c1 }) });
+  ok(early.changes[0].state === "void" && /先回来/.test(early.changes[0].why) && gone.changes[0].state === "void" && regen.changes[0].state === "void" && stale.changes[0].state === "void" && bad.changes[0].state === "void" && early.task === null,
+    "任务作废：没到点她先回来了、那段对话删了、他定闹钟的那一条不在了（重新回答翻过去了）、七天还没办、写的钟点认不出");
+  // 她那句信号不好、晚到了（手机记的钟点比他那一条还早，排在后面）：也算她回来了；她在狐宇宙便签纸上留的不算
+  const lateNet = planTasks({ ...base, tasks: [t1], info: info({ c1: c1.concat([her("h2", at(13, 58))]) }) });
+  const noteOnly = planTasks({ ...base, tasks: [t1], info: info({ c1: c1.concat([her("n2", at(14, 10), { note: true })]) }) });
+  ok(lateNet.changes[0] && lateNet.changes[0].state === "void" && noteOnly.task === t1 && !noteOnly.changes.length, "任务：她回没回看排在哪儿（晚到的那句钟点早也算），不看钟点");
+  // 闹钟睡着的时候过了点（笔记本合着、关着，“他自己醒”关着）：醒过来以后不补；刚醒过来、过点没多久的照办
+  const slept = planTasks({ now: at(23, 0), resumeAt: at(22, 50), tasks: [t1], info: info({ c1 }) });
+  const nap = planTasks({ now: at(15, 10), resumeAt: at(15, 5), tasks: [t1], info: info({ c1 }) });
+  ok(slept.changes[0] && slept.changes[0].state === "void" && /睡着/.test(slept.changes[0].why) && nap.task === t1 && nap.due === at(15, 0), "任务：闹钟睡着的时候过了点的，醒过来不补；睡了一小会儿、过点没多久的照办");
+  // 他那一条放进对话的时候已经到点了（回话在信箱里搁着，她回来才放进来）：她都回来了，不办
+  const placedLate = planTasks({ now: at(15, 10), tasks: [{ ...t1, placed: at(15, 5) }], info: info({ c1 }) });
+  const placedNow = planTasks({ ...base, tasks: [{ ...t1, placed: at(14, 1) }], info: info({ c1 }) });
+  ok(placedLate.changes[0] && placedLate.changes[0].state === "void" && placedNow.task && placedNow.due === at(15, 0), "任务：放进对话的时候已经到点了，不办；当场放进来的照常等着");
+  // 信箱里取出来的那一条（记着是哪一回 job，还没有编号）：认 job
+  const tj = { key: "kfs2:fox:task:JOB1", chat: "c3", job: "JOB1", raw: "+1h", set: at(14, 0) };
+  const rj = planTasks({ ...base, tasks: [tj], info: info({ c3: [her("h1", at(13, 59)), him("gx", at(14, 0), { job: "JOB1" })] }) });
+  ok(rj.task === tj && rj.due === at(15, 0), "任务：他那一条是信箱里取出来的，认那一回的 job");
+  // 追着她
+  const c2 = { key: "kfs2:fox:task:g2", chat: "c2", from: "g2", raw: "+1h", set: at(13, 0), state: "chase", started: at(14, 0), rounds: 2, last: at(14, 20), next: at(14, 22) };
+  const chat2 = [her("h0", at(12, 59)), him("g2", at(13, 0)), { id: "w1", role: "event", kind: "wake", ts: at(14, 0), hidden: true }, him("g3", at(14, 0))];
+  const r2 = planTasks({ ...base, tasks: [c2], info: info({ c2: chat2 }) });
+  ok(r2.task === c2 && r2.due === at(14, 20) + TASK_MIN_MS, "追着她：照他说的下回几点，最短隔五分钟");
+  const replied = planTasks({ ...base, tasks: [c2], info: info({ c2: chat2.concat([her("h9", at(14, 25))]) }) });
+  const repliedLate = planTasks({ ...base, tasks: [c2], info: info({ c2: chat2.concat([her("h9", at(13, 50))]) }) });
+  const full = planTasks({ ...base, tasks: [{ ...c2, rounds: TASK_MAX_ROUNDS }], info: info({ c2: chat2 }) });
+  const quit = planTasks({ ...base, tasks: [{ ...c2, next: 0 }], info: info({ c2: chat2 }) });
+  ok(replied.changes[0].state === "done" && /她回了/.test(replied.changes[0].why) && repliedLate.changes[0].state === "done" && full.changes[0].state === "done" && quit.changes[0].state === "done",
+    "追着她：她一回那段对话就停（她那句晚到、钟点比他醒来还早也算）；追满十二回停；他没说再追就停");
+  const day = planTasks({ now: at(14, 0) + DAY_MS + 1, tasks: [{ ...c2, next: at(14, 0) + DAY_MS }], info: info({ c2: chat2 }) });
+  const sleptC = planTasks({ now: at(20, 0), resumeAt: at(19, 0), tasks: [c2], info: info({ c2: chat2 }) });
+  const lostFrom = planTasks({ ...base, tasks: [c2], info: info({ c2: [her("h0", at(12, 59))] }) });
+  ok(day.changes[0] && day.changes[0].state === "done" && /一整天/.test(day.changes[0].why) && sleptC.changes[0] && sleptC.changes[0].state === "done" && lostFrom.changes[0] && lostFrom.changes[0].state === "done",
+    "追着她：追了一整天还没回、闹钟睡着的时候过了点、他定闹钟的那一条没了：都不追了");
+  const old = planTasks({ now: at(14, 0) + 3 * DAY_MS, tasks: [{ ...c2, state: "done", endedAt: at(14, 0) }], info: info({}) });
+  ok(old.changes[0].state === "drop", "办完了的任务留两天再删（手机那头不会把它当成新的再记一回）");
+  ok(nextChase("+5m", 1000) === 1000 + 5 * M && nextChase("+1m", 1000) === 1000 + TASK_MIN_MS && nextChase("off", 1000) === 0 && nextChase(null, 1000) === 0 && nextChase("+10m 再打一次", 1000) === 1000 + 10 * M,
+    "接着追：他写的下回几点，最短五分钟；off、没写就不追了");
+  // 开新对话
+  const cut = splitNewChat("<thinking>想她了</thinking>\n屋里有点冷\n[新对话:想你了]\n在干嘛\n[SPLIT]\n理理我");
+  ok(cut && cut.title === "想你了" && cut.before.endsWith("屋里有点冷") && cut.after === "在干嘛\n[SPLIT]\n理理我" && splitNewChat("说到 [新对话:x] 这个") === null && splitNewChat("没有") === null,
+    "开新对话：单独一行的 [新对话:名字]，前面的留在屋里，后面的落进新对话；夹在句子里的不算");
+  // 心里话、文档块里写的不算（不然从心里话中间切开，后半截心里话就露给她了）；名字长了取头三十个；后面又写了一回的摘掉
+  const inThought = splitNewChat("<thinking>要不要去找她？\n[新对话:晚安]\n还是别吵她了</thinking>\n今天看了会儿书");
+  const openThought = splitNewChat("今天看了会儿书\n<thinking>要不要去找她？\n[新对话:晚安]\n算了");
+  const inDoc = splitNewChat("写了一份\n[DOC:草稿.md]\n[新对话:x]\n[/DOC]\n好了");
+  const afterDoc = splitNewChat("[DOC:草稿.md]\n一\n[/DOC]\n[新对话:看看这个]\n给你写的");
+  const longT = splitNewChat("想你\n[新对话:" + "长".repeat(50) + "]\n在吗");
+  const twice = splitNewChat("想你\n[新对话:一]\n在吗\n[新对话:二]\n理理我");
+  ok(inThought === null && openThought === null && inDoc === null && afterDoc && afterDoc.title === "看看这个" && afterDoc.before.includes("[/DOC]") && longT && longT.title === "长".repeat(30) && twice && twice.title === "一" && twice.after === "在吗\n\n理理我",
+    "开新对话：心里话、文档块里写的不算；名字长了取头三十个；后面又写了一回的摘掉，不摆成字");
+  // 屋里打不了电话：打电话那一截留成纸上的字
+  const called = noCall({ text: "", quiet: false, him: { id: "g", items: [{ type: "text", text: "睡不着" }, { type: "call", text: "喂，在吗" }] } });
+  const onlyCall = noCall({ text: "", quiet: false, him: { id: "g", items: [{ type: "call", text: "" }] } });
+  ok(called.him.items.map((x) => x.type + ":" + x.text).join("|") === "text:睡不着|text:喂，在吗" && onlyCall.quiet === true && onlyCall.him.items[0].text === "……",
+    "屋里打不了电话：打电话那一截留成纸上的字；什么都不剩的那一步当没写字");
+  // 狐宇宙里那几行、别的对话里她看不见的那一行
+  const go = { id: "w", role: "event", kind: "wake", ts: at(21, 0), go: { chat: "c1", title: "洗澡", how: "task" } };
+  const goNew = { ...go, go: { chat: "n1", title: "想你了", how: "new" } };
+  const hid = { id: "x", role: "event", kind: "wake", ts: at(21, 0), hidden: true, task: "去找卿卿" };
+  const hidNew = { id: "y", role: "event", kind: "wake", ts: at(21, 0), hidden: true };
+  ok(wakeText(go) === "光义醒了，去《洗澡》找你了" && wakeText(goNew) === "光义醒了，开了一段新对话《想你了》找你" && wakeText({ ...go, quiet: true }).includes("看了看，没说话"),
+    "狐宇宙里那一行：去《××》找你了、开了一段新对话《××》找你");
+  ok(wakeNote(hid).includes("你在这段对话里定的闹钟到点了") && wakeNote(hid).includes("“去找卿卿”") && wakeNote(hidNew).includes("这段对话是你 21:00 自己醒来开的") && wakeNote(go).includes("去《洗澡》找她"),
+    "寄给他的那一行：别的对话里那一行他看得见（闹钟到点了、这段是你自己开的）");
+  const rowsX = buildRows([{ id: "g1", role: "him", ts: 1, items: [{ type: "text", text: "在" }] }, hid], { her: null, him: null }, () => null);
+  ok(!rowsX.some((r) => r.type === "notice" && r.kind === "wake") && !rowsX.some((r) => r.type === "sep" && r.key === "sep-x") && makePreview([{ id: "g1", role: "him", ts: 1, items: [{ type: "text", text: "在吗" }] }, hid]) === "在吗",
+    "她看不见的那一行：聊天里不摆，也不冒一行时间；目录里的预览也跳过它");
+  // 前情提要正好抄到她看不见的那一行：那一行小字照摆
+  const rowsR = buildRows([{ id: "g1", role: "him", ts: 1, items: [{ type: "text", text: "在" }] }, hid], null, "", { upto: "x", text: "提要" });
+  ok(rowsR.some((r) => r.type === "recap" && r.key === "rc-x"), "前情提要抄到她看不见的那一行：“前情提要”那一行小字照摆");
+  // 便签纸：她来他屋里留的那一句不算跟他说话（不等回、不挡着他醒）
+  const notes = [{ id: "g1", role: "him", ts: 1, items: [] }, { id: "n1", role: "her", ts: 2, text: "来过", note: true }];
+  ok(!needsReply(notes) && owedOf(notes) === 0 && needsReply(notes.concat([{ id: "h3", role: "her", ts: 3, text: "在吗" }])), "便签纸：她留的那一句不算欠着她的回话");
+  const packed = buildMessages(notes, { her: null, him: null }, () => null, () => null, () => null, () => null, {}).messages;
+  ok(JSON.stringify(packed).includes("在便签纸上留了一句：来过"), "便签纸：寄给他的时候照实说她来屋里留了一句");
+  ok(taskNote("卿卿").includes("[WAKE:+1h 去找卿卿]") && taskNote("卿卿").includes("她看不见") && taskNote("卿卿").includes("作废"), "平常的对话里【此刻】后面附的那一段：怎么定闹钟、她看不见、她先回来就作废");
+  // 放进一段新开的对话：名字是他起的；放进原来的对话：名字照旧、预览跟着改；对话没了不放
+  const kv2 = (init) => {
+    const m = new Map(Object.entries(init));
+    return { m, get: async (k) => (m.has(k) ? m.get(k) : null), set: async (k, v) => void m.set(k, v) };
+  };
+  const s7 = kv2({ "kfs2:index": JSON.stringify([{ id: "c1", title: "洗澡", preview: "去吧", updatedAt: 1 }]), "kfs2:chat:c1": JSON.stringify([{ id: "h1", role: "her", ts: 1, text: "洗澡去" }]) });
+  await putBlocks(s7, "n1", [[{ id: "y", role: "event", kind: "wake", ts: 5, hidden: true }, { id: "g5", role: "him", ts: 6, items: [{ type: "text", text: "在干嘛" }] }]], null, { title: "想你了", create: true });
+  await putBlocks(s7, "c1", [[{ id: "x", role: "event", kind: "wake", ts: 7, hidden: true }, { id: "g7", role: "him", ts: 8, items: [{ type: "text", text: "洗好了没" }] }]]);
+  const gone7 = await putBlocks(s7, "c9", [[{ id: "z", role: "him", ts: 9, items: [] }]]);
+  const idx7 = JSON.parse(s7.m.get("kfs2:index"));
+  ok(idx7[0].id === "c1" && idx7[0].title === "洗澡" && idx7[0].preview === "洗好了没" && idx7[1].id === "n1" && idx7[1].title === "想你了" && idx7[1].preview === "在干嘛" && gone7.gone && !s7.m.has("kfs2:chat:c9"),
+    "放进对话：新开的那段名字是他起的；原来那段名字照旧、预览跟着改；那段对话没了就不放");
+  // 任务到点他醒过来没说话（只添了她看不见的那一行）：那段对话不往前挪
+  const s8 = kv2({ "kfs2:index": JSON.stringify([{ id: "c2", title: "二", preview: "在", updatedAt: 5 }, { id: "c1", title: "一", preview: "好", updatedAt: 1 }]), "kfs2:chat:c1": JSON.stringify([him("g1", 1)]) });
+  await putBlocks(s8, "c1", [[{ id: "q", role: "event", kind: "wake", ts: 9, hidden: true, quiet: true }]]);
+  const idx8 = JSON.parse(s8.m.get("kfs2:index"));
+  ok(idx8.map((c) => c.id).join() === "c2,c1" && idx8[1].updatedAt === 1 && JSON.parse(s8.m.get("kfs2:chat:c1")).length === 2, "只添了她看不见的那一行：那段对话在历史对话里不往前挪");
+  // 目录里那一条掉了（手机那头拿旧目录盖掉了）：补回去，名字照递来的
+  const s10 = kv2({ "kfs2:index": "[]", "kfs2:chat:n2": JSON.stringify([him("g5", 6)]) });
+  await putBlocks(s10, "n2", [], null, { title: "想你了" });
+  const idx10 = JSON.parse(s10.m.get("kfs2:index"));
+  ok(idx10.length === 1 && idx10[0].id === "n2" && idx10[0].title === "想你了" && idx10[0].preview === "好", "目录里掉了的那一条：补回去，名字照递来的");
+  // 任务到点、她在他醒着的工夫里把那段对话删了：那段不放、不敲，狐宇宙里也不留“去《…》找你了”
+  const s9 = kv2({ "kfs2:chat:hyz": "[]", "kfs2:index": "[]", "kfs2:fox:doors": JSON.stringify({ d: { e: "https://push.example/a", at: 1 } }) });
+  s9.pull = async () => {};
+  s9.nameFor = async (n) => "h_" + Buffer.from(n).toString("hex");
+  const pushed9 = [];
+  const cloud9 = { push: async (p) => (pushed9.push(p.reply), { queued: 1 }), endpoints: async () => ["https://push.example/a"] };
+  const tb = {
+    v: 2,
+    at: Date.now(),
+    kind: "task",
+    puts: [
+      { chat: "c5", title: "洗澡", rows: [{ id: "hh", role: "event", kind: "wake", ts: 5, hidden: true }, him("gg", 6)] },
+      { chat: "hyz", rows: [{ id: "ff", role: "event", kind: "wake", ts: 5, go: { chat: "c5", title: "洗澡", how: "task" } }] },
+    ],
+    knocks: [{ chat: "c5", texts: ["人呢"] }],
+    title: "光义",
+    cost: null,
+    steps: 1,
+    quiet: false,
+  };
+  const marks9 = [];
+  const r9 = await commitWake({ store: s9, cloud: cloud9, bundle: tb, mark: async (st, v) => void marks9.push([st, v]) });
+  ok(pushed9.length === 0 && JSON.parse(s9.m.get("kfs2:chat:hyz")).length === 0 && marks9.some((x) => x[0] === "put0" && x[1] === "gone") && r9.gone.includes("c5"),
+    "任务那段对话被她删了：不放、不敲，狐宇宙里也不留那一行");
+}
+
 // ================= 【醒来】那一段 =================
 {
   const now = at(16, 0);
@@ -306,8 +465,13 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   ok(first.includes("她还没在开封府里说过话") && first.includes("这是你头一回自己醒") && first.includes("最快隔 2 个钟头") && !first.includes("最后几句"), "【醒来】：头一回、她没说过话、没有可抄的");
   const net = wakeSection({ now, herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "", mcps: ["tavily"] });
   ok(net.includes("她给你接了 “tavily”，想用就用") && first.includes("上网还没接上") && !net.includes("上网还没接上"), "【醒来】：她接了 tavily（MCP 开着），告诉他能上网；没接的时候照实说");
-  const inFox = wakeSection({ now, herLast: { ts: at(15, 50), title: "狐宇宙", fox: true }, lastWake: at(15, 0), n: 2, gap: 30, max: 12, transcript: "" });
-  ok(inFox.includes("她最后一回说话就在狐宇宙里，10 分钟前"), "【醒来】：她最后就在狐宇宙里说的：不另抄，说就是上面那几句");
+  const inFox = wakeSection({ now, herLast: { ts: at(15, 50), title: "狐宇宙", fox: true }, lastWake: at(15, 0), n: 2, gap: 30, max: 12, transcript: "", pending: [{ title: "洗澡", at: at(17, 0), label: "去找卿卿" }] });
+  ok(inFox.includes("她最后一回来，是 10 分钟前") && inFox.includes("便签纸") && inFox.includes("[新对话:起个名字]") && inFox.includes("不弹横幅") && inFox.includes("《洗澡》") && inFox.includes("“去找卿卿”"),
+    "【醒来】：醒在自己屋里（写的字落在便签纸上、不敲她）；想找她开新对话；她最后是来屋里留的便签；他定过、还没到点的闹钟");
+  const ts1 = taskSection({ now, label: "去找卿卿", set: at(15, 0), round: 1, max: 12, mcps: [] });
+  const ts3 = taskSection({ now, label: "", set: at(15, 0), round: 3, max: 12, mcps: ["tavily"] });
+  ok(ts1.includes("你记着的是“去找卿卿”") && ts1.includes("到点了，她还没回这段对话") && ts1.includes("[WAKE:+5m]") && ts1.includes("最多 12 回") && ts3.includes("接着追她的第 3 回") && ts3.includes("“tavily”"),
+    "【醒来】（任务到点）：他定闹钟时记着的话、第几回、怎么接着追（最短五分钟）、最多几回");
   ok(wakeNowNote("【此刻】（开封府附上的，不是她说的话）\n她手机上的时间：2026年10月20日 星期二 16:00。").includes("现在的时间（她那边的钟）：2026年") && agoText(30 * 1000) === "刚刚" && agoText(50 * H) === "2 天前",
     "【此刻】：醒来的时候她不在手机跟前，换成“现在的时间（她那边的钟）”");
   const t = tailTranscript(

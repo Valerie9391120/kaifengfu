@@ -34,12 +34,12 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { unseal, CHECK_TEXT } from "../src/vault.js";
-import { FOX_CHAT, FOX_STATE, BEAT_MS, wakeOn, gapOf, maxOf } from "../src/fox.js";
+import { FOX_CHAT, FOX_STATE, BEAT_MS, TASK_MAX_ROUNDS, wakeOn, gapOf, maxOf } from "../src/fox.js";
 import { createCloud } from "./cloud.js";
 import { createStore, writeAtomic } from "./store.js";
 import { saveSecret, loadSecret } from "./secret.js";
-import { planNext, parseWake, DAY_MS, OWED_MS } from "./plan.js";
-import { gather, askWake, commitWake, fetchExtraMemes, putBlocks, toRescue, owedOf } from "./wake.js";
+import { planNext, planTasks, parseWake, splitWake, DAY_MS, OWED_MS, RETRY_MS } from "./plan.js";
+import { gather, askRoom, askTask, commitWake, fetchExtraMemes, putBlocks, toRescue, owedOf, chatInfo, tasksOf, normBundle } from "./wake.js";
 
 export const VERSION = "2026-10-20";
 // 测试的时候（tests/e2e_alarm.mjs）可以拨快：KFS_ALARM_TICK、KFS_ALARM_PULL、KFS_ALARM_MANUAL_GAP（毫秒）
@@ -49,7 +49,9 @@ const ASK_WAIT = 13 * 60 * 1000; // 手敲的 wake 交给后台以后最多等�
 const STOP_WAIT = 13 * 60 * 1000; // 叫后台那一个停，最多等它把手上这一回办完多久（同上）
 // 手敲的 wake：他这么久以内刚醒过，先不叫（手抖敲了两遍、等不及又敲一遍，不多花一回钱）。测试里可以拨：KFS_ALARM_MANUAL_GAP（毫秒）
 const MANUAL_GAP = /^\d+$/.test(process.env.KFS_ALARM_MANUAL_GAP || "") ? Number(process.env.KFS_ALARM_MANUAL_GAP) : 2 * 60 * 1000;
-const CHAT_KEY = "kfs2:chat:" + FOX_CHAT;
+// 追她的时候两回之间最短五分钟（她 20:03 定的）；测试里可以拨：KFS_ALARM_TASK_MIN（毫秒）
+const TASK_MIN = /^\d+$/.test(process.env.KFS_ALARM_TASK_MIN || "") ? Number(process.env.KFS_ALARM_TASK_MIN) : undefined;
+const TASK_DAY_MAX = 36; // 追她的那几回不算进第二道闸（她 20:08 定的）；所有任务加起来往回数二十四个钟头最多这么多回（防代码出岔子绕圈）
 const FATAL = new Set(["secret", "badlogin"]); // 碰上这几样后台那一个退出（重试没用，得重新 setup）
 
 const home = () =>
@@ -296,11 +298,13 @@ const OFF_TEXT = "“他自己醒”关着：先在手机的账户面板里打�
 const OWED_TEXT = "狐宇宙里你说的那句他还没回上（回话多半在信箱里，等你打开开封府才放进来），放进来以前不叫他。";
 const resultLine = (r) =>
   r.ok
-    ? r.quiet
-      ? "醒过了，他这一回没留话。"
-      : `醒过了，他留了话（敲了 ${r.knocked || 0} 条横幅）。去狐宇宙看看。`
+    ? r.newChat
+      ? `醒过了，他开了一段新对话找你（敲了 ${r.knocked || 0} 条横幅）。`
+      : r.quiet
+      ? "醒过了，他这一回没写字。"
+      : "醒过了，他在屋里的便签纸上写了点东西（不敲你）。去狐宇宙看看。"
     : r.pending
-    ? `问到了他的话，还没放进狐宇宙（${r.err}）。闹钟过一会儿自己再放，不再问他一遍。`
+    ? `问到了他的话，还没放进去（${r.err}）。闹钟过一会儿自己再放，不再问他一遍。`
     : "没醒成：" + r.err;
 const planLine = (on, plan, pending) =>
   !on
@@ -309,24 +313,35 @@ const planLine = (on, plan, pending) =>
     ? "有一回醒来说的话还没放进狐宇宙，放进去以前不叫下一回"
     : plan.why === "owed"
     ? "狐宇宙里她那句还没回上，先不叫他"
+    : plan.why === "chase"
+    ? "他正追着她（任务标记），平常那种自己醒先停着"
     : plan.due
     ? `下回打算 ${new Date(plan.due).toLocaleString()} 醒（${plan.why}）`
     : "他说先不醒";
 // 他定的下回几点醒，日志里只记认出来的意思（他写的原样不记）
 const markLine = (raw, from) => {
   if (raw == null) return "";
-  const w = parseWake(raw, from);
+  const w = parseWake(splitWake(raw).when, from);
   return w ? (w.off ? "，他定了先不醒" : `，他定了下回 ${new Date(w.at).toLocaleString()} 醒`) : "，他写的几点醒认不出（照常）";
 };
 // ---------- 叫醒、放进去、回头核对：后台那一个和手敲的 wake 都用这一套 ----------
 function createAlarm({ cloud, store, vault, st, setBusy }) {
   const save = () => writeState(st);
-  const chatHash = async () => {
-    const s = await store.sealedOfKey(CHAT_KEY);
+  const keyOf = (chat) => "kfs2:chat:" + chat;
+  const hashOf = async (chat) => {
+    const s = await store.sealedOfKey(keyOf(chat));
     return s ? createHash("sha256").update(s).digest("hex").slice(0, 32) : "";
+  };
+  // 回头核对的那几段对话：{ [对话的编号]: { ours, list } }（头一版只核对狐宇宙一段，记的是 { ours, list }：照新样子摆）
+  const watched = () => {
+    let w = st.watch;
+    if (w && Array.isArray(w.list)) w = { [FOX_CHAT]: w };
+    st.watch = w && typeof w === "object" && !Array.isArray(w) ? w : {};
+    return st.watch;
   };
   // 他醒过的那几回：狐宇宙里那几行醒了的，加上这台电脑上记着的（那几行被手机那头盖掉了，也照样算）
   const wakesOf = (ctx) => [...new Set((ctx.wakes || []).concat(recent(st.woke, Date.now(), 2 * DAY_MS)))].sort((a, b) => a - b);
+  const chasing = (ctx) => (ctx.tasks || []).some((t) => t.state === "chase");
 
   // 心跳：写进存档（南衙那一行、账户面板里那一句照它写，见 src/fox.js）
   async function beat(fields) {
@@ -338,11 +353,14 @@ function createAlarm({ cloud, store, vault, st, setBusy }) {
     }
   }
 
+  // 平常那种自己醒（醒在狐宇宙）：几点。追着她的时候（任务标记）先停着
   function plan(ctx, now, resumeAt) {
     if (!wakeOn(ctx.settings)) return { due: null, why: "switch-off" };
+    if (chasing(ctx)) return { due: null, why: "chase" };
     return planNext({
       now,
       wakes: wakesOf(ctx),
+      capWakes: [...new Set((ctx.capWakes || []).concat(recent(st.woke, now, 2 * DAY_MS)))].sort((a, b) => a - b),
       herLast: ctx.herLast ? ctx.herLast.ts : 0,
       mark: ctx.mark,
       resumeAt,
@@ -353,6 +371,38 @@ function createAlarm({ cloud, store, vault, st, setBusy }) {
       owed: owedOf(ctx.fox),
     });
   }
+
+  // 任务（任务标记）：眼下最早该办的那一个；该作废、该收的写回去（日志里不记那段对话叫什么：名字是照她的话起的）。
+  // resumeAt：闹钟这一回几点醒过来的（同 plan）：睡着的时候过了点的任务不补
+  async function taskPlan(ctx, now, resumeAt = 0) {
+    if (!wakeOn(ctx.settings) || !(ctx.tasks || []).length) return { due: null, task: null, changed: false };
+    const infos = {};
+    for (const t of ctx.tasks) if (t.chat && !(t.chat in infos)) infos[t.chat] = await chatInfo(store, t.chat);
+    const r = planTasks({ now, tasks: ctx.tasks, info: (id) => infos[id] || null, resumeAt, ...(TASK_MIN != null ? { minGap: TASK_MIN } : {}) });
+    for (const c of r.changes) {
+      const t = ctx.tasks.find((x) => x.key === c.key) || {};
+      const { key, id, ...rest } = t;
+      if (c.state === "drop") await store.del(c.key);
+      else {
+        await store.set(c.key, JSON.stringify({ ...rest, state: c.state, why: c.why, endedAt: now }));
+        log(`任务${c.state === "done" ? "办完了" : "作废了"}：${c.why}`);
+      }
+    }
+    if (r.changes.length) ctx.tasks = await tasksOf(store);
+    return { due: r.due, task: r.task, info: r.task ? infos[r.task.chat] : null, changed: r.changes.length > 0 };
+  }
+  // 追她的那几回，所有任务加起来往回数二十四个钟头还没满
+  const taskRoom = () => recent(st.taskTries, Date.now()).length < TASK_DAY_MAX;
+  // 还没到点的那几个任务（醒在屋里的时候告诉他）
+  const pendingOf = (ctx) =>
+    (ctx.tasks || [])
+      .filter((t) => !t.state || t.state === "wait")
+      .map((t) => {
+        const p = parseWake(splitWake(t.raw).when, t.set || 0);
+        const c = (ctx.index || []).find((x) => x && x.id === t.chat);
+        return p && p.at ? { title: (c && c.title) || "一段对话", at: p.at, label: splitWake(t.raw).label } : null;
+      })
+      .filter(Boolean);
 
   // 暗号换了没有（每拉一回存档对一遍）：换了就照实停下。问不到不算
   async function checkVault() {
@@ -365,34 +415,47 @@ function createAlarm({ cloud, store, vault, st, setBusy }) {
     if (ok === false) throw Object.assign(new Error("暗号对不上了（手机上换过暗号？）：重新跑一遍 setup"), { code: "secret" });
   }
 
-  // 这一回放的那几行记下来回头核对一天（封好）；已经记过的不再记。
-  // own：狐宇宙眼下这一份是闹钟自己刚写的（putRows 的 onChat），记下它的指纹；不是自己写的不动原来记的指纹
+  // 这一回放进某段对话的那几行记下来，回头核对一天（封好）；已经记过的不再记。
+  // own：那段对话眼下这一份是闹钟自己刚写的（putBlocks 的 onChat），记下它的指纹；不是自己写的不动原来记的指纹
   // （不然手机那头盖掉的那一份会被当成闹钟自己写的，再也不核对了；另一双眼睛挑出来的）
-  async function watch(bundle, base, own = false) {
+  async function watch(chat, rows, base, own = false) {
+    const w = watched();
     const now = Date.now();
-    const w = st.watch || { ours: "", list: [] };
-    const list = (w.list || []).filter((x) => x && x.until > now);
-    const first = bundle.rows[0] && bundle.rows[0].id;
+    const cur = w[chat] || { ours: "", list: [] };
+    const list = (cur.list || []).filter((x) => x && x.until > now);
+    const first = rows[0] && rows[0].id;
     if (!list.some((x) => x.ids && x.ids[0] === first)) {
-      list.push({ sealed: await store.sealText(JSON.stringify(bundle.rows)), ids: bundle.rows.map((r) => r.id), base: base || [], until: now + DAY_MS });
+      list.push({ sealed: await store.sealText(JSON.stringify(rows)), ids: rows.map((r) => r.id), base: base || [], until: now + DAY_MS });
     }
-    st.watch = { ours: own || !w.ours ? await chatHash() : w.ours, list: list.slice(-12) };
+    w[chat] = { ours: own || !cur.ours ? await hashOf(chat) : cur.ours, list: list.slice(-12) };
     save();
   }
 
-  // 问到了的那一包放进狐宇宙。回 { done, quiet, knocked, err }
+  // 任务这一回办完了：记下第几回、下回几点再追；不追了（他没说、追满了）就收
+  async function applyChase(b) {
+    const c = b.chase;
+    const t = JSON.parse((await store.get(c.key)) || "null");
+    if (!t || typeof t !== "object") return;
+    const again = !!c.next && c.round < TASK_MAX_ROUNDS;
+    const next = { ...t, state: again ? "chase" : "done", started: t.started || b.at, rounds: c.round, last: b.at, next: again ? c.next : 0 };
+    if (!again) Object.assign(next, { why: c.next ? "追满了" : "他没说再追", endedAt: Date.now() });
+    await store.set(c.key, JSON.stringify(next));
+    log(again ? `任务办了第 ${c.round} 回，他说 ${new Date(c.next).toLocaleString()} 再去` : `任务办完了（第 ${c.round} 回）：${next.why}`);
+  }
+
+  // 问到了的那一包放进存档。回 { done, quiet, knocked, newChat, err }
   async function commitPending() {
     const p = st.pending;
     if (!p) return { done: true };
     if (Date.now() - (p.at || 0) > DAY_MS) {
-      log("有一回醒来说的话放了一天也没放进狐宇宙，不放了");
+      log("有一回醒来说的话放了一天也没放进去，不放了");
       st.pending = null;
       save();
       return { done: true, dropped: true };
     }
     let bundle;
     try {
-      bundle = JSON.parse(await store.unsealText(p.sealed));
+      bundle = normBundle(JSON.parse(await store.unsealText(p.sealed)));
     } catch (e) {
       log("有一回醒来说的话解不开了（钥匙换过？），不放了");
       st.pending = null;
@@ -402,7 +465,7 @@ function createAlarm({ cloud, store, vault, st, setBusy }) {
     setBusy(true);
     try {
       // 上回已经放进对话了（办到后面几步断了）：先拉一遍、核对一遍（这工夫里手机那头要是没看见就盖掉了，先放回去）
-      if (p.done && p.done.put) {
+      if (p.done && (p.done.put || p.done.put0)) {
         await store.pull();
         await recheck({ fresh: true });
       }
@@ -412,33 +475,48 @@ function createAlarm({ cloud, store, vault, st, setBusy }) {
         bundle,
         log,
         beforePut: () => recheck({ fresh: true }),
-        onChat: (base) => watch(bundle, base, true),
+        onChat: (chat, rows, base) => watch(chat, rows, base, true),
         done: p.done || {},
         mark: async (step, value, extra) => {
           p.done = { ...(p.done || {}), ...(extra || {}), [step]: value };
           save();
         },
       });
-      await watch(bundle, r.base);
+      for (const [chat, x] of Object.entries(r.bases)) await watch(chat, x.rows, x.base);
+      if (bundle.chase && !(p.done && p.done.chase)) {
+        await applyChase(bundle);
+        p.done = { ...(p.done || {}), chase: true };
+        save();
+      }
       st.pending = null;
       st.lastErr = "";
       save();
-      log(`放进狐宇宙了：${bundle.quiet ? "他没留话" : `他留了话，敲了 ${r.knocked} 条横幅`}${p.tries ? `（第 ${p.tries + 1} 回才放完）` : ""}`);
-      return { done: true, quiet: bundle.quiet, knocked: r.knocked };
+      const what = bundle.kind === "task" ? (bundle.quiet ? "任务到点，他去那段对话看了看，没说话" : `任务到点，他去那段对话找她了，敲了 ${r.knocked} 条横幅`) : bundle.newChat ? `他开了一段新对话找她，敲了 ${r.knocked} 条横幅` : bundle.quiet ? "他没写字" : "他在屋里写了点东西（不敲她）";
+      log(`放进去了：${what}${p.tries ? `（第 ${p.tries + 1} 回才放完）` : ""}`);
+      return { done: true, quiet: bundle.quiet, knocked: r.knocked, newChat: !!bundle.newChat };
     } catch (e) {
       if (FATAL.has(e.code)) throw e;
       p.tries = (p.tries || 0) + 1;
       p.last = Date.now();
       st.lastErr = errText(e);
       save();
-      log("问到了他的话，还没放进狐宇宙（过一会儿再放，不再问他一遍）：" + st.lastErr);
+      log("问到了他的话，还没放进去（过一会儿再放，不再问他一遍）：" + st.lastErr);
       return { done: false, err: st.lastErr };
     } finally {
       setBusy(false);
     }
   }
 
-  // 叫醒他一回：问他，问到了先封好记下，再放进狐宇宙。回 { ok, quiet, knocked } 或 { ok: false, pending?, err }
+  // 问到了：先封好记下，再放进去
+  async function keep(bundle, now) {
+    st.pending = { sealed: await store.sealText(JSON.stringify(bundle)), at: now, tries: 0, last: 0, done: {} };
+    save();
+    log(`问完了：要了 ${bundle.steps} 步${bundle.cost != null ? `，约 $${bundle.cost.toFixed(4)}` : ""}${markLine(bundle.wake, now)}`);
+    const r = await commitPending();
+    return r.done ? { ok: true, quiet: r.quiet, knocked: r.knocked || 0, newChat: r.newChat } : { ok: false, pending: true, err: r.err };
+  }
+
+  // 平常那种：叫醒他一回，醒在狐宇宙。回 { ok, quiet, knocked, newChat } 或 { ok: false, pending?, err }
   async function wake(ctx, now) {
     const wakes = wakesOf(ctx);
     const n = wakes.filter((t) => t > now - DAY_MS).length + 1;
@@ -450,7 +528,7 @@ function createAlarm({ cloud, store, vault, st, setBusy }) {
       log(`醒了（这一天里第 ${n} 回）`);
       let bundle;
       try {
-        bundle = await askWake({ store, cloud, ctx: { ...ctx, wakes }, now, n, log });
+        bundle = await askRoom({ store, cloud, ctx: { ...ctx, wakes }, now, n, log, pending: pendingOf(ctx) });
       } catch (e) {
         if (FATAL.has(e.code)) throw e;
         st.fails = (st.fails || []).concat([now]).slice(-10);
@@ -461,11 +539,7 @@ function createAlarm({ cloud, store, vault, st, setBusy }) {
       }
       st.fails = [];
       st.woke = recent(st.woke, now, 2 * DAY_MS).concat([now]);
-      st.pending = { sealed: await store.sealText(JSON.stringify(bundle)), at: now, tries: 0, last: 0, done: {} };
-      save();
-      log(`问完了：要了 ${bundle.steps} 步${bundle.cost != null ? `，约 $${bundle.cost.toFixed(4)}` : ""}${markLine(bundle.wake, now)}`);
-      const r = await commitPending();
-      return r.done ? { ok: true, quiet: r.quiet, knocked: r.knocked || 0 } : { ok: false, pending: true, err: r.err };
+      return await keep(bundle, now);
     } finally {
       // 这一回叫完是几点（手敲的 wake 两分钟以内不再叫，从叫完算：一回醒长的要十来分钟，这工夫里她又敲的那一下不该再叫一回）
       st.ended = Date.now();
@@ -474,90 +548,154 @@ function createAlarm({ cloud, store, vault, st, setBusy }) {
     }
   }
 
-  // 回头核对：狐宇宙那段对话后来被别人（手机那头）写过了，先拉一遍最新的，照最新的那一份看前几回放的——
-  //   狐宇宙整段没了（她删了那段对话）：都不放了
+  // 任务到点：醒在他定闹钟的那段对话里（info 是那段对话眼下的样子，见 wake.js 的 chatInfo）
+  async function wakeTask(ctx, task, info, now) {
+    const wakes = wakesOf(ctx);
+    const round = (task.rounds || 0) + 1;
+    st.taskTries = recent(st.taskTries, now).concat([now]);
+    save();
+    setBusy(true);
+    try {
+      await beat({ awake: true, on: true, last: wakes[wakes.length - 1] || 0 });
+      log(`任务到点了，醒在他定闹钟的那段对话里（第 ${round} 回）`);
+      const c = (ctx.index || []).find((x) => x && x.id === task.chat);
+      let bundle;
+      try {
+        bundle = await askTask({ store, cloud, ctx: { ...ctx, wakes }, now, log, task, chat: { id: task.chat, title: (c && c.title) || "一段对话", msgs: info.msgs }, minGap: TASK_MIN });
+      } catch (e) {
+        if (FATAL.has(e.code)) throw e;
+        st.lastErr = errText(e);
+        // 没问成：算一回（最多十二回，不会一直白试），一刻钟以后再试
+        const { key, id, ...rest } = task;
+        const failed = { ...rest, state: "chase", started: task.started || now, rounds: round, last: now, next: now + RETRY_MS };
+        try {
+          await store.set(task.key, JSON.stringify(failed));
+        } catch (e2) {
+          if (FATAL.has(e2.code)) throw e2;
+        }
+        save();
+        log("任务这一回没醒成：" + st.lastErr);
+        return { ok: false, err: st.lastErr };
+      }
+      return await keep(bundle, now);
+    } finally {
+      st.ended = Date.now();
+      save();
+      setBusy(false);
+    }
+  }
+
+  // 回头核对：放过东西的那几段对话后来被别人（手机那头）写过了，先拉一遍最新的，照最新的那一份看前几回放的——
+  //   那段对话整段没了（她删了）：那段的都不放了
   //   里面有这一回放的（哪怕一行；翻过去的那几支里的也算，重新回答、改她的话会把后面的收进 alts）：
   //     写的那头是看过的，少了的是她删的，不放回去
   //   一行都没有，放之前原有的那些还有在的：是没看见这一回就写的（两边差不多同时写那段对话，云端只认后写的），放回去
-  //   一行都没有，原有的一个不在（她删了又重开的），或者放之前狐宇宙是空的（分不清是不是删了重开）：不放
+  //   一行都没有，原有的一个不在（她删了又重开的），或者放之前那段对话是空的（分不清是不是删了重开）：不放
   // fresh：刚拉过（commitWake 里），不再拉
   async function recheck({ fresh = false } = {}) {
-    const w = st.watch;
-    if (!w) return;
+    const w = watched();
     const now = Date.now();
-    const list = (w.list || []).filter((x) => x && x.until > now);
-    if (!list.length) {
-      st.watch = null;
-      save();
-      return;
-    }
-    let h = await chatHash();
-    if (h === w.ours) {
-      if (list.length !== (w.list || []).length) {
-        w.list = list;
-        save();
-      }
-      return;
-    }
-    if (!fresh) {
-      await store.pull();
-      h = await chatHash();
-      if (h === w.ours) return;
-    }
-    if (!store.has(CHAT_KEY)) {
-      st.watch = null;
-      save();
-      log("狐宇宙那段对话删掉了：前几回放的不再放回去");
-      return;
-    }
-    let cur = null;
-    try {
-      cur = JSON.parse(await store.get(CHAT_KEY));
-    } catch (e) {
-      if (e.code === "store") throw e;
-    }
-    if (!Array.isArray(cur)) {
-      w.ours = h;
-      w.list = list;
-      save();
-      return;
-    }
-    const back = [];
-    const keep = [];
-    for (const x of toRescue(list, cur)) {
-      let rows = null;
-      try {
-        rows = JSON.parse(await store.unsealText(x.sealed));
-      } catch (e) {
-        log("有一回放的几行解不开了（钥匙换过？），不再核对");
+    let changed = [];
+    let pruned = false;
+    await relist(w);
+    for (const chat of Object.keys(w)) {
+      const list = ((w[chat] && w[chat].list) || []).filter((x) => x && x.until > now);
+      if (!list.length) {
+        delete w[chat];
+        pruned = true;
         continue;
       }
-      back.push(rows);
-      keep.push(x);
+      if (list.length !== w[chat].list.length) {
+        w[chat].list = list;
+        pruned = true;
+      }
+      if ((await hashOf(chat)) !== w[chat].ours) changed.push(chat);
     }
-    w.list = keep;
-    if (back.length) {
+    if (pruned) save();
+    if (!changed.length) return;
+    if (!fresh) {
+      await store.pull();
+      const still = [];
+      for (const chat of changed) if ((await hashOf(chat)) !== w[chat].ours) still.push(chat);
+      changed = still;
+    }
+    for (const chat of changed) {
+      if (!store.has(keyOf(chat))) {
+        delete w[chat];
+        save();
+        log((chat === FOX_CHAT ? "狐宇宙那段对话" : "放过东西的一段对话") + "删掉了：前几回放的不再放回去");
+        continue;
+      }
+      let cur = null;
+      try {
+        cur = JSON.parse(await store.get(keyOf(chat)));
+      } catch (e) {
+        if (e.code === "store") throw e;
+      }
+      if (!Array.isArray(cur)) {
+        w[chat].ours = await hashOf(chat);
+        save();
+        continue;
+      }
+      const back = [];
+      const kept = [];
+      for (const x of toRescue(w[chat].list, cur)) {
+        let rows = null;
+        try {
+          rows = JSON.parse(await store.unsealText(x.sealed));
+        } catch (e) {
+          log("有一回放的几行解不开了（钥匙换过？），不再核对");
+          continue;
+        }
+        back.push(rows);
+        kept.push(x);
+      }
+      w[chat].list = kept;
+      if (back.length) {
+        setBusy(true);
+        try {
+          const r = await putBlocks(store, chat, back, async () => {
+            w[chat].ours = await hashOf(chat);
+            save();
+          });
+          log(`${chat === FOX_CHAT ? "狐宇宙" : "一段对话"}里少了前几回放的 ${r.added} 行（手机那头没看见就写了那段对话），放回去了`);
+        } finally {
+          setBusy(false);
+        }
+      }
+      if (kept.length) w[chat] = { ours: await hashOf(chat), list: kept };
+      else delete w[chat];
+      save();
+    }
+  }
+
+  // 他新开的那几段对话（这一天里放过东西的）：手机那头拿旧的目录盖掉了云端的（它那一份还没有这一段），那段对话还在，
+  // 历史对话里却列不出来、点横幅也找不着：补回目录，名字照狐宇宙里那一行记着的（另一双眼睛挑出来的）。她删了的（那段对话没了）不补
+  async function relist(w) {
+    const ids = Object.keys(w).filter((c) => c !== FOX_CHAT && store.has(keyOf(c)));
+    if (!ids.length) return;
+    const index = JSON.parse((await store.get("kfs2:index")) || "[]");
+    const lost = ids.filter((c) => !index.some((x) => x && x.id === c));
+    if (!lost.length) return;
+    const fox = JSON.parse((await store.get(keyOf(FOX_CHAT))) || "[]");
+    for (const chat of lost) {
+      const go = (Array.isArray(fox) ? fox : []).find((m) => m && m.go && m.go.how === "new" && m.go.chat === chat);
+      if (!go) continue;
       setBusy(true);
       try {
-        const r = await putBlocks(store, back, async () => {
-          w.ours = await chatHash();
-          st.watch = w;
-          save();
-        });
-        log(`狐宇宙里少了前几回放的 ${r.added} 行（手机那头没看见就写了那段对话），放回去了`);
+        await putBlocks(store, chat, [], null, { title: go.go.title || "" });
       } finally {
         setBusy(false);
       }
+      log("他新开的一段对话从目录里掉了（手机那头拿旧的目录盖掉了），补回去了");
     }
-    st.watch = keep.length ? { ours: await chatHash(), list: keep } : null;
-    save();
   }
 
   // 她手敲的 wake：不看钟点，“他自己醒”得开着；上一回的还没放进去、她在狐宇宙里说的那句还没回上、他刚醒过，先不叫。
   // onStart：真要叫了叫一声（手敲的那一头这时候才说“在叫他…”）
   async function manual(ctx, onStart = null) {
     if (!wakeOn(ctx.settings)) return { ok: false, text: OFF_TEXT };
-    if (st.pending) return { ok: false, text: `上一回醒来说的话还没放进狐宇宙（${st.lastErr || "库房一时没应"}），放进去以前不再叫他。闹钟过一会儿自己再放。` };
+    if (st.pending) return { ok: false, text: `上一回醒来说的话还没放进去（${st.lastErr || "库房一时没应"}），放进去以前不再叫他。闹钟过一会儿自己再放。` };
     const owed = owedOf(ctx.fox);
     if (owed && Date.now() - owed < OWED_MS) return { ok: false, text: OWED_TEXT };
     const last = Math.max(0, ...wakesOf(ctx), ...recent(st.tries, Date.now()), Number(st.ended) || 0);
@@ -567,7 +705,7 @@ function createAlarm({ cloud, store, vault, st, setBusy }) {
     return { ...r, text: resultLine(r) };
   }
 
-  return { beat, plan, wake, recheck, commitPending, manual, wakesOf, checkVault };
+  return { beat, plan, taskPlan, taskRoom, wake, wakeTask, recheck, commitPending, manual, wakesOf, checkVault };
 }
 
 // ---------- 后台跑 ----------
@@ -703,6 +841,20 @@ async function run() {
       const on = wakeOn(ctx.settings);
       if (on && wasOn === false) resumeAt = now; // 她刚把“他自己醒”打开：不马上响
       wasOn = on;
+      // 任务标记：该作废的作废、该收的收；到点了的先办（比平常那种自己醒要紧）
+      let tp = await A.taskPlan(ctx, Date.now(), resumeAt);
+      if (tp.changed) ctx = await gather(store, st.extras || []);
+      if (!st.pending && !stopping && tp.task && Date.now() >= tp.due && A.taskRoom()) {
+        const ok = await pull();
+        lastPull = Date.now();
+        ctx = await gather(store, st.extras || []);
+        tp = await A.taskPlan(ctx, Date.now(), resumeAt);
+        if (ok && !stopping && tp.task && Date.now() >= tp.due) {
+          await A.wakeTask(ctx, tp.task, tp.info, Date.now());
+          ctx = await gather(store, st.extras || []);
+          lastBeat = 0;
+        }
+      }
       if (req) {
         // 拉的工夫里那一头都走了：不替走了的人叫。拉不到最新的也不叫（她刚在手机上说的话、刚关的开关，这台电脑还不知道）
         if (reqs.every((x) => x.conn && x.conn.destroyed)) answered = true;
@@ -749,6 +901,9 @@ async function run() {
       if (FATAL.has(e.code)) return quit(1, "这一个退出：" + errText(e) + (e.code === "badlogin" ? "（邮箱、密码对不上了，改过密码？重新跑一遍 setup）" : ""));
       log("这一圈出岔子了（下一圈照常）：" + errText(e));
     }
+    // 笔记本睡没睡过，从这一圈办完算起（一圈里叫醒他一回，网不好的时候能拖十几二十分钟，那不是睡着了；
+    // 当成睡着了的话，这工夫里到点的任务会被当成“睡着的时候错过的”扔掉，另一双眼睛挑出来的）
+    lastTick = Date.now();
     if (stopping) break;
     await nap(TICK);
   }
@@ -812,7 +967,8 @@ async function setup() {
   say("暗号对上了。");
   try {
     const k = await cloud.push({ op: "key" });
-    if (!(k && Array.isArray(k.can) && k.can.includes("notify"))) say("提醒：Supabase 里推送的那个小后端（push）还是旧的，他留了话敲不了你的手机。先把新代码贴进去 Deploy，闹钟不用重装。");
+    if (!(k && Array.isArray(k.can) && k.can.includes("notify"))) say("提醒：Supabase 里推送的那个小后端（push）还是旧的，他找你的时候敲不了你的手机。先把新代码贴进去 Deploy，闹钟不用重装。");
+    else if (!k.can.includes("wakelabel")) say("提醒：Supabase 里推送的那个小后端（push）是上一版的：他藏着的那行闹钟要是写长了，会露在横幅上。把新代码贴进去 Deploy，闹钟不用重装。");
   } catch (e) {
     say("提醒：问推送的小后端没问成（" + e.message + "），装完以后再看。");
   }
@@ -868,7 +1024,7 @@ async function status() {
       : `在跑（进程 ${info.pid}，${info.ver || "?"}${info.cmd === "wake" ? "，是手敲的 wake" : ""}${info.busy ? "，这会儿正在叫他" : ""}）`
   );
   if (!fs.existsSync(P.secret())) say("还没装：node kfs-alarm.mjs setup");
-  if (st.pending) say(`有一回醒来说的话还没放进狐宇宙（试过 ${st.pending.tries || 0} 回${st.lastErr ? "：" + st.lastErr : ""}），放进去以前不叫下一回`);
+  if (st.pending) say(`有一回醒来说的话还没放进去（试过 ${st.pending.tries || 0} 回${st.lastErr ? "：" + st.lastErr : ""}），放进去以前不叫下一回`);
   if (st.plan)
     say(
       st.plan.due
@@ -877,6 +1033,8 @@ async function status() {
         ? "他说先不醒，等她来过再说"
         : st.plan.why === "owed"
         ? "狐宇宙里她那句还没回上，先不叫他"
+        : st.plan.why === "chase"
+        ? "他正追着她（任务标记），平常那种自己醒先停着"
         : "“他自己醒”关着"
     );
   if (st.fails && st.fails.length) say(`最近连着 ${st.fails.length} 回没醒成：${st.lastErr || ""}`);

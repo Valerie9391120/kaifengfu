@@ -887,7 +887,7 @@ function splitCall(text: string): [string, string] | null {
 
 // 他定下回几点醒的记号（狐宇宙，卿卿 10 月 20 日定的，见网页那头 src/fox.js）：单独一行写 [WAKE:…]，
 // 连着那一行的换行一起摘掉，横幅上不写。文档块里的不算。和网页那头（src/reply.js 的 takeWake）一样
-const WAKE_LINE = /^[ \t]*\[(?:WAKE|Wake|wake)[:：]([^\[\]\n]{0,40})\][ \t]*(?:\r?\n|\r?$)/gm;
+const WAKE_LINE = /^[ \t]*\[(?:WAKE|Wake|wake)[:：]([^\[\]\n]{0,80})\][ \t]*(?:\r?\n|\r?$)/gm;
 function takeWake(text: string): string {
   return text.replace(WAKE_LINE, () => "");
 }
@@ -1230,9 +1230,10 @@ Deno.serve(async (req: Request) => {
   // can 是这份代码会做的事：网页看到 "reply"，就知道回话可以交给这里等；
   // "bubbles" 是横幅一个气泡敲一条，"halt" 是她按了停就把跟 Anthropic 的线掐掉（面板的“看细节”里照着说）；
   // "voice" 是他的语音条在横幅上写 [语音]（上一版不认 [VOICE]，横幅上会露出那一串记号）；
-  // "notify" 是他自己醒来说的话也敲得了（狐宇宙，见上面 notify），横幅上也不露 [WAKE:…]（家里那台闹钟装的时候看这一样，没有就让她换新代码）
+  // "notify" 是他自己醒来说的话也敲得了（狐宇宙，见上面 notify），横幅上也不露 [WAKE:…]（家里那台闹钟装的时候看这一样，没有就让她换新代码）；
+  // "wakelabel" 是 [WAKE:…] 里带着他记着的那句话（任务标记）、长到八十个字也摘得掉（10 月 20 日夜里改的，闹钟装的时候也看这一样）
   if (body.op === "key") {
-    const can = ["reply", "bubbles", "halt", "voice", "notify"];
+    const can = ["reply", "bubbles", "halt", "voice", "notify", "wakelabel"];
     return json(200, state.ok ? { configured: true, publicKey: state.vapid.publicKey, can } : { configured: false, missing: state.missing, message: state.message, can });
   }
 
