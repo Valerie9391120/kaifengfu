@@ -1328,6 +1328,23 @@ function resetWorld() {
     "[CALL]\n接起来说\n[DOC:x.md]\n正文\n[/DOC]\n文档后面的照常",
     "[CALL]\r\nWindows 换行",
     "*摸摸头*\n[CALL]\n*动作* 不念",
+    // 下回几点醒（狐宇宙，见 src/fox.js）：单独一行的 [WAKE:…] 连着换行摘掉，横幅上不写；文档里的、夹在句子里的不算
+    "在呢\n[WAKE:+3h]",
+    "[WAKE:+3h]",
+    "<thinking>想她</thinking>\n[WAKE:07:30]",
+    "先说\n[SPLIT]\n[WAKE:off]\n[SPLIT]\n后说",
+    "[DOC:x.md]\n[WAKE:+1h]\n[/DOC]\n[WAKE:+2h]",
+    "句子中间的 [WAKE:+3h] 不算",
+    "[wake：+40m]\n全角冒号、小写也认",
+    "[CALL]\n卿卿\n[WAKE:+2h]",
+    "[VOICE]\n想你\n[WAKE:+1h]\n还在说",
+    "  [WAKE: +3h ]  \r\n后面",
+    "[WAKE:" + "x".repeat(41) + "]",
+    "[WAKE:+3h][WAKE:+4h]",
+    "一\n[WAKE:+1h]\n[WAKE:+2h]\n二",
+    "[WAKE:]\n空的也摘",
+    "[MEME:a.jpg]\n[WAKE:+3h]",
+    "[AVATAR:fox.jpg]\n[WAKE:+3h]",
   ];
   const diff = corpus.filter((t) => !same(t));
   ok(diff.length === 0, `横幅：${corpus.length} 条各式各样的回话，小后端拆出来的和网页拆出来的一模一样，一个气泡对一条${diff.length ? "（对不上的：" + JSON.stringify(diff.map((t) => [t, fn.bubblesOf(t), expect(t)])) + "）" : ""}`);
@@ -1348,7 +1365,8 @@ function resetWorld() {
     "「", "」", "'", "\"", "》", "《", "[DOC:「x」.md]\n", "[DOC:'x'", "]\n", "[NAME:「新名字」」]", "\n[NAME:『新名字』]\n", "[NAME:新名字", "」]\n",
     "# ", "## ", "\n# ", "\n### ", "#", " #", " ##\n", "**", "***", "**粗**", "*斜*", "```", "\n```\n", "   ", "    ",
     "[VOICE]", "\n[VOICE]\n", "[VOICE] ", "\n[voice]", " [VOICE]", "[whispers] ", "\n\t[VOICE]\t",
-    "[CALL]", "\n[CALL]\n", "[CALL] ", "\n[call]", " [CALL]", "\n\t[CALL]\t"];
+    "[CALL]", "\n[CALL]\n", "[CALL] ", "\n[call]", " [CALL]", "\n\t[CALL]\t",
+    "[WAKE:+3h]", "\n[WAKE:+3h]\n", "\n[wake：off]\n", "[WAKE: 07:30 ]\r\n", " [WAKE:+1h] "];
   const off = [];
   const splitOff = [];
   for (let i = 0; i < 20000; i++) {
@@ -1397,6 +1415,8 @@ function resetWorld() {
     const voiceLine = () => /^[ \t]*\[(?:VOICE|Voice|voice)\]/m;
     // 打电话的记号也一样：原来紧贴在表情包、换头像后面写，没被认成打电话（当字显示了），单独写回去就成了真打电话
     const callLine = () => /^[ \t]*\[(?:CALL|Call|call)\]/m;
+    // 定下回几点醒的记号也一样（狐宇宙，见 src/fox.js）：原来跟别的字写在同一行（当字显示了），单独写回去就成了真记号，被摘掉
+    const wakeLine = () => /^[ \t]*\[(?:WAKE|Wake|wake)[:：][^\[\]\n]{0,40}\][ \t]*\r?$/m;
     // 学不了的三种，都是他写岔了才有的样子（见 rawOf 上面那段）：
     //   一句话自己长得就像记号（改名的、文档开头的、语音的记号紧贴着别的东西写，原来当字显示了）；
     //   文档的正文里夹着一行结尾的记号（原来那一行后面跟着怪空白，没被认成结尾）；
@@ -1406,7 +1426,7 @@ function resetWorld() {
     const oddCall = (items) => items.some((it, i) => it.type === "call" && i + 1 < items.length && items[i + 1].type !== "avatar" && items[i + 1].type !== "doc");
     const odd = (items, rename) =>
       oddCall(items) ||
-      items.some((it) => (it.type === "text" && (nameLine().test(it.text) || voiceLine().test(it.text) || callLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "voice" && (nameLine().test(it.text) || callLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "call" && (nameLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "doc" && docClose().test(it.text))) ||
+      items.some((it) => (it.type === "text" && (nameLine().test(it.text) || voiceLine().test(it.text) || callLine().test(it.text) || wakeLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "voice" && (nameLine().test(it.text) || callLine().test(it.text) || wakeLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "call" && (nameLine().test(it.text) || wakeLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "doc" && docClose().test(it.text))) ||
       (!!rename && namesjs.cleanMarkName(rename) !== rename);
     const flat = (items) => JSON.stringify(items.map((it) => (it.type === "doc" ? { ...it, name: docsjs.cleanDocName(it.name) } : it)));
     let tried = 0, skipped = 0;

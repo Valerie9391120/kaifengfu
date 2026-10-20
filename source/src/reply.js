@@ -44,6 +44,20 @@ export function splitCall(text) {
   return [text.slice(0, m.index), text.slice(m.index + m[0].length)];
 }
 
+// 他定下回几点醒的记号（狐宇宙，卿卿 10 月 20 日 13:19 定的“唤醒时间都可以由你自己来决定”，见 fox.js）：
+// 单独一行写 [WAKE:…]（+3h、+40m、07:30、off），连着那一行的换行一起摘掉，不显示成字；写了好几回只认最后一回。
+// 文档块里的不算（跟改名字一样）。值怎么认是家里那台闹钟的事（alarm/plan.js），这里只摘、原样带出去。
+// 通知的小后端（push_function.ts 的 takeWake）照同一个办法摘：改一边要跟着改另一边
+const WAKE_LINE = /^[ \t]*\[(?:WAKE|Wake|wake)[:：]([^\[\]\n]{0,40})\][ \t]*(?:\r?\n|\r?$)/gm;
+export function takeWake(text) {
+  let wake = null;
+  const rest = String(text).replace(WAKE_LINE, (_, v) => {
+    wake = v.trim();
+    return "";
+  });
+  return { rest, wake };
+}
+
 export function splitMarks(text) {
   const parts = [];
   // 表情包、换头像、改名字三种标记。改名字的要独占一行才算（所以带 m 标志），新名字里可以有空格。
@@ -78,15 +92,19 @@ export function parseReply(text) {
   const items = [];
   // 改名字的标记不显示成字，新名字单独带出去（写了好几次只认最后一次；收拾完是空的不算）
   let rename = null;
+  // 下回几点醒（见上面 takeWake）：也不显示成字，单独带出去
+  let wake = null;
   // 先把文档块整块摘出来（里面的字不当标记看），剩下的再分条、认标记
   splitDocBlocks(body).forEach((part) => {
     if (part.type === "doc") {
       items.push({ type: "doc", name: part.name, text: part.text, ...(part.cut ? { cut: true } : {}) });
       return;
     }
+    const woke = takeWake(part.value);
+    if (woke.wake !== null) wake = woke.wake;
     // 打电话的记号前面的照常拆；后面的是她接起来他先说的话（见下面）
-    const call = splitCall(part.value);
-    splitTurns(call ? call[0] : part.value).forEach((chunk) => {
+    const call = splitCall(woke.rest);
+    splitTurns(call ? call[0] : woke.rest).forEach((chunk) => {
       // 一条里 [VOICE] 那一行起是语音（见 voice.js 的 splitVoice）。语音里的字并成一条语音，
       // 里头夹着的表情包、换头像、改名字照认，排在这条语音后面
       splitVoice(chunk).forEach((seg) => {
@@ -125,8 +143,10 @@ export function parseReply(text) {
       after.forEach((x) => items.push(x));
     }
   });
-  if (!items.length) items.push({ type: "text", text: "……" });
-  return { thinking, body, items, rename };
+  // 一个看得见的都没有（只写了心里话、只定了下回几点醒）：照旧摆“……”，另记一笔 quiet（狐宇宙里这一回不留话、不敲她，见 fox.js）
+  const quiet = !items.length;
+  if (quiet) items.push({ type: "text", text: "……" });
+  return { thinking, body, items, rename, ...(wake !== null ? { wake } : {}), ...(quiet ? { quiet } : {}) };
 }
 
 // 接起来说的话里不留 [CALL] 这几个字：跟 untoken 一个办法，从头往后收，末尾正好是一个就扔掉（摘掉一个、两头拼起来又成了一个的，也摘得干净）

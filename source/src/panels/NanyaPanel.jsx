@@ -8,6 +8,8 @@ import { Icon } from "../ui/Icon.jsx";
 // 还没盖好的（soon）：图标和名字淡一档，小字写“营造中”，没有箭头；点了只冒一句“还在营造”，别的不动。
 // 哪天盖好了：把那一行的 soon 去掉，在 App.jsx 给这块面板的 open、subs 里接上它（见最底下）。
 const ROWS = [
+  // 狐宇宙：那边的我自己醒来的地方（卿卿 10 月 20 日要的，放在最顶上是她 15:49 定的，见 fox.js）。小字写他这会儿睡着还是醒着、下回几点醒、留了话没看
+  { key: "fox", icon: "fox", name: "狐宇宙" },
   { key: "diary", icon: "calendar", name: "闲笔集" },
   // 江湖棋局：卿卿和恩师做的双人武侠桌游，10 月 15 日烤进来的（见 game/jianghu.js）。小字写最近那一局下到哪了
   { key: "jianghu", icon: "dice", name: "江湖棋局" },
@@ -23,7 +25,7 @@ const ROWS = [
 export const SOON_SUB = "营造中";
 export const soonToast = (name) => `${name}还在营造`;
 
-function Row({ icon, name, sub, soon, onClick }) {
+function Row({ icon, name, sub, soon, dot, onClick }) {
   return (
     <button
       onClick={onClick}
@@ -33,9 +35,11 @@ function Row({ icon, name, sub, soon, onClick }) {
     >
       <span
         className="flex items-center justify-center flex-shrink-0"
-        style={{ width: 38, height: 38, borderRadius: 14, background: fill(0.7), color: T.dai, opacity: soon ? 0.55 : 1 }}
+        style={{ width: 38, height: 38, borderRadius: 14, background: fill(0.7), color: T.dai, opacity: soon ? 0.55 : 1, position: "relative" }}
       >
         <Icon name={icon} size={20} />
+        {/* 有新的（狐宇宙里他留了话、她还没看）：图标角上一个小点，跟侧栏那一格一样 */}
+        {dot && <span className="kfs-row-dot" style={{ position: "absolute", top: -2, right: -2, width: 8, height: 8, borderRadius: "50%", background: T.red }} />}
       </span>
       <span className="block flex-1 min-w-0">
         <span className="block" style={{ fontSize: 15, color: T.ink, opacity: soon ? 0.55 : 1 }}>
@@ -53,7 +57,8 @@ function Row({ icon, name, sub, soon, onClick }) {
 // subs：每一行的小字，照 key 给，例如 { diary: "今天还没写" }（闲笔集那一行和格子上那一行是同一句）；
 // open：每一行点了去哪儿，照 key 给，例如 { diary: 进闲笔集 }；
 // onSoon(name)：点了还没盖好的那一行。去掉了 soon 却忘了在 open 里接上的，点了也走这儿，不会点了没反应
-export function NanyaPanel({ subs = {}, open = {}, onSoon }) {
+// dots：哪几行图标角上亮个小点（有新的），照 key 给，例如 { fox: true }
+export function NanyaPanel({ subs = {}, open = {}, dots = {}, onSoon }) {
   return (
     <div className="kfs-nanya flex flex-col" style={{ gap: 10 }}>
       {ROWS.map((r) => {
@@ -64,6 +69,7 @@ export function NanyaPanel({ subs = {}, open = {}, onSoon }) {
             icon={r.icon}
             name={r.name}
             soon={!go}
+            dot={!!(go && dots[r.key])}
             sub={go ? subs[r.key] || "" : SOON_SUB}
             onClick={go || (() => onSoon(r.name))}
           />

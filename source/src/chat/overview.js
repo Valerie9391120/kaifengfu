@@ -1,5 +1,6 @@
 import { plainOf } from "../rich.js";
 import { isCallMark, markText } from "../call/marks.js";
+import { isWakeMark } from "../fox.js";
 
 export function makeTitle(msgs, memeLookup) {
   const first = msgs.find((m) => m.role === "her");
@@ -23,6 +24,7 @@ export function makePreview(msgs) {
   const last = msgs[at];
   if (!last) return "";
   if (isCallMark(last)) return `[${markText(last)}]`;
+  if (isWakeMark(last)) return last.quiet ? "[醒了一会儿]" : "[醒了]";
   if (last.role === "event") return "[换了新头像]";
   if (last.role === "her") {
     if (last.kind === "meme") return "[表情包]";

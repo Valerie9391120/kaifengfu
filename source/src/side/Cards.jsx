@@ -95,12 +95,13 @@ export function DaysCard({ now, armed, onArm, onDisarm, onLotus }) {
 }
 
 // 图标摆多大：手绘的那一套是 20；恩师画的那一套（殿、三足乌、云月、牡丹）照它自己的大小，是 25（见 ui/Icon.jsx 的 artSize）
-export function Tile({ icon, label, sub, onClick }) {
+// dot：右上角亮个小点（南衙那一格：狐宇宙里他留了话、她还没看，见 fox.js）
+export function Tile({ icon, label, sub, onClick, dot = false }) {
   return (
     <button
       onClick={onClick}
       className="kfs-tap flex flex-col justify-between text-left"
-      style={{ ...glass(0.46, 22), borderRadius: 24, padding: 16, aspectRatio: "1 / 0.92" }}
+      style={{ ...glass(0.46, 22), borderRadius: 24, padding: 16, aspectRatio: "1 / 0.92", position: "relative" }}
     >
       <span
         className="flex items-center justify-center"
@@ -122,6 +123,8 @@ export function Tile({ icon, label, sub, onClick }) {
           {sub}
         </span>
       </span>
+      {/* 摆在最后：读屏念名字的时候先念“南衙”，再念“有新的” */}
+      {dot && <span className="kfs-tile-dot" aria-label="有新的" style={{ position: "absolute", top: 14, right: 14, width: 8, height: 8, borderRadius: "50%", background: T.red }} />}
     </button>
   );
 }

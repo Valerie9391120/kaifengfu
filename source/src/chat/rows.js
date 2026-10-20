@@ -1,5 +1,6 @@
 import { HIS_NAME } from "../names.js";
 import { isCallMark, markText } from "../call/marks.js";
+import { isWakeMark, wakeText } from "../fox.js";
 
 // stoppedId：底下要摆那行“停了，点这里让我回”的是哪一句（她的话；江湖棋局里也可能是他说到一半的那一步。没有就是空的，见 thread.js 的 stoppedAt）
 // recap：眼下作数的那一份前情提要（见 recap.js 的 pickRecap；没有就是 null）。在它抄到的那一条后面添一行小字
@@ -21,6 +22,9 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId
       // 通话开始、挂了（见 call/marks.js）：一行小字，前面一个小电话
       inCall = m.phase === "start";
       rows.push({ type: "notice", key: m.id, msg: m, kind: "call", text: markText(m) });
+    } else if (isWakeMark(m)) {
+      // 他自己醒了一回（狐宇宙，见 fox.js）：一行小字，前面是他的头像
+      rows.push({ type: "notice", key: m.id, msg: m, who: "him", kind: "wake", text: wakeText(m) });
     } else if (m.role === "event") {
       rows.push({
         type: "notice",

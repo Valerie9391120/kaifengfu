@@ -58,6 +58,8 @@ import { NanyaPanel, soonToast } from "./panels/NanyaPanel.jsx";
 import { BOX_KEY, BOX_AUDIO, packEntry, keptText, listEntries, sameVoiceIds, findBySrc, boxSub } from "./cangyin/parts.js";
 import { CangyinPage, TRAD_KEY } from "./cangyin/CangyinPage.jsx";
 import { CallPage } from "./call/CallPage.jsx";
+import { FOX_CHAT, FOX_TITLE, FOX_STATE, FOX_DOORS, FOX_SEEN, FOX_HERE, isFoxChat, wakeOn, unseenOf, readFoxState, foxSub } from "./fox.js";
+import { FoxSection } from "./panels/FoxSection.jsx";
 import { createListener, pauseOf } from "./call/listen.js";
 import { createSayer, segmentsOfReply, segmentsOfItems } from "./call/say.js";
 import { emptySubs, herLive, herDone, hisSay } from "./call/subs.js";
@@ -386,6 +388,10 @@ export default function App({ account = {} }) {
   // 藏音匣借走了放声音的东西（见 boxAudio）：这边要停下它的时候（切到后台、来电话）告诉那一页一声
   const audioOwner = useRef(null);
   const [diaryToday, setDiaryToday] = useState({ her: false, him: false });
+  // 狐宇宙（见 fox.js）：闹钟写的那一份（醒着没有、下回几点醒、还活着没有），她还没看过他几回话
+  const [foxState, setFoxState] = useState(null);
+  const [foxUnseen, setFoxUnseen] = useState(0);
+  const foxSeenRef = useRef(0);
   const diaryCache = useRef({});
   const dayMsgsRef = useRef({});
   const [editing, setEditing] = useState(null);
@@ -603,9 +609,44 @@ export default function App({ account = {} }) {
         .catch(() => {});
 
       refreshBox();
+      refreshFox();
       setBooted(true);
     })();
   }, []);
+
+  // ---- 狐宇宙（见 fox.js）：她正看着那段对话，看到哪儿记下来（南衙那一格的小点收了） ----
+  useEffect(() => {
+    if (chatId !== FOX_CHAT) return;
+    const look = () => {
+      if (document.visibilityState === "visible") markFoxSeen(messagesRef.current);
+    };
+    look();
+    document.addEventListener("visibilitychange", look);
+    return () => document.removeEventListener("visibilitychange", look);
+  }, [chatId, messages]);
+
+  // ---- 狐宇宙：“他自己醒”开着的时候，这台手机报门牌号（他留了话敲这一台，同 push.js 的 knockList） ----
+  // 存成 { 设备编号: { e: 门牌号, at: 几点报的 } }：好几台手机各报各的，谁也不顶掉谁（闹钟敲的时候新报的排前头，
+  // 登记簿里已经没有的不敲，见 alarm/wake.js 的 doorsOf）。关了“他自己醒”、这台关了通知、门牌号换了（重新订过），
+  // 回到眼前、收起面板的时候跟着改；没变不写（头一版存的是光一个门牌号，碰上了换成新样子）
+  useEffect(() => {
+    if (!booted) return;
+    const sync = () => {
+      if (document.visibilityState !== "visible") return;
+      let doors = safeParse(store.peek(FOX_DOORS), null);
+      if (!doors || typeof doors !== "object" || Array.isArray(doors)) doors = {};
+      const mine = wakeOn(settingsRef.current) ? knockList()[0] || "" : "";
+      const had = doors[DEVICE_ID];
+      if (mine ? had && typeof had === "object" && had.e === mine : !had) return;
+      const next = { ...doors };
+      if (mine) next[DEVICE_ID] = { e: mine, at: Date.now() };
+      else delete next[DEVICE_ID];
+      store.set(FOX_DOORS, JSON.stringify(next));
+    };
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, [booted, settings.wake, sheet]);
 
   // ---- 别的设备改了东西：拉下来之后跟着刷新 ----
   useEffect(() => {
@@ -646,6 +687,8 @@ export default function App({ account = {} }) {
       if (has(RECAP_KEY)) showRecaps(chatIdRef.current);
       // 藏音匣：别的设备存了、移出了
       if (has(BOX_KEY)) refreshBox();
+      // 狐宇宙：闹钟写了心跳、他醒来说了话、别的设备上看过了
+      if (has("kfs2:fox:") || keys.includes("kfs2:chat:" + FOX_CHAT)) refreshFox();
       // 别的设备念好的语音同步下来了（这台设备上要念的那一条就不用再念了）
       if (has(VOICE_KEY) && speakerRef.current) speakerRef.current.synced(keys.filter((k) => k.startsWith(VOICE_KEY)));
       if (has("kfs2:memindex") || has("kfs2:mem:")) {
@@ -744,7 +787,7 @@ export default function App({ account = {} }) {
     const entry = {
       id,
       // 江湖棋局的那一段（编号 jh 开头）：名字就叫“江湖棋局”，不照她头一句话起（她可以长按改名）
-      title: old && old.title ? old.title : isGameChat(id) ? "江湖棋局" : makeTitle(msgs, memeLookup),
+      title: old && old.title ? old.title : isGameChat(id) ? "江湖棋局" : isFoxChat(id) ? FOX_TITLE : makeTitle(msgs, memeLookup),
       preview: makePreview(msgs),
       updatedAt: Date.now(),
     };
@@ -1191,6 +1234,25 @@ export default function App({ account = {} }) {
     });
   };
 
+  // ---- 狐宇宙（见 fox.js）----
+  // 闹钟写的那一份、她看到哪儿了、那段对话里他说了几回她还没看：都是引擎手里现成的，同步取
+  const refreshFox = () => {
+    setFoxState(readFoxState(store.peek(FOX_STATE)));
+    const seen = Number(store.peek(FOX_SEEN)) || 0;
+    foxSeenRef.current = Math.max(foxSeenRef.current, seen);
+    const msgs = chatIdRef.current === FOX_CHAT ? messagesRef.current : safeParse(store.peek("kfs2:chat:" + FOX_CHAT), []) || [];
+    setFoxUnseen(unseenOf(msgs, foxSeenRef.current));
+  };
+  // 她正看着狐宇宙：看到哪儿记下来（跟着云端走，别的设备上那个小点也收了）。只往后挪，没变不写
+  const markFoxSeen = (msgs) => {
+    const last = (msgs || []).reduce((t, m) => Math.max(t, (m && m.ts) || 0), 0);
+    if (last > foxSeenRef.current) {
+      foxSeenRef.current = last;
+      store.set(FOX_SEEN, String(last));
+    }
+    setFoxUnseen(0);
+  };
+
   // ---- 藏音匣（见开发说明“藏音匣”那节、cangyin/）----
   // 存档里那几条（引擎手里本来就是现成的，同步取）
   const refreshBox = () => {
@@ -1359,6 +1421,8 @@ export default function App({ account = {} }) {
       toolNote: ctx && ctx.withMcp && !(used && used.mcp) ? "这次MCP没连上，先不用工具回你" : "",
     };
     if (job) him.job = job;
+    // 他定了下回自己几点醒（[WAKE:…]，狐宇宙，见 fox.js）：记在这一条上，家里的闹钟照最近的那一条办
+    if (parsed.wake != null) him.wake = parsed.wake;
     // 江湖棋局里他调了引擎（掷骰子、买东西，见 game/jianghu.js）、翻了日记（见 diaryTools.js）：记下调了哪几样，放进对话之前替他调（settleCalls）。
     // 停在 tool_use 上的：他还没说完，等结果递回去接着说（thread.js 的 midTurn）。
     // 只调了工具、一个字没说的那一步：不摆“……”（拆回话那一下没字就补一个，这一步不要），聊天里只有卡片、那一行小字
@@ -1487,7 +1551,7 @@ export default function App({ account = {} }) {
     // 江湖棋局：摆着棋盘的那一段（jh 开头的，或者她在平常对话里摆开的）名帖里多一段【江湖棋局】，【此刻】里多一行棋盘，带着四样工具；
     // 摆开过又收了棋的平常对话，对话里有他调过的：四样工具照带（不带那边不认），这一回不许调，【此刻】里写一句收起来了（见 game/jianghu.js）
     const game = isOn(opts.chat) ? { board: boardIn(msgs), mixed: !isGameChat(opts.chat) } : hasSteps(msgs) ? { off: true } : null;
-    const { staticText, nowNote } = buildSystem({
+    const { staticText, nowNote: baseNote } = buildSystem({
       now: new Date(),
       memeList: allMemes,
       hisAvatarName: avatarName(avatarsRef.current.him),
@@ -1501,6 +1565,8 @@ export default function App({ account = {} }) {
       call: inCall, // 正在打电话：【此刻】后面附上通话的规矩（见 call/）
       game,
     });
+    // 狐宇宙（见 fox.js）：【此刻】后面多一句，他知道这是他自己醒来的地方、现在是她来了。在记号后面，名帖一个字不动
+    const nowNote = isFoxChat(opts.chat) ? baseNote + "\n" + FOX_HERE : baseNote;
     // 这段对话抄过提要的：前面的不寄原话，换成提要（见 recap.js）
     const recapList = opts.chat ? await readRecaps(opts.chat) : [];
     const { messages: apiMessages, tail } = buildMessages(msgs, avatarsRef.current, memeLookup, imgLookup, thumbLookup, docLookup, { recaps: recapList, tier: recallTier(staticText) });
@@ -4657,6 +4723,8 @@ export default function App({ account = {} }) {
             <Toggle on={settings.thoughts !== false} onChange={(v) => updateSettings({ thoughts: v })} label="他写心里话" />
           </div>
           <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>所有模型一起管，打电话的时候自动关着。拨了以后，下一句话那段对话的缓存得重新攒一回，那一句贵一些，之后照常。</p>
+          {/* 他自己醒（狐宇宙，卿卿 10 月 20 日要的，见 fox.js、panels/FoxSection.jsx）：跟“他写心里话”放在一处，都是他的事 */}
+          <FoxSection settings={settings} onChange={updateSettings} state={foxState} canKnock={knockList().length > 0} now={now.getTime()} />
           <div style={{ height: 1, background: HAIR, margin: "22px 0 18px" }} />
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>主题色</div>
           <div className="flex items-center flex-wrap" style={{ gap: 8, marginBottom: theme === entranceTheme() ? 22 : 10 }}>
@@ -4840,8 +4908,14 @@ export default function App({ account = {} }) {
       return (
         <Sheet title="南衙" onClose={() => setSheet(null)}>
           <NanyaPanel
-            subs={{ diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length) }}
+            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, unseen: foxUnseen, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length) }}
+            dots={{ fox: foxUnseen > 0 }}
             open={{
+              // 狐宇宙：菜单收起，翻到那段对话（他自己醒来说的话都在那儿，见 fox.js）
+              fox: () => {
+                setSheet(null);
+                openChat(FOX_CHAT);
+              },
               diary: () => {
                 setSheet(null);
                 setDiaryOpen(true);
@@ -4973,14 +5047,15 @@ export default function App({ account = {} }) {
             {/* 第四个方块是“南衙”（卿卿 2026 年 10 月 11 日定的）：原来写“日记本”、点了直接进日记，现在点了从底下冒出一张菜单
                 （见 renderSheet 里的 nanya），日记是里面的头一行“闲笔集”。图标是恩师画的牡丹。
                 底下那行小字没动，还是今天的日记写了没 */}
-            <Tile icon="peony" label="南衙" sub={diarySub} onClick={() => setSheet("nanya")} />
+            {/* 狐宇宙里他留了话、她还没看：方块上亮个小点（10 月 20 日添的，见 fox.js） */}
+            <Tile icon="peony" label="南衙" sub={diarySub} dot={foxUnseen > 0} onClick={() => setSheet("nanya")} />
           </div>
         </div>
         {/* 历史对话固定在最底下那排（头像、新对话）的正上方，不跟着上面那段滚（卿卿定的位置）。
             它和底下那排之间隔 12，跟卡片之间的间距一样；屏幕有富余的时候，空在它和四个方块之间 */}
         <div className="flex-shrink-0" style={{ padding: "0 16px" }}>
           <HistoryCard
-            index={index}
+            index={index.filter((c) => !isFoxChat(c.id))}
             currentId={chatId}
             onOpenAll={() => setHistoryOpen(true)}
             onOpen={openChat}
@@ -5089,6 +5164,22 @@ export default function App({ account = {} }) {
           style={{ padding: "8px 14px 12px" }}
         >
           {/* 江湖棋局那一段还空着：中间写“江湖棋局”（底下原来有一句怎么开局的提示，卿卿 10 月 16 日说连同气泡拿掉） */}
+          {/* 狐宇宙还空着（他还没自己醒过）：中间写“狐宇宙”，底下一行小字是眼下的样子（同南衙那一行，见 fox.js 的 foxSub） */}
+          {messages.length === 0 && !loading && isFoxChat(chatId) && (
+            <div className="kfs-fox-empty h-full flex flex-col items-center justify-center" style={{ gap: 12 }}>
+              <p className="kfs-fox-title" style={{ fontFamily: SERIF, fontSize: 17, letterSpacing: "0.4em", paddingLeft: "0.4em", color: T.motto }}>
+                {FOX_TITLE}
+              </p>
+              {/* 字的颜色同中间那行字（--k-motto，实色）：这一块压在背景中间那一方深色上，淡墨在上面看不清 */}
+              <p style={{ fontSize: 12.5, color: T.motto, lineHeight: 1.8, textAlign: "center", letterSpacing: "0.05em" }}>
+                他自己醒来想说的话，会留在这里
+                <br />
+                <span className="kfs-fox-sub" style={{ opacity: 0.75 }}>
+                  {foxSub({ on: wakeOn(settings), state: foxState, unseen: 0, now: now.getTime() })}
+                </span>
+              </p>
+            </div>
+          )}
           {messages.length === 0 && !loading && isGameChat(chatId) && (
             <div className="kfs-game-empty h-full flex flex-col items-center justify-center">
               <p className="kfs-game-title" style={{ fontFamily: SERIF, fontSize: 17, letterSpacing: "0.4em", paddingLeft: "0.4em", color: T.motto }}>
@@ -5096,7 +5187,7 @@ export default function App({ account = {} }) {
               </p>
             </div>
           )}
-          {messages.length === 0 && !loading && !isGameChat(chatId) && (
+          {messages.length === 0 && !loading && !isGameChat(chatId) && !isFoxChat(chatId) && (
             <div className="h-full flex flex-col items-center justify-center" style={{ gap: 18 }}>
               {/* 题字的颜色跟主题走（--k-motto，见 input.css），都是实色，不带透明。
                   青绿的背景里它正压在那方深青上，原来的淡墨（inkSoft）叠上去只有 3 比 1，看不清；
@@ -5134,7 +5225,7 @@ export default function App({ account = {} }) {
             }
             if (row.type === "notice") {
               // 改名字的提示用他现在的头像
-              const r = row.kind === "rename" ? { ...row, av: avatars.him } : row;
+              const r = row.kind === "rename" || row.kind === "wake" ? { ...row, av: avatars.him } : row;
               return <NoticeRow key={row.key} row={r} animate={row.msg.ts >= listMount.current} />;
             }
             if (row.type === "ctrl") {
@@ -5519,7 +5610,7 @@ export default function App({ account = {} }) {
 
       {historyOpen && (
         <HistoryPage
-          index={index}
+          index={index.filter((c) => !isFoxChat(c.id))}
           currentId={chatId}
           now={now}
           onBack={() => setHistoryOpen(false)}

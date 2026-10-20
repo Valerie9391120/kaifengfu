@@ -237,7 +237,7 @@ const rowOf = (dev) => supa.table.all().find((r) => r.endpoint === dev.endpoint)
   const ready = await call({ op: "key" });
   ok(ready.status === 200 && ready.data.configured === true && ready.data.publicKey === keys.publicKey && Object.keys(ready.data).sort().join() === "can,configured,publicKey" && !JSON.stringify(ready.data).includes(keys.privateKey),
     "问钥匙：贴进密钥柜就认（两头带着引号、空白、换行也不碍事），只把公钥交出来，私钥一个字不带");
-  ok(ready.data.can.join() === "reply,bubbles,halt,voice" && empty.data.can.join() === "reply,bubbles,halt,voice", "问钥匙：顺带说这份代码会什么（网页靠这个认新旧）：替她等回话、横幅一个气泡敲一条、她按了停就不等了、他的语音条写 [语音]");
+  ok(ready.data.can.join() === "reply,bubbles,halt,voice,notify" && empty.data.can.join() === "reply,bubbles,halt,voice,notify", "问钥匙：顺带说这份代码会什么（网页、家里的闹钟靠这个认新旧）：替她等回话、横幅一个气泡敲一条、她按了停就不等了、他的语音条写 [语音]、他自己醒来说的话也敲得了");
   pushEnv.VAPID_PRIVATE_KEY = other.privateKey;
   const broken = await call({ op: "key" });
   ok(broken.data.configured === false && broken.data.message.includes("不是一对"), "问钥匙：私钥换成了另一把，马上说不是一对");
@@ -357,6 +357,43 @@ const rowOf = (dev) => supa.table.all().find((r) => r.endpoint === dev.endpoint)
   const q2 = await call({ op: "test", endpoint: plain.endpoint, delay: 1 });
   await sleep(1400);
   ok(q2.data.queued === true && plain.hits === 1 && rowOf(plain) === null, "没有 EdgeRuntime 的地方：后台的活也干完了（地址作废的那行照样划掉）");
+
+  // ---- 他自己醒来说的话（op: "notify"，狐宇宙，见 src/fox.js、alarm/） ----
+  {
+    const fw = [];
+    globalThis.EdgeRuntime = { waitUntil: (p) => fw.push(p) };
+    const phone = push.addDevice();
+    register(phone);
+    const strangerDev = push.addDevice();
+    register(strangerDev, STRANGER);
+    const TAG = "TAGtagTAG_-12";
+    const JOB = "wakeJob0001abcdefghi";
+    const n0 = push.delivered.length;
+    const t2 = Date.now();
+    const said = await call({ op: "notify", job: JOB, tag: TAG, title: "小狐", knock: [phone.endpoint, strangerDev.endpoint, "https://web.push.apple.com/nobody"], reply: "<thinking>想她了</thinking>\n醒了\n[SPLIT]\n[MEME:a.jpg]\n[WAKE:+3h]" }, { origin: "" });
+    ok(said.status === 200 && said.data.queued === 2 && Date.now() - t2 < 500 && fw.length === 1, `醒来说的话：先回话（排了 ${said.data && said.data.queued} 条横幅），后台接着敲`);
+    await fw[0];
+    const got2 = push.delivered.slice(n0);
+    ok(got2.length === 2 && got2.every((d) => d.endpoint === phone.endpoint) && got2.map((d) => d.json.notification.body).join("|") === "醒了|[表情包]" && got2.every((d) => d.json.notification.title === "小狐"),
+      "醒来说的话：一个气泡一条（心里话、[WAKE:…] 不上横幅），只敲报上来的、登记簿里真有的她那一台（别人的、没登记的都不敲）");
+    ok(got2[0].json.notification.navigate === PAGE + "#n=r." + TAG + "." + JOB && got2[0].json.notification.tag === "r." + TAG + "." + JOB + ".0" && got2[1].json.notification.tag === "r." + TAG + "." + JOB + ".1" && got2[1].at - got2[0].at >= 900,
+      "醒来说的话：点了回到那段对话（记号跟替她等回话的一个样子），隔一秒一条，各带各的记号");
+    const quietN = push.delivered.length;
+    const quiet = await call({ op: "notify", job: JOB, tag: TAG, title: "小狐", knock: [phone.endpoint], reply: "<thinking>她睡了，不吵她</thinking>\n[WAKE:07:30]" });
+    const noDoor = await call({ op: "notify", job: JOB, tag: TAG, title: "小狐", knock: [], reply: "在吗" });
+    ok(quiet.status === 200 && quiet.data.queued === 0 && noDoor.data.queued === 0 && fw.length === 1 && push.delivered.length === quietN, "醒来说的话：一个看得见的字都没有（只有心里话、只定了几点醒），或者没报敲哪台：一条都不敲");
+    const avatarOnly = await call({ op: "notify", job: JOB, tag: TAG, title: "小狐", knock: [phone.endpoint], reply: "[AVATAR:fox.jpg]\n[WAKE:+2h]" });
+    await fw[fw.length - 1];
+    ok(avatarOnly.data.queued === 1 && push.delivered[push.delivered.length - 1].json.notification.body === "[换了新头像]", "醒来说的话：只换了头像的敲一条“换了新头像”");
+    const bad = [await call({ op: "notify", job: "短", tag: TAG, knock: [phone.endpoint], reply: "在" }), await call({ op: "notify", job: JOB, tag: "x", knock: [phone.endpoint], reply: "在" })];
+    ok(bad.every((r) => r.status === 400 && r.data.error.code === "bad_request"), "醒来说的话：没有编号、没说是哪段对话，拦下");
+    const long = await call({ op: "notify", job: JOB, tag: TAG, title: "小狐", knock: [], reply: "长".repeat(100000) });
+    const tooLong = await call(null, { raw: JSON.stringify({ op: "notify", job: JOB, tag: TAG, knock: [], reply: "长".repeat(310000) }) });
+    ok(long.status === 200 && tooLong.status === 413, "醒来说的话：带着他一整段回话寄得进来（十万字也收），再长就拦下");
+    const strangerTry = await call({ op: "notify", job: JOB, tag: TAG, knock: [phone.endpoint], reply: "在" }, { token: "token-stranger" });
+    ok(strangerTry.status === 403, "醒来说的话：不是卿卿的登录，不让敲");
+    delete globalThis.EdgeRuntime;
+  }
 
   // ---- 私钥哪儿都不该出现 ----
   ok(replies.length > 30 && replies.every((t) => !t.includes(keys.privateKey) && !t.includes(other.privateKey)), `函数回过的 ${replies.length} 句话里，没有一句带着私钥`);

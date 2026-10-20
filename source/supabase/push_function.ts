@@ -14,6 +14,9 @@
 //     她一直在开封府里的话，回话照旧直接交给网页，不敲。
 //     claude 那个函数原样留着：这里哪一步不肯接（信箱那张表没建、这份代码还是旧的），网页就走回那条老路。
 //
+// 三、他自己醒来说的话（op: "notify"，10 月 20 日添的“狐宇宙”）。她家里那台笔记本上的闹钟叫醒他、替他要回话、放进对话，
+//     这里只照他的话敲她的手机（敲的样子跟二一样）。他一个看得见的字都没写，就不敲。
+//
 // 通知的字在这里加密，只有那台设备解得开；苹果的推送服务只管送，看不见写了什么。
 // 签名用的钥匙（VAPID）只存在 Supabase 的密钥柜里，网页和手机上都没有。
 //
@@ -39,6 +42,7 @@ const SEND_TIMEOUT = 10000; // 敲推送服务的门最多等多少毫秒
 // 替她等回话用的
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const SMALL_BODY = 4000; // 别的动作寄来的东西最多这么长
+const NOTIFY_BODY = 300_000; // 他自己醒来说的话（op: "notify"）寄来的最多这么长：带着他一整段回话（写横幅只看前 BANNER_SOURCE 个字）
 const MAX_BODY = 40_000_000; // 一回传话寄来的东西最多这么长（带着照片的对话有好几兆）
 const REPLY_BUDGET = 125_000; // 等 Anthropic 最多等多少毫秒，从这一回敲门算（这份代码被叫起来一趟最多活 LIFE 那么久，留出收尾的工夫）
 const BEAT = 8000; // 还在等的时候，隔多少毫秒去信箱里摸一下：网页靠它看这一回还活着没有
@@ -881,10 +885,24 @@ function splitCall(text: string): [string, string] | null {
   return [text.slice(0, m.index), text.slice(m.index + m[0].length)];
 }
 
+// 他定下回几点醒的记号（狐宇宙，卿卿 10 月 20 日定的，见网页那头 src/fox.js）：单独一行写 [WAKE:…]，
+// 连着那一行的换行一起摘掉，横幅上不写。文档块里的不算。和网页那头（src/reply.js 的 takeWake）一样
+const WAKE_LINE = /^[ \t]*\[(?:WAKE|Wake|wake)[:：]([^\[\]\n]{0,40})\][ \t]*(?:\r?\n|\r?$)/gm;
+function takeWake(text: string): string {
+  return text.replace(WAKE_LINE, () => "");
+}
+
 // 一条回话 → 一个气泡一条横幅，各写什么字。至少回一条。
 // 语音那一条写 [语音]（卿卿 10 月 9 日定的，照微信），里头夹着的表情包排在它后面，和对话里一样。
 // 打电话那一条写 [来电]（她接起来他先说的话不上横幅）
 function bubblesOf(reply: string): string[] {
+  const seen = visibleBubbles(reply);
+  if (!seen.lines.length) return [seen.avatar ? "[换了新头像]" : "……"];
+  return seen.lines;
+}
+
+// 一个气泡一条：看得见的那几条（一条都没有就是空的），外加换没换头像
+function visibleBubbles(reply: string): { lines: string[]; avatar: boolean } {
   let body = reply.length > BANNER_SOURCE ? reply.slice(0, BANNER_SOURCE) : reply;
   const think = body.match(/<thinking>([\s\S]*?)<\/thinking>/);
   if (think) body = body.replace(think[0], () => "");
@@ -898,10 +916,11 @@ function bubblesOf(reply: string): string[] {
       continue;
     }
     // 打电话的记号前面的照常拆，后面的（她接起来他先说的话）不上横幅，写一条 [来电]
-    const call = splitCall(part.text);
+    const text0 = takeWake(part.text);
+    const call = splitCall(text0);
     // 按 [SPLIT] 切开，记号两头的空白不要：和网页那头（src/reply.js 的 splitTurns）一样。
     // 不写成 /\s*\[SPLIT\]\s*/ 那样的正则：碰上几万个连着的空行，它一个位置一个位置地试，要算好几秒，这里一回请求只给两秒
-    const chunks = (call ? call[0] : part.text).split("[SPLIT]");
+    const chunks = (call ? call[0] : text0).split("[SPLIT]");
     for (let k = 0; k < chunks.length; k++) {
       let chunk = chunks[k];
       if (k > 0) chunk = chunk.trimStart();
@@ -942,8 +961,7 @@ function bubblesOf(reply: string): string[] {
     }
     if (call) lines.push("[来电]");
   }
-  if (!lines.length) return [avatar ? "[换了新头像]" : "……"];
-  return lines;
+  return { lines, avatar };
 }
 
 // 按“看得见的一个字”截：最多 maxChars 个字、maxBytes 个字节，截了就在后面加一个省略号
@@ -1126,6 +1144,57 @@ async function relay(req: Request, body: Rec): Promise<Response> {
   return json(200, { type: "reply", job, result: await ready });
 }
 
+// 他自己醒来说的话（op: "notify"）。卿卿 10 月 20 日要的“狐宇宙”：她家里那台笔记本上的闹钟到点叫醒他，
+// 他想说什么就说（见网页那头 src/fox.js、闹钟 source/alarm/）。回话是闹钟自己要的（走 claude 那个函数），
+// 放进对话也是闹钟自己放的；这里只管敲她的手机，跟替她等回话敲的一个样子：一个气泡一条，按顺序、隔一秒。
+//   reply  他这一回写的整段字（Anthropic 回来的几块 text 拼起来）
+//   job    这一回的编号（闹钟起的）；tag  狐宇宙那段对话的那串字。两样写进通知的网址，她点了回到狐宇宙
+//   title  通知上写的名字（他现在顶上的名字）
+//   knock  敲哪几台：她在手机上打开“他自己醒”的时候，那台手机自己报的门牌号（存在加密的存档里，闹钟原样转来）。
+//          跟替她等回话一样只敲报上来的、登记簿里也真有的那几台，不照登记簿全敲（登记簿是明文的，道理见文件开头）
+// 一个看得见的字都没有（他只写了心里话、只定了下回几点醒）：一条都不敲。先回话（{ queued: 几条 }），后台接着敲
+async function notify(req: Request, body: Rec): Promise<Response> {
+  const job = str(body.job);
+  if (!JOB_PATTERN.test(job)) return refuse(400, "bad_request", "这一回没有编号");
+  const tag = str(body.tag);
+  if (!TAG_PATTERN.test(tag)) return refuse(400, "bad_request", "没说是哪段对话");
+  const title = str(body.title).slice(0, 200);
+  const knock = Array.from(new Set((Array.isArray(body.knock) ? body.knock : []).filter((e): e is string => typeof e === "string" && e.length > 0 && e.length <= 1024))).slice(0, MAX_DEVICES);
+  const seen = visibleBubbles(str(body.reply));
+  const lines = seen.lines.length ? seen.lines : seen.avatar ? ["[换了新头像]"] : [];
+  if (!lines.length || !knock.length) return json(200, { queued: 0 });
+  const keys = await loadVapid();
+  if (!keys.ok) return fail(400, keys.message);
+  const book = ledger(req);
+  const origin = req.headers.get("Origin");
+  const said = { title: clip(tidyName(title), 40, 160) || "开封府", bodies: lines.map((line) => clip(line, BANNER_CHARS, BANNER_BYTES)) };
+  const started = Date.now();
+  const lifeFrom = started - worker.born < LIFE / 2 ? worker.born : started;
+  const work = (async () => {
+    const rows: Row[] = [];
+    for (const endpoint of knock) {
+      let found = await book.find(endpoint);
+      if (!("rows" in found) && found.status === 502) {
+        await sleep(1000);
+        found = await book.find(endpoint);
+      }
+      if ("rows" in found) rows.push(...found.rows);
+    }
+    let doors = rows.slice(0, MAX_DEVICES);
+    for (let i = 0; i < said.bodies.length && doors.length; i++) {
+      if (i > 0) await sleep(BANNER_GAP);
+      const rest = said.bodies.slice(i);
+      const last = worker.closing || Date.now() - lifeFrom > LIFE - LAST_CALL;
+      const text = last && rest.length > 1 ? clip(rest.join("\n"), BANNER_CHARS, BANNER_BYTES) : rest[0];
+      const sent = await deliver(book, origin, doors, keys.vapid, (page) => replyNotice(page, { title: said.title, body: text }, job, tag, i), REPLY_TTL);
+      doors = doors.filter((_, k) => !(sent[k] && sent[k].removed));
+      if (last) return;
+    }
+  })();
+  inBackground(work);
+  return json(200, { queued: said.bodies.length });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors() });
   if (req.method !== "POST") return fail(405, "只收 POST");
@@ -1144,23 +1213,26 @@ Deno.serve(async (req: Request) => {
     if (text.length > MAX_BODY) return fail(413, "寄来的东西太长");
     body = JSON.parse(text);
     if (!isRec(body)) throw new Error("不是对象");
-    // 只有替她等回话那一种寄得长（整段对话都在里面），别的动作几行字就够
-    if (body.op !== "reply" && text.length > SMALL_BODY) return fail(413, "寄来的东西太长");
+    // 只有替她等回话那一种寄得长（整段对话都在里面），他自己醒来说的话（notify）带着他整段回话，别的动作几行字就够
+    if (body.op === "notify" ? text.length > NOTIFY_BODY : body.op !== "reply" && text.length > SMALL_BODY) return fail(413, "寄来的东西太长");
   } catch (_) {
     return fail(400, "收到的不是合法的 JSON");
   }
 
   // 替她等回话
   if (body.op === "reply") return await relay(req, body);
+  // 他自己醒来说的话（狐宇宙）
+  if (body.op === "notify") return await notify(req, body);
 
   const state = await loadVapid();
 
   // 问：钥匙放好了没有。放好了就把公钥给网页（订阅要用，公钥本来就是公开的）。
   // can 是这份代码会做的事：网页看到 "reply"，就知道回话可以交给这里等；
   // "bubbles" 是横幅一个气泡敲一条，"halt" 是她按了停就把跟 Anthropic 的线掐掉（面板的“看细节”里照着说）；
-  // "voice" 是他的语音条在横幅上写 [语音]（上一版不认 [VOICE]，横幅上会露出那一串记号）
+  // "voice" 是他的语音条在横幅上写 [语音]（上一版不认 [VOICE]，横幅上会露出那一串记号）；
+  // "notify" 是他自己醒来说的话也敲得了（狐宇宙，见上面 notify），横幅上也不露 [WAKE:…]（家里那台闹钟装的时候看这一样，没有就让她换新代码）
   if (body.op === "key") {
-    const can = ["reply", "bubbles", "halt", "voice"];
+    const can = ["reply", "bubbles", "halt", "voice", "notify"];
     return json(200, state.ok ? { configured: true, publicKey: state.vapid.publicKey, can } : { configured: false, missing: state.missing, message: state.message, can });
   }
 
