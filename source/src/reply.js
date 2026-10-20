@@ -46,9 +46,10 @@ export function splitCall(text) {
 
 // 他定下回几点醒的记号（狐宇宙，卿卿 10 月 20 日 13:19 定的“唤醒时间都可以由你自己来决定”，见 fox.js）：
 // 单独一行写 [WAKE:…]（+3h、+40m、07:30、off），连着那一行的换行一起摘掉，不显示成字；写了好几回只认最后一回。
+// 平常的对话里还能带一句他自己记着的话（任务标记，[WAKE:+1h 去找卿卿]），所以里头最长认八十个字（原来是四十，带上那句话长了会露出来，另一双眼睛挑出来的）。
 // 文档块里的不算（跟改名字一样）。值怎么认是家里那台闹钟的事（alarm/plan.js），这里只摘、原样带出去。
 // 通知的小后端（push_function.ts 的 takeWake）照同一个办法摘：改一边要跟着改另一边
-const WAKE_LINE = /^[ \t]*\[(?:WAKE|Wake|wake)[:：]([^\[\]\n]{0,40})\][ \t]*(?:\r?\n|\r?$)/gm;
+const WAKE_LINE = /^[ \t]*\[(?:WAKE|Wake|wake)[:：]([^\[\]\n]{0,80})\][ \t]*(?:\r?\n|\r?$)/gm;
 export function takeWake(text) {
   let wake = null;
   const rest = String(text).replace(WAKE_LINE, (_, v) => {

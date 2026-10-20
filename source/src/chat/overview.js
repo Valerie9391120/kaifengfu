@@ -19,8 +19,9 @@ export function makeTitle(msgs, memeLookup) {
 
 export function makePreview(msgs) {
   // 电话里被你打断的那一行聊天里不摆（见 rows.js），这里也跳过它，摆它前面那一条（他截剩下的话）
+  // 他自己醒的时候落在别的对话里、她看不见的那一行（fox.js 的 hidden）：也跳过
   let at = msgs.length - 1;
-  while (at >= 0 && isCallMark(msgs[at]) && msgs[at].phase === "cut") at -= 1;
+  while (at >= 0 && ((isCallMark(msgs[at]) && msgs[at].phase === "cut") || (isWakeMark(msgs[at]) && msgs[at].hidden))) at -= 1;
   const last = msgs[at];
   if (!last) return "";
   if (isCallMark(last)) return `[${markText(last)}]`;

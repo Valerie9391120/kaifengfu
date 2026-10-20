@@ -237,7 +237,7 @@ const rowOf = (dev) => supa.table.all().find((r) => r.endpoint === dev.endpoint)
   const ready = await call({ op: "key" });
   ok(ready.status === 200 && ready.data.configured === true && ready.data.publicKey === keys.publicKey && Object.keys(ready.data).sort().join() === "can,configured,publicKey" && !JSON.stringify(ready.data).includes(keys.privateKey),
     "问钥匙：贴进密钥柜就认（两头带着引号、空白、换行也不碍事），只把公钥交出来，私钥一个字不带");
-  ok(ready.data.can.join() === "reply,bubbles,halt,voice,notify" && empty.data.can.join() === "reply,bubbles,halt,voice,notify", "问钥匙：顺带说这份代码会什么（网页、家里的闹钟靠这个认新旧）：替她等回话、横幅一个气泡敲一条、她按了停就不等了、他的语音条写 [语音]、他自己醒来说的话也敲得了");
+  ok(ready.data.can.join() === "reply,bubbles,halt,voice,notify,wakelabel" && empty.data.can.join() === "reply,bubbles,halt,voice,notify,wakelabel", "问钥匙：顺带说这份代码会什么（网页、家里的闹钟靠这个认新旧）：替她等回话、横幅一个气泡敲一条、她按了停就不等了、他的语音条写 [语音]、他自己醒来说的话也敲得了、[WAKE:…] 带着他记着的话也摘得掉");
   pushEnv.VAPID_PRIVATE_KEY = other.privateKey;
   const broken = await call({ op: "key" });
   ok(broken.data.configured === false && broken.data.message.includes("不是一对"), "问钥匙：私钥换成了另一把，马上说不是一对");
