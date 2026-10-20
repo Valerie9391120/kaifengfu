@@ -16,8 +16,8 @@ function voiceLine(c) {
   return c.say ? `${c.say}。` : "连不上念语音的小后端。";
 }
 
-// 三选一的那种滑块（“回复最长多少”“他记多长”都是它）
-function Pick({ options, value, onPick, label }) {
+// 三选一的那种滑块（“回复最长多少”“他记多长”都是它；账户面板里“他自己醒”的两道闸也借它，见 FoxSection.jsx）
+export function Pick({ options, value, onPick, label }) {
   return (
     <div className="flex" role="group" aria-label={label} style={{ ...glass(0.4, 12), borderRadius: 999, padding: 4 }}>
       {options.map((o) => (

@@ -3,6 +3,7 @@ import { MEME_MAP } from "../memes.js";
 import { tierOf, planWindow, staleImages, stamp } from "../recap.js";
 import { isCallMark, markNote } from "../call/marks.js";
 import { apiBlocks } from "../game/jianghu.js";
+import { isWakeMark, wakeNote } from "../fox.js";
 
 function avatarBlock(av, thumbLookup = () => null) {
   if (!av) return null;
@@ -153,6 +154,11 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
     // 通话开始、挂了：一行提示（见 call/marks.js），挂了以后他知道你们刚通过电话
     if (isCallMark(m)) {
       arr.push({ role: "user", content: [{ type: "text", text: markNote(m) }] });
+      return;
+    }
+    // 他自己醒了一回（狐宇宙，见 fox.js）：一行提示，他下回醒来知道自己前几回几点醒的、哪回什么也没说
+    if (isWakeMark(m)) {
+      arr.push({ role: "user", content: [{ type: "text", text: wakeNote(m) }] });
       return;
     }
     // 她在聊天中途换了头像：变成对话里真实发生的一件事，图跟着这一行寄过去

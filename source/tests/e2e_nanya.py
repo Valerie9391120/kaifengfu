@@ -110,15 +110,15 @@ def run(browser):
         ctx.close(); return                 # 菜单都没出来，后面的没法走
     rs = rows(pg)
     # 10 月 15 日闲笔集后面添了一行“江湖棋局”（见 tests/e2e_jianghu.py），四行；10 月 17 日藏音匣盖好了（见 tests/e2e_cangyin.py）；
-    # 10 月 18 日凌晨网易云后面挂上“邸报”（还在营造），五行
-    ok([(r["name"], r["sub"]) for r in rs] == [("闲笔集", "今天还没写"), ("江湖棋局", "还没开局"), ("藏音匣", "还空着"), ("网易云", "营造中"), ("邸报", "营造中")],
-       f"菜单五行：闲笔集、江湖棋局、藏音匣、网易云、邸报；闲笔集那行的小字和格子上的是同一句（{[(r['name'], r['sub']) for r in rs]}）")
-    ok([r["soon"] for r in rs] == ["", "", "", "1", "1"] and [r["svgs"] for r in rs] == [2, 2, 2, 1, 1] and [r["dim"] for r in rs] == ["1", "1", "1", "0.55", "0.55"] and [r["chip"] for r in rs] == ["1", "1", "1", "0.55", "0.55"],
+    # 10 月 18 日凌晨网易云后面挂上“邸报”（还在营造），五行；10 月 20 日最顶上添了“狐宇宙”（他自己醒来的地方，细的见 tests/e2e_fox.py），六行
+    ok([(r["name"], r["sub"]) for r in rs] == [("狐宇宙", "还没让他自己醒"), ("闲笔集", "今天还没写"), ("江湖棋局", "还没开局"), ("藏音匣", "还空着"), ("网易云", "营造中"), ("邸报", "营造中")],
+       f"菜单六行：狐宇宙、闲笔集、江湖棋局、藏音匣、网易云、邸报；闲笔集那行的小字和格子上的是同一句（{[(r['name'], r['sub']) for r in rs]}）")
+    ok([r["soon"] for r in rs] == ["", "", "", "", "1", "1"] and [r["svgs"] for r in rs] == [2, 2, 2, 2, 1, 1] and [r["dim"] for r in rs] == ["1", "1", "1", "1", "0.55", "0.55"] and [r["chip"] for r in rs] == ["1", "1", "1", "1", "0.55", "0.55"],
        f"能进去的那几行右边带箭头；还没盖的网易云、邸报淡一档、没有箭头（箭头 {[r['svgs'] - 1 for r in rs]}，名字的浓淡 {[r['dim'] for r in rs]}）")
 
     # ---- 藏音匣：点了进那一页（里面的见 tests/e2e_cangyin.py），左上角返回回到侧栏 ----
     c0 = len(calls())
-    pg.locator(".kfs-nanya-row").nth(2).click()
+    pg.locator(".kfs-nanya-row").nth(3).click()
     try:
         pg.locator(".kfs-cangyin").wait_for(timeout=8000)
         inbox = True
@@ -131,13 +131,13 @@ def run(browser):
     ok(pg.locator(".kfs-cangyin").count() == 0 and pg.locator(".kfs-nanya").count() == 0 and pg.evaluate(TILE_ON_TOP), "藏音匣左上角返回：回到侧栏，不回菜单")
     open_menu(pg)
     # ---- 还没盖的网易云：点了只冒一句话 ----
-    pg.locator(".kfs-nanya-row").nth(3).click()
+    pg.locator(".kfs-nanya-row").nth(4).click()
     said = wait_has(pg, "网易云还在营造")
     still = pg.locator(".kfs-nanya").count() == 1 and pg.locator(".kfs-page").count() == 0
     gone2 = wait_has(pg, "网易云还在营造", want=False)
     ok(said and still and gone2 and len(calls()) == c0,
        "点网易云：冒一句“网易云还在营造”，菜单还开着，那句话一会儿自己消失；前后也没往那边发什么")
-    pg.locator(".kfs-nanya-row").nth(4).click()
+    pg.locator(".kfs-nanya-row").nth(5).click()
     said = wait_has(pg, "邸报还在营造")
     still = pg.locator(".kfs-nanya").count() == 1 and pg.locator(".kfs-page").count() == 0
     gone2 = wait_has(pg, "邸报还在营造", want=False)
@@ -157,7 +157,7 @@ def run(browser):
 
     # ---- 闲笔集 ----
     open_menu(pg)
-    pg.locator(".kfs-nanya-row").nth(0).click()
+    pg.locator(".kfs-nanya-row").nth(1).click()
     pg.locator(".kfs-page").wait_for(timeout=5000); pg.wait_for_timeout(600)
     head = pg.evaluate("() => { const p = document.querySelector('.kfs-page'); return p.querySelector('[aria-label=\"返回\"]').parentElement.innerText.trim(); }")
     page_text = pg.locator(".kfs-page").inner_text()
@@ -192,7 +192,7 @@ def run(browser):
        "从闲笔集按返回：回到侧栏，菜单没有再冒出来")
     again = open_menu(pg)
     rs = rows(pg) if again else []
-    ok(bool(rs) and rs[0]["name"] == "闲笔集" and rs[0]["sub"] == "今天都写了" == tile_sub(pg), f"再点开南衙：闲笔集那一行也写着“今天都写了”（{rs[0]['sub'] if rs else '菜单没出来'}）")
+    ok(len(rs) > 1 and rs[1]["name"] == "闲笔集" and rs[1]["sub"] == "今天都写了" == tile_sub(pg), f"再点开南衙：闲笔集那一行也写着“今天都写了”（{rs[1]['sub'] if len(rs) > 1 else '菜单没出来'}）")
     if not again:
         ctx.close(); return
     pg.get_by_role("button", name="关闭").click(); pg.wait_for_timeout(400)

@@ -16,6 +16,7 @@ let claudeFail = null; // 测试用：下一次问 Anthropic 照它的样子报�
 // 这三种一直管用、直到改回来：broken：回回都报 key 没绑工作区；mcp：带着工具的一律不行；
 // recap：叫他抄前情提要的那一种一律报太挤（平常的话照回）；recap-cut：抄提要的那一种写到上限被截断
 let claudeFailTimes = 0; // overloaded 连着挤几回（不写就是一回）
+let kvFail = { times: 0, key: "" }; // 测试用：往后这么多回往库房里写都不成（库房一时出岔子，见 /__debug/kv-fail）
 let claudeHold = 0; // 测试用：下一次问 Anthropic，压这么多毫秒再答（等的工夫里她切走、关掉）
 let echoSeq = 0; // “原样回：”回过几回（回话里写 {回} 换成这是第几回：重新回答的那一版和原来那一版字不一样，分得清）
 let claudeHoldKind = ""; // 只压哪一种：recap 是只压叫他抄前情提要的那一种（平常的话照常答）；不写就是下一回不管哪一种
@@ -462,6 +463,12 @@ const server = http.createServer(async (req, res) => {
       claudeFailTimes = Number(url.searchParams.get("times") || 1);
       return send(res, 200, { ok: true });
     }
+    // 往后 times 回往库房里写（kv 表的 POST）都回 503：家里的闹钟问到了他的话、却一时放不进存档（tests/e2e_alarm.mjs）。
+    // 带 key（云端的钥匙名 h_…）：只算写这一行的那几回
+    if (url.pathname === "/__debug/kv-fail") {
+      kvFail = { times: Number(url.searchParams.get("times") || 1), key: url.searchParams.get("key") || "" };
+      return send(res, 200, { ok: true });
+    }
     // 下一次问 Anthropic 压多少毫秒再答
     // 带 kind=recap：只压下一回叫他抄前情提要的（这之前平常的话照常答）
     if (url.pathname === "/__debug/claude-hold") {
@@ -548,6 +555,7 @@ const server = http.createServer(async (req, res) => {
       rows.clear();
       claudeLog.length = 0;
       claudeFail = null;
+      kvFail = { times: 0, key: "" };
       replyQueue.length = 0;
       pushReset();
       voiceReset();
@@ -648,6 +656,10 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "POST") {
         const body = JSON.parse((await readBody(req)) || "[]");
         const list = Array.isArray(body) ? body : [body];
+        if (kvFail.times > 0 && (!kvFail.key || list.some((r) => r && r.key === kvFail.key))) {
+          kvFail.times--;
+          return send(res, 503, { message: "upstream connect error (test)", code: "PGRST000" });
+        }
         const t = stamp();
         for (const r of list) {
           if (r.user_id && r.user_id !== u.id) return send(res, 403, { message: 'new row violates row-level security policy for table "kv"', code: "42501" });

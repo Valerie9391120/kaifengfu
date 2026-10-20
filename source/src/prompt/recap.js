@@ -10,6 +10,7 @@ import { PIECE_PHOTOS, PIECE_BYTES, PART_MOST, MERGE_MOST, DOC_HEAD, HIS_DOC_HEA
 import { memeLabel, dataUrlBlock } from "./messages.js";
 import { heardOf } from "../voice.js";
 import { isCallMark, markRecap } from "../call/marks.js";
+import { isWakeMark, wakeRecap } from "../fox.js";
 import { stepLines } from "../game/jianghu.js";
 
 const GAP = 30 * 60 * 1000; // 隔了这么久，中间写一行钟点
@@ -109,6 +110,11 @@ export function buildRecapAsk({ msgs, prev = null, thick = 0, memeLookup, imgLoo
     }
     if (isCallMark(m)) {
       buf.push(markRecap(m));
+      return;
+    }
+    // 他自己醒了一回（狐宇宙，见 fox.js）
+    if (isWakeMark(m)) {
+      buf.push(wakeRecap(m));
       return;
     }
     if (m.role === "event") {
