@@ -3,6 +3,7 @@ import { docBlocksToNote } from "./docs.js";
 import { pad } from "./days.js";
 import { unvoice } from "./voice.js";
 import { stepLines } from "./game/jianghu.js";
+import { lotBrief } from "./qx/pool.js";
 
 // ---------- 日记本 ----------
 export const dayKeyOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -57,6 +58,7 @@ export function dayTranscript(msgs, memeLookup, maxChars = 9000) {
         if (m.kind === "photo") return "卿卿：[照片]";
         if (m.kind === "doc") return `卿卿：[文档《${m.name || "文档"}》]`;
         if (m.kind === "voice") return `卿卿：[语音] ${m.text || ""}`;
+        if (m.kind === "lot") return `卿卿：${lotBrief(m)}`; // 秘戏钱匣里丢进来的一签（见 qx/pool.js）
         return `卿卿：${m.text || ""}`;
       }
       const raw = unvoice(docBlocksToNote(m.raw || ""))

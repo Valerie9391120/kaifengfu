@@ -4,6 +4,7 @@ import { tierOf, planWindow, staleImages, stamp } from "../recap.js";
 import { isCallMark, markNote } from "../call/marks.js";
 import { apiBlocks } from "../game/jianghu.js";
 import { isWakeMark, wakeNote } from "../fox.js";
+import { lotText } from "../qx/pool.js";
 
 function avatarBlock(av, thumbLookup = () => null) {
   if (!av) return null;
@@ -226,6 +227,11 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
           text: memeNote(meme, m.file),
         });
         arr.push({ role: "user", content: blocks });
+        return;
+      }
+      // 她从秘戏钱匣里丢进来的一签（见 qx/pool.js）：【秘戏钱匣】卿卿抽了一签（风花雪月）：一样一行
+      if (m.kind === "lot") {
+        arr.push({ role: "user", content: [{ type: "text", text: lotText(m) }] });
         return;
       }
       // 她来狐宇宙（他的屋子）转了一圈，在便签纸上留的（fox.js 的 note）：不是跟他说话，照实告诉他

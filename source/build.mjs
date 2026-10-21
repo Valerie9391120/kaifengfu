@@ -93,6 +93,15 @@ const jinhuiCss = Buffer.from(
 );
 const jinhuiCssName = `jinhui-${hash(jinhuiCss)}.css`;
 fs.writeFileSync(`${OUT}/assets/${jinhuiCssName}`, jinhuiCss);
+// 秘戏钱匣那一页（她拿来的《锦盒抽签》，tools/make_qianxia.py 生成的，见开发说明“秘戏钱匣”那节）：一整个 HTML，两兆六，名字带指纹。
+// 卷轴上的字用刻本体：那一页里写的是占位的 __KFS_JINHUI__，这里换成上面那张样式表的真名字（同一个目录），再算指纹。
+// 开封府开门不碰它，南衙里点秘戏钱匣的时候才用框装进来（src/qx/QxPage.jsx 的 QX_URL）
+const qxSrc = fs.readFileSync("static/qianxia.html", "utf8");
+if (!qxSrc.includes('href="./__KFS_JINHUI__"')) throw new Error("static/qianxia.html 里没找到 __KFS_JINHUI__：用 tools/make_qianxia.py 重新生成");
+const qianxia = Buffer.from(qxSrc.replace('href="./__KFS_JINHUI__"', `href="./${jinhuiCssName}"`));
+const qianxiaName = `qianxia-${hash(qianxia)}.html`;
+fs.writeFileSync(`${OUT}/assets/${qianxiaName}`, qianxia);
+define.__KFS_QIANXIA__ = JSON.stringify(`./assets/${qianxiaName}`);
 const cyAssets = {
   tex: cyAsset("static/cangyin/paper.webp", "paper"),
   flower: cyAsset("static/cangyin/flower.webp", "flower"),

@@ -12,6 +12,7 @@ import { heardOf } from "../voice.js";
 import { isCallMark, markRecap } from "../call/marks.js";
 import { isWakeMark, wakeRecap } from "../fox.js";
 import { stepLines } from "../game/jianghu.js";
+import { lotText } from "../qx/pool.js";
 
 const GAP = 30 * 60 * 1000; // 隔了这么久，中间写一行钟点
 
@@ -149,6 +150,11 @@ export function buildRecapAsk({ msgs, prev = null, thick = 0, memeLookup, imgLoo
       }
       if (m.kind === "voice") {
         buf.push(say(HER_NAME, `[语音，转成的字] ${head(m.text || "（没听清）", ROW_HEAD)}`));
+        return;
+      }
+      // 秘戏钱匣里丢进来的一签（见 qx/pool.js）：照寄给他的样子写，不截
+      if (m.kind === "lot") {
+        buf.push(lotText(m));
         return;
       }
       buf.push(say(HER_NAME, head(m.text || "……", ROW_HEAD)));

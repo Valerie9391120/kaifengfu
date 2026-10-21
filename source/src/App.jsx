@@ -36,6 +36,9 @@ import { buildRecapAsk, buildMergeAsk } from "./prompt/recap.js";
 import { DaysCard, Tile, HistoryCard } from "./side/Cards.jsx";
 import { ChatMenu } from "./side/ChatMenu.jsx";
 import { LotusPage } from "./panels/LotusPage.jsx";
+import { QxPage } from "./qx/QxPage.jsx";
+import { LotRow } from "./qx/LotRow.jsx";
+import { QX_KEY, QX_TOOLS, QX_NAMES, CUT_QX, QX_FAIL_NOTE, isQxCall, readPool, packPool, emptyPool, runQxCalls, qxSection, poolSize, hasLots, cleanLines } from "./qx/pool.js";
 import { buildRows } from "./chat/rows.js";
 import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/overview.js";
 import { BubbleRow } from "./chat/Bubble.jsx";
@@ -143,8 +146,8 @@ const STEP_GRACE = 2 * 60 * 1000; // 别的设备发的那一回、回来的是�
 // 他调了引擎、回话却没停在 tool_use 上（写到长度上限被截断了）：调的那几样多半没写完整，一样不调，递回去的是这一句
 const CUT_CALL = "没执行：这一回的回话没写完整（多半是写到长度上限被截断了），这一步没下。要下的话重新调一次。";
 const CUT_DIARY = "没翻：这一回的回话没写完整（多半是写到长度上限被截断了），日记没替你翻。要翻的话重新调一次。";
-// 他回话里认哪几样工具是要开封府在手机上替他办的：江湖棋局那四样、翻日记那三样（MCP 的那头自己办，不归这里）
-const CALL_NAMES = new Set([...GAME_NAMES, ...DIARY_NAMES]);
+// 他回话里认哪几样工具是要开封府在手机上替他办的：江湖棋局那四样、翻日记那几样、秘戏钱匣里抽签那一样（MCP 的那头自己办，不归这里）
+const CALL_NAMES = new Set([...GAME_NAMES, ...DIARY_NAMES, ...QX_NAMES]);
 // 这一回是不是这台设备发的（江湖棋局那段原来只写 dev；10 月 18 日起每一回都写 from）
 const ownJob = (info) => !!(info && info.extra && (info.extra.dev === DEVICE_ID || info.extra.from === DEVICE_ID));
 
@@ -417,6 +420,14 @@ export default function App({ account = {} }) {
   const [chatMenu, setChatMenu] = useState(null); // 长按一段对话弹出来的小菜单
   const [lotusArmed, setLotusArmed] = useState(false); // 长按了日期卡片：卡片最底下那行换成了“去看并蒂莲”
   const [lotusOpen, setLotusOpen] = useState(false); // 并蒂莲那一层开着
+  const [qxOpen, setQxOpen] = useState(false); // 秘戏钱匣那一层开着（见 qx/QxPage.jsx）
+  const [qxPool, setQxPool] = useState(emptyPool); // 秘戏钱匣的签库（kfs2:qx:pool，见 qx/pool.js）
+  const qxPoolRef = useRef(qxPool); // 替他抽签的时候用（settleCalls 在回调里，拿最新的）
+  qxPoolRef.current = qxPool;
+  // 秘戏钱匣开着：她丢进聊天的签先攒着，他先不回，关上了再回（见 openQx、closeQx、scheduleReply、triggerReply）。
+  // owe：开着的这一阵里有要回的（她丢了签、进来之前刚说完一句、别处想叫他回被拦下了）。关上的时候只认这个：
+  // 什么都没丢、也没拦下过，就不替她叫他（江湖棋局里“点这里让我接着说”的那一步、别的设备的那一步，照旧不自己接）
+  const qxHold = useRef({ on: false, owe: false });
   const [renaming, setRenaming] = useState(null); // 正在改名的那段对话
   const [usage, setUsage] = useState(null);
   const [monthUsage, setMonthUsage] = useState(null);
@@ -609,6 +620,7 @@ export default function App({ account = {} }) {
 
       refreshBox();
       refreshFox();
+      refreshQx();
       setBooted(true);
     })();
   }, []);
@@ -677,6 +689,8 @@ export default function App({ account = {} }) {
       if (has(BOX_KEY)) refreshBox();
       // 狐宇宙：闹钟写了心跳
       if (has(FOX_STATE)) refreshFox();
+      // 秘戏钱匣：别的设备导了签库、删了加了签、改了抽哪几样
+      if (keys.includes(QX_KEY)) refreshQx();
       // 别的设备念好的语音同步下来了（这台设备上要念的那一条就不用再念了）
       if (has(VOICE_KEY) && speakerRef.current) speakerRef.current.synced(keys.filter((k) => k.startsWith(VOICE_KEY)));
       if (has("kfs2:memindex") || has("kfs2:mem:")) {
@@ -803,6 +817,8 @@ export default function App({ account = {} }) {
   };
 
   const openChat = async (id) => {
+    // 秘戏钱匣开着的时候翻到别的对话（点了通知）：先关上，丢在眼前这段的签这就交出去（closeQx 排上、flushPending 马上送）
+    if (qxHold.current.on) closeQx();
     flushPending();
     stopVoice();
     setEditing(null);
@@ -863,6 +879,7 @@ export default function App({ account = {} }) {
 
   // game：开的是一局江湖棋局（编号以 jh 开头，见 game/jianghu.js；南衙里“开新的一局”）
   const newChat = (game = false) => {
+    if (qxHold.current.on) closeQx(); // 同 openChat
     flushPending();
     stopVoice();
     setEditing(null);
@@ -1231,6 +1248,45 @@ export default function App({ account = {} }) {
   const refreshFox = () => {
     setFoxState(readFoxState(store.peek(FOX_STATE)));
   };
+
+  // ---- 秘戏钱匣（见 qx/pool.js、qx/QxPage.jsx） ----
+  // 签库一整份存在一条里（四百来条签，几 KB），改一下整条重存
+  const refreshQx = () => {
+    const p = readPool(store.peek(QX_KEY));
+    qxPoolRef.current = p;
+    setQxPool(p);
+  };
+  const saveQx = (p) => {
+    qxPoolRef.current = p;
+    setQxPool(p);
+    store.set(QX_KEY, packPool(p)).then((ok) => {
+      if (!ok) markStorageFail();
+    });
+  };
+  // 她点了“发给光义”：这一签丢进眼前这段对话（她的一条话，kind: "lot"）。秘戏钱匣开着，他先不回（qxHold），关上了一起回。
+  // 狐宇宙那段对话（他的屋子，她只留便签）里不丢：那一层不摆“发给光义”（canSend），这里也拦一道
+  const sendLot = ({ coin, lines }) => {
+    const ls = cleanLines(lines);
+    if (!ls.length || !chatIdRef.current || isFoxChat(chatIdRef.current)) return false;
+    if (qxHold.current.on) qxHold.current.owe = true;
+    sendHer({ kind: "lot", coin: Number(coin) || 0, lines: ls }, { hold: true });
+    return true;
+  };
+  const openQx = () => {
+    // 她进来之前刚说完一句、还在等她停手的那两秒：先不回，记着欠一句，关上了一起回
+    qxHold.current = { on: true, owe: disarm() };
+    setQxOpen(true);
+  };
+  const closeQx = () => {
+    const h = qxHold.current;
+    qxHold.current = { on: false, owe: false };
+    setQxOpen(false);
+    // 开着的时候丢了签（或者有要回的被拦下了）、他还没回：这就回（正回着别的一段的话，记下来，回完那段轮到这里，同 triggerReply）
+    if (h.owe && owes(messagesRef.current)) {
+      if (loadingRef.current) pendingRef.current.add(chatIdRef.current);
+      else scheduleReply(700);
+    } else if (!loadingRef.current) nextPending();
+  };
   // 她来他屋里转一圈，在便签纸上留了一句（FoxNotePad）：放进狐宇宙，记 note: true——不叫他、不等回话，他下回醒来看得见
   const saveFoxNote = (text) => {
     if (chatIdRef.current !== FOX_CHAT) return;
@@ -1434,7 +1490,14 @@ export default function App({ account = {} }) {
         him.calls = calls;
         him.stop = "tool_use";
         if (!String(parsed.body || "").trim() && !parsed.rename && !settled.avatarFile) him.items = [];
-      } else him.calls = calls.map((c) => (isDiaryCall(c) ? { ...c, out: CUT_DIARY, err: true, note: "想翻日记，没翻成", card: [] } : { ...c, out: CUT_CALL, err: true, card: [] }));
+      } else
+        him.calls = calls.map((c) =>
+          isDiaryCall(c)
+            ? { ...c, out: CUT_DIARY, err: true, note: "想翻日记，没翻成", card: [] }
+            : isQxCall(c)
+            ? { ...c, out: CUT_QX, err: true, note: QX_FAIL_NOTE, card: [] }
+            : { ...c, out: CUT_CALL, err: true, card: [] }
+        );
     }
     if (settled.avatarFile) changeHisAvatar({ type: "meme", file: settled.avatarFile });
     // 他给自己改了名字：顶栏马上换；回复上记一笔，对话里留一行提示（和现在一样的不算改）
@@ -1468,6 +1531,8 @@ export default function App({ account = {} }) {
   const settleCalls = async (him, before, strict = false, chat = "") => {
     if (!needsRun(him)) return true;
     if (him.calls.some((c) => isDiaryCall(c) && typeof c.out !== "string")) him.calls = await runDiaryCalls(him.calls, diaryReader, new Date());
+    // 秘戏钱匣里抽签（见 qx/pool.js）：照这台手机上的签库、照他调的那一样的编号抽（两台设备抽得一样）
+    if (him.calls.some((c) => isQxCall(c) && typeof c.out !== "string")) him.calls = runQxCalls(him.calls, qxPoolRef.current);
     if (!needsRun(him)) return true;
     // 剩下的是江湖棋局那几样
     if (chat && !isOn(chat)) {
@@ -1564,6 +1629,7 @@ export default function App({ account = {} }) {
       callable: st.callable !== false, // 他能打电话（API 面板里的开关，默认开着；见 call/incoming.js）
       call: inCall, // 正在打电话：【此刻】后面附上通话的规矩（见 call/）
       game,
+      qx: qxSection(qxPoolRef.current), // 秘戏钱匣：签库里有签才有这一段，只写维度名（见 qx/pool.js）
     });
     // 任务标记（见 fox.js）：“他自己醒”开着的时候，平常的对话里【此刻】后面附一段，他知道能定个闹钟到点来找她。在记号后面，名帖一个字不动
     const tasks = wakeOn(st) && !isFoxChat(opts.chat) && !isGameChat(opts.chat);
@@ -1587,9 +1653,9 @@ export default function App({ account = {} }) {
         system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
         messages: withNowNote(apiMessages, nowNote, at.cache, tail),
       };
-      // 江湖棋局的四样工具排在最前头，翻日记的三样跟着（日记共读，见 diaryTools.js：随时带着），MCP 的排最后。
+      // 江湖棋局的四样工具排在最前头，翻日记的几样跟着（日记共读，见 diaryTools.js：随时带着），秘戏钱匣里抽签那一样再跟着（也随时带着，见 qx/pool.js），MCP 的排最后。
       // 三种写法都带：摘掉 MCP 的那一种也带着，对话里有他调过的，不带那边不认
-      const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS);
+      const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, QX_TOOLS);
       if (at.mcp) {
         body.mcp_servers = mcps.map((m, i) => {
           const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
@@ -1998,6 +2064,11 @@ export default function App({ account = {} }) {
   // ---- 她连着发几条，停下来再回 ----
   // how：见 askGuangyi（定时器走完叫的时候不带）
   const triggerReply = (how = null) => {
+    // 秘戏钱匣开着：她可能还在一签一签地丢，先不回，记着欠一句，关上了再回（closeQx）
+    if (qxHold.current.on) {
+      qxHold.current.owe = true;
+      return;
+    }
     if (loadingRef.current) {
       pendingRef.current.add(chatIdRef.current);
       return;
@@ -2008,6 +2079,10 @@ export default function App({ account = {} }) {
   };
 
   const scheduleReply = (ms) => {
+    if (qxHold.current.on) {
+      qxHold.current.owe = true; // 秘戏钱匣开着，先不回（见 triggerReply）
+      return;
+    }
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
@@ -2137,6 +2212,7 @@ export default function App({ account = {} }) {
     setMessages(next);
     setErrorNote("");
     saveChat(id, next);
+    if (opts.hold) return; // 秘戏钱匣里丢进来的签：先攒着，关上了再回（closeQx）
     if (opts.now) {
       disarm();
       triggerReply();
@@ -3023,6 +3099,8 @@ export default function App({ account = {} }) {
   const answerRing = () => {
     const r = ringRef.current;
     if (!r) return;
+    // 秘戏钱匣开着的时候他打来、她接了：先关上（打着电话说的话得马上回，不能攒着）
+    if (qxHold.current.on) closeQx();
     endRing(r, "answer");
     startCall({ callOf: r.msgId, segs: r.segs, pre: r.pre });
   };
@@ -3381,6 +3459,12 @@ export default function App({ account = {} }) {
       disarm();
       triggerReply({ flushed: true });
     }
+    // 秘戏钱匣开着、攒着要回的（丢了签、进来之前刚说完的那一句）：切走以后页面可能就没了，也这一下交出去（交了就不再欠，回来照旧开着）
+    if (qxHold.current.on && qxHold.current.owe && getRelay().trusted()) {
+      qxHold.current = { on: false, owe: false };
+      triggerReply({ flushed: true });
+      qxHold.current = { on: true, owe: false };
+    }
     store.flush().catch(() => {});
   };
 
@@ -3494,7 +3578,7 @@ export default function App({ account = {} }) {
     // 名帖那一大段和聊天时寄的一个字不差（缓存接得上；正在打电话的这段对话，心里话那一条照关着算，见 thoughtsFor；
     // 江湖棋局那一段带着【江湖棋局】那一段，见 game/jianghu.js）；【此刻】这回用不着
     const game = isOn(id) ? { board: null, mixed: !isGameChat(id) } : hasSteps(msgs) ? { off: true } : null;
-    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game });
+    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game, qx: qxSection(qxPoolRef.current) });
     // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
     const photos = {};
     for (const m of msgs) {
@@ -3526,7 +3610,7 @@ export default function App({ account = {} }) {
       messages: [{ role: "user", content: ask.content }],
     };
     // 工具照聊天时一样带着（排在名帖前头，带着才接得上聊天时写下的缓存：江湖棋局那四样、翻日记那三样），只是这一回不许调
-    recapBody.tools = (game ? GAME_TOOLS : []).concat(DIARY_TOOLS);
+    recapBody.tools = (game ? GAME_TOOLS : []).concat(DIARY_TOOLS, QX_TOOLS);
     recapBody.tool_choice = { type: "none" };
     const data = await askRecap(recapBody);
     recordUsage(data, true);
@@ -4552,7 +4636,7 @@ export default function App({ account = {} }) {
   // 只认一根手指。落下了第二根，这一回就不算划侧栏了（拖到一半的弹回去），等手指全抬起来再从头认：
   // 整页不许捏以后，两根手指往里一捏，头一根正好是往右走的，原来会被当成右划、把侧栏带出来
   const onTouchStart = (e) => {
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen) return;
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen || qxOpen) return;
     if (e.touches.length > 1) {
       touch.current = null;
       setDragX(null);
@@ -4565,7 +4649,7 @@ export default function App({ account = {} }) {
     const s = touch.current;
     if (!s) return;
     // 手指还按着的工夫里冒出了菜单、面板（长按气泡就是）：底下的侧栏不跟着这根手指走，这一回也不算了
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen) {
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen || qxOpen) {
       touch.current = null;
       setDragX(null);
       return;
@@ -4898,7 +4982,7 @@ export default function App({ account = {} }) {
             usage={usage}
             monthUsage={monthUsage}
             recapUsage={recapUsage}
-            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false }).staticText)}
+            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false, qx: qxSection(qxPool) }).staticText)}
           />
         </Sheet>
       );
@@ -4909,7 +4993,7 @@ export default function App({ account = {} }) {
       return (
         <Sheet title="南衙" onClose={() => setSheet(null)}>
           <NanyaPanel
-            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length) }}
+            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length), qx: hasLots(qxPool) ? `签库里 ${poolSize(qxPool)} 条签` : "签库还空着" }}
             open={{
               // 狐宇宙：菜单收起，翻到那段对话（他自己醒来说的话都在那儿，见 fox.js）
               fox: () => {
@@ -4927,6 +5011,14 @@ export default function App({ account = {} }) {
                 stopVoice();
                 setSheet(null);
                 setBoxOpen(true);
+              },
+              // 秘戏钱匣：菜单、侧栏都收起，盖上那一层（见 qx/QxPage.jsx）；叉一点回到眼前这段对话（她丢进来的签在这儿，他关上以后回）。
+              // 聊天里正放着的语音停下（锦盒自己有声音）
+              qx: () => {
+                stopVoice();
+                setSheet(null);
+                setDrawerOpen(false);
+                openQx();
               },
             }}
             onSoon={(name) => setToast(soonToast(name))}
@@ -5246,6 +5338,10 @@ export default function App({ account = {} }) {
                   {row.text}
                 </div>
               );
+            }
+            if (row.type === "lot") {
+              // 她从秘戏钱匣里丢进来的一签（见 qx/LotRow.jsx）
+              return <LotRow key={row.key} msg={row.msg} animate={row.msg.ts >= listMount.current} />;
             }
             if (row.type === "game") {
               // 江湖棋局：他这一步下了什么（掷了几点、走到哪、花了几两，见 game/jianghu.js 的 cardsOf）
@@ -5662,6 +5758,7 @@ export default function App({ account = {} }) {
 
       {/* 并蒂莲：盖在最上面（比照片、提示那几层还高），叉一点就整层拆掉，回到侧栏 */}
       {lotusOpen && <LotusPage theme={theme} onClose={() => setLotusOpen(false)} />}
+      {qxOpen && <QxPage pool={qxPool} onPool={saveQx} sendLot={sendLot} canSend={!isFoxChat(chatId)} onClose={closeQx} />}
 
       {/* 通话页：盖在最上面（见 call/CallPage.jsx）。她点屏幕那一下（iPhone 不让自己接着听的时候）接着听 */}
       {call && <CallPage call={call} avatar={avatars.him} name={names.him || HIS_NAME} onMute={toggleMute} onHangUp={hangUp} onTap={callTap} />}

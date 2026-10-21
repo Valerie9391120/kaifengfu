@@ -41,6 +41,10 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId
         av: m.av,
         text: m.av ? "你换了新头像" : "你换回了默认头像",
       });
+    } else if (m.role === "her" && m.kind === "lot") {
+      // 她从秘戏钱匣里丢进来的一签（见 qx/pool.js）：聊天正中一个方框，不是她那一边的气泡
+      rows.push({ type: "lot", key: m.id, msg: m });
+      if (stoppedId && m.id === stoppedId) rows.push({ type: "stopped", key: "sp-" + m.id, msg: m });
     } else if (m.role === "her") {
       rows.push({
         type: "bubble",

@@ -168,7 +168,7 @@ with sync_playwright() as p:
     ok(len(rcs) == 4 and all(60 < a < 100 for a in asked) and sum(asked) < N - 100, f"四趟为止，这一回话不再多抄（各抄了 {asked} 条，后面的等他下回回完话）")
     ok(all(c["via"] == "claude" and c["body"]["system"][0].get("cache_control") == ONE_HOUR and c["body"]["system"][0]["text"] == body["system"][0]["text"] and rule_of(c).startswith("【抄提要】") and c["body"]["max_tokens"] == 4000
            and c["body"]["model"] == body["model"] and "mcp_servers" not in c["body"] and len(c["body"]["messages"]) == 1 and ask_text(c).rstrip().endswith("抄吧。") and "最长不超过 900 字" in rule_of(c)
-           and c["body"].get("tools") == body.get("tools") and [t["name"] for t in body.get("tools", [])] == ["diary_list", "diary_read", "diary_search", "diary_note"] and c["body"].get("tool_choice") == {"type": "none"} for c in rcs),
+           and c["body"].get("tools") == body.get("tools") and [t["name"] for t in body.get("tools", [])] == ["diary_list", "diary_read", "diary_search", "diary_note", "qx_draw"] and c["body"].get("tool_choice") == {"type": "none"} for c in rcs),
        "抄的每一趟：走的是写日记那条路；名帖那一大段和聊天时寄的一个字不差（缓存接得上），后面跟【抄提要】的规矩；用眼下选的模型，不带 MCP；工具照聊天时一样带着（翻日记的四样，10 月 18 日起），这一回不许调")
     t1 = ask_text(rcs[0])
     ok("〔前面已经抄好的提要" not in t1 and "卿卿：甲旧话第0问" in t1 and "光义：甲旧话第0答" in t1 and "甲：" not in t1 and f"光义：{OLD[asked[0] - 1]['raw'][:9]}" in t1 and f"卿卿：{OLD[asked[0]]['text'][:9]}" not in t1,

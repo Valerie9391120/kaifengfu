@@ -30,6 +30,7 @@ import { needsReply, stoppedAt } from "../src/thread.js";
 import { FOX_CHAT, FOX_TITLE, FOX_DOORS, FOX_TASK, TASK_MAX_ROUNDS, isWakeMark, gapOf, maxOf } from "../src/fox.js";
 import { lastMark, parseWake, nextChase, infoOf, splitWake } from "./plan.js";
 import { TOOLS as GAME_TOOLS, ON_KEY, readOn, gameOn, hasSteps } from "../src/game/jianghu.js";
+import { QX_KEY, QX_TOOLS, QX_NAMES, CUT_QX, QX_FAIL_NOTE, isQxCall, readPool, runQxCalls, qxSection } from "../src/qx/pool.js";
 import { gardenOf, gardenBrief, gardenToy } from "./garden.js";
 import { dressingOf, dressingBrief, dressingToy } from "./dressing.js";
 import { completedToday } from "../vendor/dressing/dressing-engine.ts";
@@ -217,6 +218,8 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   };
   const mcps = mcpsOf(st);
   const thoughts = st.thoughts !== false;
+  // 秘戏钱匣的签库（同手机那头，见 src/qx/pool.js）：名帖里那一段照它拼，他醒着的时候也能抽（这台电脑上替他抽）
+  const qxPool = readPool(store.peek(QX_KEY));
   const { staticText, nowNote } = buildSystem({
     now: new Date(),
     memeList: memes,
@@ -230,6 +233,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     callable: st.callable !== false,
     call: false,
     game,
+    qx: qxSection(qxPool),
   });
   const room = (sure) => roomFor(windowOf(model), staticText.length, maxTokens, sure);
   const tier = tierOf(st.recall, room(false), room(true));
@@ -249,7 +253,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
       system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
       messages: withNowNote(messages, final && lastNote ? woke + "\n\n" + lastNote : woke, at.cache, tail),
     };
-    const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, toys.map((t) => t.tool));
+    const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, QX_TOOLS, toys.map((t) => t.tool));
     if (at.mcp) {
       body.mcp_servers = mcps.map((m, i) => {
         const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
@@ -279,7 +283,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   };
 
   // 他调的那几样里认哪些（翻日记的，再加屋里那几样的）；哪一样归哪个玩的
-  const callNames = toys.length ? new Set([...DIARY_NAMES, ...toys.flatMap((t) => [...t.names])]) : DIARY_NAMES;
+  const callNames = new Set([...DIARY_NAMES, ...QX_NAMES, ...toys.flatMap((t) => [...t.names])]);
   const toyOf = (c) => toys.find((t) => t.is(c)) || null;
 
   // 他这一步回来的整理成对话里的一条（同 App.jsx 的 digestReply）。text 给了就只整理这一截（拆新对话用，钱不再记一遍）
@@ -329,7 +333,11 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
         // 写到长度上限被截断、没停在调工具上：他调的那几样不替他办，各记一行“没翻成 / 没去成”；一样的只留一行（另一双眼睛挑出来的）
         const seen = new Set();
         him.calls = calls.map((c) => {
-          const x = toyOf(c) ? toyOf(c).cut(c) : { ...c, out: CUT_DIARY, err: true, note: "想翻日记，没翻成", card: [] };
+          const x = toyOf(c)
+            ? toyOf(c).cut(c)
+            : isQxCall(c)
+            ? { ...c, out: CUT_QX, err: true, note: QX_FAIL_NOTE, card: [] }
+            : { ...c, out: CUT_DIARY, err: true, note: "想翻日记，没翻成", card: [] };
           if (!x.note) return x;
           if (seen.has(x.note)) return { ...x, note: "" };
           seen.add(x.note);
@@ -367,8 +375,9 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     const step = digest(data, used);
     steps.push(step);
     log(`第 ${i + 1} 步：${data.stop_reason || "?"}，${step.quiet ? "没留话" : "留了话"}`);
-    if (step.him.stop === "tool_use" && step.him.calls && step.him.calls.some((c) => (isDiaryCall(c) || toyOf(c)) && typeof c.out !== "string")) {
+    if (step.him.stop === "tool_use" && step.him.calls && step.him.calls.some((c) => (isDiaryCall(c) || isQxCall(c) || toyOf(c)) && typeof c.out !== "string")) {
       let calls = await runDiaryCalls(step.him.calls, reader, new Date());
+      calls = runQxCalls(calls, qxPool);
       for (const t of toys) calls = await t.run(calls);
       step.him.calls = calls;
       continue;

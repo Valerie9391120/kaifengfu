@@ -56,7 +56,9 @@ export const DIARY_SECTION = `【日记本】
 //   没摆过棋盘的对话不传：名帖一个字不变（原来攒下的缓存照样接得上）。抄提要那一回也照聊天时一样传
 // diary：名帖里带不带【日记本】那一段（DIARY_SECTION）。聊天、抄提要、API 面板算“他记多长”都带（默认）；
 //   写日记那一回不带（那一回不带工具，他翻不了；名帖照 10 月 18 日以前一个字不变）
-export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true, call = false, callable = false, game = null, diary = true }) {
+// qx：名帖里的【秘戏钱匣】那一段（照她的签库现拼，见 qx/pool.js 的 qxSection；签库空着是 ""，名帖一个字不变）。
+//   聊天、抄提要、API 面板算“他记多长”、闹钟叫醒他都传同一段，缓存才接得上；写日记那一回不带工具，不传
+export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true, call = false, callable = false, game = null, diary = true, qx = "" }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const annivLine = a.days === 0 ? `今天是你们的${a.name}纪念日。` : `离你们的${a.name}纪念日还有${a.days}天。`;
@@ -113,7 +115,7 @@ ${memBlock}
 这只是顶上显示的名字。你是谁、她平时怎么叫你，还是按名帖来。
 她也能给自己起昵称，起了的话【此刻】里会写着。那是她给自己挂的名号，注意到了可以接话；平时怎么称呼她，还是按名帖来。
 
-${diary ? DIARY_SECTION + "\n\n" : ""}${game && !game.off ? gameSection(!!game.mixed) + "\n\n" : ""}【回复格式】
+${diary ? DIARY_SECTION + "\n\n" : ""}${qx ? qx + "\n\n" : ""}${game && !game.off ? gameSection(!!game.mixed) + "\n\n" : ""}【回复格式】
 每次回复都按这个顺序：
 ${formatRules}
 
