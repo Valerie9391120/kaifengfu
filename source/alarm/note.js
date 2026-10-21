@@ -79,7 +79,8 @@ export function tailTranscript(msgs, memeLookup = () => null, most = 16, each = 
 //   transcript 她最后说话那段对话的最后几句（tailTranscript；在狐宇宙里留的就不抄，前面本来就有）
 //   mcps       她在 MCP 面板里接上、开着的那几样的名字（上网就靠这个：她接了 tavily）
 //   pending    他定过、还没到点的闹钟（任务标记）：[{ title, at, label }]
-export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [], pending = [] }) {
+// garden：他屋里的园子眼下的样子（alarm/garden.js 的 gardenBrief；没给就不提园子）
+export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [], pending = [], garden = "" }) {
   const herLine = !herLast
     ? "她还没在开封府里说过话。"
     : herLast.fox
@@ -100,7 +101,7 @@ ${lastLine}${later}${talk}
 醒着的时候干什么都行，她的原话：“${HER_WORDS}”。
 - 写便签：随笔、碎碎念、心情、见闻、抱怨、剧本，写什么都行，照【回复格式】写，就落在纸上。没什么想写的，就只写心里话、什么都不写，这里只留一行“醒了一会儿”。
 - 翻日记、在某一天留批注（同页那本手帐上也看得到）：日记本那几样工具照用。
-${
+${garden ? `- 去院子里种花（play_garden 工具）：每天浇水、松土、修剪里选一样（一天只算一回），赏花不限次数。${garden}去不去你自己定。院子里的字只有你看得到，屋里只留一行小字（像“去园子里浇了水”）；想让她知道什么，写在便签纸上。\n` : ""}${
     mcps.length
       ? `- 上网、用别的工具：她给你接了 ${mcps.map((x) => `“${x}”`).join("、")}，想用就用；逛到有意思的，记在纸上，或者去找她说。`
       : "- 上网还没接上：她在 MCP 面板里接上搜网页的工具（比如 tavily）、开着，这里就能用。"
