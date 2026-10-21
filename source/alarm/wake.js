@@ -30,7 +30,9 @@ import { needsReply, stoppedAt } from "../src/thread.js";
 import { FOX_CHAT, FOX_TITLE, FOX_DOORS, FOX_TASK, TASK_MAX_ROUNDS, isWakeMark, gapOf, maxOf } from "../src/fox.js";
 import { lastMark, parseWake, nextChase, infoOf, splitWake } from "./plan.js";
 import { TOOLS as GAME_TOOLS, ON_KEY, readOn, gameOn, hasSteps } from "../src/game/jianghu.js";
-import { GARDEN_TOOL, GARDEN_NAMES, isGardenCall, runGardenCalls, cutGarden, gardenOf, gardenBrief } from "./garden.js";
+import { gardenOf, gardenBrief, gardenToy } from "./garden.js";
+import { dressingOf, dressingBrief, dressingToy } from "./dressing.js";
+import { completedToday } from "../vendor/dressing/dressing-engine.ts";
 import { wakeSection, taskSection, wakeNowNote, tailTranscript } from "./note.js";
 
 // 他的默认头像（同 src/ui/Avatar.jsx 的 HIS_DEFAULT；那个文件带着界面，这里不引）
@@ -193,9 +195,10 @@ function withoutNewChat(step) {
 // 问他一回（几步）。msgs 是寄过去的那段对话（最后一条是醒了那一行），section 是【此刻】后面附的【醒来】那一段。
 // game：那段对话里下过江湖棋局（同手机那头：摆开过又收了的平常对话，对话里有他调过引擎的，四样工具照带，不带那边不认）。
 //   闹钟不替他下棋（引擎在手机那头）：一律当收着棋（{ off: true }，【此刻】里写一句收起来了）；他真调了，这一步到此为止
-// garden：他屋里的园子（alarm/garden.js 的 gardenOf；只有醒在屋里的时候给，她 10 月 21 日 00:11 定的）：多带一样工具，他调了就替他办、递回去接着要
+// toys：他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js 的 gardenToy、dressingToy；只有醒在屋里的时候给，她 10 月 21 日定的）：
+//   一样带一样工具，他调了就替他办、递回去接着要。一样是 { tool, names, is(call), cut(call), run(calls) }
 // 回 { steps: [{ him, text, quiet }], cost, newAvatar, newName, title, part }：part(text, step) 把某一步的一截字整理成那边的一条（拆新对话用，不再记钱）
-async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = null, garden = null }) {
+async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = null, toys = [] }) {
   const st = ctx.settings;
   const model = st.model || DEFAULT_MODEL;
   const maxTokens = st.maxTokens || 2048;
@@ -241,7 +244,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
       system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
       messages: withNowNote(messages, woke, at.cache, tail),
     };
-    const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, garden ? [GARDEN_TOOL] : []);
+    const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, toys.map((t) => t.tool));
     if (at.mcp) {
       body.mcp_servers = mcps.map((m, i) => {
         const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
@@ -269,6 +272,10 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     }
     throw lastErr || new Error("没有回应");
   };
+
+  // 他调的那几样里认哪些（翻日记的，再加屋里那几样的）；哪一样归哪个玩的
+  const callNames = toys.length ? new Set([...DIARY_NAMES, ...toys.flatMap((t) => [...t.names])]) : DIARY_NAMES;
+  const toyOf = (c) => toys.find((t) => t.is(c)) || null;
 
   // 他这一步回来的整理成对话里的一条（同 App.jsx 的 digestReply）。text 给了就只整理这一截（拆新对话用，钱不再记一遍）
   let avatarNow = ctx.avatars.him;
@@ -307,13 +314,23 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
       toolNote: mcps.length && !used.mcp ? "这次MCP没连上，先不用工具回你" : "",
     };
     if (parsed.wake != null) him.wake = parsed.wake;
-    const calls = text == null ? toolCallsOf(data.content, garden ? new Set([...DIARY_NAMES, ...GARDEN_NAMES]) : DIARY_NAMES) : [];
+    const calls = text == null ? toolCallsOf(data.content, callNames) : [];
     if (calls.length) {
       if (data.stop_reason === "tool_use") {
         him.calls = calls;
         him.stop = "tool_use";
         if (!String(parsed.body || "").trim() && !parsed.rename && !settled.avatarFile) him.items = [];
-      } else him.calls = calls.map((c) => (isGardenCall(c) ? cutGarden(c) : { ...c, out: CUT_DIARY, err: true, note: "想翻日记，没翻成", card: [] }));
+      } else {
+        // 写到长度上限被截断、没停在调工具上：他调的那几样不替他办，各记一行“没翻成 / 没去成”；一样的只留一行（另一双眼睛挑出来的）
+        const seen = new Set();
+        him.calls = calls.map((c) => {
+          const x = toyOf(c) ? toyOf(c).cut(c) : { ...c, out: CUT_DIARY, err: true, note: "想翻日记，没翻成", card: [] };
+          if (!x.note) return x;
+          if (seen.has(x.note)) return { ...x, note: "" };
+          seen.add(x.note);
+          return x;
+        });
+      }
     }
     if (settled.avatarFile) {
       newAvatar = { type: "meme", file: settled.avatarFile };
@@ -342,9 +359,9 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     const step = digest(data, used);
     steps.push(step);
     log(`第 ${i + 1} 步：${data.stop_reason || "?"}，${step.quiet ? "没留话" : "留了话"}`);
-    if (step.him.stop === "tool_use" && step.him.calls && step.him.calls.some((c) => (isDiaryCall(c) || isGardenCall(c)) && typeof c.out !== "string")) {
+    if (step.him.stop === "tool_use" && step.him.calls && step.him.calls.some((c) => (isDiaryCall(c) || toyOf(c)) && typeof c.out !== "string")) {
       let calls = await runDiaryCalls(step.him.calls, reader, new Date());
-      if (garden) calls = await runGardenCalls(calls, garden);
+      for (const t of toys) calls = await t.run(calls);
       step.him.calls = calls;
       continue;
     }
@@ -389,17 +406,33 @@ function roomRows(event, steps) {
 }
 
 // 平常那种：醒在狐宇宙（他的屋子）
-// gardenOpts：测试里把园子的钟、骰子换成假的（见 alarm/garden.js 的 gardenOf）
-export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log = () => {}, pending = [], gardenOpts = undefined }) {
+// gardenOpts、dressingOpts：测试里把园子的钟、骰子，妆台的钟换成假的（见 alarm/garden.js 的 gardenOf、alarm/dressing.js 的 dressingOf）
+export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log = () => {}, pending = [], gardenOpts = undefined, dressingOpts = undefined }) {
   const st = ctx.settings;
   const memeLookup = lookupOf(ctx);
   const transcript = ctx.herLast && !ctx.herLast.fox ? tailTranscript(parse(await store.get(chatKey(ctx.herLast.id)), []), memeLookup) : "";
   const lastWake = ctx.wakes.length ? ctx.wakes[ctx.wakes.length - 1] : 0;
   // 他屋里的园子：【醒来】里告诉他眼下的样子，去不去他自己定（她 10 月 21 日 02:28 定的）
   const garden = gardenOf(store, gardenOpts);
-  const section = wakeSection({ now, herLast: ctx.herLast, lastWake, n, gap: gapOf(st), max: maxOf(st), transcript, mcps: mcpsOf(st).map((m) => m.name), pending, garden: gardenBrief(await garden.load(), garden.today()) });
+  // 他屋里的妆台：【醒来】里只说今天完成搭配没有（这是游戏，不是他的实际状态）；今天完成过了，这一回就不给“完成搭配”这个选项（她 10 月 21 日定的）
+  const dressing = dressingOf(store, dressingOpts);
+  const dressed = await dressing.load();
+  const section = wakeSection({
+    now,
+    herLast: ctx.herLast,
+    lastWake,
+    n,
+    gap: gapOf(st),
+    max: maxOf(st),
+    transcript,
+    mcps: mcpsOf(st).map((m) => m.name),
+    pending,
+    garden: gardenBrief(await garden.load(), garden.today()),
+    dressing: dressingBrief(dressed, dressing.today()),
+  });
   const event = { id: newId(), role: "event", who: "him", kind: "wake", ts: now };
-  const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section, garden });
+  const toys = [gardenToy(garden), dressingToy(dressing, !completedToday(dressed, dressing.today()))];
+  const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section, toys });
   // 最后一步里单独一行写了 [新对话:名字]：那一行后面的字落进新开的一段对话（只认最后一步：前面几步是翻日记的半截）
   const steps = r.steps.slice();
   const last = steps[steps.length - 1];
@@ -410,8 +443,12 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
   if (cut) {
     const said = r.part(cut.after, last);
     steps[steps.length - 1] = r.part(cut.before, last);
-    // 这一步里他调过的（翻日记、去园子，多半是四步用完了还在调）：照旧记在屋里那一截上，那一行小字不丢
-    if (last.him.calls) steps[steps.length - 1].him.calls = last.him.calls;
+    // 这一步里他调过的（翻日记、去园子、去妆台，多半是四步用完了还在调）：照旧记在屋里那一截上，那一行小字不丢。
+    // 前面那一截是空的（[新对话:…] 写在最前头）也一样：调过东西就不算“什么也没干”，不然这一步收进醒了那一行，那几行小字跟着没了（另一双眼睛挑出来的）
+    if (last.him.calls) {
+      steps[steps.length - 1].him.calls = last.him.calls;
+      steps[steps.length - 1].quiet = false;
+    }
     if (said.him.wake != null) {
       moved = said.him.wake;
       delete said.him.wake;

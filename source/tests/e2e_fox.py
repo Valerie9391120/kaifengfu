@@ -145,8 +145,10 @@ def run(browser):
         # ---- 闹钟装上，叫醒他一回：他在屋里写了几句 ----
         code, out = alarm(["setup"], home)
         ok(code == 0 and "暗号对上了" in out, "家里的闹钟：拿她设的暗号装上了")
-        # 他先去院子里浇了水（恩师写的园子，见 alarm/garden.js），再写了几句
+        # 他先去院子里浇了水（恩师写的园子，见 alarm/garden.js），又去妆台前换了一身、完成了今天的搭配（alarm/dressing.js），再写了几句
         mock("/__debug/tool-queue?name=play_garden&input=" + quote(json.dumps({"action": "water"})))
+        mock("/__debug/tool-queue?name=play_dressing_room&input=" + quote(json.dumps({"action": "select", "category": "outfit", "itemId": "outfit_black_turtleneck"})))
+        mock("/__debug/tool-queue?name=play_dressing_room&input=" + quote(json.dumps({"action": "complete"})))
         mock("/__debug/reply-queue?text=" + quote("<thinking>她还在上班吧</thinking>\n醒了，翻了会儿书\n[SPLIT]\n[MEME:fox_reading_book.jpg]\n[SPLIT]\n今天风好大\n[WAKE:+2h]"))
         n0 = len(banners())
         code, out = alarm(["wake"], home)
@@ -167,7 +169,11 @@ def run(browser):
         said = pg.evaluate(BUBBLES)
         ok(any("光义醒了" in n for n in notes) and "醒了，翻了会儿书" in said and "今天风好大" in said and not any("WAKE" in x for x in said), f"翻开狐宇宙：醒了那一行是一行小字，他写的是气泡（{notes}，{said}）")
         garden_lines = pg.evaluate("() => [...document.querySelectorAll('.kfs-chat-rows .kfs-diary-note')].map((d) => d.innerText.trim())")
-        ok(garden_lines == ["去园子里浇了水"] and "魏紫" not in pg.evaluate("document.querySelector('.kfs-chat-rows').innerText"), f"他去院子里浇了水：屋里只有一行小字，园子里的字她看不见（她 02:28 定的）（{garden_lines}）")
+        room_text = pg.evaluate("document.querySelector('.kfs-chat-rows').innerText")
+        ok(garden_lines[:1] == ["去园子里浇了水"] and "魏紫" not in room_text, f"他去院子里浇了水：屋里只有一行小字，园子里的字她看不见（她 02:28 定的）（{garden_lines}）")
+        ok(garden_lines[1:] == ["在妆台前换了换行头", "完成了今天的搭配：披发、素面、不熏香；衣柜：高领黑毛衣"] and "初整衣冠" not in room_text and "已加入当前衣柜" not in room_text,
+           f"他去妆台前换了一身、完成了今天的搭配：屋里两行小字，完成的那一行写那一身；妆台上的字（成就、引擎回的话）她看不见（{garden_lines[1:]}）")
+        shot(pg, "4b_room_notes")
 
         # ---- 她在便签纸上留一句 ----
         c0 = len(calls())

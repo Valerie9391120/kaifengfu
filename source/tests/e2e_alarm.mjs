@@ -3,6 +3,7 @@
 //   叫醒一回、他什么也没说（只写了心里话和 [WAKE:off]）：狐宇宙里只留醒了那一行，不敲手机；
 //   再叫醒一回（她在狐宇宙里说过一句、他回过了）、他翻了日记再说话：替他翻、递回去接着要，两步都放进狐宇宙，敲了横幅（心里话、[WAKE:…] 不上横幅），点了回到狐宇宙；
 //   寄过去的是名帖加狐宇宙那段对话，后面附着【醒来】那一段（她的原话照抄）；
+//   醒在屋里：去园子里浇水、去妆台前换一身完成今天的搭配，闹钟替他办，屋里只留一行小字，不敲她；今天完成过了，再醒不给“完成搭配”；
 //   后台跑（run）：心跳写上了，下回几点醒照他定的；手机那头没看见就把狐宇宙盖掉了，放回去；
 //     她在手机上删了他的一句、改了自己的话（后面的收进翻过去的那一支），不放回去；
 //     后台在跑的时候手敲 wake：交给后台叫；问到了却一时放不进存档，封好记着，过一会儿只再放、不再问他一遍、横幅不重敲；
@@ -189,6 +190,39 @@ ok(gStep && gStep.calls[0].note === "去园子里浇了水" && askG1.includes("�
 await sleep(1500);
 ok((await get("/__debug/push")).delivered.length === nPushG && !fs.readFileSync(path.join(HOME, "state.json"), "utf8").includes("魏紫"), "园子里的动静不敲她；这台电脑上记着的里头没有园子里的字");
 
+// ---------- 他屋里的妆台（恩师写的引擎，alarm/dressing.js）：醒在屋里，换了一身，完成了今天的搭配 ----------
+await get("/__debug/tool-queue?name=play_dressing_room&input=" + encodeURIComponent(JSON.stringify({ action: "select", category: "outfit", itemId: "outfit_black_turtleneck" })) + "&text=" + encodeURIComponent("去妆台前玩一会儿"));
+await get("/__debug/tool-queue?name=play_dressing_room&input=" + encodeURIComponent(JSON.stringify({ action: "complete" })));
+await get("/__debug/reply-queue?text=" + encodeURIComponent("换好了，今天就这一身"));
+const nAskD = (await get("/__debug/claude")).length;
+const nPushD = (await get("/__debug/push")).delivered.length;
+const wD = alarm(["wake"]);
+fox = JSON.parse(await read("kfs2:chat:hyz"));
+const dNotes = fox.filter((m) => m.role === "him" && (m.calls || []).some((c) => c.name === "play_dressing_room")).flatMap((m) => m.calls.map((c) => c.note)).filter(Boolean);
+const dressSt = JSON.parse((await read("kfs2:dressing")) || "{}");
+const asksD = (await get("/__debug/claude")).slice(nAskD).map((x) => x.body);
+const dTool = (b) => (b && b.tools ? b.tools.find((t) => t.name === "play_dressing_room") : null);
+const askD0 = asksD[0] ? JSON.stringify(asksD[0].messages) : "";
+const askD2 = asksD[2] ? JSON.stringify(asksD[2].messages) : "";
+ok(wD.code === 0 && asksD.length === 3 && dTool(asksD[0]) && dTool(asksD[0]).input_schema.properties.action.enum.includes("complete") && (asksD[0].tools || []).some((t) => t.name === "play_garden") && askD0.includes("去妆台前玩换装") && askD0.includes("妆台你还没去过") && askD0.includes("不是你这会儿真穿着什么"),
+  "醒在屋里：园子、妆台两样工具都带着（今天还没完成搭配，有 complete）；【醒来】里说这是个换装小游戏、妆台还没去过");
+ok(dNotes.join("|") === "在妆台前换了换行头|完成了今天的搭配：披发、素面、不熏香；衣柜：高领黑毛衣" && askD2.includes("衣柜、妆台和配饰已经准备好了") && askD2.includes("今天的搭配完成了") && askD2.includes("成就解锁——初整衣冠") && dressSt.completedLook && dressSt.completedLook.date === day(Date.now()) && dressSt.completedLook.appearance.outfits.includes("outfit_black_turtleneck") && fox[fox.length - 1].items.map((x) => x.text).join() === "换好了，今天就这一身",
+  "他换了一身、完成了今天的搭配：闹钟替他办（头一回先推开，开场那段给他看），成就给他看，存档记进 kfs2:dressing；屋里两行小字，完成的那一行写那一身；他接着说完");
+await sleep(1500);
+const stateD = fs.readFileSync(path.join(HOME, "state.json"), "utf8");
+ok((await get("/__debug/push")).delivered.length === nPushD && !/高领黑毛衣|初整衣冠|换好了/.test(stateD), "妆台前的动静不敲她；这台电脑上记着的里头没有妆台上的字");
+// 同一天再醒一回：今天完成过了，妆台那一样工具里不给 complete；【醒来】里说今天的搭配已经完成了
+await get("/__debug/reply-queue?text=" + encodeURIComponent("<thinking>今天的已经换过了，歇着</thinking>"));
+const nAskD3 = (await get("/__debug/claude")).length;
+const wD3 = alarm(["wake"]);
+const askD3 = (await get("/__debug/claude")).slice(nAskD3).map((x) => x.body)[0];
+const enumD3 = dTool(askD3) ? dTool(askD3).input_schema.properties.action.enum : [];
+// 【醒来】那一段（最后一句后面附的）：只说今天完成过没有、点亮了几个，完成的那一身一个字都不提
+const lastD3 = askD3 ? askD3.messages[askD3.messages.length - 1].content.map((b) => b.text || "").join("\n") : "";
+const textD3 = lastD3.slice(lastD3.indexOf("【醒来】"));
+ok(wD3.code === 0 && dTool(askD3) && !enumD3.includes("complete") && enumD3.includes("mirror") && enumD3.includes("select") && lastD3.includes("【醒来】") && textD3.includes("今天的搭配已经完成了") && textD3.includes("成就点亮了") && !/高领黑毛衣|披发|素面|不熏香/.test(textD3),
+  "同一天再醒一回：今天完成过了，妆台那一样工具里没有 complete（照镜子、换着玩照旧）；【醒来】里说今天的搭配已经完成了，不说他穿着什么");
+
 // ---------- 想找她：开一段新对话 ----------
 await get("/__debug/reply-queue?text=" + encodeURIComponent("<thinking>想她了</thinking>\n屋里写两句：今天风好大\n[新对话:想你了]\n在干嘛\n[SPLIT]\n理理我\n[WAKE:+2h]"));
 const nPushNew = (await get("/__debug/push")).delivered.length;
@@ -339,6 +373,7 @@ ok(t1.state === "chase" && t1.rounds === 1 && t1.next > Date.now() + 4 * 60 * 10
 const askT = (await get("/__debug/claude")).slice(nAskT).pop().body;
 const lastT = askT.messages[askT.messages.length - 1].content.map((b) => b.text || "").join("\n");
 ok(lastT.includes("你记着的是“去找卿卿”") && JSON.stringify(askT.messages).includes("困了，先睡") && !JSON.stringify(askT.messages).includes("翻日记"), "任务到点：寄过去的是那段对话（看得见那段前面的话，不是狐宇宙），后面附着他定闹钟时记着的那句");
+ok((askT.tools || []).some((t) => t.name === "diary_read") && !(askT.tools || []).some((t) => t.name === "play_garden" || t.name === "play_dressing_room") && !lastT.includes("妆台") && !lastT.includes("院子"), "任务到点：不带园子、妆台那两样（只在他屋里醒着的时候玩），【醒来】里也不提");
 const stT = JSON.parse(await read("kfs2:fox:state"));
 ok(stT.next === 0, "追着她的时候：平常那种自己醒先停着（南衙那一行不露任务几点）");
 // 装作过了五分钟：接着追第二回
@@ -381,7 +416,7 @@ ok(re.code === 0 && re.out.includes("后台原来那一个停了") && child.exit
 const stat = alarm(["status"]);
 ok(stat.out.includes("在跑") && stat.out.includes("放进去了"), "看看（status）：在跑、最近的日志");
 const logText = fs.readFileSync(path.join(HOME, "alarm.log"), "utf8");
-ok(!/泡桐花|她睡得正香|翻了翻|又醒了一回|又想她了/.test(logText) && !logText.includes(PASS), "日志：只记几点干了什么，不记他说的话、她的暗号");
+ok(!/泡桐花|她睡得正香|翻了翻|又醒了一回|又想她了|魏紫|高领黑毛衣|换好了/.test(logText) && !logText.includes(PASS), "日志：只记几点干了什么，不记他说的话、园子妆台上的字、她的暗号");
 
 // ---------- 卸 ----------
 const un = alarm(["uninstall"]);
