@@ -43,7 +43,6 @@ export const OWED_MS = 3 * DAY_MS;
 export const TASK_STALE = 7 * DAY_MS; // 定了七天还没到点的任务（写的钟点认错了之类）：不办了
 export const TASK_KEEP = 2 * DAY_MS; // 办完的任务留两天再删（手机那头不会把它当成新的再记一回）
 export const TASK_LATE = 15 * 60 * 1000; // 闹钟醒过来的时候过点超过这么久的任务：睡着的时候错过的，不补
-export const TASK_PLACED = 2 * 60 * 1000; // 他那一条放进对话的时候离到点不到这么久（或者已经过了）：她回来的时候已经到点了，不办
 export const CHASE_MAX = DAY_MS; // 追了一整天她还没回：不追了
 const MOST_AHEAD = 7 * DAY_MS; // 他写的最远认到七天以后
 
@@ -238,7 +237,8 @@ export function planTasks({ now, tasks = [], info, minGap = TASK_MIN_MS, resumeA
         end("定了七天还没办");
         continue;
       }
-      if (t.placed && p.at < t.placed + TASK_PLACED) {
+      // 他那一条放进对话的时候已经过了点（回话在信箱里搁着，她回来才放进来）：她都回来了，不办
+      if (t.placed && p.at <= t.placed) {
         end("放进对话的时候已经到点了");
         continue;
       }

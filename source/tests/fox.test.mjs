@@ -343,7 +343,9 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   // 他那一条放进对话的时候已经到点了（回话在信箱里搁着，她回来才放进来）：她都回来了，不办
   const placedLate = planTasks({ now: at(15, 10), tasks: [{ ...t1, placed: at(15, 5) }], info: info({ c1 }) });
   const placedNow = planTasks({ ...base, tasks: [{ ...t1, placed: at(14, 1) }], info: info({ c1 }) });
-  ok(placedLate.changes[0] && placedLate.changes[0].state === "void" && placedNow.task && placedNow.due === at(15, 0), "任务：放进对话的时候已经到点了，不办；当场放进来的照常等着");
+  const placedJust = planTasks({ ...base, tasks: [{ ...t1, raw: "+1m", placed: at(14, 0) + 1000 }], info: info({ c1 }) });
+  ok(placedLate.changes[0] && placedLate.changes[0].state === "void" && placedNow.task && placedNow.due === at(15, 0) && placedJust.task && !placedJust.changes.length,
+    "任务：放进对话的时候已经过了点，不办；当场放进来的照常等着（定得再近，一分钟以后的也一样）");
   // 信箱里取出来的那一条（记着是哪一回 job，还没有编号）：认 job
   const tj = { key: "kfs2:fox:task:JOB1", chat: "c3", job: "JOB1", raw: "+1h", set: at(14, 0) };
   const rj = planTasks({ ...base, tasks: [tj], info: info({ c3: [her("h1", at(13, 59)), him("gx", at(14, 0), { job: "JOB1" })] }) });
