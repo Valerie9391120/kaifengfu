@@ -31,6 +31,7 @@
 // =====================================================
 import { NAME_MARK } from "./names.js";
 import { pad } from "./days.js";
+import { lotText } from "./qx/pool.js";
 
 export const RECAP_KEY = "kfs2:recap:";
 const RECAP_KEEP = 6; // 单子里最多留几份
@@ -106,6 +107,7 @@ export function thick(m) {
     // 文档的全文跟着这一行整份寄过去（见 docs.js）。字数发的时候记在这一行上；没记的按两千字算
     if (m.kind === "doc") return THICK.row + 80 + (Number(m.chars) > 0 ? Number(m.chars) : THICK.doc);
     if (m.kind === "voice") return THICK.row + 30 + len(m.text);
+    if (m.kind === "lot") return THICK.row + len(lotText(m)); // 秘戏钱匣里丢进来的一签（见 qx/pool.js）
     return THICK.row + len(m.text);
   }
   // 他的：寄回去的是 raw（心里话不寄）。他换了头像的，后面跟一行提示带着图。
@@ -123,6 +125,7 @@ export function askThick(m) {
     if (m.kind === "photo") return THICK.row + THICK.photo;
     if (m.kind === "meme") return THICK.row + 30;
     if (m.kind === "doc") return THICK.row + 80 + Math.min(DOC_HEAD, Number(m.chars) > 0 ? Number(m.chars) : THICK.doc);
+    if (m.kind === "lot") return THICK.row + len(lotText(m));
     return THICK.row + Math.min(ROW_HEAD, len(m.text)) + (m.kind === "voice" ? 12 : 0);
   }
   const items = Array.isArray(m.items) && m.items.length ? m.items : null;

@@ -100,7 +100,7 @@ def run(browser):
 
     # ---- 手绘的那一套没被带歪 ----
     if len(opened) == 4 and opened[3]:
-        ok(all(r["size"] == [20, 20] and r["fill"] == "none" and r["stroke"] == d["color"] for r in d["rows"]) and len(d["rows"]) == 6 and d["close"]["size"] == [16, 16] and d["close"]["fill"] == "none" and d["close"]["stroke"] != "none",
+        ok(all(r["size"] == [20, 20] and r["fill"] == "none" and r["stroke"] == d["color"] for r in d["rows"]) and len(d["rows"]) == 7 and d["close"]["size"] == [16, 16] and d["close"]["fill"] == "none" and d["close"]["stroke"] != "none",
            f"手绘的那一套照旧：南衙菜单里六行的图标（江湖棋局那一颗骰子、邸报那一张报、狐宇宙那个狐狸脑袋也是）还是 20、描线不填色，右上角的叉还是 16（{[r['size'][0] for r in d['rows']]}，{d['close']['size'][0]}）")
     else:
         ok(False, "手绘的那一套照旧（南衙的菜单没打开，没看成）")

@@ -14,3 +14,8 @@
 - 代码里没有任何私人内容。人设、记忆、聊天、日记、照片，全部在手机上先用暗号加密，云端只存乱码。
 - Anthropic 的 key 存在 Supabase 的密钥柜里，网页和手机上都没有。
 - 库房每一行都绑着账号，只有登录后的本人能读写；注册通道关着。
+
+## 出处
+
+- 南衙里的秘戏钱匣：签的分法和签 Based on Ruota della Fortuna by Copper (29-Cu)（https://github.com/29-Cu/routa-della-fortuna）。签库不在这个仓库里，在她手机上。
+- 锦盒里的铜钱声：Kenney 的 RPG Audio、Vinrax 的 Coin Drop（OpenGameArt），都是 CC0。

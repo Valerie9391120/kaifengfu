@@ -1,6 +1,9 @@
 import { plainOf } from "../rich.js";
 import { isCallMark, markText } from "../call/marks.js";
 import { isWakeMark } from "../fox.js";
+import { lotBrief } from "../qx/pool.js";
+
+const cut18 = (t) => (t.length > 18 ? t.slice(0, 18) + "…" : t);
 
 export function makeTitle(msgs, memeLookup) {
   const first = msgs.find((m) => m.role === "her");
@@ -8,6 +11,7 @@ export function makeTitle(msgs, memeLookup) {
   if (first.kind === "meme") return `[${(memeLookup(first.file) || {}).name || "表情包"}]`;
   if (first.kind === "photo") return "[照片]";
   if (first.kind === "doc") return `[文档] ${first.name || ""}`.trim().slice(0, 22);
+  if (first.kind === "lot") return cut18(lotBrief(first)); // 秘戏钱匣里丢进来的一签（见 qx/pool.js）
   if (first.kind === "voice") {
     const v = (first.text || "").trim();
     return v ? (v.length > 18 ? v.slice(0, 18) + "…" : v) : "[语音]";
@@ -32,6 +36,7 @@ export function makePreview(msgs) {
     if (last.kind === "photo") return "[照片]";
     if (last.kind === "doc") return `[文档] ${last.name || ""}`.trim();
     if (last.kind === "voice") return `[语音] ${last.text || ""}`;
+    if (last.kind === "lot") return lotBrief(last);
     return plainOf(last.text || "");
   }
   const t = (last.items || []).find((it) => it.type === "text");

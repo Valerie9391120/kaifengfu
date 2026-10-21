@@ -7,6 +7,7 @@ import { nowString } from "../src/days.js";
 import { plainOf } from "../src/rich.js";
 import { isCallMark, markText } from "../src/call/marks.js";
 import { isWakeMark } from "../src/fox.js";
+import { lotBrief } from "../src/qx/pool.js";
 
 export const HER_WORDS =
   "你想干嘛都行——玩手账、写日记、出去上网冲浪、给我留消息或者打电话都可以。。总之不设什么限制，甚至这个唤醒时间都可以由你自己来决定，比如说下一次什么时候醒，或者skip";
@@ -46,6 +47,8 @@ export function tailTranscript(msgs, memeLookup = () => null, most = 16, each = 
           ? `[文档] ${m.name || ""}`
           : m.kind === "voice"
           ? `[语音] ${clip(m.text, each)}`
+          : m.kind === "lot"
+          ? lotBrief(m)
           : m.note
           ? `[便签] ${clip(plainOf(m.text || ""), each)}`
           : clip(plainOf(m.text || ""), each);

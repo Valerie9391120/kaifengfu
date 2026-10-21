@@ -168,6 +168,54 @@ function fakeDiary(body) {
   return null;
 }
 
+// 秘戏钱匣里他自己抽签的假的那边的我（tests/e2e_qx.py 用；带着 qx_draw 的时候，见 src/qx/pool.js）。照她最后说的那句话：
+//   “抽一签”：先说“我抽一签。”，再调 qx_draw（每个维度都抽）
+//   “只抽 某某”：调 qx_draw，dims 只写那一样
+//   “连抽两签”：抽一回，结果递回来再抽一回，再递回来才说完
+//   “抽到一半”：说“抽着抽着”、调了 qx_draw，可回话停在 max_tokens 上（写到长度上限被截断）：开封府不该替他抽
+//   结果递回来：说“（测试抽签）”加结果的头两行
+//   打电话的时候（tool_choice 是 none）、别的话、递回来的不是抽签的结果：回 null（交给别人）
+function fakeQx(body) {
+  if (body.tool_choice && body.tool_choice.type === "none") return null;
+  const msgs = body.messages || [];
+  const blocksOf = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || []);
+  const lastUser = msgs[msgs.length - 1];
+  const results = lastUser && lastUser.role === "user" ? blocksOf(lastUser).filter((b) => b.type === "tool_result") : [];
+  let herAt = -1;
+  let herSay = "";
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role !== "user") continue;
+    const t = blocksOf(msgs[i])
+      .filter((b) => b.type === "text" && !b.text.startsWith("【") && !b.text.startsWith("[开封府提示"))
+      .map((b) => b.text)
+      .join(" / ");
+    if (t.trim()) {
+      herAt = i;
+      herSay = t;
+      break;
+    }
+  }
+  const used = msgs.slice(herAt + 1).filter((m) => m.role === "assistant").flatMap((m) => blocksOf(m).filter((b) => b.type === "tool_use"));
+  const usage = { input_tokens: 60, cache_creation_input_tokens: 0, cache_read_input_tokens: 9000, output_tokens: 50 };
+  const use = (input) => ({ type: "tool_use", id: "toolu_qx_" + ++toolSeq, name: "qx_draw", input });
+  const step = (text, call) => ({ status: 200, json: { model: body.model, stop_reason: "tool_use", content: (text ? [{ type: "text", text }] : []).concat([call]), usage } });
+  const say = (text) => ({ status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text }], usage } });
+  const text = (r) => String((r && (typeof r.content === "string" ? r.content : JSON.stringify(r.content))) || "");
+  if (results.length) {
+    const ids = new Set(used.filter((u) => u.name === "qx_draw").map((u) => u.id));
+    if (!results.some((r) => ids.has(r.tool_use_id))) return null;
+    if (/连抽两签/.test(herSay) && used.length < 2) return step("再抽一签。", use({}));
+    if (replyQueue.length) return say(replyQueue.shift());
+    return say(`（测试抽签）${results[0].is_error ? "没抽成：" : ""}${text(results[0]).split("\n").slice(0, 2).join(" ")}`);
+  }
+  if (/抽到一半/.test(herSay)) return { status: 200, json: { model: body.model, stop_reason: "max_tokens", content: [{ type: "text", text: "抽着抽着" }, use({})], usage } };
+  if (/连抽两签/.test(herSay)) return step("先抽一签。", use({}));
+  const only = /只抽\s*(\S+)/.exec(herSay);
+  if (only) return step("我只抽这一样。", use({ dims: [only[1]] }));
+  if (/抽一签/.test(herSay)) return step("我抽一签。", use({}));
+  return null;
+}
+
 // 闲笔集里的手帐（同页那一本）：她在「交给光义」那一屏点了发送（tests/e2e_tongye.py 用，见 src/tongye/host.js 的 tyArrangeAsk）。
 // 跟在名帖后面的那段规矩是【排手帐】开头的。照寄来的编号排：原话挑头两句（再编一个不存在的，开封府该认不出），
 // 头一张照片当主照片、第二三张当双联照（有的话），再编一张不存在的当截图；留一条批注贴在主照片旁边。她说的“想要”抄进正文（看得出带过来了）。
@@ -243,6 +291,11 @@ function fakeAnthropic(body, beta, via) {
   if (Array.isArray(body.tools) && body.tools.some((t) => t && TOYS.has(t.name))) {
     const g = fakeGarden(body);
     if (g) return g;
+  }
+  // 秘戏钱匣里他自己抽签（带着 qx_draw，见 src/qx/pool.js）
+  if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "qx_draw")) {
+    const q = fakeQx(body);
+    if (q) return q;
   }
   // 翻日记（带着那几样工具，见 src/diaryTools.js）：假的那边的我翻日记
   if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "diary_read")) {
