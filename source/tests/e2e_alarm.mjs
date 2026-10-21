@@ -170,6 +170,25 @@ const nAskGap = (await get("/__debug/claude")).length;
 const again2 = alarm(["wake"], { KFS_ALARM_MANUAL_GAP: "120000" });
 ok(again2.out.includes("他刚醒过") && (await get("/__debug/claude")).length === nAskGap, "刚叫完又敲一遍 wake：两分钟以内不再叫（不多花一回钱）");
 
+// ---------- 他屋里的园子（恩师写的引擎，alarm/garden.js）：醒在屋里，去院子里浇了水 ----------
+await get("/__debug/tool-queue?name=play_garden&input=" + encodeURIComponent(JSON.stringify({ action: "water" })) + "&text=" + encodeURIComponent("去院子里看看"));
+await get("/__debug/reply-queue?text=" + encodeURIComponent("浇过水了，叶子绿绿的"));
+const nAskG = (await get("/__debug/claude")).length;
+const nPushG = (await get("/__debug/push")).delivered.length;
+const wG = alarm(["wake"]);
+fox = JSON.parse(await read("kfs2:chat:hyz"));
+const gStep = fox.find((m) => m.role === "him" && (m.calls || []).some((c) => c.name === "play_garden"));
+const gardenSt = JSON.parse((await read("kfs2:garden")) || "{}");
+const asksG = (await get("/__debug/claude")).slice(nAskG).map((x) => x.body);
+const askG0 = asksG[0] ? JSON.stringify(asksG[0].messages) : "";
+const askG1 = asksG[1] ? JSON.stringify(asksG[1].messages) : "";
+ok(wG.code === 0 && asksG.length === 2 && (asksG[0].tools || []).some((t) => t.name === "play_garden") && askG0.includes("去院子里种花") && askG0.includes("还没进去过"),
+  "醒在屋里：带着园子那一样工具，【醒来】里告诉他园子眼下的样子（还没进去过）");
+ok(gStep && gStep.calls[0].note === "去园子里浇了水" && askG1.includes("缘识") && askG1.includes("浇了一圈水") && gardenSt.currentPlant === "peony_weizi" && gardenSt.careDays === 1 && fox[fox.length - 1].items.map((x) => x.text).join() === "浇过水了，叶子绿绿的",
+  "他去院子里浇了水：闹钟替他办（头一回先推开园门，那首诗给他看），存档记进 kfs2:garden，屋里一行小字“去园子里浇了水”，他接着说完");
+await sleep(1500);
+ok((await get("/__debug/push")).delivered.length === nPushG && !fs.readFileSync(path.join(HOME, "state.json"), "utf8").includes("魏紫"), "园子里的动静不敲她；这台电脑上记着的里头没有园子里的字");
+
 // ---------- 想找她：开一段新对话 ----------
 await get("/__debug/reply-queue?text=" + encodeURIComponent("<thinking>想她了</thinking>\n屋里写两句：今天风好大\n[新对话:想你了]\n在干嘛\n[SPLIT]\n理理我\n[WAKE:+2h]"));
 const nPushNew = (await get("/__debug/push")).delivered.length;

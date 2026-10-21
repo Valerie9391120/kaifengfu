@@ -24,6 +24,29 @@ let claudeRelease = null; // 正压着的那一回：叫它现在就答
 // 测试用：排好的回话（tests/look.py 截图用）。平常的话按次序一句一句取，取完了照旧回“收到：…”；
 // 写日记、抄提要那几种不取。/__debug/reply-queue?text=… 往后排一句，/__debug/reset 清空
 const replyQueue = [];
+// 他屋里的园子（alarm/garden.js）：/__debug/tool-queue?name=play_garden&input={"action":"water"}&text=先去看看花 往后排一步调工具。
+// 带着那一样工具的那一回照排好的调；结果递回来以后，还有排着的接着调，没有了照 reply-queue 说（没排就说一句“（测试园子）结果的头一行”）
+const toolQueue = [];
+function fakeGarden(body) {
+  const msgs = body.messages || [];
+  const blocksOf = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || []);
+  const lastUser = msgs[msgs.length - 1];
+  const results = lastUser && lastUser.role === "user" ? blocksOf(lastUser).filter((b) => b.type === "tool_result") : [];
+  const usage = { input_tokens: 60, cache_creation_input_tokens: 0, cache_read_input_tokens: 9000, output_tokens: 50 };
+  const step = (q) => ({ status: 200, json: { model: body.model, stop_reason: "tool_use", content: (q.text ? [{ type: "text", text: q.text }] : []).concat([{ type: "tool_use", id: "toolu_garden_" + ++toolSeq, name: q.name, input: q.input }]), usage } });
+  const say = (text) => ({ status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text }], usage } });
+  if (results.length) {
+    const prev = msgs[msgs.length - 2];
+    const uses = prev ? blocksOf(prev).filter((b) => b.type === "tool_use") : [];
+    if (!uses.some((u) => u.name === "play_garden")) return null;
+    if (toolQueue.length) return step(toolQueue.shift());
+    if (replyQueue.length) return say(replyQueue.shift());
+    const r = results[0];
+    return say("（测试园子）" + String(typeof r.content === "string" ? r.content : JSON.stringify(r.content)).split("\n")[0].slice(0, 40));
+  }
+  if (toolQueue.length) return step(toolQueue.shift());
+  return null;
+}
 // 是不是叫他抄前情提要的那两种（抄一段、并几段，见 src/prompt/recap.js）：跟在名帖后面的那段规矩是这两个标题开头的
 const recapRuleOf = (body) => (Array.isArray(body.system) ? body.system.map((x) => x.text || "").find((t) => t.startsWith("【抄提要】") || t.startsWith("【并提要】")) : "") || "";
 
@@ -214,6 +237,11 @@ function fakeAnthropic(body, beta, via) {
   // 排手帐（不带工具，跟在名帖后面的是【排手帐】那段规矩）
   const jz = fakeArrange(body);
   if (jz) return jz;
+  // 他屋里的园子（带着 play_garden，见 alarm/garden.js）：排好了要他调的，照排好的调
+  if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "play_garden")) {
+    const g = fakeGarden(body);
+    if (g) return g;
+  }
   // 翻日记（带着那几样工具，见 src/diaryTools.js）：假的那边的我翻日记
   if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "diary_read")) {
     const d = fakeDiary(body);
@@ -476,6 +504,15 @@ const server = http.createServer(async (req, res) => {
       claudeHoldKind = url.searchParams.get("kind") || "";
       return send(res, 200, { ok: true });
     }
+    // 往后排一步调园子的工具（见上面 toolQueue）
+    if (url.pathname === "/__debug/tool-queue") {
+      let input = {};
+      try {
+        input = JSON.parse(url.searchParams.get("input") || "{}");
+      } catch (e) {}
+      toolQueue.push({ name: url.searchParams.get("name") || "play_garden", input, text: url.searchParams.get("text") || "" });
+      return send(res, 200, { ok: true, queued: toolQueue.length });
+    }
     // 往后排一句回话（截图用，见上面 replyQueue）
     if (url.pathname === "/__debug/reply-queue") {
       replyQueue.push(url.searchParams.get("text") || "");
@@ -557,6 +594,7 @@ const server = http.createServer(async (req, res) => {
       claudeFail = null;
       kvFail = { times: 0, key: "" };
       replyQueue.length = 0;
+      toolQueue.length = 0;
       pushReset();
       voiceReset();
       return send(res, 200, { ok: true });

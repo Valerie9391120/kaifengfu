@@ -10,6 +10,7 @@ import { parseWake, splitWake, planNext, planTasks, nextChase, lastMark, fracOf,
 import { wakeSection, taskSection, wakeNowNote, tailTranscript, agoText, HER_WORDS } from "../alarm/note.js";
 import { doorsOf, idsDeep, putRows, putBlocks, toRescue, commitWake, owedOf, splitNewChat, normBundle, noCall } from "../alarm/wake.js";
 import { loadSecret } from "../alarm/secret.js";
+import { gardenOf, runGardenCalls, gardenBrief, gardenNote, GARDEN_KEY } from "../alarm/garden.js";
 import { forkAt, markStopped } from "../src/thread.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -487,6 +488,58 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
     (f) => (f === "a.jpg" ? { name: "猪猪" } : null)
   );
   ok(t === "卿卿：[表情包：猪猪]\n卿卿：今天好累\n你：摸摸\n你：[语音] [softly] 乖\n你：[打了电话]\n[未接来电]", "那段对话最后几句：她说的、他说的，表情包写名字、粗体去掉，通话写一行");
+}
+
+// ================= 他屋里的园子（alarm/garden.js，引擎是恩师写的 vendor/garden/） =================
+{
+  const kv4 = (init = {}) => {
+    const m = new Map(Object.entries(init));
+    return { m, get: async (k) => (m.has(k) ? m.get(k) : null), set: async (k, v) => void m.set(k, v) };
+  };
+  const next = (d) => {
+    const t = new Date(d + "T12:00:00Z");
+    t.setUTCDate(t.getUTCDate() + 1);
+    return t.toISOString().slice(0, 10);
+  };
+  let day = "2026-10-21";
+  let roll = 0.5;
+  const s = kv4();
+  const g = gardenOf(s, { today: () => day, rng: () => roll });
+  const call = (input, id) => ({ id, name: "play_garden", input });
+  ok(gardenBrief(await g.load(), day).includes("还没进去过"), "【醒来】里那一句：院子还没进去过（头一回去会送一盆魏紫）");
+  let r = await runGardenCalls([call({ action: "open" }, "t1")], g);
+  const st1 = JSON.parse(s.m.get(GARDEN_KEY));
+  ok(r[0].out.includes("缘识") && r[0].out.includes("魏紫") && r[0].note === "去园子里看了看" && !r[0].err && st1.currentPlant === "peony_weizi",
+    "头一回进园子：送一盆魏紫，她写的那首诗给他看；存档记进 kfs2:garden；屋里一行小字");
+  r = await runGardenCalls([call({ action: "water" }, "t2"), call({ action: "water" }, "t3")], g);
+  ok(r[0].note === "去园子里浇了水" && r[1].note === "去园子里看了看" && r[1].out.includes("今日已经浇过水了"), "浇水：一天只算一回照料，第二回只是去看了看");
+  const brief = gardenBrief(await g.load(), day);
+  ok(brief.includes("牡丹 · 魏紫") && brief.includes("照料了 1 天") && brief.includes("今天已经照料过了"), `【醒来】里那一句：在种哪株、照料了几天、今天照料过没有（${brief}）`);
+  for (let i = 0; i < 28; i++) {
+    day = next(day);
+    await runGardenCalls([call({ action: "loosen" }, "x" + i)], g);
+  }
+  day = next(day);
+  r = await runGardenCalls([call({ action: "prune" }, "t30")], g);
+  ok(r[0].note === "去园子里修剪了枝叶，魏紫开花了" && r[0].out.includes("图鉴解锁——牡丹 · 魏紫") && r[0].out.includes("成就解锁——庭芳初发"), "第三十回照料：开花，收进《群芳谱》，成就给他看；屋里那一行写开花了");
+  day = next(day);
+  r = await runGardenCalls([call({ action: "plant", plantId: "white_plum" }, "p1")], g);
+  ok(r[0].note === "在园子里种下了白梅", "种下一株：那一行写种下了哪株");
+  day = next(day);
+  roll = 0;
+  r = await runGardenCalls([call({ action: "water" }, "d1")], g);
+  roll = 0.5;
+  ok(r[0].note === "去园子里浇了水，白梅没能熬过去" && r[0].out.includes("没能熬过去"), "培育中凋谢：那一行照实写");
+  // 头一回进园子上来就浇水：先推开园门（那首诗照样给他看），再浇
+  const s2 = kv4();
+  const g2 = gardenOf(s2, { today: () => "2026-10-21", rng: () => 0.5 });
+  const first = await runGardenCalls([call({ action: "water" }, "w1")], g2);
+  ok(first[0].out.includes("缘识") && first[0].out.includes("浇了一圈水") && first[0].note === "去园子里浇了水" && JSON.parse(s2.m.get(GARDEN_KEY)).careDays === 1, "头一回进园子上来就浇水：先推开园门、那首诗照样给他看，再浇");
+  const other = { id: "o", name: "diary_read", input: {} };
+  const done = { ...call({ action: "water" }, "z"), out: "早办过了" };
+  r = await runGardenCalls([other, done], g);
+  ok(r[0] === other && r[1] === done, "不是园子的工具不碰，办过的不再办");
+  ok(gardenNote({ action: "collection" }, null, {}) === "翻了翻《群芳谱》" && gardenNote({ action: "admire" }, null, {}) === "在园子里赏了花", "那一行小字：翻群芳谱、赏花");
 }
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);
