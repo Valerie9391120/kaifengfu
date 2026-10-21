@@ -33,11 +33,14 @@ import { TOOLS as GAME_TOOLS, ON_KEY, readOn, gameOn, hasSteps } from "../src/ga
 import { gardenOf, gardenBrief, gardenToy } from "./garden.js";
 import { dressingOf, dressingBrief, dressingToy } from "./dressing.js";
 import { completedToday } from "../vendor/dressing/dressing-engine.ts";
-import { wakeSection, taskSection, wakeNowNote, tailTranscript } from "./note.js";
+import { wakeSection, taskSection, wakeNowNote, tailTranscript, LAST_STEP_NOTE } from "./note.js";
 
 // 他的默认头像（同 src/ui/Avatar.jsx 的 HIS_DEFAULT；那个文件带着界面，这里不引）
 const HIS_DEFAULT = { type: "meme", file: "fox_reading_book.jpg" };
-const MOST_STEPS = 4; // 一回醒着最多接着要几步（他翻了日记，结果递回去接着说）
+const MOST_STEPS = 4; // 一回醒着最多接着要几步（他翻了日记，结果递回去接着说）：任务到点那一回照这个
+// 醒在屋里那一回最多几步（她 10 月 21 日 20:11 定的）：屋里有了园子、妆台，四步不够玩——头一回真醒，推门、浇水、翻衣柜、赏花，
+// 四步就用完了，衣服没换上，便签纸上一个字没留
+export const ROOM_STEPS = 12;
 const CUT_DIARY = "没翻：这一回的回话没写完整（多半是写到长度上限被截断了），日记没替你翻。要翻的话重新调一次。"; // 同 App.jsx
 const mcpSlug = (name, i) => (name || "mcp").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `mcp-${i}`; // 同 App.jsx
 const chatKey = (id) => "kfs2:chat:" + id;
@@ -197,8 +200,9 @@ function withoutNewChat(step) {
 //   闹钟不替他下棋（引擎在手机那头）：一律当收着棋（{ off: true }，【此刻】里写一句收起来了）；他真调了，这一步到此为止
 // toys：他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js 的 gardenToy、dressingToy；只有醒在屋里的时候给，她 10 月 21 日定的）：
 //   一样带一样工具，他调了就替他办、递回去接着要。一样是 { tool, names, is(call), cut(call), run(calls) }
+// most：最多几步（调一回工具、拿到结果接着往下说算一步）；lastNote：到了最后一步（前面一步调了工具，接着要的那一回）附在【醒来】后面的提醒，没给就不提醒
 // 回 { steps: [{ him, text, quiet }], cost, newAvatar, newName, title, part }：part(text, step) 把某一步的一截字整理成那边的一条（拆新对话用，不再记钱）
-async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = null, toys = [] }) {
+async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = null, toys = [], most = MOST_STEPS, lastNote = "" }) {
   const st = ctx.settings;
   const model = st.model || DEFAULT_MODEL;
   const maxTokens = st.maxTokens || 2048;
@@ -236,13 +240,14 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   mcps.forEach((m, i) => {
     slugs[mcpSlug(m.name, i)] = m.name;
   });
-  const bodyFor = (list, at) => {
+  // final：这是最后一步，【醒来】后面附上提醒（附在缓存记号后面，前面那些照样读缓存）
+  const bodyFor = (list, at, final = false) => {
     const { messages, tail } = buildMessages(list, ctx.avatars, memeLookup, imgLookup, thumbLookup, docLookup, { recaps, tier });
     const body = {
       model,
       max_tokens: maxTokens,
       system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
-      messages: withNowNote(messages, woke, at.cache, tail),
+      messages: withNowNote(messages, final && lastNote ? woke + "\n\n" + lastNote : woke, at.cache, tail),
     };
     const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, toys.map((t) => t.tool));
     if (at.mcp) {
@@ -259,11 +264,11 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   // 同手机那头：带缓存 → 不带缓存 → 不带 MCP，哪种通了用哪种
   const attempts = [{ cache: true, mcp: mcps.length > 0 }, { cache: false, mcp: mcps.length > 0 }];
   if (mcps.length) attempts.push({ cache: false, mcp: false });
-  const askHim = async (list) => {
+  const askHim = async (list, final = false) => {
     let lastErr = null;
     for (const at of attempts) {
       try {
-        const data = await cloud.callClaude(bodyFor(list, at), at.mcp ? "mcp-client-2025-11-20" : "");
+        const data = await cloud.callClaude(bodyFor(list, at, final), at.mcp ? "mcp-client-2025-11-20" : "");
         return { data, used: at };
       } catch (e) {
         lastErr = e;
@@ -354,8 +359,11 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   };
 
   const steps = [];
-  for (let i = 0; i < MOST_STEPS; i++) {
-    const { data, used } = await askHim(msgs.concat(steps.map((s) => s.him)));
+  for (let i = 0; i < most; i++) {
+    const { data, used } = await askHim(
+      msgs.concat(steps.map((s) => s.him)),
+      i > 0 && i === most - 1
+    );
     const step = digest(data, used);
     steps.push(step);
     log(`第 ${i + 1} 步：${data.stop_reason || "?"}，${step.quiet ? "没留话" : "留了话"}`);
@@ -367,7 +375,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     }
     break;
   }
-  // 四步用完了他还在翻日记：这一条当说完了。不然手机那头认成他说到一半（thread.js 的 midTurn），算欠着她一句，
+  // 步数用完了他还在调（翻日记、去园子、去妆台）：这一条当说完了。不然手机那头认成他说到一半（thread.js 的 midTurn），算欠着她一句，
   // 闹钟也照“她那句还没回上”一直等着（plan.js 规矩七）
   const tail = steps[steps.length - 1].him;
   if (tail.stop === "tool_use") delete tail.stop;
@@ -429,10 +437,11 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     pending,
     garden: gardenBrief(await garden.load(), garden.today()),
     dressing: dressingBrief(dressed, dressing.today()),
+    steps: ROOM_STEPS,
   });
   const event = { id: newId(), role: "event", who: "him", kind: "wake", ts: now };
   const toys = [gardenToy(garden), dressingToy(dressing, !completedToday(dressed, dressing.today()))];
-  const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section, toys });
+  const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section, toys, most: ROOM_STEPS, lastNote: LAST_STEP_NOTE });
   // 最后一步里单独一行写了 [新对话:名字]：那一行后面的字落进新开的一段对话（只认最后一步：前面几步是翻日记的半截）
   const steps = r.steps.slice();
   const last = steps[steps.length - 1];
@@ -443,7 +452,7 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
   if (cut) {
     const said = r.part(cut.after, last);
     steps[steps.length - 1] = r.part(cut.before, last);
-    // 这一步里他调过的（翻日记、去园子、去妆台，多半是四步用完了还在调）：照旧记在屋里那一截上，那一行小字不丢。
+    // 这一步里他调过的（翻日记、去园子、去妆台，多半是步数用完了还在调）：照旧记在屋里那一截上，那一行小字不丢。
     // 前面那一截是空的（[新对话:…] 写在最前头）也一样：调过东西就不算“什么也没干”，不然这一步收进醒了那一行，那几行小字跟着没了（另一双眼睛挑出来的）
     if (last.him.calls) {
       steps[steps.length - 1].him.calls = last.him.calls;

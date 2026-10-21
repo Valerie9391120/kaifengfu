@@ -671,6 +671,18 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   cloud = cloudOf([said("在吗")]);
   await askTask({ store: kv6(), cloud, ctx: ctxOf(), task: { key: "kfs2:fox:task:x", raw: "+5m", set: Date.now() }, chat: { id: "c1", title: "一段对话", msgs: [{ id: "h1", role: "her", ts: 1, text: "嗯" }] } });
   ok(cloud.bodies[0].tools.some((t) => t.name === "diary_read") && !cloud.bodies[0].tools.some((t) => t.name === "play_garden" || t.name === "play_dressing_room"), "任务到点：不带园子、妆台那两样");
+  // 醒在屋里最多十二步（她 20:11 定的）：【醒来】里先说；到了第十二步附上“只剩这最后一步”，前面几步不附；十二步用完就到这儿
+  const lastText = (body) => body.messages[body.messages.length - 1].content.map((x) => x.text || "").join("\n");
+  const admire = (i) => ({ stop_reason: "tool_use", content: [use("a" + i, "play_garden", { action: "admire" })] });
+  cloud = cloudOf(Array.from({ length: 13 }, (_, i) => admire(i)));
+  b = await askRoom({ store: kv6(), cloud, ctx: ctxOf(), ...opts });
+  ok(cloud.bodies.length === 12 && lastText(cloud.bodies[0]).includes("这一回醒着最多 12 步") && lastText(cloud.bodies[11]).includes("只剩这最后一步") && !cloud.bodies.slice(0, 11).some((x) => lastText(x).includes("只剩这最后一步")) && b.steps === 12 && !b.puts[0].rows[b.puts[0].rows.length - 1].stop,
+    `醒在屋里最多十二步：【醒来】里先说，第十二步提醒只剩最后一步，用完就到这儿（问了 ${cloud.bodies.length} 回）`);
+  // 任务到点那一回还是四步，不附那句提醒
+  const peek = (i) => ({ stop_reason: "tool_use", content: [use("d" + i, "diary_list", {})] });
+  cloud = cloudOf(Array.from({ length: 5 }, (_, i) => peek(i)));
+  await askTask({ store: kv6(), cloud, ctx: ctxOf(), task: { key: "kfs2:fox:task:y", raw: "+5m", set: Date.now() }, chat: { id: "c1", title: "一段对话", msgs: [{ id: "h1", role: "her", ts: 1, text: "嗯" }] } });
+  ok(cloud.bodies.length === 4 && !cloud.bodies.some((x) => lastText(x).includes("只剩这最后一步")) && !lastText(cloud.bodies[0]).includes("最多 12 步"), `任务到点那一回还是四步，不附提醒（问了 ${cloud.bodies.length} 回）`);
 }
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);

@@ -204,8 +204,8 @@ const asksD = (await get("/__debug/claude")).slice(nAskD).map((x) => x.body);
 const dTool = (b) => (b && b.tools ? b.tools.find((t) => t.name === "play_dressing_room") : null);
 const askD0 = asksD[0] ? JSON.stringify(asksD[0].messages) : "";
 const askD2 = asksD[2] ? JSON.stringify(asksD[2].messages) : "";
-ok(wD.code === 0 && asksD.length === 3 && dTool(asksD[0]) && dTool(asksD[0]).input_schema.properties.action.enum.includes("complete") && (asksD[0].tools || []).some((t) => t.name === "play_garden") && askD0.includes("去妆台前玩换装") && askD0.includes("妆台你还没去过") && askD0.includes("不是你这会儿真穿着什么"),
-  "醒在屋里：园子、妆台两样工具都带着（今天还没完成搭配，有 complete）；【醒来】里说这是个换装小游戏、妆台还没去过");
+ok(wD.code === 0 && asksD.length === 3 && dTool(asksD[0]) && dTool(asksD[0]).input_schema.properties.action.enum.includes("complete") && (asksD[0].tools || []).some((t) => t.name === "play_garden") && askD0.includes("去妆台前玩换装") && askD0.includes("妆台你还没去过") && askD0.includes("不是你这会儿真穿着什么") && askD0.includes("这一回醒着最多 12 步"),
+  "醒在屋里：园子、妆台两样工具都带着（今天还没完成搭配，有 complete）；【醒来】里说这是个换装小游戏、妆台还没去过、这一回最多十二步");
 ok(dNotes.join("|") === "在妆台前换了换行头|完成了今天的搭配：披发、素面、不熏香；衣柜：高领黑毛衣" && askD2.includes("衣柜、妆台和配饰已经准备好了") && askD2.includes("今天的搭配完成了") && askD2.includes("成就解锁——初整衣冠") && dressSt.completedLook && dressSt.completedLook.date === day(Date.now()) && dressSt.completedLook.appearance.outfits.includes("outfit_black_turtleneck") && fox[fox.length - 1].items.map((x) => x.text).join() === "换好了，今天就这一身",
   "他换了一身、完成了今天的搭配：闹钟替他办（头一回先推开，开场那段给他看），成就给他看，存档记进 kfs2:dressing；屋里两行小字，完成的那一行写那一身；他接着说完");
 await sleep(1500);
