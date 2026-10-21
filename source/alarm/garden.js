@@ -41,17 +41,17 @@ export function localDay(t = Date.now()) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-// 引擎要的存档：读 kfs2:garden；改的时候一样一样排着来（同一个闹钟里先后两回不会互相盖掉）
-function storeOf(store) {
+// 引擎要的存档：读 kfs2:garden（妆台用的是 kfs2:dressing，见 alarm/dressing.js）；改的时候一样一样排着来（同一个闹钟里先后两回不会互相盖掉）
+export function storeOf(store, key = GARDEN_KEY) {
   let queue = Promise.resolve();
   return {
     async load() {
-      return parse(await store.get(GARDEN_KEY));
+      return parse(await store.get(key));
     },
     update(fn) {
       const run = queue.then(async () => {
-        const [next, value] = await fn(parse(await store.get(GARDEN_KEY)));
-        await store.set(GARDEN_KEY, JSON.stringify(next));
+        const [next, value] = await fn(parse(await store.get(key)));
+        await store.set(key, JSON.stringify(next));
         return value;
       });
       queue = run.catch(() => {});
@@ -115,6 +115,9 @@ export async function runGardenCalls(calls, garden) {
 }
 // 回话写到长度上限被截断、没停在调工具上：他调的那一样多半没写完整，不替他办
 export const cutGarden = (c) => ({ ...c, out: "（这一步没写完，园子没去成。）", err: true, note: "想去园子里，没去成" });
+
+// 交给 askCore 的那一样（他屋里能玩的，见 wake.js 的 toys）：带哪样工具、认哪几个名字、怎么替他办、没写完怎么记
+export const gardenToy = (garden) => ({ tool: GARDEN_TOOL, names: GARDEN_NAMES, is: isGardenCall, cut: cutGarden, run: (calls) => runGardenCalls(calls, garden) });
 
 // 【醒来】里那一句：园子眼下的样子（她 02:28 定的：告诉他，去不去他自己定）。state 是存档（没进过是 null）
 export function gardenBrief(state, today) {

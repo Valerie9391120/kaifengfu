@@ -24,9 +24,11 @@ let claudeRelease = null; // 正压着的那一回：叫它现在就答
 // 测试用：排好的回话（tests/look.py 截图用）。平常的话按次序一句一句取，取完了照旧回“收到：…”；
 // 写日记、抄提要那几种不取。/__debug/reply-queue?text=… 往后排一句，/__debug/reset 清空
 const replyQueue = [];
-// 他屋里的园子（alarm/garden.js）：/__debug/tool-queue?name=play_garden&input={"action":"water"}&text=先去看看花 往后排一步调工具。
-// 带着那一样工具的那一回照排好的调；结果递回来以后，还有排着的接着调，没有了照 reply-queue 说（没排就说一句“（测试园子）结果的头一行”）
+// 他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js）：/__debug/tool-queue?name=play_garden&input={"action":"water"}&text=先去看看花 往后排一步调工具
+// （name 写 play_dressing_room 就是去妆台）。带着那几样工具的那一回照排好的调；结果递回来以后，还有排着的接着调，没有了照 reply-queue 说
+// （没排就说一句“（测试园子）结果的头一行”）
 const toolQueue = [];
+const TOYS = new Set(["play_garden", "play_dressing_room"]);
 function fakeGarden(body) {
   const msgs = body.messages || [];
   const blocksOf = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || []);
@@ -38,7 +40,7 @@ function fakeGarden(body) {
   if (results.length) {
     const prev = msgs[msgs.length - 2];
     const uses = prev ? blocksOf(prev).filter((b) => b.type === "tool_use") : [];
-    if (!uses.some((u) => u.name === "play_garden")) return null;
+    if (!uses.some((u) => TOYS.has(u.name))) return null;
     if (toolQueue.length) return step(toolQueue.shift());
     if (replyQueue.length) return say(replyQueue.shift());
     const r = results[0];
@@ -237,8 +239,8 @@ function fakeAnthropic(body, beta, via) {
   // 排手帐（不带工具，跟在名帖后面的是【排手帐】那段规矩）
   const jz = fakeArrange(body);
   if (jz) return jz;
-  // 他屋里的园子（带着 play_garden，见 alarm/garden.js）：排好了要他调的，照排好的调
-  if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "play_garden")) {
+  // 他屋里的园子、妆台（带着 play_garden、play_dressing_room，见 alarm/garden.js、alarm/dressing.js）：排好了要他调的，照排好的调
+  if (Array.isArray(body.tools) && body.tools.some((t) => t && TOYS.has(t.name))) {
     const g = fakeGarden(body);
     if (g) return g;
   }
@@ -504,7 +506,7 @@ const server = http.createServer(async (req, res) => {
       claudeHoldKind = url.searchParams.get("kind") || "";
       return send(res, 200, { ok: true });
     }
-    // 往后排一步调园子的工具（见上面 toolQueue）
+    // 往后排一步调园子、妆台的工具（见上面 toolQueue）
     if (url.pathname === "/__debug/tool-queue") {
       let input = {};
       try {

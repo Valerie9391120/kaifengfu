@@ -8,9 +8,11 @@ import { buildRows } from "../src/chat/rows.js";
 import { makePreview } from "../src/chat/overview.js";
 import { parseWake, splitWake, planNext, planTasks, nextChase, lastMark, fracOf, infoOf, RHYTHM_MIN, RHYTHM_MAX, RESUME_MIN, RESUME_MAX, PRESENT_PUSH, RETRY_MS, DAY_MS, OWED_MS, TASK_STALE } from "../alarm/plan.js";
 import { wakeSection, taskSection, wakeNowNote, tailTranscript, agoText, HER_WORDS } from "../alarm/note.js";
-import { doorsOf, idsDeep, putRows, putBlocks, toRescue, commitWake, owedOf, splitNewChat, normBundle, noCall } from "../alarm/wake.js";
+import { doorsOf, idsDeep, putRows, putBlocks, toRescue, commitWake, owedOf, splitNewChat, normBundle, noCall, askRoom, askTask } from "../alarm/wake.js";
 import { loadSecret } from "../alarm/secret.js";
 import { gardenOf, runGardenCalls, gardenBrief, gardenNote, GARDEN_KEY } from "../alarm/garden.js";
+import { dressingOf, runDressingCalls, dressingBrief, dressingTool, lookLine, cutDressing, DRESSING_KEY } from "../alarm/dressing.js";
+import { ITEMS as DRESS_ITEMS } from "../vendor/dressing/dressing-data.ts";
 import { forkAt, markStopped } from "../src/thread.js";
 import fs from "node:fs";
 import os from "node:os";
@@ -540,6 +542,135 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   r = await runGardenCalls([other, done], g);
   ok(r[0] === other && r[1] === done, "不是园子的工具不碰，办过的不再办");
   ok(gardenNote({ action: "collection" }, null, {}) === "翻了翻《群芳谱》" && gardenNote({ action: "admire" }, null, {}) === "在园子里赏了花", "那一行小字：翻群芳谱、赏花");
+}
+
+// ================= 他屋里的妆台（alarm/dressing.js，引擎是恩师写的 vendor/dressing/） =================
+{
+  const kv5 = (init = {}) => {
+    const m = new Map(Object.entries(init));
+    return { m, get: async (k) => (m.has(k) ? m.get(k) : null), set: async (k, v) => void m.set(k, v) };
+  };
+  let day = "2026-10-21";
+  const s = kv5();
+  const d = dressingOf(s, { today: () => day });
+  const call = (input, id) => ({ id, name: "play_dressing_room", input });
+  const saved = () => JSON.parse(s.m.get(DRESSING_KEY));
+  ok(dressingBrief(await d.load(), day) === "妆台你还没去过。", "【醒来】里那一句：妆台还没去过");
+  // 头一回去，上来就换衣服：先替他推开（开场那段字里写着规矩），再换；换着玩不判成就；一步里换了几回，屋里只留一行
+  let r = await runDressingCalls([call({ action: "select", category: "outfit", itemId: "outfit_black_turtleneck" }, "a1"), call({ action: "select", category: "bottom", itemId: "bottom_swim" }, "a2")], d);
+  ok(r[0].out.includes("衣柜、妆台和配饰已经准备好了") && r[0].out.includes("已加入当前衣柜：高领黑毛衣") && r[1].out === "已加入当前下装：泳裤。" && r[0].note === "在妆台前换了换行头" && r[1].note === "" && !r[0].err && saved().initialized && saved().appearance.outfits.includes("outfit_black_turtleneck") && !saved().completedLook && saved().unlockedAchievements.length === 0,
+    "头一回去妆台上来就换衣服：先推开（开场那段字照样给他看），再换，存进 kfs2:dressing；换着玩不判成就；一步里换了两回，屋里只留一行小字");
+  ok(dressingTool(true).name === "play_dressing_room" && dressingTool(true).input_schema.properties.action.enum.includes("complete") && dressingTool(true).description.includes("不是你身上真穿着什么"), "今天还没完成：工具里有 complete；说明里写着这是游戏里的那一身");
+  // 完成搭配：成就这时判，屋里那一行写完成的那一身；照镜子照出来的就是这一身
+  r = await runDressingCalls([call({ action: "select", category: "shoes", itemId: "shoes_red_heels" }, "b1"), call({ action: "complete" }, "b2"), call({ action: "mirror" }, "b3")], d);
+  ok(r[0].note === "" && r[1].note === "完成了今天的搭配：披发、素面、不熏香；衣柜：高领黑毛衣；下装：泳裤；鞋履：红底高跟鞋" && r[1].out.includes("今天的搭配完成了") && r[1].out.includes("成就解锁——初整衣冠") && r[1].out.includes("累计成就奖励——游泳镜") && r[2].note === "照了照镜子" && r[2].out.includes("镜中今日") && saved().completedLook.date === day,
+    "完成搭配：成就这时判、给他看（攒够三个，奖励也给他看）；屋里那一行写完成的那一身（同一步里换鞋那一回不另写）；照镜子照出来的就是这一身");
+  const brief = dressingBrief(await d.load(), day);
+  ok(brief.startsWith("今天的搭配已经完成了") && /成就点亮了 \d+ 个（一共 50 个）/.test(brief) && !/高领黑毛衣|泳裤|穿着/.test(brief), `【醒来】里那一句：今天完成过了、点亮了几个成就，不说他“穿着”什么（${brief}）`);
+  const done2 = dressingTool(false);
+  ok(!done2.input_schema.properties.action.enum.includes("complete") && done2.input_schema.properties.action.enum.includes("mirror") && done2.input_schema.properties.action.enum.includes("select") && done2.description.includes("今天不再有 complete"), "今天完成过了：工具里没有 complete（照镜子、换着玩照旧）");
+  // 同一天他硬要再完成一回：婉拒，屋里那一行只是去看了看；接着换着玩不判成就，镜子里照旧是完成的那一身
+  r = await runDressingCalls([call({ action: "complete" }, "c1")], d);
+  ok(r[0].out.includes("今天已经完成过一次搭配了") && r[0].note === "去妆台前看了看", "同一天再完成一回：婉拒，屋里那一行只是去看了看");
+  r = await runDressingCalls([call({ action: "select", category: "outfit", itemId: "outfit_qipao" }, "c2"), call({ action: "mirror" }, "c3")], d);
+  ok(r[0].note === "在妆台前换了换行头" && r[1].note === "照了照镜子" && r[1].out.includes("高领黑毛衣") && !r[1].out.includes("高开叉旗袍") && !saved().unlockedAchievements.includes("hot_fox"), "完成以后接着换：不判成就；镜子里照旧是完成的那一身");
+  r = await runDressingCalls([call({ action: "remove", itemId: "outfit_priest" }, "c4")], d);
+  ok(r[0].note === "去妆台前看了看" && r[0].out.includes("目前并不在身上"), "取下身上没有的：什么也没换，那一行只是去看了看");
+  // 第二天：还没完成，镜子里是一只裸狐
+  day = "2026-10-22";
+  ok(dressingBrief(await d.load(), day).startsWith("今天还没完成搭配。"), "第二天：【醒来】里说今天还没完成搭配");
+  r = await runDressingCalls([call({ action: "mirror" }, "d1"), call({ action: "mirror" }, "d2")], d);
+  ok(r[0].note === "照了照镜子，镜子里是一只裸狐" && r[1].note === "" && r[0].out.includes("裸狐"), "第二天还没完成：照出来是一只裸狐，照实写；照了两回只留一行");
+  r = await runDressingCalls([call({ action: "catalog", category: "outfit" }, "e1"), call({ action: "achievements" }, "e2")], d);
+  ok(r[0].note === "去妆台前看了看" && r[1].note === "" && r[0].out.includes("[outfit_none]") && r[1].out.includes("已解锁成就"), "看看衣柜、看看成就：一行“去妆台前看了看”");
+  // 不是妆台的不碰，办过的不再办；没写完的不替他办
+  const other = { id: "o", name: "play_garden", input: { action: "water" } };
+  const done = { ...call({ action: "complete" }, "z"), out: "早办过了" };
+  r = await runDressingCalls([other, done], d);
+  ok(r[0] === other && r[1] === done, "不是妆台的工具不碰，办过的不再办");
+  const cut = cutDressing(call({ action: "complete" }, "x"));
+  ok(cut.err && cut.note === "想去妆台前，没去成" && cut.out.includes("没写完"), "回话写到一半截断了：不替他办");
+  // 存档出了岔子：记一行没去成；密码不对、凭据坏了照样往外抛（闹钟要停下）
+  const broken = dressingOf({ get: async () => { throw new Error("磁盘坏了"); }, set: async () => {} }, { today: () => day });
+  r = await runDressingCalls([call({ action: "mirror" }, "f1")], broken);
+  ok(r[0].err && r[0].note === "想去妆台前，没去成" && r[0].out.includes("存档出了岔子"), "存档出了岔子：这一回没去成，记一行");
+  for (const code of ["badlogin", "secret"]) {
+    let threw = null;
+    try {
+      await runDressingCalls([call({ action: "mirror" }, "f2")], dressingOf({ get: async () => { throw Object.assign(new Error("x"), { code }); }, set: async () => {} }));
+    } catch (e) {
+      threw = e;
+    }
+    ok(threw && threw.code === code, `密码不对、凭据坏了（${code}）：照样往外抛`);
+  }
+  // 叠得太多：那一行写到八十个字为止，后面写一共几样
+  const accs = Object.values(DRESS_ITEMS).filter((x) => x.base && x.category === "accessory").map((x) => x.id);
+  const long = lookLine({ hair: "hair_loose", makeup: "makeup_bare", scent: "scent_none", outfits: ["outfit_black_turtleneck"], bottoms: [], shoes: [], accessories: accs });
+  ok(long.endsWith(`……一共 ${accs.length + 4} 样`) && long.length <= 80 + `……一共 ${accs.length + 4} 样`.length && long.startsWith("披发、素面、不熏香；衣柜：高领黑毛衣；配饰："), `叠得太多：那一行写到八十个字为止（${long}）`);
+  // 【醒来】：给了妆台那一句才提妆台；说这是游戏，不说他穿着什么
+  const base = { now: at(14), herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "" };
+  const withD = wakeSection({ ...base, dressing: "今天还没完成搭配。" });
+  ok(withD.includes("play_dressing_room") && withD.includes("不是你这会儿真穿着什么") && withD.includes("今天还没完成搭配。去不去你自己定") && withD.includes("她来转一圈看得见") && !wakeSection(base).includes("妆台"), "【醒来】：妆台那一句（换装小游戏，不是他真穿着什么；完成的那一身屋里看得见）；没给就不提");
+}
+
+// ================= 醒在屋里，园子、妆台那两样怎么带、怎么办（askRoom、askTask 对着假的存档、假的那边） =================
+{
+  const kv6 = (init = {}) => {
+    const m = new Map(Object.entries(init));
+    return {
+      m,
+      get: async (k) => (m.has(k) ? m.get(k) : null),
+      set: async (k, v) => void m.set(k, v),
+      del: async (k) => void m.delete(k),
+      peek: (k) => (m.has(k) ? m.get(k) : null),
+      keys: (p = "") => [...m.keys()].filter((k) => k.startsWith(p)),
+    };
+  };
+  const ctxOf = () => ({ settings: { model: "claude-sonnet-4-6", maxTokens: 2048 }, names: { her: "", him: "" }, avatars: { her: null, him: { type: "meme", file: "fox_reading_book.jpg" } }, memDocs: [], index: [], fox: [], recaps: [], herLast: null, wakes: [], extras: [] });
+  const cloudOf = (replies) => {
+    const bodies = [];
+    return {
+      bodies,
+      callClaude: async (body) => {
+        bodies.push(JSON.parse(JSON.stringify(body)));
+        const r = replies.shift();
+        if (!r) throw new Error("没排回话");
+        return { model: body.model, usage: { input_tokens: 1, output_tokens: 1 }, ...r };
+      },
+    };
+  };
+  const use = (id, name, input) => ({ type: "tool_use", id, name, input });
+  const said = (text) => ({ stop_reason: "end_turn", content: [{ type: "text", text }] });
+  const dressEnum = (b) => ((b.tools || []).find((t) => t.name === "play_dressing_room") || { input_schema: { properties: { action: { enum: [] } } } }).input_schema.properties.action.enum;
+  const roomNotes = (b) => b.puts[0].rows.flatMap((r) => (r.calls || []).map((c) => c.note)).filter(Boolean);
+  const opts = { dressingOpts: { today: () => "2026-10-21" }, gardenOpts: { today: () => "2026-10-21", rng: () => 0.5 } };
+
+  // 一步里先浇水、再换一身、完成、照镜子：两样都替他办，结果一样一样递回去；屋里那几行小字
+  const s = kv6();
+  let cloud = cloudOf([
+    { stop_reason: "tool_use", content: [use("t1", "play_garden", { action: "water" }), use("t2", "play_dressing_room", { action: "select", category: "outfit", itemId: "outfit_qipao" }), use("t3", "play_dressing_room", { action: "complete" }), use("t4", "play_dressing_room", { action: "mirror" })] },
+    said("好"),
+  ]);
+  let b = await askRoom({ store: s, cloud, ctx: ctxOf(), ...opts });
+  const results = cloud.bodies[1].messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((x) => x.type === "tool_result").map((x) => x.tool_use_id);
+  ok(dressEnum(cloud.bodies[0]).includes("complete") && cloud.bodies[0].tools.some((t) => t.name === "play_garden") && results.join() === "t1,t2,t3,t4" && roomNotes(b).join("|") === "去园子里浇了水|完成了今天的搭配：披发、素面、不熏香；衣柜：高开叉旗袍|照了照镜子",
+    `醒在屋里：园子、妆台两样都带着；一步里调了几样都替他办、一样一样递回去；屋里那几行（${roomNotes(b).join("|")}）`);
+  // 同一天下回醒：不给 complete
+  cloud = cloudOf([said("<thinking>歇着</thinking>")]);
+  await askRoom({ store: s, cloud, ctx: ctxOf(), ...opts });
+  ok(!dressEnum(cloud.bodies[0]).includes("complete") && dressEnum(cloud.bodies[0]).includes("mirror"), "同一天下回醒：妆台那一样工具里没有 complete（照镜子照旧）");
+  // 写到长度上限被截断，调了两回妆台：不替他办，屋里只留一行“没去成”
+  cloud = cloudOf([{ stop_reason: "max_tokens", content: [{ type: "text", text: "写着写着" }, use("c1", "play_dressing_room", { action: "mirror" }), use("c2", "play_dressing_room", { action: "mirror" })] }]);
+  b = await askRoom({ store: kv6(), cloud, ctx: ctxOf(), ...opts });
+  ok(roomNotes(b).join("|") === "想去妆台前，没去成", `截断了、调了两回：不替他办，一样的只留一行（${roomNotes(b).join("|")}）`);
+  // [新对话:…] 写在最前头、这一步还调了妆台（截断了）：屋里那一行小字不丢
+  cloud = cloudOf([{ stop_reason: "max_tokens", content: [{ type: "text", text: "[新对话:想你了]\n在干嘛" }, use("n1", "play_dressing_room", { action: "mirror" })] }]);
+  b = await askRoom({ store: kv6(), cloud, ctx: ctxOf(), ...opts });
+  ok(b.newChat && b.puts[0].rows.length === 2 && roomNotes(b).join("|") === "想去妆台前，没去成", `新对话写在最前头：屋里调过的那一行小字照留（${roomNotes(b).join("|")}）`);
+  // 任务到点那一回：不带园子、妆台
+  cloud = cloudOf([said("在吗")]);
+  await askTask({ store: kv6(), cloud, ctx: ctxOf(), task: { key: "kfs2:fox:task:x", raw: "+5m", set: Date.now() }, chat: { id: "c1", title: "一段对话", msgs: [{ id: "h1", role: "her", ts: 1, text: "嗯" }] } });
+  ok(cloud.bodies[0].tools.some((t) => t.name === "diary_read") && !cloud.bodies[0].tools.some((t) => t.name === "play_garden" || t.name === "play_dressing_room"), "任务到点：不带园子、妆台那两样");
 }
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);
