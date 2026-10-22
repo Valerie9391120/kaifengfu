@@ -134,6 +134,8 @@ if (ON) {
       return;
     }
     if (d.safe) setSafe(d.safe);
+    // 键盘开着没有（整层铺到了键盘上面）：见下面 CSS 里 kfs-kb 那一句
+    if (typeof d.kb === "boolean") document.documentElement.classList.toggle("kfs-kb", d.kb);
     if (Array.isArray(d.changed)) {
       const keys = [];
       for (const [k, v] of d.changed) {
@@ -433,8 +435,6 @@ function typingCheck() {
   const t = typingEl(document.activeElement);
   if (t === typingOn) return;
   typingOn = t;
-  // 打字的时候右下角那颗“＋”、左下角“撤回”收起来：框变矮以后它们浮在键盘上头，正好压着正打着的那一行（见下面 CSS）
-  document.documentElement.classList.toggle("kfs-typing", t);
   tellOut("typing", { on: t });
 }
 function caretIntoView(a) {
@@ -543,8 +543,9 @@ const CSS = [
   ".qrow{animation:none!important}",
   ".qbar [data-qa][hidden]{display:none!important}",
   ".kfs-qmore{flex:none;padding:8px 0 12px;text-align:center;font-size:11.5px;color:var(--mute)}",
-  // 打字的时候（见上面“打字的时候告诉外面”）：右下角“＋”、左下角“撤回”收起来，不压着正打着的那一行
-  "html.kfs-typing #addFab,html.kfs-typing #undoPill{display:none!important}",
+  // 键盘开着、整层铺到了键盘上面的时候（外面说的，见上面“跟外面说话”那一段的 kb）：右下角“＋”、左下角“撤回”收起来，
+  // 框变矮以后它们浮在键盘上头，正好压着正打着的那一行。只看键盘：同页放上一张字贴会自己把焦点放到字上（键盘不出来），那时候不收
+  "html.kfs-kb #addFab,html.kfs-kb #undoPill{display:none!important}",
   // 「存」里删掉这一页：同页用 hidden 先藏着“真的删掉 / 算了”，可它自己的 .savebig{display:flex} 把 hidden 盖了，两颗一起露着（原版也这样），
   // 一下就能点到“真的删掉”。照它的意思：先点“删掉这一页”才露出来
   "#delBox [hidden]{display:none!important}",
