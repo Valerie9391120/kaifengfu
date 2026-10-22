@@ -194,6 +194,43 @@ export const PATCHES = [
     1,
     "开封府打开某一天",
   ],
+  // ---- 引用栏（她 10 月 22 日报“手帐好卡、引用的句子点了没反应”，见 bridge.js 的“引用栏”那一节、开发说明“手帐不卡”那一节） ----
+  // 狐宇宙里的（她留的、他在屋里说的）另起一栏「便签」（她 10 月 22 日截图画的），聊天那一栏不再掺：
+  // 便签这一本（NOTELOG，同 CHATLOG 的样子：月.日 → [{w,t,p,src:"便签"}]）、选中的几句、栏的名字
+  ["const CHATLOG={};", "const CHATLOG={},NOTELOG={};", 1, "便签那一栏"],
+  ['const QSEL={"聊天":[],"吃了吗":[],"书摘":[],"健康":[]};', 'const QSEL={"聊天":[],"便签":[],"吃了吗":[],"书摘":[],"健康":[]};', 1, "便签那一栏"],
+  ['const qLog=()=>quoteSub==="聊天"?CHATLOG:quoteSub==="书摘"', 'const qLog=()=>quoteSub==="聊天"?CHATLOG:quoteSub==="便签"?NOTELOG:quoteSub==="书摘"', 1, "便签那一栏"],
+  ['${["聊天","吃了吗","书摘","健康"].map(k=>', '${["聊天","便签","吃了吗","书摘","健康"].map(k=>', 1, "便签那一栏"],
+  ['g==="quote"?(quoteSub==="聊天"?"从聊天记录里挑 · 原话一个字不改"', 'g==="quote"?(quoteSub==="便签"?"从狐宇宙里挑 · 原话一个字不改":quoteSub==="聊天"?"从聊天记录里挑 · 原话一个字不改"', 1, "便签那一栏"],
+  // 日历的深浅：聊天照聊天的（__bzHeat），便签照便签的（__bzNoteHeat，见 bridge.js）
+  ['...(quoteSub==="聊天"&&window.__bzHeat?Object.keys(__bzHeat):[])', '...Object.keys((quoteSub==="聊天"?window.__bzHeat:quoteSub==="便签"?window.__bzNoteHeat:null)||{})', 1, "便签那一栏的日历"],
+  ['const HT=quoteSub==="聊天"&&window.__bzHeat||{};', 'const HT=(quoteSub==="聊天"?window.__bzHeat:quoteSub==="便签"?window.__bzNoteHeat:null)||{};', 1, "便签那一栏的日历"],
+  ['颜色越深那天${quoteSub==="聊天"?"说得越多":"吃得越多"}', '颜色越深那天${quoteSub==="聊天"||quoteSub==="便签"?"说得越多":"吃得越多"}', 1, "便签那一栏的日历"],
+  // 贴到页上：便签跟聊天一样贴成原话（C: 加原样的几句；每一句带着 src，便签的那几句底下小字写“便签”）；几句都是便签的，头上写“便签”
+  [':(quoteSub==="聊天"?"C:"+encodeURIComponent(', ':(quoteSub==="聊天"||quoteSub==="便签"?"C:"+encodeURIComponent(', 1, "便签贴到页上"],
+  ['${L.every(x=>x.src==="原话")?"原话":"演示"}', '${L.every(x=>x.src==="便签")?"便签":L.every(x=>x.src==="原话"||x.src==="便签")?"原话":"演示"}', 1, "便签贴到页上"],
+  // 取那一整天（同页的 qFullDay，开封府那一层的 sources）：便签一起取回来（note）；取回来以后那一天选过的清掉，便签那一栏也清。
+  // 换不换成整天的聊天，比的是原来那几条（拆成几句的只算一条，他排页挑进来的便签不算），拆过、掺了便签的照样换得进来
+  ['["聊天","书摘","健康"].forEach(function(t){QSEL[t]=', '["聊天","便签","书摘","健康"].forEach(function(t){QSEL[t]=', 1, "便签一起取"],
+  [
+    "if(C.length>=((CHATLOG[k]||[]).length))CHATLOG[k]=C}catch(e){}",
+    'var was=(CHATLOG[k]||[]).filter(function(x){return x&&x.src!=="便签"&&!(x.part>1)}).length;if(C.length>=was)CHATLOG[k]=C}catch(e){}' +
+      'try{if(Array.isArray(s.note))NOTELOG[k]=s.note.filter(function(x){return x&&x.p}).map(function(x){return {w:x.w,t:x.t||"",p:x.p,src:"便签"}})}catch(e){}',
+    1,
+    "便签一起取",
+  ],
+  // 收到那一天的 day（他排好了、别处改了）：同页拿 day 里他挑的那几句当那一天的聊天。那一天整天的话已经取过了（引用栏开过），
+  // 就不拿那几句盖掉（不然他排好以后再开引用栏，聊天那一栏只剩他挑的那两三句，整天的话也不会再取）
+  [
+    'if(C&&R.chat)C[R.day]=R.chat.map(x=>({w:x.w,t:x.t||"",p:x.p,src:x.src||"原话"}));',
+    'if(C&&R.chat&&!(window.QF_DONE&&QF_DONE.has(R.day)))C[R.day]=R.chat.map(x=>({w:x.w,t:x.t||"",p:x.p,src:x.src||"原话"}));',
+    1,
+    "整天的话不被他挑的那几句盖掉",
+  ],
+  // 引用栏摆出来、点一句：聊天、便签这两栏交给开封府那一层（不飞、一段一段摆、点一句只改那一句，见 bridge.js）；
+  // 别的几栏（吃了吗、书摘、健康，开封府没有，藏着）照同页原来的
+  ["function quotePickerHTML(){window.qFullDay&&qFullDay(qDay);", 'function quotePickerHTML(){if(window.__kfsQuoteHTML&&(quoteSub==="聊天"||quoteSub==="便签"))return __kfsQuoteHTML();window.qFullDay&&qFullDay(qDay);', 1, "引用栏不卡"],
+  ["wireQuote=function(){_wq.apply(this,arguments);", 'wireQuote=function(){if(window.__kfsWireQuote&&(quoteSub==="聊天"||quoteSub==="便签"))return __kfsWireQuote(_wq);_wq.apply(this,arguments);', 1, "引用栏不卡"],
 ];
 
 // 一段脚本的指纹（写进这一页的安全规矩：只有这几段跑得了）

@@ -33,6 +33,8 @@ export function focusInside(a) {
 function typingHere() {
   const a = document.activeElement;
   if (!a || !a.closest || !a.closest(FIT)) return false;
+  // 隔开的框（手帐本子，sandbox）里头看不进去：框里自己报在打字没有，框上记着 data-kfs-typing（见 tongye/TongyeFrame.jsx）
+  if (a.tagName === "IFRAME" && a.hasAttribute("data-kfs-typing")) return true;
   // 框身上带 data-kfs-kbfit 的（并蒂莲那一页），看框里的焦点是不是落在输入框上（它底下那个起名框）
   return isTextField(focusInside(a));
 }
@@ -88,4 +90,6 @@ export function initKeyboardFit() {
   vv.addEventListener("scroll", schedule);
   window.addEventListener("focusin", schedule);
   window.addEventListener("focusout", () => setTimeout(schedule, 60));
+  // 框里报了一声开始打字、不打了（手帐本子，见 typingHere）：再看一遍
+  window.addEventListener("kfs-kbcheck", schedule);
 }
