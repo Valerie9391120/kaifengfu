@@ -112,7 +112,7 @@ def run(browser):
     poll(lambda: len(calls()) >= 1, 30); wait_js(pg, "!document.body.innerText.includes('正在输入')", 30000); pg.wait_for_timeout(800)
     c_first = calls()[-1]["body"]
     sys0 = json.dumps(c_first.get("system"), ensure_ascii=False)
-    ok([t.get("name") for t in c_first.get("tools", [])][-1] == "qx_draw" and "【秘戏钱匣】" not in sys0, "签库空着：工具里照样带着 qx_draw（跟翻日记那几样一样随时带着），名帖里没有【秘戏钱匣】")
+    ok("qx_draw" in [t.get("name") for t in c_first.get("tools", [])] and "【秘戏钱匣】" not in sys0, "签库空着：工具里照样带着 qx_draw（跟翻日记那几样一样随时带着），名帖里没有【秘戏钱匣】")
 
     # ---- 南衙 ----
     open_nanya(pg)
@@ -232,7 +232,7 @@ def run(browser):
     sys_text = json.dumps(body.get("system"), ensure_ascii=False)
     ok(len(lots) == 2 and all("单一：只有这一条" in t for t in lots) and not any("去处" in t for t in lots),
        f"寄过去的：一句话里两签，【秘戏钱匣】卿卿抽了一签（哪一枚）：一样一行，简体（{lots}）")
-    ok("【秘戏钱匣】" in sys_text and "维度有：天气、点心、去处、单一。" in sys_text and [t.get("name") for t in body.get("tools", [])][-1] == "qx_draw",
+    ok("【秘戏钱匣】" in sys_text and "维度有：天气、点心、去处、单一。" in sys_text and "qx_draw" in [t.get("name") for t in body.get("tools", [])],
        "名帖里多了【秘戏钱匣】那一段（写着维度名），工具里带着 qx_draw")
     boxes = pg.locator(".kfs-lot").all_inner_texts()
     ok(len(boxes) == 2 and all(b.startswith("〔签〕") and "单一" in b and "只有这一条" in b for b in boxes), f"聊天里两个方框：〔签〕哪一枚，一样一行（{[b[:30] for b in boxes]}）")

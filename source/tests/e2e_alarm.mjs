@@ -136,6 +136,7 @@ const sys = Array.isArray(ask1.system) ? ask1.system.map((b) => b.text).join("")
 ok(sys.includes("测试名帖") && sys.includes("【回复格式】") && lastText.includes("【醒来】") && lastText.includes("你想干嘛都行——玩手账") && lastText.includes("现在的时间（她那边的钟）") && lastText.includes("《周末去哪》") && lastText.includes("卿卿：困了，先睡") && lastText.includes("这是你头一回自己醒"),
   "寄过去的：名帖照手机那头的拼法；最后一句后面附着【醒来】（她的原话照抄、她在哪段对话里最后说的、那段对话最后几句、头一回醒）");
 ok((ask1.tools || []).some((t) => t.name === "diary_read") && ask1.max_tokens === 2048 && ask1.model === "claude-sonnet-4-6", "寄过去的：带着翻日记那几样工具，模型、回复长度照她的设置");
+ok(sys.includes("【你的屋子】") && !(ask1.tools || []).some((t) => t.name === "room_look" || t.name === "room_memo"), "醒在屋里：名帖里有【你的屋子】（同手机那头），不带回屋看一眼、留便签那两样（他就在屋里）");
 
 // ---------- 再叫醒一回：他翻了日记再说话 ----------
 // 她在狐宇宙里说过一句“翻日记 某天”，他回过她了（假的那边的我照这句去翻）
@@ -374,6 +375,8 @@ const askT = (await get("/__debug/claude")).slice(nAskT).pop().body;
 const lastT = askT.messages[askT.messages.length - 1].content.map((b) => b.text || "").join("\n");
 ok(lastT.includes("你记着的是“去找卿卿”") && JSON.stringify(askT.messages).includes("困了，先睡") && !JSON.stringify(askT.messages).includes("翻日记"), "任务到点：寄过去的是那段对话（看得见那段前面的话，不是狐宇宙），后面附着他定闹钟时记着的那句");
 ok((askT.tools || []).some((t) => t.name === "diary_read") && !(askT.tools || []).some((t) => t.name === "play_garden" || t.name === "play_dressing_room") && !lastT.includes("妆台") && !lastT.includes("院子"), "任务到点：不带园子、妆台那两样（只在他屋里醒着的时候玩），【醒来】里也不提");
+const sysT = Array.isArray(askT.system) ? askT.system.map((b) => b.text).join("") : askT.system;
+ok((askT.tools || []).map((t) => t.name).slice(-3).join() === "qx_draw,room_look,room_memo" && sysT.includes("【你的屋子】"), "任务到点：同手机那头带着回屋看一眼、留便签那两样（排在抽签后面），名帖里有【你的屋子】");
 const stT = JSON.parse(await read("kfs2:fox:state"));
 ok(stT.next === 0, "追着她的时候：平常那种自己醒先停着（南衙那一行不露任务几点）");
 // 装作过了五分钟：接着追第二回

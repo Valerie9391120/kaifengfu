@@ -11,7 +11,7 @@ from playwright.sync_api import sync_playwright
 from mailkit import *
 
 errors = []
-D = ["diary_list", "diary_read", "diary_search", "diary_note", "qx_draw"]  # 翻日记的四样（日记共读，10 月 18 日起随时带着；第四样留批注是掺手帐那回加的，见 src/diaryTools.js），秘戏钱匣里抽签那一样（10 月 21 日起随时带着，见 src/qx/pool.js）
+D = ["diary_list", "diary_read", "diary_search", "diary_note", "qx_draw", "room_look", "room_memo"]  # 翻日记的四样（日记共读，10 月 18 日起随时带着；第四样留批注是掺手帐那回加的，见 src/diaryTools.js），秘戏钱匣里抽签那一样（10 月 21 日起随时带着，见 src/qx/pool.js），回屋看一眼、留换装便签那两样（10 月 22 日起随时带着，见 src/room.js）
 GD = ["new_game", "roll", "game_action", "game_info"] + D
 CARDS = "[...document.querySelectorAll('.kfs-game-card')].map((e) => e.innerText)"
 STRIP = "(() => { const e = document.querySelector('.kfs-game-strip'); return e ? e.innerText.replace(/\\n/g, ' | ') : null; })()"
