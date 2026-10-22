@@ -209,9 +209,17 @@ const parseJson = (s) => {
 
 // ---------- 刚打开、还没换到要看的那一天之前：同页按它自带的那一天（9.26）摆过一遍，那时候写的不存 ----------
 // 换天（journalSetDay 里 PAGE_DAY 换过来那一下，tools/tongye.mjs 在那儿加了一句 __kfsOpened）以后才放开
+// 换到那一天，顺手把那一天整天的话（引用栏的聊天、便签）先取回来（同页的 qFullDay，取过的不再取）：等她打开引用栏已经在了。
+// 不然是打开引用栏那一下才取，取回来同页把那一排整排重摆一回（那一天选过的清掉），她点句子正好赶上那一下就点空了（另一双眼睛挑出来的）
 let opened = false;
-window.__kfsOpened = () => {
+window.__kfsOpened = (k) => {
   opened = true;
+  if (ON && typeof k === "string")
+    setTimeout(() => {
+      try {
+        if (typeof window.qFullDay === "function") window.qFullDay(k);
+      } catch (e) {}
+    }, 0);
 };
 const lsHead = (k) => {
   const i = String(k).lastIndexOf(":");

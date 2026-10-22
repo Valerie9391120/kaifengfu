@@ -32,9 +32,12 @@ export function focusInside(a) {
 
 function typingHere() {
   const a = document.activeElement;
+  // 隔开的框（手帐本子，sandbox）里头看不进去：框里自己报在打字没有，框上记着 data-kfs-typing（见 tongye/TongyeFrame.jsx）。
+  // 焦点落在框里的时候这边的焦点照说是那个框；哪天浏览器把框挪到别的进程里、这边只说落在 body 上，框报着在打字也认
+  // （键盘真起来了才铺，见 update 里可视区变矮那一条）
+  const typingFrame = document.querySelector("[data-kfs-kbfit] iframe[data-kfs-typing]");
+  if (typingFrame && (a === typingFrame || !a || a === document.body || a === document.documentElement)) return true;
   if (!a || !a.closest || !a.closest(FIT)) return false;
-  // 隔开的框（手帐本子，sandbox）里头看不进去：框里自己报在打字没有，框上记着 data-kfs-typing（见 tongye/TongyeFrame.jsx）
-  if (a.tagName === "IFRAME" && a.hasAttribute("data-kfs-typing")) return true;
   // 框身上带 data-kfs-kbfit 的（并蒂莲那一页），看框里的焦点是不是落在输入框上（它底下那个起名框）
   return isTextField(focusInside(a));
 }
