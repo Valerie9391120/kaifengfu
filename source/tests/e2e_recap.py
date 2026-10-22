@@ -128,10 +128,18 @@ with sync_playwright() as p:
     pa = A.new_page()
     pa.on("pageerror", lambda e: errors.append("A: " + str(e)))
     first_time(pa)
+    # 打开“他自己醒”：名帖里多【你的屋子】那一段（见 src/room.js）。下面比抄提要和聊天时的名帖那几条，连这一段一起比
+    side(pa)
+    pa.get_by_role("button", name="头像与设置").click(); pa.wait_for_timeout(600)
+    sw = pa.get_by_role("switch", name="他自己醒")
+    (sw if sw.count() else pa.get_by_role("button", name="他自己醒")).click(); pa.wait_for_timeout(500)
+    close_sheet(pa)
+    shut_side(pa)
 
     # ================= 短对话：和原来一样 =================
     chat(pa, "头一句")
     body = chat_calls()[-1]["body"]
+    ok("【你的屋子】" in body["system"][0]["text"], "“他自己醒”开着：名帖里有【你的屋子】（下面抄提要的名帖要跟它一个字不差）")
     ok(not any("前情提要】这段对话" in t or "没有寄来" in t for t in all_texts(body)) and first_texts(body)[0].startswith("【开封府附注】") and "【前情提要】\n一段对话聊长了" in body["system"][0]["text"],
        "短对话：寄的和原来一样，开头没有多出来的话；名帖后面的规矩里有【前情提要】那一段")
     ok([m[2] for m in marks(body)] == [ONE_HOUR], "头一句话：对话上只有一个缓存记号，留一小时")

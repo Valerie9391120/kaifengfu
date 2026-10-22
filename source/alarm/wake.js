@@ -31,7 +31,7 @@ import { FOX_CHAT, FOX_TITLE, FOX_DOORS, FOX_TASK, TASK_MAX_ROUNDS, isWakeMark, 
 import { lastMark, parseWake, nextChase, infoOf, splitWake } from "./plan.js";
 import { TOOLS as GAME_TOOLS, ON_KEY, readOn, gameOn, hasSteps } from "../src/game/jianghu.js";
 import { QX_KEY, QX_TOOLS, QX_NAMES, CUT_QX, QX_FAIL_NOTE, isQxCall, readPool, runQxCalls, qxSection } from "../src/qx/pool.js";
-import { ROOM_TOOLS, ROOM_NAMES, isRoomCall, runRoomCalls, roomSection, cutRoom, localDay, MEMO_KEY, liveMemos } from "../src/room.js";
+import { ROOM_TOOLS, ROOM_NAMES, isRoomCall, runRoomCalls, roomSection, cutRoom, localDay, MEMO_KEY, liveMemos, memoStands, memoLines } from "../src/room.js";
 import { gardenOf, gardenBrief, gardenToy } from "./garden.js";
 import { dressingOf, dressingBrief, dressingToy } from "./dressing.js";
 import { completedToday } from "../vendor/dressing/dressing-engine.ts";
@@ -441,13 +441,25 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
   // 他屋里的妆台：【醒来】里只说今天完成搭配没有（这是游戏，不是他的实际状态）；今天完成过了，这一回就不给“完成搭配”这个选项（她 10 月 21 日定的）
   const dressing = dressingOf(store, dressingOpts);
   const dressed = await dressing.load();
-  // 他在聊天里给自己留的换装便签（src/room.js）：还管着的摆在【醒来】里，过了三天的收起来
+  // 他在聊天里给自己留的换装便签（src/room.js）：还管着的摆在【醒来】里；过了三天的、留它的那一步已经不在那段对话里的（她改了话、重新回答、删了那段），收起来
   const memos = liveMemos(await Promise.all(store.keys(MEMO_KEY).map(async (key) => ({ key, text: await store.get(key) }))), now);
-  for (const k of memos.stale) {
+  const chats = new Map();
+  const msgsOf = async (id) => {
+    if (!chats.has(id)) chats.set(id, id ? parse(await store.get(chatKey(id)), null) : null);
+    return chats.get(id);
+  };
+  const shown = [];
+  const drop = memos.stale.slice();
+  for (const m of memos.live) {
+    if (memoStands(m, await msgsOf(m.chat), now)) shown.push(m);
+    else drop.push(m.key);
+  }
+  for (const k of drop) {
     try {
       await store.del(k);
     } catch (e) {
-      log("收一张过期的便签没收成，下回再收");
+      if (e && (e.code === "badlogin" || e.code === "secret")) throw e;
+      log("收一张不算数的便签没收成，下回再收");
     }
   }
   const section = wakeSection({
@@ -463,18 +475,28 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     garden: gardenBrief(await garden.load(), garden.today()),
     dressing: dressingBrief(dressed, dressing.today()),
     steps: ROOM_STEPS,
-    memos: memos.live,
+    memos: memoLines(shown),
   });
   const event = { id: newId(), role: "event", who: "him", kind: "wake", ts: now };
   // 妆台：这一回他完成了今天的搭配，便签就收起来（“下次穿”就是下一身，她 10 月 22 日凌晨定的：管到下一回完成搭配为止）。
   // 在完成的那一下就收（同园子、妆台的存档：替他办了就算数，后面哪一步要不到回话也一样）
+  // 收的时候一张一张收，哪张没收成留着，这一回醒完再收一遍（另一双眼睛挑出来的：原来头一张没收成，后面的也不收了）
   const dress = dressingToy(dressing, !completedToday(dressed, dressing.today()));
-  let retired = memos.live.length === 0;
+  let left = shown.slice();
   const retire = async () => {
-    if (retired || completedToday(dressed, dressing.today()) || !completedToday(await dressing.load(), dressing.today())) return;
-    retired = true;
-    for (const m of memos.live) await store.del(m.key);
-    log(`他完成了今天的搭配，收了 ${memos.live.length} 张便签`);
+    if (!left.length || completedToday(dressed, dressing.today()) || !completedToday(await dressing.load(), dressing.today())) return;
+    const keep = [];
+    for (const m of left) {
+      try {
+        await store.del(m.key);
+      } catch (e) {
+        if (e && (e.code === "badlogin" || e.code === "secret")) throw e;
+        keep.push(m);
+      }
+    }
+    if (left.length > keep.length) log(`他完成了今天的搭配，收了 ${left.length - keep.length} 张便签`);
+    if (keep.length) log(`有 ${keep.length} 张便签没收成，过一会儿再收`);
+    left = keep;
   };
   const dressRun = async (calls) => {
     const out = await dress.run(calls);
@@ -482,12 +504,19 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
       await retire();
     } catch (e) {
       if (e && (e.code === "badlogin" || e.code === "secret")) throw e;
-      log("收便签没收成，下回再收");
+      log("收便签没收成，过一会儿再收");
     }
     return out;
   };
   const toys = [gardenToy(garden), { ...dress, run: dressRun }];
   const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section, toys, most: ROOM_STEPS, lastNote: LAST_STEP_NOTE });
+  // 便签：完成搭配那一下没收成的，醒完再收一遍
+  try {
+    await retire();
+  } catch (e) {
+    if (e && (e.code === "badlogin" || e.code === "secret")) throw e;
+    log("收便签没收成，下回完成搭配再收");
+  }
   // 最后一步里单独一行写了 [新对话:名字]：那一行后面的字落进新开的一段对话（只认最后一步：前面几步是翻日记的半截）
   const steps = r.steps.slice();
   const last = steps[steps.length - 1];

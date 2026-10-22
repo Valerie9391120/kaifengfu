@@ -2,8 +2,8 @@
 // 照恩师的引擎写、只读不写，便签怎么留、留多久、什么时候收；闹钟那头任务到点那一回带着、醒在屋里那一回不带，便签摆在【醒来】里、完成搭配就收。
 // 园子、妆台的存档是拿恩师的引擎现跑出来的（编的日子），不是她的存档。
 import {
-  ROOM_TOOLS, ROOM_NAMES, ROOM_SECTION, MEMO_KEY, MEMO_NOTE, MEMO_FAIL, LOOK_FAIL, MEMO_DAYS, GARDEN_KEY, DRESSING_KEY,
-  isRoomCall, roomSection, gardenView, dressingView, wardrobeView, runRoomCalls, liveMemos, readMemo, cutRoom, localDay,
+  ROOM_TOOLS, ROOM_NAMES, ROOM_SECTION, MEMO_KEY, MEMO_NOTE, MEMO_FAIL, LOOK_FAIL, MEMO_DAYS, MEMO_GRACE, GARDEN_KEY, DRESSING_KEY,
+  isRoomCall, roomSection, gardenView, dressingView, wardrobeView, runRoomCalls, liveMemos, readMemo, memoStands, memoLines, cutRoom, localDay,
 } from "../src/room.js";
 import { GardenEngine } from "../vendor/garden/garden-engine.ts";
 import { DressingEngine } from "../vendor/dressing/dressing-engine.ts";
@@ -181,8 +181,9 @@ ok(both.staticText.indexOf("【日记本】") < both.staticText.indexOf("【你�
   const s2 = kv();
   const m2 = await runRoomCalls([call("toolu_m1", "room_memo", { text: "  答应了卿卿\n下次穿高领黑毛衣 " })], { ...io, get: s2.get, set: s2.set });
   ok(s2.m.get(MEMO_KEY + "toolu_m1") === s.m.get(MEMO_KEY + "toolu_m1") && m2[0].out === m[0].out, "两台设备替他留同一张：钥匙、写进去的一样（记的是他那一条的时间，不是各自的钟）");
-  const long = await runRoomCalls([call("toolu_m2", "room_memo", { text: "长".repeat(80) })], io);
+  const long = await runRoomCalls([call("toolu_m2", "room_memo", { text: "长".repeat(80) }), call("toolu_m6", "room_memo", { text: "😀".repeat(80) })], io);
   ok(JSON.parse(s.m.get(MEMO_KEY + "toolu_m2")).text === "长".repeat(60) + "…" && !long[0].err, "写得太长：留前六十个字");
+  ok(JSON.parse(s.m.get(MEMO_KEY + "toolu_m6")).text === "😀".repeat(60) + "…", "表情这种占两格的字一个一个数，不截成半个");
   const empty = await runRoomCalls([call("toolu_m3", "room_memo", { text: "   " }), call("toolu_m4", "room_memo", {})], io);
   ok(empty.every((c) => c.err) && empty[0].note === MEMO_FAIL && empty[1].note === "" && !s.m.has(MEMO_KEY + "toolu_m3") && !s.m.has(MEMO_KEY + "toolu_m4"), "便签上没写字：不留，小字“没记成”（一样的只留一行）");
   const off = await runRoomCalls([call("toolu_m5", "room_memo", { text: "下次穿旗袍" })], { ...io, on: false });
@@ -225,6 +226,19 @@ ok(both.staticText.indexOf("【日记本】") < both.staticText.indexOf("【你�
   ok(r.live.map((m) => m.key).join() === "k1,k3" && r.live[0].text === "先留的" && r.stale.sort().join() === "k2,k4,k5" && MEMO_DAYS === 3,
     "还管着的：三天以内的，按留的先后排；过了三天的、坏了的、空的该收");
   ok(readMemo(null) === null && readMemo('{"text":"x","at":"昨天"}') === null && readMemo(JSON.stringify({ text: "x", at: 1 })).chat === "", "读便签：坏的不认，缺的补空");
+  ok(liveMemos([item(MEMO_KEY + "toolu_9", now)], now).live[0].id === "toolu_9", "每张带着他调 room_memo 那一下的编号（钥匙后半截）");
+
+  // 还算不算数：留它的那一步还在那段对话眼前这一支上
+  const memo = { id: "toolu_m", text: "下次穿旗袍", chat: "c1", at: now - 2 * H };
+  const step = (id, name = "room_memo") => ({ id: "h" + id, role: "him", ts: 1, items: [], calls: [{ id, name, input: { text: "x" }, out: "好", note: MEMO_NOTE }] });
+  const her = { id: "q1", role: "her", ts: 0, text: "记得下次穿旗袍" };
+  ok(memoStands(memo, [her, step("toolu_m")], now), "留它的那一步还在：算数");
+  ok(!memoStands(memo, [{ ...her, alts: [[her, step("toolu_m")]] }, step("toolu_other")], now) && !memoStands(memo, [her, step("toolu_m", "room_look")], now),
+    "她改了话、重新回答（原来那一支收进 alts，眼前这一支上没有这一步）：不算了");
+  ok(!memoStands(memo, null, now) && !memoStands(memo, [], now), "那段对话没了、空了：不算了");
+  ok(memoStands({ ...memo, at: now - MEMO_GRACE + 60 * 1000 }, null, now) && MEMO_GRACE === 30 * 60 * 1000, "刚留的半个钟头里不查（手机先存便签、再存对话，闹钟可能先拉到便签）");
+  const ls = memoLines([{ text: "下次穿旗袍", at: 1 }, { text: "下次穿西装", at: 2 }, { text: "下次穿旗袍", at: 3 }]);
+  ok(ls.map((m) => m.at).join() === "2,3", "写的一样的只摆一张（留得晚的那张），照先后排");
 }
 
 // =====================================================
@@ -306,9 +320,13 @@ ok(both.staticText.indexOf("【日记本】") < both.staticText.indexOf("【你�
   // 有一张便签：摆在【醒来】里；他这一回完成了搭配，便签收起来
   const now = Date.now();
   const H = 60 * 60 * 1000;
+  // 那段对话（留便签的那几步在眼前这一支上）
+  const chatWith = (...ids) => JSON.stringify([{ id: "q1", role: "her", ts: 1, text: "记得下次穿旗袍" }, ...ids.map((id, i) => ({ id: "h" + i, role: "him", ts: 2 + i, items: [], calls: [{ id, name: "room_memo", input: { text: "x" }, out: "好", note: MEMO_NOTE }] }))]);
+  const memoOf = (text, chat, title, at) => JSON.stringify({ v: 1, text, chat, title, at });
   const r1 = kv({
-    [MEMO_KEY + "m1"]: JSON.stringify({ v: 1, text: "答应了卿卿下次穿旗袍", chat: "c1", title: "布丁", at: now - 2 * H }),
-    [MEMO_KEY + "old"]: JSON.stringify({ v: 1, text: "早就过期的那张", chat: "c1", title: "布丁", at: now - 4 * 24 * H }),
+    [MEMO_KEY + "m1"]: memoOf("答应了卿卿下次穿旗袍", "c1", "布丁", now - 2 * H),
+    [MEMO_KEY + "old"]: memoOf("早就过期的那张", "c1", "布丁", now - 4 * 24 * H),
+    "kfs2:chat:c1": chatWith("m1", "old"),
   });
   cloud = cloudOf([
     { stop_reason: "tool_use", content: [use("w1", "play_dressing_room", { action: "select", category: "outfit", itemId: "outfit_qipao" }), use("w2", "play_dressing_room", { action: "complete" })] },
@@ -322,25 +340,86 @@ ok(both.staticText.indexOf("【日记本】") < both.staticText.indexOf("【你�
   ok(!r1.m.has(MEMO_KEY + "m1") && !r1.m.has(MEMO_KEY + "old"), "他这一回完成了搭配：便签收起来；过了三天的那张也收了");
 
   // 这一回只照了照镜子、没完成：便签留着
-  const r2 = kv({ [MEMO_KEY + "m2"]: JSON.stringify({ v: 1, text: "答应了卿卿下次穿旗袍", chat: "c1", title: "布丁", at: now - H }) });
+  const r2 = kv({ [MEMO_KEY + "m2"]: memoOf("答应了卿卿下次穿旗袍", "c1", "布丁", now - H), "kfs2:chat:c1": chatWith("m2") });
   cloud = cloudOf([{ stop_reason: "tool_use", content: [use("x1", "play_dressing_room", { action: "mirror" })] }, said("照了照")]);
   await askRoom({ store: r2, cloud, ctx: ctxOf(), now, ...opts });
   ok(r2.m.has(MEMO_KEY + "m2"), "这一回没完成搭配（只照了镜子）：便签留着");
   // 今天早就完成过了（这一回完成不了）：便签留着，等明天那一身
-  const r3 = kv({ [MEMO_KEY + "m3"]: JSON.stringify({ v: 1, text: "答应了卿卿下次穿旗袍", chat: "c1", title: "布丁", at: now - H }) });
+  const r3 = kv({ [MEMO_KEY + "m3"]: memoOf("答应了卿卿下次穿旗袍", "c1", "布丁", now - H), "kfs2:chat:c1": chatWith("m3") });
   await dress(r3, day(21), [["outfit", "outfit_black_turtleneck"]]);
   cloud = cloudOf([{ stop_reason: "tool_use", content: [use("y1", "play_dressing_room", { action: "select", category: "outfit", itemId: "outfit_qipao" }), use("y2", "play_dressing_room", { action: "complete" })] }, said("今天穿过了")]);
   await askRoom({ store: r3, cloud, ctx: ctxOf(), now, ...opts });
   ok(r3.m.has(MEMO_KEY + "m3") && lastText(cloud.bodies[0]).includes("答应了卿卿下次穿旗袍"), "今天早就完成过搭配（这一回完成不了）：便签照摆、留着，等下一回完成");
   // 两张：都摆、都收
   const r4 = kv({
-    [MEMO_KEY + "a"]: JSON.stringify({ v: 1, text: "先答应的", chat: "c1", title: "", at: now - 3 * H }),
-    [MEMO_KEY + "b"]: JSON.stringify({ v: 1, text: "后答应的", chat: "c2", title: "雪", at: now - H }),
+    [MEMO_KEY + "a"]: memoOf("先答应的", "c1", "", now - 3 * H),
+    [MEMO_KEY + "b"]: memoOf("后答应的", "c2", "雪", now - H),
+    "kfs2:chat:c1": chatWith("a"),
+    "kfs2:chat:c2": chatWith("b"),
   });
   cloud = cloudOf([{ stop_reason: "tool_use", content: [use("z1", "play_dressing_room", { action: "complete" })] }, said("好")]);
   await askRoom({ store: r4, cloud, ctx: ctxOf(), now, ...opts });
   const w4 = lastText(cloud.bodies[0]);
   ok(w4.includes("妆台上压着你自己留的 2 张便签") && w4.indexOf("先答应的") < w4.indexOf("后答应的") && w4.includes("在《雪》里") && r4.keys(MEMO_KEY).length === 0, "两张：照留的先后都摆着，完成搭配一起收");
+  // 她改了话、重新回答以后：原来那一支上的那张不摆、收掉；那段对话删了的也收；刚留的、对话还没同步过来的照摆
+  const r5 = kv({
+    [MEMO_KEY + "gone"]: memoOf("答应了卿卿下次穿旗袍", "c1", "布丁", now - 2 * H),
+    [MEMO_KEY + "kept"]: memoOf("答应了卿卿下次穿西装", "c1", "布丁", now - H),
+    [MEMO_KEY + "nochat"]: memoOf("删了的那段里留的", "c9", "没了", now - H),
+    [MEMO_KEY + "fresh"]: memoOf("刚留的那张", "c8", "新的", now - 5 * 60 * 1000),
+    "kfs2:chat:c1": JSON.stringify([{ id: "q1", role: "her", ts: 1, text: "记得下次穿西装", alts: [[{ id: "q1", role: "her", ts: 1, text: "记得下次穿旗袍" }, { id: "h0", role: "him", ts: 2, items: [], calls: [{ id: "gone", name: "room_memo", input: {}, out: "好" }] }]] }, { id: "h1", role: "him", ts: 3, items: [], calls: [{ id: "kept", name: "room_memo", input: {}, out: "好" }] }]),
+  });
+  cloud = cloudOf([said("醒了")]);
+  await askRoom({ store: r5, cloud, ctx: ctxOf(), now, ...opts });
+  const w5 = lastText(cloud.bodies[0]);
+  ok(w5.includes("穿西装") && w5.includes("刚留的那张") && !w5.includes("穿旗袍") && !w5.includes("删了的那段里留的") && r5.m.has(MEMO_KEY + "kept") && r5.m.has(MEMO_KEY + "fresh") && !r5.m.has(MEMO_KEY + "gone") && !r5.m.has(MEMO_KEY + "nochat"),
+    "她把“穿旗袍”改成“穿西装”：屋里只摆后来那张，原来那一支上的那张收掉；那段对话删了的也收掉；刚留的照摆");
+  // 一样的两张（他留了两回）：只摆一张，完成搭配都收
+  const r6 = kv({ [MEMO_KEY + "d1"]: memoOf("答应了卿卿下次穿旗袍", "c1", "布丁", now - 2 * H), [MEMO_KEY + "d2"]: memoOf("答应了卿卿下次穿旗袍", "c1", "布丁", now - H), "kfs2:chat:c1": chatWith("d1", "d2") });
+  cloud = cloudOf([{ stop_reason: "tool_use", content: [use("v1", "play_dressing_room", { action: "complete" })] }, said("好")]);
+  await askRoom({ store: r6, cloud, ctx: ctxOf(), now, ...opts });
+  ok(lastText(cloud.bodies[0]).split("答应了卿卿下次穿旗袍").length === 2 && r6.keys(MEMO_KEY).length === 0, "写的一样的两张：只摆一张，完成搭配两张都收");
+  // 收的时候头一张没收成：后面那张照收，头一张醒完再收一遍
+  const r7 = kv({ [MEMO_KEY + "e1"]: memoOf("先答应的", "c1", "", now - 2 * H), [MEMO_KEY + "e2"]: memoOf("后答应的", "c1", "", now - H), "kfs2:chat:c1": chatWith("e1", "e2") });
+  let fails = 1;
+  const del7 = r7.del;
+  r7.del = async (k) => {
+    if (k === MEMO_KEY + "e1" && fails-- > 0) throw Object.assign(new Error("断了"), { code: "unreachable" });
+    return del7(k);
+  };
+  cloud = cloudOf([{ stop_reason: "tool_use", content: [use("u1", "play_dressing_room", { action: "complete" })] }, said("好")]);
+  await askRoom({ store: r7, cloud, ctx: ctxOf(), now, ...opts });
+  ok(r7.keys(MEMO_KEY).length === 0 && fails < 0, "收的时候头一张一时没收成：后面那张照收，头一张醒完再收一遍，都收了");
+  // 头一张两回都没收成：后面那张照样收了，头一张留着（下回完成搭配再收）
+  const r7b = kv({ [MEMO_KEY + "e1"]: memoOf("先答应的", "c1", "", now - 2 * H), [MEMO_KEY + "e2"]: memoOf("后答应的", "c1", "", now - H), "kfs2:chat:c1": chatWith("e1", "e2") });
+  const del7b = r7b.del;
+  r7b.del = async (k) => {
+    if (k === MEMO_KEY + "e1") throw Object.assign(new Error("断了"), { code: "unreachable" });
+    return del7b(k);
+  };
+  cloud = cloudOf([{ stop_reason: "tool_use", content: [use("u3", "play_dressing_room", { action: "complete" })] }, said("好")]);
+  await askRoom({ store: r7b, cloud, ctx: ctxOf(), now, ...opts });
+  ok(r7b.m.has(MEMO_KEY + "e1") && !r7b.m.has(MEMO_KEY + "e2"), "头一张怎么也收不成：不耽误后面那张（一张一张收）");
+  // 一直收不成（断网）：这一回醒照常醒完，便签留着，下回完成搭配再收
+  const r8 = kv({ [MEMO_KEY + "f1"]: memoOf("先答应的", "c1", "", now - 2 * H), "kfs2:chat:c1": chatWith("f1") });
+  r8.del = async () => {
+    throw Object.assign(new Error("断了"), { code: "unreachable" });
+  };
+  cloud = cloudOf([{ stop_reason: "tool_use", content: [use("u2", "play_dressing_room", { action: "complete" })] }, said("好")]);
+  const b8 = await askRoom({ store: r8, cloud, ctx: ctxOf(), now, ...opts });
+  ok(b8 && b8.kind === "room" && r8.m.has(MEMO_KEY + "f1"), "一直收不成（断了网）：这一回照常醒完，便签留着");
+  // 密码不对、凭据坏了：照样往外抛（同园子、妆台）
+  const r9 = kv({ [MEMO_KEY + "g1"]: memoOf("过期的", "c1", "", now - 4 * 24 * H) });
+  r9.del = async () => {
+    throw Object.assign(new Error("x"), { code: "badlogin" });
+  };
+  let threw = null;
+  try {
+    await askRoom({ store: r9, cloud: cloudOf([said("醒了")]), ctx: ctxOf(), now, ...opts });
+  } catch (e) {
+    threw = e;
+  }
+  ok(threw && threw.code === "badlogin", "收便签的时候密码不对：往外抛（同园子、妆台）");
   // 【醒来】那一段：没给便签，跟原来一个字不差
   const base = { now, herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "" };
   ok(wakeSection(base) === wakeSection({ ...base, memos: [] }) && !wakeSection(base).includes("便签（跟她聊天"), "没有便签：【醒来】跟原来一个字不差");
