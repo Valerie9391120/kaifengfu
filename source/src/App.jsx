@@ -39,6 +39,7 @@ import { LotusPage } from "./panels/LotusPage.jsx";
 import { QxPage } from "./qx/QxPage.jsx";
 import { LotRow } from "./qx/LotRow.jsx";
 import { QX_KEY, QX_TOOLS, QX_NAMES, CUT_QX, QX_FAIL_NOTE, isQxCall, readPool, packPool, emptyPool, runQxCalls, qxSection, poolSize, hasLots, cleanLines } from "./qx/pool.js";
+import { ROOM_TOOLS, ROOM_NAMES, isRoomCall, runRoomCalls, roomSection, cutRoom, localDay } from "./room.js";
 import { buildRows } from "./chat/rows.js";
 import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/overview.js";
 import { BubbleRow } from "./chat/Bubble.jsx";
@@ -147,7 +148,7 @@ const STEP_GRACE = 2 * 60 * 1000; // 别的设备发的那一回、回来的是�
 const CUT_CALL = "没执行：这一回的回话没写完整（多半是写到长度上限被截断了），这一步没下。要下的话重新调一次。";
 const CUT_DIARY = "没翻：这一回的回话没写完整（多半是写到长度上限被截断了），日记没替你翻。要翻的话重新调一次。";
 // 他回话里认哪几样工具是要开封府在手机上替他办的：江湖棋局那四样、翻日记那几样、秘戏钱匣里抽签那一样（MCP 的那头自己办，不归这里）
-const CALL_NAMES = new Set([...GAME_NAMES, ...DIARY_NAMES, ...QX_NAMES]);
+const CALL_NAMES = new Set([...GAME_NAMES, ...DIARY_NAMES, ...QX_NAMES, ...ROOM_NAMES]);
 // 这一回是不是这台设备发的（江湖棋局那段原来只写 dev；10 月 18 日起每一回都写 from）
 const ownJob = (info) => !!(info && info.extra && (info.extra.dev === DEVICE_ID || info.extra.from === DEVICE_ID));
 
@@ -1496,6 +1497,8 @@ export default function App({ account = {} }) {
             ? { ...c, out: CUT_DIARY, err: true, note: "想翻日记，没翻成", card: [] }
             : isQxCall(c)
             ? { ...c, out: CUT_QX, err: true, note: QX_FAIL_NOTE, card: [] }
+            : isRoomCall(c)
+            ? cutRoom(c)
             : { ...c, out: CUT_CALL, err: true, card: [] }
         );
     }
@@ -1533,6 +1536,11 @@ export default function App({ account = {} }) {
     if (him.calls.some((c) => isDiaryCall(c) && typeof c.out !== "string")) him.calls = await runDiaryCalls(him.calls, diaryReader, new Date());
     // 秘戏钱匣里抽签（见 qx/pool.js）：照这台手机上的签库、照他调的那一样的编号抽（两台设备抽得一样）
     if (him.calls.some((c) => isQxCall(c) && typeof c.out !== "string")) him.calls = runQxCalls(him.calls, qxPoolRef.current);
+    // 回屋看一眼、给屋里的自己留换装便签（见 room.js）：屋里的存档就在这台手机上（家里的闹钟写、同步下来的），只读；便签记的是他这一条的时间（两台设备替他留，留的一样）
+    if (him.calls.some((c) => isRoomCall(c) && typeof c.out !== "string")) {
+      const title = ((chat && indexRef.current.find((x) => x.id === chat)) || {}).title || "";
+      him.calls = await runRoomCalls(him.calls, { get: (k) => store.get(k), set: (k, v) => store.set(k, v), today: localDay(), at: him.ts || Date.now(), chat, title, on: wakeOn(settingsRef.current) });
+    }
     if (!needsRun(him)) return true;
     // 剩下的是江湖棋局那几样
     if (chat && !isOn(chat)) {
@@ -1630,6 +1638,7 @@ export default function App({ account = {} }) {
       call: inCall, // 正在打电话：【此刻】后面附上通话的规矩（见 call/）
       game,
       qx: qxSection(qxPoolRef.current), // 秘戏钱匣：签库里有签才有这一段，只写维度名（见 qx/pool.js）
+      room: roomSection(wakeOn(st)), // 他的屋子：“他自己醒”开着才有这一段（见 room.js）
     });
     // 任务标记（见 fox.js）：“他自己醒”开着的时候，平常的对话里【此刻】后面附一段，他知道能定个闹钟到点来找她。在记号后面，名帖一个字不动
     const tasks = wakeOn(st) && !isFoxChat(opts.chat) && !isGameChat(opts.chat);
@@ -1653,9 +1662,10 @@ export default function App({ account = {} }) {
         system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
         messages: withNowNote(apiMessages, nowNote, at.cache, tail),
       };
-      // 江湖棋局的四样工具排在最前头，翻日记的几样跟着（日记共读，见 diaryTools.js：随时带着），秘戏钱匣里抽签那一样再跟着（也随时带着，见 qx/pool.js），MCP 的排最后。
+      // 江湖棋局的四样工具排在最前头，翻日记的几样跟着（日记共读，见 diaryTools.js：随时带着），秘戏钱匣里抽签那一样再跟着（也随时带着，见 qx/pool.js），
+      // 回屋看一眼、留换装便签那两样再跟着（也随时带着，见 room.js），MCP 的排最后。
       // 三种写法都带：摘掉 MCP 的那一种也带着，对话里有他调过的，不带那边不认
-      const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, QX_TOOLS);
+      const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, QX_TOOLS, ROOM_TOOLS);
       if (at.mcp) {
         body.mcp_servers = mcps.map((m, i) => {
           const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
@@ -3578,7 +3588,7 @@ export default function App({ account = {} }) {
     // 名帖那一大段和聊天时寄的一个字不差（缓存接得上；正在打电话的这段对话，心里话那一条照关着算，见 thoughtsFor；
     // 江湖棋局那一段带着【江湖棋局】那一段，见 game/jianghu.js）；【此刻】这回用不着
     const game = isOn(id) ? { board: null, mixed: !isGameChat(id) } : hasSteps(msgs) ? { off: true } : null;
-    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game, qx: qxSection(qxPoolRef.current) });
+    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game, qx: qxSection(qxPoolRef.current), room: roomSection(wakeOn(st)) });
     // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
     const photos = {};
     for (const m of msgs) {
@@ -3610,7 +3620,7 @@ export default function App({ account = {} }) {
       messages: [{ role: "user", content: ask.content }],
     };
     // 工具照聊天时一样带着（排在名帖前头，带着才接得上聊天时写下的缓存：江湖棋局那四样、翻日记那三样），只是这一回不许调
-    recapBody.tools = (game ? GAME_TOOLS : []).concat(DIARY_TOOLS, QX_TOOLS);
+    recapBody.tools = (game ? GAME_TOOLS : []).concat(DIARY_TOOLS, QX_TOOLS, ROOM_TOOLS);
     recapBody.tool_choice = { type: "none" };
     const data = await askRecap(recapBody);
     recordUsage(data, true);
@@ -4982,7 +4992,7 @@ export default function App({ account = {} }) {
             usage={usage}
             monthUsage={monthUsage}
             recapUsage={recapUsage}
-            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false, qx: qxSection(qxPool) }).staticText)}
+            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false, qx: qxSection(qxPool), room: roomSection(wakeOn(settings)) }).staticText)}
           />
         </Sheet>
       );

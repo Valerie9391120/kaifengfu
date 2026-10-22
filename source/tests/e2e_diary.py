@@ -85,7 +85,7 @@ with sync_playwright() as p:
         # ================= 平常说话：带着翻日记的四样 =================
         n0 = say_and_wait(pa, "你好", 1)
         b0 = said_by("你好", n0)[0]["body"]
-        ok(tool_names(b0) == DIARY_NAMES + ["qx_draw"] and "tool_choice" not in b0, f"平常说一句：带着翻日记的四样工具，随时能翻；后面跟着秘戏钱匣里抽签那一样（{tool_names(b0)}）")
+        ok(tool_names(b0) == DIARY_NAMES + ["qx_draw", "room_look", "room_memo"] and "tool_choice" not in b0, f"平常说一句：带着翻日记的四样工具，随时能翻；后面跟着秘戏钱匣里抽签那一样、回屋看一眼和留换装便签那两样（{tool_names(b0)}）")
         ok("【日记本】" in sys_text(b0) and "diary_search" in sys_text(b0) and sys_text(b0).index("【日记本】") < sys_text(b0).index("【回复格式】"), "名帖里有【日记本】那一段，排在【回复格式】前头")
         ok(pa.evaluate(NOTES) == [], "没翻：聊天里没有那一行小字")
 

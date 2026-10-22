@@ -27,10 +27,11 @@ import { makePreview } from "../src/chat/overview.js";
 import { chatTag } from "../src/mail.js";
 import { newId } from "../src/util.js";
 import { needsReply, stoppedAt } from "../src/thread.js";
-import { FOX_CHAT, FOX_TITLE, FOX_DOORS, FOX_TASK, TASK_MAX_ROUNDS, isWakeMark, gapOf, maxOf } from "../src/fox.js";
+import { FOX_CHAT, FOX_TITLE, FOX_DOORS, FOX_TASK, TASK_MAX_ROUNDS, isWakeMark, gapOf, maxOf, wakeOn } from "../src/fox.js";
 import { lastMark, parseWake, nextChase, infoOf, splitWake } from "./plan.js";
 import { TOOLS as GAME_TOOLS, ON_KEY, readOn, gameOn, hasSteps } from "../src/game/jianghu.js";
 import { QX_KEY, QX_TOOLS, QX_NAMES, CUT_QX, QX_FAIL_NOTE, isQxCall, readPool, runQxCalls, qxSection } from "../src/qx/pool.js";
+import { ROOM_TOOLS, ROOM_NAMES, isRoomCall, runRoomCalls, roomSection, cutRoom, localDay, MEMO_KEY, liveMemos } from "../src/room.js";
 import { gardenOf, gardenBrief, gardenToy } from "./garden.js";
 import { dressingOf, dressingBrief, dressingToy } from "./dressing.js";
 import { completedToday } from "../vendor/dressing/dressing-engine.ts";
@@ -202,8 +203,10 @@ function withoutNewChat(step) {
 // toys：他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js 的 gardenToy、dressingToy；只有醒在屋里的时候给，她 10 月 21 日定的）：
 //   一样带一样工具，他调了就替他办、递回去接着要。一样是 { tool, names, is(call), cut(call), run(calls) }
 // most：最多几步（调一回工具、拿到结果接着往下说算一步）；lastNote：到了最后一步（前面一步调了工具，接着要的那一回）附在【醒来】后面的提醒，没给就不提醒
+// room：醒在平常的对话里（任务到点那一回）是 { chat, title }：同手机那头，带着回屋看一眼、留换装便签那两样（src/room.js），他调了就替他办；
+//   醒在屋里那一回不给（他就在屋里，园子、妆台自己带着）
 // 回 { steps: [{ him, text, quiet }], cost, newAvatar, newName, title, part }：part(text, step) 把某一步的一截字整理成那边的一条（拆新对话用，不再记钱）
-async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = null, toys = [], most = MOST_STEPS, lastNote = "" }) {
+async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = null, toys = [], most = MOST_STEPS, lastNote = "", room = null }) {
   const st = ctx.settings;
   const model = st.model || DEFAULT_MODEL;
   const maxTokens = st.maxTokens || 2048;
@@ -234,9 +237,10 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     call: false,
     game,
     qx: qxSection(qxPool),
+    room: roomSection(wakeOn(st)), // 【你的屋子】：同手机那头（“他自己醒”开着才有；闹钟叫他的时候总是开着的）
   });
-  const room = (sure) => roomFor(windowOf(model), staticText.length, maxTokens, sure);
-  const tier = tierOf(st.recall, room(false), room(true));
+  const roomOf = (sure) => roomFor(windowOf(model), staticText.length, maxTokens, sure);
+  const tier = tierOf(st.recall, roomOf(false), roomOf(true));
   const woke = wakeNowNote(nowNote) + "\n\n" + section;
 
   const { imgLookup, docLookup } = await attachmentsOf(store, msgs);
@@ -253,7 +257,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
       system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
       messages: withNowNote(messages, final && lastNote ? woke + "\n\n" + lastNote : woke, at.cache, tail),
     };
-    const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, QX_TOOLS, toys.map((t) => t.tool));
+    const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, QX_TOOLS, room ? ROOM_TOOLS : [], toys.map((t) => t.tool));
     if (at.mcp) {
       body.mcp_servers = mcps.map((m, i) => {
         const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
@@ -283,7 +287,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   };
 
   // 他调的那几样里认哪些（翻日记的，再加屋里那几样的）；哪一样归哪个玩的
-  const callNames = new Set([...DIARY_NAMES, ...QX_NAMES, ...toys.flatMap((t) => [...t.names])]);
+  const callNames = new Set([...DIARY_NAMES, ...QX_NAMES, ...(room ? [...ROOM_NAMES] : []), ...toys.flatMap((t) => [...t.names])]);
   const toyOf = (c) => toys.find((t) => t.is(c)) || null;
 
   // 他这一步回来的整理成对话里的一条（同 App.jsx 的 digestReply）。text 给了就只整理这一截（拆新对话用，钱不再记一遍）
@@ -337,6 +341,8 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
             ? toyOf(c).cut(c)
             : isQxCall(c)
             ? { ...c, out: CUT_QX, err: true, note: QX_FAIL_NOTE, card: [] }
+            : isRoomCall(c)
+            ? cutRoom(c)
             : { ...c, out: CUT_DIARY, err: true, note: "想翻日记，没翻成", card: [] };
           if (!x.note) return x;
           if (seen.has(x.note)) return { ...x, note: "" };
@@ -375,9 +381,10 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     const step = digest(data, used);
     steps.push(step);
     log(`第 ${i + 1} 步：${data.stop_reason || "?"}，${step.quiet ? "没留话" : "留了话"}`);
-    if (step.him.stop === "tool_use" && step.him.calls && step.him.calls.some((c) => (isDiaryCall(c) || isQxCall(c) || toyOf(c)) && typeof c.out !== "string")) {
+    if (step.him.stop === "tool_use" && step.him.calls && step.him.calls.some((c) => (isDiaryCall(c) || isQxCall(c) || (room && isRoomCall(c)) || toyOf(c)) && typeof c.out !== "string")) {
       let calls = await runDiaryCalls(step.him.calls, reader, new Date());
       calls = runQxCalls(calls, qxPool);
+      if (room) calls = await runRoomCalls(calls, { get: (k) => store.get(k), set: (k, v) => store.set(k, v), today: localDay(), at: step.him.ts, chat: room.chat, title: room.title, on: true });
       for (const t of toys) calls = await t.run(calls);
       step.him.calls = calls;
       continue;
@@ -434,6 +441,15 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
   // 他屋里的妆台：【醒来】里只说今天完成搭配没有（这是游戏，不是他的实际状态）；今天完成过了，这一回就不给“完成搭配”这个选项（她 10 月 21 日定的）
   const dressing = dressingOf(store, dressingOpts);
   const dressed = await dressing.load();
+  // 他在聊天里给自己留的换装便签（src/room.js）：还管着的摆在【醒来】里，过了三天的收起来
+  const memos = liveMemos(await Promise.all(store.keys(MEMO_KEY).map(async (key) => ({ key, text: await store.get(key) }))), now);
+  for (const k of memos.stale) {
+    try {
+      await store.del(k);
+    } catch (e) {
+      log("收一张过期的便签没收成，下回再收");
+    }
+  }
   const section = wakeSection({
     now,
     herLast: ctx.herLast,
@@ -447,9 +463,30 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     garden: gardenBrief(await garden.load(), garden.today()),
     dressing: dressingBrief(dressed, dressing.today()),
     steps: ROOM_STEPS,
+    memos: memos.live,
   });
   const event = { id: newId(), role: "event", who: "him", kind: "wake", ts: now };
-  const toys = [gardenToy(garden), dressingToy(dressing, !completedToday(dressed, dressing.today()))];
+  // 妆台：这一回他完成了今天的搭配，便签就收起来（“下次穿”就是下一身，她 10 月 22 日凌晨定的：管到下一回完成搭配为止）。
+  // 在完成的那一下就收（同园子、妆台的存档：替他办了就算数，后面哪一步要不到回话也一样）
+  const dress = dressingToy(dressing, !completedToday(dressed, dressing.today()));
+  let retired = memos.live.length === 0;
+  const retire = async () => {
+    if (retired || completedToday(dressed, dressing.today()) || !completedToday(await dressing.load(), dressing.today())) return;
+    retired = true;
+    for (const m of memos.live) await store.del(m.key);
+    log(`他完成了今天的搭配，收了 ${memos.live.length} 张便签`);
+  };
+  const dressRun = async (calls) => {
+    const out = await dress.run(calls);
+    try {
+      await retire();
+    } catch (e) {
+      if (e && (e.code === "badlogin" || e.code === "secret")) throw e;
+      log("收便签没收成，下回再收");
+    }
+    return out;
+  };
+  const toys = [gardenToy(garden), { ...dress, run: dressRun }];
   const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section, toys, most: ROOM_STEPS, lastNote: LAST_STEP_NOTE });
   // 最后一步里单独一行写了 [新对话:名字]：那一行后面的字落进新开的一段对话（只认最后一步：前面几步是翻日记的半截）
   const steps = r.steps.slice();
@@ -519,7 +556,7 @@ export async function askTask({ store, cloud, ctx, now = Date.now(), log = () =>
   const section = taskSection({ now, label, set: task.set, round, max: TASK_MAX_ROUNDS, mcps: mcpsOf(ctx.settings).map((m) => m.name) });
   // 下过江湖棋局的那段（她在平常对话里摆开过、对话里有他调过引擎的）：四样工具照带（见 askCore 的 game）
   const game = gameOn(chat.id, readOn(await store.get(ON_KEY))) || hasSteps(chat.msgs) ? { off: true } : null;
-  const r = await askCore({ store, cloud, ctx, log, msgs: chat.msgs.concat([head]), recaps, section, game });
+  const r = await askCore({ store, cloud, ctx, log, msgs: chat.msgs.concat([head]), recaps, section, game, room: { chat: chat.id, title: chat.title || "" } });
   // 这一回不认开新对话（他人就在她那段对话里）：那一行摘掉
   const steps = r.steps.map(withoutNewChat);
   const there = roomRows(head, steps);

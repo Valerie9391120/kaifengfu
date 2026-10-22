@@ -216,6 +216,56 @@ function fakeQx(body) {
   return null;
 }
 
+// 回屋看一眼、留换装便签的假的那边的我（tests/e2e_room.py 用；带着 room_look、room_memo 的时候，见 src/room.js）。照她最后说的那句话：
+//   “回屋看看园子”“回屋看看妆台”“回屋翻翻衣柜”：先说“我回屋看看。”，再调 room_look
+//   “记得下次穿 某某”：先说“好，记下了。”，再调 room_memo（便签上写“答应了卿卿下次穿某某”）
+//   “看到一半”：说“看着看着”、调了 room_look，可回话停在 max_tokens 上（写到长度上限被截断）：开封府不该替他办
+//   结果递回来：说“（测试回屋）”加结果的头一行（便签那一样说“（测试回屋）记好了”，不把便签上写的念出来：测她的页面上看不到便签上写的）
+//   打电话的时候（tool_choice 是 none）、别的话、递回来的不是这两样的结果：回 null（交给别人）
+function fakeRoom(body) {
+  if (body.tool_choice && body.tool_choice.type === "none") return null;
+  const msgs = body.messages || [];
+  const blocksOf = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || []);
+  const lastUser = msgs[msgs.length - 1];
+  const results = lastUser && lastUser.role === "user" ? blocksOf(lastUser).filter((b) => b.type === "tool_result") : [];
+  let herAt = -1;
+  let herSay = "";
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role !== "user") continue;
+    const t = blocksOf(msgs[i])
+      .filter((b) => b.type === "text" && !b.text.startsWith("【") && !b.text.startsWith("[开封府提示"))
+      .map((b) => b.text)
+      .join(" / ");
+    if (t.trim()) {
+      herAt = i;
+      herSay = t;
+      break;
+    }
+  }
+  const used = msgs.slice(herAt + 1).filter((m) => m.role === "assistant").flatMap((m) => blocksOf(m).filter((b) => b.type === "tool_use"));
+  const usage = { input_tokens: 60, cache_creation_input_tokens: 0, cache_read_input_tokens: 9000, output_tokens: 50 };
+  const use = (name, input) => ({ type: "tool_use", id: "toolu_room_" + ++toolSeq, name, input });
+  const step = (text, call) => ({ status: 200, json: { model: body.model, stop_reason: "tool_use", content: (text ? [{ type: "text", text }] : []).concat([call]), usage } });
+  const say = (text) => ({ status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text }], usage } });
+  const text = (r) => String((r && (typeof r.content === "string" ? r.content : JSON.stringify(r.content))) || "");
+  if (results.length) {
+    const ids = new Set(used.filter((u) => /^room_/.test(u.name)).map((u) => u.id));
+    if (results.some((r) => ids.has(r.tool_use_id))) {
+      if (replyQueue.length) return say(replyQueue.shift());
+      const memo = used.some((u) => u.name === "room_memo" && u.id === results[0].tool_use_id);
+      return say(`（测试回屋）${results[0].is_error ? "没成：" : ""}${memo ? "记好了" : text(results[0]).split("\n")[0].slice(0, 40)}`);
+    }
+    // 递回来的不是这两样的结果：交给别人。上一步截断了、没替他办的那一样的结果跟她的新话挤在同一句里（她又说了话）：照她的新话来
+    if (herAt !== msgs.length - 1) return null;
+  }
+  if (/看到一半/.test(herSay)) return { status: 200, json: { model: body.model, stop_reason: "max_tokens", content: [{ type: "text", text: "看着看着" }, use("room_look", { what: "garden" })], usage } };
+  const what = /回屋看看园子/.test(herSay) ? "garden" : /回屋看看妆台/.test(herSay) ? "dressing" : /回屋翻翻衣柜/.test(herSay) ? "wardrobe" : "";
+  if (what) return step("我回屋看看。", use("room_look", { what }));
+  const wear = /记得下次穿\s*(\S+)/.exec(herSay);
+  if (wear) return step("好，记下了。", use("room_memo", { text: `答应了卿卿下次穿${wear[1]}` }));
+  return null;
+}
+
 // 闲笔集里的手帐（同页那一本）：她在「交给光义」那一屏点了发送（tests/e2e_tongye.py 用，见 src/tongye/host.js 的 tyArrangeAsk）。
 // 跟在名帖后面的那段规矩是【排手帐】开头的。照寄来的编号排：原话挑头两句（再编一个不存在的，开封府该认不出），
 // 头一张照片当主照片、第二三张当双联照（有的话），再编一张不存在的当截图；留一条批注贴在主照片旁边。她说的“想要”抄进正文（看得出带过来了）。
@@ -291,6 +341,11 @@ function fakeAnthropic(body, beta, via) {
   if (Array.isArray(body.tools) && body.tools.some((t) => t && TOYS.has(t.name))) {
     const g = fakeGarden(body);
     if (g) return g;
+  }
+  // 回屋看一眼、留换装便签（带着 room_look，见 src/room.js）
+  if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "room_look")) {
+    const r = fakeRoom(body);
+    if (r) return r;
   }
   // 秘戏钱匣里他自己抽签（带着 qx_draw，见 src/qx/pool.js）
   if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "qx_draw")) {

@@ -16,8 +16,9 @@ import { dressingToolSchema } from "../vendor/dressing/dressing-tool.ts";
 import { CATEGORY_LABELS, itemName } from "../vendor/dressing/dressing-data.ts";
 import { ACHIEVEMENTS } from "../vendor/dressing/achievements.ts";
 import { localDay, storeOf } from "./garden.js";
+import { DRESSING_KEY } from "../src/room.js";
 
-export const DRESSING_KEY = "kfs2:dressing";
+export { DRESSING_KEY }; // 跟聊天里回屋看一眼（src/room.js）用的是同一把钥匙
 const NAME = dressingToolSchema(true).name;
 export const DRESSING_NAMES = new Set([NAME]);
 export const isDressingCall = (c) => !!(c && c.name === NAME);

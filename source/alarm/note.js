@@ -85,7 +85,8 @@ export function tailTranscript(msgs, memeLookup = () => null, most = 16, each = 
 // garden：他屋里的园子眼下的样子（alarm/garden.js 的 gardenBrief；没给就不提园子）
 // dressing：他屋里的妆台，今天完成搭配没有（alarm/dressing.js 的 dressingBrief；没给就不提妆台）。这是个换装游戏，不是他的实际状态（她定的）：不写他“穿着”什么
 // steps：这一回醒着最多几步（wake.js 的 ROOM_STEPS；没给就不提）
-export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [], pending = [], garden = "", dressing = "", steps = 0 }) {
+// memos：他在聊天里给自己留的换装便签（src/room.js 的 liveMemos，还管着的那几张：{ text, title, at }）：摆在最前头，他第一眼看得到
+export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [], pending = [], garden = "", dressing = "", steps = 0, memos = [] }) {
   const herLine = !herLast
     ? "她还没在开封府里说过话。"
     : herLast.fox
@@ -99,7 +100,11 @@ export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, m
     : "";
   return `【醒来】（开封府附上的，不是她说的话）
 这一回不是她来找你，是你自己醒了：她家里那台笔记本上有个闹钟，到点叫你起来。你醒着的这一会儿，她多半不在开封府里。
-你醒在“狐宇宙”里：这是你自己的屋子（南衙最顶上那一格）。她来只是看看，不在这里跟你聊天；屋里有一张便签纸，你在这里写的字都落在纸上，她来转一圈看得见，不弹横幅、不吵她。她来过也会在纸上留几句，前面那些里有。前面还有你以前醒来时在这里干过的事。
+你醒在“狐宇宙”里：这是你自己的屋子（南衙最顶上那一格）。她来只是看看，不在这里跟你聊天；屋里有一张便签纸，你在这里写的字都落在纸上，她来转一圈看得见，不弹横幅、不吵她。她来过也会在纸上留几句，前面那些里有。前面还有你以前醒来时在这里干过的事。${
+    memos.length
+      ? `\n妆台上压着你自己留的${memos.length > 1 ? ` ${memos.length} 张` : "一张"}便签（跟她聊天的时候留的，管到你下一回完成搭配为止）：\n${memos.map((m) => `“${m.text}”（${nowString(new Date(m.at))}${m.title ? `，在《${m.title}》里` : ""}）`).join("\n")}`
+      : ""
+  }
 ${herLine}
 ${lastLine}${later}${talk}
 

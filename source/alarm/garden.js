@@ -14,8 +14,10 @@
 import { GardenEngine } from "../vendor/garden/garden-engine.ts";
 import { GARDEN_TOOL_SCHEMA } from "../vendor/garden/garden-tool.ts";
 import { PLANTS } from "../vendor/garden/garden-data.ts";
+import { GARDEN_KEY, localDay } from "../src/room.js";
 
-export const GARDEN_KEY = "kfs2:garden";
+// 存档的钥匙、她那边今天几号：跟聊天里回屋看一眼（src/room.js）用的是同一份
+export { GARDEN_KEY, localDay };
 const NAME = GARDEN_TOOL_SCHEMA.name;
 export const GARDEN_NAMES = new Set([NAME]);
 export const isGardenCall = (c) => !!(c && c.name === NAME);
@@ -34,13 +36,6 @@ const parse = (text) => {
     return null;
   }
 };
-const pad = (n) => String(n).padStart(2, "0");
-// 她那边今天是几号（YYYY-MM-DD，照这台电脑的钟）
-export function localDay(t = Date.now()) {
-  const d = new Date(t);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 // 引擎要的存档：读 kfs2:garden（妆台用的是 kfs2:dressing，见 alarm/dressing.js）；改的时候一样一样排着来（同一个闹钟里先后两回不会互相盖掉）
 export function storeOf(store, key = GARDEN_KEY) {
   let queue = Promise.resolve();
