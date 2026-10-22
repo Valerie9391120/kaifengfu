@@ -1539,7 +1539,10 @@ export default function App({ account = {} }) {
     // 回屋看一眼、给屋里的自己留换装便签（见 room.js）：屋里的存档就在这台手机上（家里的闹钟写、同步下来的），只读；便签记的是他这一条的时间（两台设备替他留，留的一样）
     if (him.calls.some((c) => isRoomCall(c) && typeof c.out !== "string")) {
       const title = ((chat && indexRef.current.find((x) => x.id === chat)) || {}).title || "";
-      him.calls = await runRoomCalls(him.calls, { get: (k) => store.get(k), set: (k, v) => store.set(k, v), today: localDay(), at: him.ts || Date.now(), chat, title, on: wakeOn(settingsRef.current) });
+      const set = async (k, v) => {
+        if ((await store.set(k, v)) === false) markStorageFail(); // 这台手机上没存进去（同别处：照样记在手上、推上云端，提示她一声）
+      };
+      him.calls = await runRoomCalls(him.calls, { get: (k) => store.get(k), set, today: localDay(), at: him.ts || Date.now(), chat, title, on: wakeOn(settingsRef.current) });
     }
     if (!needsRun(him)) return true;
     // 剩下的是江湖棋局那几样

@@ -187,8 +187,8 @@ def run(browser):
         woke = last_her(asked)
         ok(code == 0 and "妆台上压着你自己留的一张便签" in woke and "“答应了卿卿下次穿高领黑毛衣”" in woke and (f"在《{title}》里" in woke if title else True),
            "再叫醒他一回：【醒来】里摆着那张便签（写的什么、在哪段对话里留的）")
-        ok(not any(n in names_of(asked) for n in ("room_look", "room_memo")) and "play_dressing_room" in names_of(asked) and "【你的屋子】" in system_of(asked),
-           "醒在屋里：不带回屋那两样（他就在屋里），妆台照带；名帖跟聊天里一样")
+        ok(not any(n in names_of(asked) for n in ("room_look", "room_memo")) and "play_dressing_room" in names_of(asked) and system_of(asked) == sys0,
+           "醒在屋里：不带回屋那两样（他就在屋里），妆台照带；名帖跟手机上聊天时的一个字不差（连【你的屋子】）")
         got = until(pg, lambda: not pg.evaluate(KV, "kfs2:fox:memo:" + call.get("id", "")))
         ok(got, "他完成了今天的搭配：便签收起来（手机上同步下来也没了）")
 

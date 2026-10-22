@@ -19,6 +19,9 @@ import { dressingToolSchema } from "../vendor/dressing/dressing-tool.ts";
 import { ITEMS, CATEGORY_LABELS, itemName } from "../vendor/dressing/dressing-data.ts";
 import { HER_NAME } from "./names.js";
 
+// 恩师的引擎里用 structuredClone（iPhone 上 iOS 15.4 以后才有）：老一点的手机上补一个（存档都是 JSON，照 JSON 拷一份就够；另一双眼睛挑出来的）
+if (typeof globalThis.structuredClone !== "function") globalThis.structuredClone = (v) => JSON.parse(JSON.stringify(v));
+
 export const GARDEN_KEY = "kfs2:garden"; // 园子的存档（家里的闹钟写，见 alarm/garden.js）
 export const DRESSING_KEY = "kfs2:dressing"; // 妆台的存档（同上，见 alarm/dressing.js）
 // 换装便签：一张一条，kfs2:fox:memo:<他调 room_memo 那一下的编号> = { v: 1, text, chat, title, at }（加密了跟着云端走）。
@@ -26,6 +29,8 @@ export const DRESSING_KEY = "kfs2:dressing"; // 妆台的存档（同上，见 a
 export const MEMO_KEY = "kfs2:fox:memo:";
 export const MEMO_DAYS = 3;
 export const MEMO_MS = MEMO_DAYS * 24 * 60 * 60 * 1000;
+// 刚留的这一阵不查它还在不在那段对话里（见 memoStands：手机先存便签、再存对话，家里的闹钟可能先拉到便签）
+export const MEMO_GRACE = 30 * 60 * 1000;
 const MEMO_MAX = 60; // 便签上最多几个字（说明里叫他写四十个字以内，多写的截掉）
 export const MEMO_NOTE = "记录了下次换装偏好"; // 她那边那一行小字（她 02:32 的原话）
 export const MEMO_FAIL = "想记下换装偏好，没记成";
@@ -187,17 +192,39 @@ export function readMemo(text) {
   if (!m || typeof m.text !== "string" || !m.text.trim() || !Number.isFinite(m.at)) return null;
   return { text: m.text, chat: typeof m.chat === "string" ? m.chat : "", title: typeof m.title === "string" ? m.title : "", at: m.at };
 }
-// 还管着的那几张（没过三天的，按留的先后排）和过了期该收的那几张的钥匙。list：[{ key, text }]（text 是存档里那一行）
+// 还管着的那几张（没过三天的，按留的先后排）和过了期该收的那几张的钥匙。list：[{ key, text }]（text 是存档里那一行）。
+// 每张带着 id（他调 room_memo 那一下的编号，见 memoStands）
 export function liveMemos(list, now = Date.now()) {
   const live = [];
   const stale = [];
   for (const { key, text } of list || []) {
     const m = readMemo(text);
     if (!m || now - m.at > MEMO_MS) stale.push(key);
-    else live.push({ key, ...m });
+    else live.push({ key, id: String(key).slice(MEMO_KEY.length), ...m });
   }
   live.sort((a, b) => a.at - b.at);
   return { live, stale };
+}
+
+// 这张便签还算不算数：留它的那一步还在那段对话眼前这一支上。她改了自己的话、点了重新回答（原来那一支收进 alts），
+// 整段对话删了，那张就不算了（另一双眼睛挑出来的：不然改成“穿西装”以后，屋里还压着“穿旗袍”那张）。
+// msgs 是那段对话（没有了是 null）；刚留的那一阵（MEMO_GRACE）不查
+export function memoStands(memo, msgs, now = Date.now()) {
+  if (now - memo.at < MEMO_GRACE) return true;
+  if (!Array.isArray(msgs)) return false;
+  return msgs.some((m) => m && m.role === "him" && Array.isArray(m.calls) && m.calls.some((c) => c && c.name === "room_memo" && c.id === memo.id));
+}
+
+// 【醒来】里摆哪几张：写的一样的只摆一张（留得晚的那张）
+export function memoLines(memos) {
+  const seen = new Set();
+  const out = [];
+  for (const m of (memos || []).slice().reverse()) {
+    if (seen.has(m.text)) continue;
+    seen.add(m.text);
+    out.unshift(m);
+  }
+  return out;
 }
 
 async function leaveMemo(c, input, io) {
@@ -205,7 +232,8 @@ async function leaveMemo(c, input, io) {
     .replace(/\s+/g, " ")
     .trim();
   if (!t) return { out: "便签上没写字，没留成。", err: true, note: MEMO_FAIL };
-  const text = t.length > MEMO_MAX ? t.slice(0, MEMO_MAX) + "…" : t;
+  const chars = Array.from(t); // 一个字一个字数（表情这种占两格的不截成半个）
+  const text = chars.length > MEMO_MAX ? chars.slice(0, MEMO_MAX).join("") + "…" : t;
   await io.set(MEMO_KEY + c.id, JSON.stringify({ v: 1, text, chat: io.chat || "", title: io.title || "", at: io.at || Date.now() }));
   const off = io.on === false ? "（她这会儿关着“他自己醒”，你不会在屋里醒；三天以内她打开了，你醒来照样看得到。）" : "";
   return { out: `便签留好了，压在你屋里的妆台上：“${text}”。你下回在屋里醒来，第一眼就看得到；管到你下一回完成搭配为止，最多三天。${off}`, err: false, note: MEMO_NOTE };
