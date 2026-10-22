@@ -157,6 +157,13 @@ ok(txt.includes("票根：午饭 米线店：番茄牛肉米线、冰粉") && tx
 ok(pageBitsOf(s2, D).includes("紫色的，一串一串") && pageBitsOf(s2, D).includes("好看") && pageBitsOf(s2, D).includes("运河边上") && pageBitsOf(s2, D).includes("风好大 拍糊了") && !pageBitsOf(s2, D).includes("[["),
   "按词找的时候：页上写着的字（记号去掉）、照片底下写的、她贴的原话");
 ok(quotesOfStk({ c: "qsel", k: "C:坏了%" }) === null && quotesOfStk({ c: "text", k: "C:x" }) === null, "认不出的原话便签不出错");
+const sN = mkStore({
+  [`${TY_KV}day/${D}`]: J({ day: D, status: "done", by: "me", title: "便签", ts: 1, photos: [], chat: [{ w: "her", t: "09:46", p: "今天看到泡桐花" }, { w: "me", t: "10:01", p: "去园子里转了一圈", src: "便签" }] }),
+  [`${TY_KV}page/${D}`]: J({ stk: [{ c: "qsel", k: "C:" + encodeURIComponent(JSON.stringify([{ d: "10.12", w: "her", t: "10:00", p: "晚上记得浇花", src: "便签" }])), who: "her" }] }),
+});
+const tN = pageTextOf(sN, D);
+ok(tN.includes("摆的原话：09:46 卿卿：今天看到泡桐花｜10:01 你（狐宇宙里的便签）：去园子里转了一圈") && tN.includes("她贴的原话：10:00 卿卿（狐宇宙里的便签）：晚上记得浇花"),
+  "他翻日记：页上摆的、她贴的，是狐宇宙里的便签的写明（他排的时候挑的、她从便签那一栏贴的）");
 await addNoteTo(s2, D, "her", "这天真好", new Date(2026, 9, 12, 22, 0).getTime());
 const r2 = notesOf(s2, D)[0];
 s2.m.set(`${TY_KV}notes/re2`, J({ id: "re2", day: D, who: "me", text: "嗯", at: new Date(2026, 9, 12, 23, 5).getTime(), re: r2.id, b: "" }));
@@ -346,6 +353,28 @@ s7.full = false;
 const init = srv.init({ day: D, mode: "view", heat: { [D]: 4 }, safe: { t: 47 }, now: 123 });
 ok(init.today === 123 && init.ls[`${TY_LS}journalCfg`] && !init.ls[`${TY_LS}journalPage:${D}`] && !init.ls[`${TY_LS}journalMine`] && eq(init.open, { day: D, mode: "view" }) && init.heat[D] === 4 && init.start === "2026-10-18",
   "开门带进去的：这一本存在“这台设备上”的那几样（大的缓存不带），今天、要打开的那一天、这一本从哪天写起（搬进来那一天）");
+ok(eq(src.note, []) && eq(init.noteHeat, {}), "没给狐宇宙那一份的：便签那一栏空着");
+// 狐宇宙里的（引用栏的便签那一栏，她 10 月 22 日画的）：聊天、便签分开给；照片两边的都算；框里打字报一声
+const FOX = { [D]: [
+  { id: "f0", role: "event", who: "him", kind: "wake", ts: new Date(2026, 9, 12, 9, 59).getTime() },
+  { id: "f1", role: "her", kind: "text", text: "晚上记得浇花", ts: new Date(2026, 9, 12, 10, 0).getTime() },
+  { id: "f2", role: "him", items: [{ type: "text", text: "去园子里转了一圈\n月季开了" }], ts: new Date(2026, 9, 12, 10, 1).getTime() },
+  { id: "f3", role: "her", kind: "photo", imgId: "img3", ts: new Date(2026, 9, 12, 10, 2).getTime() },
+] };
+const typedOn = [];
+const srvN = makeServer({
+  store: s7, dayMsgs: async (d) => MSGS[d] || [], noteMsgs: async (d) => FOX[d] || [], onTyping: (on) => typedOn.push(on), cfgKey: "kfs2:jzcfg", day: D,
+  chatImg: async (id) => (id === "img1" || id === "img3" ? "data:image/jpeg;base64,BBBB" : null),
+});
+const srcN = await srvN.handle("sources", { date: D });
+ok(eq(srcN.chat, chatOf(MSGS[D])) && eq(srcN.note, [{ w: "her", t: "10:00", p: "晚上记得浇花" }, { w: "me", t: "10:01", p: "去园子里转了一圈\n月季开了" }]) && eq(await srvN.handle("sources", { date: "坏的" }), { chat: [], note: [] }),
+  "某一天的原话：聊天里的（chat）、狐宇宙里的（note，醒了那一行不算）分开给；日子不规矩的两样都不给");
+ok(eq((await srvN.handle("chatPhotos", { date: D })).map((p) => [p.id, p.t]), [["img1", "09:47"], ["img3", "10:02"]]), "那一天的照片：聊天里的、狐宇宙里的都算（照几点排）");
+await srvN.handle("typing", { on: true });
+await srvN.handle("typing", { on: "是" });
+await srvN.handle("typing", {});
+ok(eq(typedOn, [true, false, false]), "框里打字、不打了：告诉外面（只认 true）");
+ok(eq(srvN.init({ day: D, heat: { [D]: 4 }, noteHeat: { [D]: 2 }, now: 1 }).noteHeat, { [D]: 2 }), "开门带进去：每一天狐宇宙里有几句（便签那一栏的日历）");
 const t0 = T0.getTime();
 ok(todayFor("2026-10-12", t0) === t0 && todayFor("2025-10-19", t0) === t0 && todayFor("2025-10-18", t0) === new Date(2025, 9, 18, 12).getTime() && todayFor("2024-02-29", t0) === new Date(2024, 1, 29, 12).getTime() && todayFor("坏的", t0) === t0 && todayFor("2025-02-30", t0) === t0,
   "框里的“今天”：一年以内的照今天；翻一年以前的那一天，今天挪到那一天（不然同页认不出那一天）");
@@ -389,6 +418,16 @@ ok(AQ.text.includes("这一天：2026年10月15日 星期四") && AQ.text.includ
   && AQ.text.includes("她说想要：安安静静的") && AQ.text.includes("她藏起来的：路线、快门条") && AQ.text.includes("“那天真好”") && AQ.text.includes("她自己起的标题：“泡桐花开了”") && AQ.text.includes("信纸 × 和纸"),
   "寄去的：哪天、天气、两个人的日记、原话（编号｜几点｜谁）、照片（哪来的）、她想要的、她动过的（藏的、打的字、起的标题、挑的版式风格）");
 ok(tyArrangeAsk({ label: "x" }).text.includes("这天你们没在开封府聊天") && tyArrangeAsk({ label: "x" }).text.includes("这天没有照片") && !tyArrangeAsk({ label: "x" }).text.includes("她已经动过"), "什么都没有的一天：照实说，不编");
+// 狐宇宙里的便签也给他挑（她 10 月 22 日说的“可以”）：另列一段，写明是狐宇宙里的；编号跟原话一起挑
+const NQ = [
+  { id: "f1", w: "her", t: "16:04", p: "晚上记得浇花", src: "便签" },
+  { id: "f2#0", w: "him", t: "16:06", p: "去园子里转了一圈\n月季开了", src: "便签" },
+];
+const AQN = tyArrangeAsk({ label: "x", her: "卿卿", quotes: QS, notes: NQ });
+ok(AQN.rule.includes("狐宇宙里的便签（你屋里的：她留的、你在屋里说的）也能挑，跟原话合在一起最多八句") && AQN.text.includes("这天狐宇宙里的便签（你屋里的：卿卿留的、你在屋里说的；编号｜几点｜谁｜原话）：")
+  && AQN.text.includes("f1｜16:04｜卿卿｜晚上记得浇花") && AQN.text.includes("f2#0｜16:06｜你｜去园子里转了一圈 月季开了") && AQN.text.indexOf("m3｜16:05") < AQN.text.indexOf("这天狐宇宙里的便签"),
+  "那天狐宇宙里有话：原话后面另列一段便签（写明是你屋里的），规矩里说一声也能挑");
+ok(!AQ.rule.includes("狐宇宙") && !AQ.text.includes("狐宇宙") && tyArrangeAsk({ label: "x", notes: NQ }).text.includes("这天你们没在开封府聊天"), "没有便签的一天：一个字不提；只有便签没聊天的：照实说没聊天，便签照列");
 
 const TAGS = PHS.map((x) => x.tag);
 const say = (o) => `排好了。\n[JZ]\n${JSON.stringify(o)}\n[/JZ]`;
@@ -453,6 +492,9 @@ ok(AR.status === "done" && AR.by === "me" && AR.ts === 9999 && AR.title === "＜
 ok(eq(AR.photos.map((p) => [p.src, p.role, p.t]), [["kfsimg:a2", "hero", ""], ["kfsimg:a1", "", "16:01"]]) && eq(AR.chat, [{ w: "her", t: "16:02", p: "今天看到泡桐花了" }, { w: "her", t: "16:05", p: "风好大 拍糊了" }]),
   "照片照存档里的编号写（没存成的那一张不要），主照片排头；原话照同页的样子（他是 me）");
 ok(!("herTitle" in arrangedDay("", A2, { day: AD, src: () => "" })) && !("layout" in arrangedDay("", A2, { day: AD, src: () => "" })), "没有的不写（她没起标题、他没挑版式）");
+const A3 = parseTyArrange(say({ title: "便签", quotes: ["f1", "m1", "f9"] }), [QS[0], QS[1], NQ[0], QS[2], NQ[1]], TAGS);
+ok(eq(arrangedDay("", A3, { day: AD, src: () => "" }).chat, [{ w: "her", t: "16:02", p: "今天看到泡桐花了" }, { w: "her", t: "16:04", p: "晚上记得浇花", src: "便签" }]),
+  "他挑了一句便签：照几点跟原话排在一起，记着是便签（原话不记出处，跟原来一样）");
 
 // 排到一半断了（开封府被关了）
 const s10 = mkStore({ [`${TY_KV}day/${AD}`]: J(makingDay(HER, AD, [{ a: "看了", ok: true }, { a: "在排", ok: false }], 1000)), [`${TY_KV}day/2026-10-16`]: J(makingDay(null, "2026-10-16", [], 1000)), [`${TY_KV}day/2026-10-17`]: J(makingDay(null, "2026-10-17", [], 1000 + TY_STALE)) });
@@ -556,6 +598,11 @@ ok(html.includes("const P={t:R.herTitle||R.title||k,") && html.split('{const kc=
 ok(html.includes("map(x=>window.__kfsAskRef?__kfsAskRef(x):x)") && html.includes('(R.status==="making"||R.status==="failed")') && html.includes('s2.fail?"fail"') && html.includes("!(r.steps||[]).some(x=>x&&x.fail)")
   && html.includes('(window.__kfsHisNew?__kfsHisNew(R):R.by!=="her")&&toast2') && html.includes('if(mode==="day"&&!DONE[k]){try{openDay(k)}') && html.includes("dayIn:function(k,ph,chat)") && html.includes('"这天还没有天气"'),
   "交给光义那几处接上了：寄的照片换成开封府的编号、没排成不起页不冒“打开这一页”、“光义刚更新了这一页”只在他排好的时候说、开封府能打开某一天的那一屏、那一屏的照片原话");
+ok(html.includes('const QSEL={"聊天":[],"便签":[],"吃了吗"') && html.includes("const CHATLOG={},NOTELOG={};") && html.includes('quoteSub==="便签"?NOTELOG:') && html.includes('${["聊天","便签","吃了吗","书摘","健康"].map(k=>')
+  && html.includes('quoteSub==="便签"?window.__bzNoteHeat') && html.includes('"从狐宇宙里挑 · 原话一个字不改"') && html.includes('quoteSub==="聊天"||quoteSub==="便签"?"C:"') && html.includes("NOTELOG[k]=s.note.filter")
+  && html.includes('["聊天","便签","书摘","健康"].forEach(function(t){QSEL[t]=') && html.includes("return __kfsQuoteHTML();") && html.includes("return __kfsWireQuote(_wq);")
+  && html.includes("if(C&&R.chat&&!(window.QF_DONE&&QF_DONE.has(R.day)))C[R.day]=R.chat.map("),
+  "引用栏那几处接上了：多一栏便签（选的、取的、日历、贴到页上、底下那一行字）；聊天、便签两栏摆出来、点一句交给开封府那一层");
 const KIT = tyKit(SRC);
 ok(KIT.layouts.length === 17 && KIT.styles.length === 26 && KIT.layouts.every(([id, n, t]) => TY_LAYOUTS[id] === n && t) && KIT.styles.every(([id, n, t]) => TY_STYLES[id] === n && t),
   "同页的版式、风格（给他挑的那一份）照同页那一页抄：名字跟开封府这头记的对得上，每一种都有一句是什么样");

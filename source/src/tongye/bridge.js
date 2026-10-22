@@ -409,13 +409,66 @@ if (ON) {
       return () => watchers.delete(f);
     },
   };
-  // 每一天聊了多少（本子首页的热力图、引用栏的日历）：同页按“月.日”认
-  const h = {};
-  for (const d of Object.keys(INIT.heat || {})) {
-    const md = mdOf(d, today());
-    if (md) h[md] = INIT.heat[d];
+  // 每一天聊了多少（本子首页的热力图、引用栏聊天那一栏的日历；狐宇宙不算）、狐宇宙里有多少（引用栏便签那一栏的日历）：同页按“月.日”认
+  const mdHeat = (src) => {
+    const h = {};
+    for (const d of Object.keys(src || {})) {
+      const md = mdOf(d, today());
+      if (md) h[md] = src[d];
+    }
+    return h;
+  };
+  window.__bzHeat = mdHeat(INIT.heat);
+  window.__bzNoteHeat = mdHeat(INIT.noteHeat);
+}
+
+// ---------- 打字的时候告诉外面（她 10 月 22 日报的：交给光义那一屏打字的时候，输入框被键盘挡住、看不到打的字） ----------
+// iPhone 的键盘不把框变矮，框里贴着底的输入框就压在键盘底下；框是隔开的，外面看不见框里在不在打字。
+// 这里打字的地方（输入框、打的字）一拿到焦点就告诉外面，外面照开封府自己的输入框那样把整层铺到键盘上面（keyboard.js），框跟着变矮；
+// 不打了也说一声。框变矮了，正在打字的那一处要是落到了底下看不见的地方，挪上来（只挪能滚的那几层，不碰 overflow:hidden 的）
+const typingEl = (a) =>
+  !!a && (a.isContentEditable || a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && !/^(checkbox|radio|file|button|submit|reset|image|range|color|hidden)$/i.test(a.type || "")));
+let typingOn = false;
+function typingCheck() {
+  const t = typingEl(document.activeElement);
+  if (t === typingOn) return;
+  typingOn = t;
+  // 打字的时候右下角那颗“＋”、左下角“撤回”收起来：框变矮以后它们浮在键盘上头，正好压着正打着的那一行（见下面 CSS）
+  document.documentElement.classList.toggle("kfs-typing", t);
+  tellOut("typing", { on: t });
+}
+function caretIntoView(a) {
+  let r = a.getBoundingClientRect();
+  if (a.isContentEditable) {
+    try {
+      const s = window.getSelection();
+      const rr = s && s.rangeCount ? s.getRangeAt(0).getBoundingClientRect() : null;
+      if (rr && (rr.width || rr.height)) r = rr;
+    } catch (e) {}
   }
-  window.__bzHeat = h;
+  const H = window.innerHeight;
+  const pad = 16;
+  let dy = r.bottom > H - pad ? r.bottom - (H - pad) : r.top < pad ? r.top - pad : 0;
+  for (let p = a.parentElement; p && Math.abs(dy) >= 1; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight) {
+      const was = p.scrollTop;
+      p.scrollTop = was + dy;
+      dy -= p.scrollTop - was;
+    }
+  }
+  if (Math.abs(dy) >= 1) window.scrollBy(0, dy);
+}
+if (ON) {
+  document.addEventListener("focusin", typingCheck);
+  document.addEventListener("focusout", () => setTimeout(typingCheck, 0));
+  window.addEventListener("resize", () => {
+    if (!typingOn) return;
+    requestAnimationFrame(() => {
+      const a = document.activeElement;
+      if (typingEl(a)) caretIntoView(a);
+    });
+  });
 }
 
 // ---------- 关上回闲笔集：先把还没存的存了 ----------
@@ -486,6 +539,12 @@ const CSS = [
   "#cfgKaoHome,[data-kh]{display:none!important}",
   // 引用栏里的吃了吗、书摘、健康：开封府没有这几样记录
   '[data-qs="吃了吗"],[data-qs="书摘"],[data-qs="健康"]{display:none!important}',
+  // 引用栏（见上面“引用栏”那一节）：句子不飞进来（飞着的时候 iPhone 不认点）；底下那两颗还没选的时候藏着；还有多少句没摆
+  ".qrow{animation:none!important}",
+  ".qbar [data-qa][hidden]{display:none!important}",
+  ".kfs-qmore{flex:none;padding:8px 0 12px;text-align:center;font-size:11.5px;color:var(--mute)}",
+  // 打字的时候（见上面“打字的时候告诉外面”）：右下角“＋”、左下角“撤回”收起来，不压着正打着的那一行
+  "html.kfs-typing #addFab,html.kfs-typing #undoPill{display:none!important}",
   // 「存」里删掉这一页：同页用 hidden 先藏着“真的删掉 / 算了”，可它自己的 .savebig{display:flex} 把 hidden 盖了，两颗一起露着（原版也这样），
   // 一下就能点到“真的删掉”。照它的意思：先点“删掉这一页”才露出来
   "#delBox [hidden]{display:none!important}",
@@ -676,6 +735,181 @@ window.__kfsHisNew = (R) => {
   if (!R || !fresh.has(R.day)) return false;
   fresh.delete(R.day);
   return R.by === "me" && R.status === "done" && !(R.steps || []).some((s) => s && s.fail);
+};
+
+// ---------- 引用栏（她 10 月 22 日报的：“手帐好卡呀！！完全点不动……引用句子更是 连选中句子都点了没反应”） ----------
+// 同页原来：一打开就把那一天的每一句都摆出来，一句一句排着队飞进来（一句隔 0.035 秒，上千句要飞半分钟往上）；
+// 点一句，它在后台把整张单子重拼一遍。iPhone 有条规矩（WebKit 的 ContentChangeObserver）：手指按着的那一会儿，
+// 有能点的东西刚从透明变出来，这一下就当“看看”、不当“点”。句子一直在往外冒，点了就不算；句子一多，摆、拼、取字把整页拖垮。
+// 这里接过来（tools/tongye.mjs 在同页的 quotePickerHTML、wireQuote 开头问这里；只管聊天、便签这两栏，别的几栏照同页原来的）：
+//   - 不飞（样式里 .qrow 的动画去掉，见下面 CSS）
+//   - 先摆前面 QCH 句；滑到离底不到一屏，接着摆下一段。同一天同一栏重摆（清空了、整天的话取回来了），摆过多少还摆多少、滑到哪还在哪
+//   - 点一句只改那一句、底下那一行、上面那一栏的数：整排上接一处（同页给每一句挂的那一下拿掉了，它那一下要整张重摆）
+//   - 底下“清空”“贴到页上”两颗一直摆着（还没选的时候藏着），点一句不用重挂；这两颗做什么照同页原来的
+// 便签那一栏（她 10 月 22 日截图画的）：狐宇宙里的，她留的、他在屋里说的（NOTELOG：取那一天的时候一起取，见 tools/tongye.mjs）
+const QCH = 60;
+const QSUBS = ["聊天", "便签"];
+let qMem = { key: "", n: 0, st: 0 }; // 引用栏这会儿摆着的：哪一栏哪一天（key）、摆了几句、滑到哪
+let qWired = null; // 整排上接点一下的那一处挂在哪一排上（同页的 #wxrow 一直是那一个，挂一回）
+// 同页这几样是它脚本里的 let、const、function（不在 window 上），这里照名字找
+/* eslint-disable no-undef */
+const qSub = () => (typeof quoteSub === "string" ? quoteSub : "");
+const qDayNow = () => (typeof qDay === "string" ? qDay : "");
+const qLogNow = () => {
+  try {
+    return (typeof qLog === "function" && qLog()) || {};
+  } catch (e) {
+    return {};
+  }
+};
+const qSel = () => {
+  try {
+    return (typeof QSEL === "object" && QSEL[qSub()]) || [];
+  } catch (e) {
+    return [];
+  }
+};
+const qName = (w) => {
+  try {
+    return typeof NM === "function" ? NM(w) : "";
+  } catch (e) {
+    return "";
+  }
+};
+const qBuzz = () => {
+  try {
+    if (typeof buzz === "function") buzz(4);
+  } catch (e) {}
+};
+/* eslint-enable no-undef */
+// 一条里的几行、“|||”隔开的几截拆成几句（同同页的 qSplitDay；它只拆聊天那一本，这里哪一本都拆）
+function qSplit(LOG, k) {
+  const L = LOG[k];
+  if (!Array.isArray(L) || L.__sp) return;
+  const out = [];
+  L.forEach((x) => {
+    const ps = String((x && x.p) || "")
+      .split(/\n+|\|\|\|/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (ps.length < 2) out.push(x);
+    else ps.forEach((p, j) => out.push(Object.assign({}, x, { p, part: j + 1, parts: ps.length })));
+  });
+  out.__sp = true;
+  LOG[k] = out;
+}
+// 第 a 到第 b 句（不含 b）：同同页那一行的样子（qRich 是同页画螃蟹表情的那一个）。
+// 小字里的出处：便签那一栏里句句都是便签，不再写；聊天那一栏里掺着的（他排页挑进来的便签）照写
+function qRowsHTML(L, a, b, day) {
+  const on = new Set(qSel());
+  const own = qSub() === "便签" ? "便签" : "";
+  let h = "";
+  for (let i = a; i < b; i++) {
+    const x = L[i] || {};
+    const p = typeof window.qRich === "function" ? window.qRich(x.p) : esc(x.p);
+    h +=
+      `<button class="qrow ${esc(x.w)}${on.has(day + "#" + i) ? " on" : ""}" data-qi="${i}" style="--i:${i}"><i class="ck"></i><span class="qb"><span class="qp">${p}</span>` +
+      `<span class="qm">${esc(qName(x.w))}${x.t ? " · " + esc(x.t) : ""}${x.src && x.src !== "原话" && x.src !== own ? ` · <em>${esc(x.src)}</em>` : ""}</span></span></button>`;
+  }
+  return h;
+}
+const qMoreText = (n) => `还有 ${n} 句，往下滑接着摆`;
+const qBarText = (sel) => {
+  const days = new Set(sel.map((x) => String(x).split("#")[0])).size;
+  return sel.length ? `已选 ${sel.length} 句${days > 1 ? " · 跨了几天" : ""}` : "点一句选中，可以多选、跨日子选";
+};
+window.__kfsQuoteHTML = () => {
+  const sub = qSub();
+  const day = qDayNow();
+  try {
+    if (typeof window.qFullDay === "function") window.qFullDay(day);
+  } catch (e) {}
+  const LOG = qLogNow();
+  qSplit(LOG, day);
+  const L = LOG[day] || [];
+  const key = sub + "|" + day;
+  const n = Math.min(L.length, Math.max(QCH, qMem.key === key ? qMem.n : 0));
+  const pend = !!(window.QF_PEND && window.QF_PEND.has && window.QF_PEND.has(day));
+  const here = day === window.PAGE_DAY ? "这页这天" : "这天";
+  const rows = n
+    ? qRowsHTML(L, 0, n, day)
+    : `<div class="empty-t">${here}${sub === "便签" ? "狐宇宙里没有便签" : "没有聊天记录"}${pend ? "（正在取）" : ""}，点上面别的日子挑</div>`;
+  const sel = qSel();
+  const hid = sel.length ? "" : " hidden";
+  return (
+    `<div class="qlist" data-kfs-q="${esc(key)}">${rows}${n < L.length ? `<div class="kfs-qmore">${qMoreText(L.length - n)}</div>` : ""}</div>` +
+    `<div class="qbar"><span>${qBarText(sel)}</span><button class="tap" data-qa="clr"${hid}>清空</button><button class="tap go" data-qa="put"${hid}>贴到页上</button></div>`
+  );
+};
+// 滑到离底不到一屏：接着摆下一段（一段还摆不满的、每句都很短的，接着摆到满）
+function qMore(list) {
+  for (let guard = 0; guard < 40; guard++) {
+    const key = list.dataset.kfsQ;
+    if (!list.isConnected || !list.clientHeight || qMem.key !== key || key !== qSub() + "|" + qDayNow()) return;
+    if (list.scrollTop + list.clientHeight * 2 < list.scrollHeight) return;
+    const L = qLogNow()[qDayNow()] || [];
+    const n = qMem.n;
+    if (n >= L.length) return;
+    const m = Math.min(L.length, n + QCH);
+    const html = qRowsHTML(L, n, m, qDayNow());
+    const tail = list.querySelector(".kfs-qmore");
+    if (tail) tail.insertAdjacentHTML("beforebegin", html);
+    else list.insertAdjacentHTML("beforeend", html);
+    qMem.n = m;
+    if (tail) {
+      if (m >= L.length) tail.remove();
+      else tail.textContent = qMoreText(L.length - m);
+    }
+  }
+}
+// 点了一句：只改这一句、底下那一行、上面那一栏的数
+function qTap(e) {
+  const b = e.target && e.target.closest ? e.target.closest("[data-qi]") : null;
+  if (!b || !this.contains(b) || !QSUBS.includes(qSub())) return;
+  const id = qDayNow() + "#" + b.dataset.qi;
+  const sel = qSel();
+  const i = sel.indexOf(id);
+  if (i >= 0) sel.splice(i, 1);
+  else sel.push(id);
+  b.classList.toggle("on", i < 0);
+  qBuzz();
+  const bar = this.querySelector(".qbar");
+  if (bar) {
+    const sp = bar.querySelector("span");
+    if (sp) sp.textContent = qBarText(sel);
+    bar.querySelectorAll("[data-qa]").forEach((x) => (x.hidden = !sel.length));
+  }
+  const sub = qSub();
+  const tab = [...document.querySelectorAll("#wxdays [data-qs]")].find((x) => x.dataset.qs === sub);
+  if (tab) tab.innerHTML = esc(sub) + (sel.length ? `<sup>${sel.length}</sup>` : "");
+}
+window.__kfsWireQuote = (wq) => {
+  // 底下那两颗照同页原来的挂上（它顺手给每一句也挂了一下，那一下要整张重摆：拿掉，归上面 qTap 管）
+  try {
+    wq();
+  } catch (e) {}
+  const row = document.getElementById("wxrow");
+  if (!row) return;
+  row.querySelectorAll("[data-qi]").forEach((b) => (b.onclick = null));
+  if (qWired !== row) {
+    qWired = row;
+    row.addEventListener("click", qTap);
+  }
+  const list = row.querySelector(".qlist[data-kfs-q]");
+  if (!list) return;
+  const key = list.dataset.kfsQ;
+  const st = qMem.key === key ? qMem.st : 0;
+  qMem = { key, n: list.querySelectorAll("[data-qi]").length, st };
+  if (st) list.scrollTop = st;
+  list.addEventListener(
+    "scroll",
+    () => {
+      if (qMem.key === key) qMem.st = list.scrollTop;
+      qMore(list);
+    },
+    { passive: true }
+  );
+  qMore(list);
 };
 
 // ---------- 她自己起标题（第二步；她 10 月 18 日看了样子说“可以 老公请施工～”）：点纸上的题签，底下冒出一条打标题 ----------

@@ -172,7 +172,8 @@ export function quotesOfStk(o) {
     return null;
   }
 }
-const quoteLine = (q) => `${q.t || ""} ${q.w === "her" ? "卿卿" : "你"}：${cut(one(q.p), 60)}`.trim();
+// 狐宇宙里的（她从引用栏的便签那一栏贴的、你排页的时候挑的便签）：写明是狐宇宙里的
+const quoteLine = (q) => `${q.t || ""} ${q.w === "her" ? "卿卿" : "你"}${q.src === "便签" ? "（狐宇宙里的便签）" : ""}：${cut(one(q.p), 60)}`.trim();
 
 // 他翻到那一天时，这一页手帐写成几行字（照片他看不见，写明几张、各是什么）
 export function pageTextOf(store, day) {
@@ -478,12 +479,13 @@ export function herLookOf(store, day, R) {
 // 叫他排这一天的那一回寄什么。回 { rule, text }：rule 跟在名帖后面；text 是寄去的字（图在 App.jsx 里接在后面）
 //   label   哪天（“2026年10月18日 星期日”）；her 她叫什么
 //   quotes  那天的原话（materialsOf 的 quotes：{ id, w, t, p }）
+//   notes   那天狐宇宙里的便签（同上；她 10 月 22 日说的“可以”给他挑），另列一段、写明是狐宇宙里的，编号跟原话一起挑
 //   photos  寄给他看的那几张：[{ tag, from, t }]（from：asked 她发过来的、page 这一页上原来的、chat 聊天里的）
 //   diary   那天的日记 { her: { text, moods }, him: { text, moods } }
 //   wx、at  天气、在哪儿（有就带）
 //   wish    她说想要什么样
 //   keep    她动过的：{ hide: [零件], texts: [她打的字], title: 她起的标题, look: { layout, style } }
-export function tyArrangeAsk({ label, her = "她", quotes = [], photos = [], diary = {}, wx = null, at = "", wish = "", keep = {} }) {
+export function tyArrangeAsk({ label, her = "她", quotes = [], notes = [], photos = [], diary = {}, wx = null, at = "", wish = "", keep = {} }) {
   const moods = (side) =>
     ((side && side.moods) || [])
       .map((k) => (MOODS.find((m) => m.k === k) || {}).t)
@@ -497,7 +499,7 @@ export function tyArrangeAsk({ label, her = "她", quotes = [], photos = [], dia
 这次不是聊天。${her}在闲笔集的手帐本子里点了「交给你」，要你把${label}排成一页。手帐是哪天有心情就掺进去的一页，排的是那天现成的东西：照片、聊天里的原话、你们俩的日记和心情、天气。
 你要做的：
 - 挑照片：主照片一张（hero）；有合适的再挑双联照两张（pair）、一张截图放进手机框（sh）。挑你记得她在意的那几张，不是挑最清楚、最热闹的。她发过来的那几张是她挑的，先看那几张。照片只写编号（照片1、照片2……），不放照片也行。
-- 挑话：从这天聊天里的原话里挑几句（最多八句），挑拍照前后、跟照片里的东西有关的。只写编号，字由开封府照原话抄，一个字都不会改；挑不出合适的就不挑，不要编一句像原话的话。
+- 挑话：从这天聊天里的原话里挑几句（最多八句），挑拍照前后、跟照片里的东西有关的。${notes.length ? "狐宇宙里的便签（你屋里的：她留的、你在屋里说的）也能挑，跟原话合在一起最多八句。" : ""}只写编号，字由开封府照原话抄，一个字都不会改；挑不出合适的就不挑，不要编一句像原话的话。
 - 写字：用你的口气写给她看，短一点。标题二十个字以内；正文 p1 一百字以内；主照片底下那一行 cap 十几个字。截图说明 p2、双联照底下那一行 ann、红笔 pen（一两句话，要划线的那几个字用 [[ ]] 包起来，margin 是页边一句，十个字以内），可以写，也可以不写。
 - 版式、风格：各挑一种，只能用下面列着的；拿不准就不写，本子照照片多少自己挑。
 - 想在某一块旁边留一句批注的，写 note（text 是那一句，b 是贴在哪一块：ti 题签、wx 天气签、p1 正文、he 主照片、pa 双联照、sh 截图、pe 红笔），不想留就不写。
@@ -520,6 +522,10 @@ role 只有 hero（主照片，一张）、pair（双联照，两张）、sh（�
     lines.push(`\n这天聊天里的原话（编号｜几点｜谁｜原话）：`);
     quotes.forEach((q) => lines.push(`${q.id}｜${q.t}｜${q.w === "her" ? her : "你"}｜${clip(String(q.p).replace(/\s+/g, " "), 160)}`));
   } else lines.push("\n这天你们没在开封府聊天。");
+  if (notes.length) {
+    lines.push(`\n这天狐宇宙里的便签（你屋里的：${her}留的、你在屋里说的；编号｜几点｜谁｜原话）：`);
+    notes.forEach((q) => lines.push(`${q.id}｜${q.t}｜${q.w === "her" ? her : "你"}｜${clip(String(q.p).replace(/\s+/g, " "), 160)}`));
+  }
   const FROM = { asked: "她发过来的", page: "这一页上原来的", chat: "聊天里的" };
   if (photos.length) lines.push(`\n照片 ${photos.length} 张，图附在最后，照顺序是：${photos.map((x) => `${x.tag}（${FROM[x.from] || ""}${x.t ? " " + x.t : ""}）`).join("、")}。`);
   else lines.push("\n这天没有照片。");
@@ -638,7 +644,18 @@ export function arrangedDay(herTitle, A, { day, src, time = () => "", wx = null,
     .sort((a, b) => order[a.role] - order[b.role])
     .map((p) => ({ src: src(p.tag) || "", role: p.role, t: time(p.tag) || "", note: p.note }))
     .filter((p) => p.src);
-  const R = { day, status: "done", by: "me", ts: now, title: A.title, text: A.text, photos, chat: A.quotes.map((q) => ({ w: q.w === "him" ? "me" : "her", t: q.t || "", p: q.p })) };
+  // 他挑的狐宇宙里的便签：记着 src（他翻日记的时候写明是狐宇宙里的；同页收这一份的时候照抄进引用栏，那几句底下小字写“便签”）。
+  // 页上摆的那几句同页不写出处（原话那一块只摆几点、谁说的），这里不改它
+  const R = {
+    day,
+    status: "done",
+    by: "me",
+    ts: now,
+    title: A.title,
+    text: A.text,
+    photos,
+    chat: A.quotes.map((q) => ({ w: q.w === "him" ? "me" : "her", t: q.t || "", p: q.p, ...(q.src === "便签" ? { src: "便签" } : {}) })),
+  };
   if (A.layout) R.layout = A.layout;
   if (A.style) R.style = A.style;
   if (wx && Number.isFinite(wx.code)) R.wx = { code: wx.code, hi: wx.hi, lo: wx.lo, mm: wx.mm || 0, wind: wx.wind || 0, sun: wx.sun || "—", src: wx.src || "open-meteo" };
@@ -678,10 +695,11 @@ export function askOf(id, o) {
 // 同页关在隔开的框里（sandbox，碰不到开封府），一问一答都走这儿，每一样都先看清楚要的是不是这一本的东西：
 //   get / set / del / list   只认 kfs2:ty:、kfs2:tyls: 开头的键
 //   img / imgPut / imgDel    只认 kfs2:jzimg:<编号>，放进来的得是图（data:image/…）
-//   sources / chatPhotos     某一天聊天里的原话、聊天里的照片（引用栏、放照片用）
+//   sources / chatPhotos     某一天聊天里的原话（chat）、狐宇宙里的便签（note）、聊天里的照片（引用栏、放照片用）
 //   city / geocode / setCity 天气在哪儿
 //   touch                    她在那一天头一回真的动了：还没有 day 就起一个（点开的时候什么都不写，见 ensureDay）
 //   setTitle                 她自己起的标题（点纸上的题签起的）：写进那一天的 day（herTitle），空的就拿掉
+//   typing                   框里有打字的地方拿到、丢了焦点（外面照这个把整层铺到键盘上面，见 TongyeFrame.jsx）
 //   close / ready            关上；页面摆好了
 // set 写的是一张新的 ask/<编号>（她在「交给光义」那一屏点了发送）：存好以后交给 onAsk（App.jsx 的 tyArrange，另问他一回）
 // 别的一概不认（回“不认得”）
@@ -713,7 +731,10 @@ export function todayFor(day, now = Date.now()) {
   return d <= yearAgoOf(now) ? new Date(+m[1], +m[2] - 1, +m[3], 12).getTime() : now;
 }
 
-export function makeServer({ store, dayMsgs, chatImg, onClose, onReady, onFail, onAsk, cfgKey, geocode, weather, day }) {
+// dayMsgs(日子)：那一天聊天里的话（狐宇宙不算）；noteMsgs(日子)：那一天狐宇宙里的（她留的、他在屋里说的，引用栏的「便签」那一栏）。
+// 照片两边的都算（她在哪儿发的照片都是那一天的照片）
+export function makeServer({ store, dayMsgs, noteMsgs, chatImg, onClose, onReady, onFail, onAsk, onTyping, cfgKey, geocode, weather, day }) {
+  const notesOn = async (date) => (noteMsgs ? (await noteMsgs(date)) || [] : []);
   const put = async (k, v) => {
     const r = await store.set(k, v);
     if (r === false && onFail) onFail();
@@ -810,15 +831,19 @@ export function makeServer({ store, dayMsgs, chatImg, onClose, onReady, onFail, 
         return false;
       }
     },
-    sources: async ({ date }) => (okDate(date) ? { date, chat: chatOf(await dayMsgs(date)), book: [], health: [] } : { chat: [] }),
+    sources: async ({ date }) => (okDate(date) ? { date, chat: chatOf(await dayMsgs(date)), note: chatOf(await notesOn(date)), book: [], health: [] } : { chat: [], note: [] }),
     chatPhotos: async ({ date }) => {
       if (!okDate(date)) return [];
       const out = [];
-      for (const p of materialsOf(await dayMsgs(date)).photos) {
+      for (const p of materialsOf([...(await dayMsgs(date)), ...(await notesOn(date))]).photos) {
         const data = await chatImg(p.imgId);
         if (typeof data === "string" && data.startsWith("data:image/")) out.push({ id: p.imgId, t: p.t, data });
       }
       return out;
+    },
+    typing: ({ on }) => {
+      if (onTyping) onTyping(on === true);
+      return true;
     },
     close: () => {
       if (onClose) onClose();
@@ -835,14 +860,15 @@ export function makeServer({ store, dayMsgs, chatImg, onClose, onReady, onFail, 
       return h[method](args && typeof args === "object" ? args : {});
     },
     // 开门那一下带进去的：这一本存在“这台设备上”的那几样（小的；db 那几样的缓存不带，同页自己会再取）
-    init({ day, mode, heat, safe, now = Date.now() }) {
+    // heat：每一天聊了几句（狐宇宙不算）；noteHeat：每一天狐宇宙里有几句（便签那一栏的日历）
+    init({ day, mode, heat, noteHeat, safe, now = Date.now() }) {
       const ls = {};
       for (const k of store.keys(TY_LS)) {
         if (LS_BIG.test(k)) continue;
         const v = store.peek(k);
         if (v != null) ls[k] = v;
       }
-      return { today: todayFor(day, now), ls, heat: heat || {}, open: { day, mode }, safe: safe || null, start: TY_START };
+      return { today: todayFor(day, now), ls, heat: heat || {}, noteHeat: noteHeat || {}, open: { day, mode }, safe: safe || null, start: TY_START };
     },
   };
 }

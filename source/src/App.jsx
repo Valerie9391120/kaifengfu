@@ -397,6 +397,10 @@ export default function App({ account = {} }) {
   const [foxState, setFoxState] = useState(null);
   const diaryCache = useRef({});
   const dayMsgsRef = useRef({});
+  const chatDaysRef = useRef({}); // 同上，聊天的（狐宇宙不算）；见 loadDays
+  const foxDaysRef = useRef({}); // 同上，狐宇宙里的
+  const daysAtRef = useRef(0); // 上一回按天归好是几点（0：还没归过）
+  const daysRunRef = useRef(null); // 正在归的那一趟
   const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState("");
   const [noticeMark, setNoticeMark] = useState(""); // 她是点了哪条通知回来的（通知网址后面的记号）
@@ -4163,24 +4167,45 @@ export default function App({ account = {} }) {
     return data;
   };
 
-  // 把所有对话按天归好：日历的深浅、我写日记要读的聊天，都从这来
-  const loadDays = async () => {
-    const byDay = {};
-    for (const c of indexRef.current) {
-      const msgs =
-        c.id === chatIdRef.current ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + c.id), []) || [];
-      msgs.forEach((m) => {
-        if (m.role !== "her" && m.role !== "him") return;
-        const k = dayKeyOf(new Date(m.ts));
-        (byDay[k] = byDay[k] || []).push(m);
+  // 把所有对话按天归好：日历的深浅、我写日记要读的聊天、手帐的引用栏，都从这来。
+  //   dayMsgsRef  所有对话（连狐宇宙）：我写日记读的
+  //   chatDaysRef 聊天（狐宇宙不算）：闲笔集日历的深浅、“这天说了几句”、手帐引用栏的聊天那一栏、那一屏的“几句聊天”
+  //   foxDaysRef  狐宇宙里的（她留的、我在屋里说的）：手帐引用栏的便签那一栏（她 10 月 22 日画的、说“你来决定就行”）
+  // 回的是每一天聊了几句（聊天的）。同时只翻一遍（闲笔集、手帐一起要的时候不各翻各的）；翻过一遍记一笔（daysAtRef），
+  // 手帐找没聊过天的日子不再从头翻（10 月 22 日她报手帐卡，查到的一处）
+  const loadDays = () => {
+    if (daysRunRef.current) return daysRunRef.current;
+    const run = (async () => {
+      const byDay = {};
+      const chatDays = {};
+      const foxDays = {};
+      for (const c of indexRef.current) {
+        const msgs =
+          c.id === chatIdRef.current ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + c.id), []) || [];
+        const side = isFoxChat(c.id) ? foxDays : chatDays;
+        msgs.forEach((m) => {
+          if (m.role !== "her" && m.role !== "him") return;
+          const k = dayKeyOf(new Date(m.ts));
+          (byDay[k] = byDay[k] || []).push(m);
+          (side[k] = side[k] || []).push(m);
+        });
+      }
+      dayMsgsRef.current = byDay;
+      chatDaysRef.current = chatDays;
+      foxDaysRef.current = foxDays;
+      daysAtRef.current = Date.now();
+      const counts = {};
+      Object.keys(chatDays).forEach((k) => {
+        counts[k] = chatDays[k].length;
       });
-    }
-    dayMsgsRef.current = byDay;
-    const counts = {};
-    Object.keys(byDay).forEach((k) => {
-      counts[k] = byDay[k].length;
-    });
-    return counts;
+      return counts;
+    })();
+    daysRunRef.current = run;
+    const done = () => {
+      if (daysRunRef.current === run) daysRunRef.current = null;
+    };
+    run.then(done, done);
+    return run;
   };
 
   const writeHis = async (key, herEntry) => {
@@ -4315,8 +4340,16 @@ export default function App({ account = {} }) {
     }
     try {
       // 原料：那一天的原话、照片（她发过来的在前，再是这一页上原来的、那天聊天里的），最多十张，长边 512
-      if (!dayMsgsRef.current[day]) await loadDays();
-      const mats = materialsOf(dayMsgsRef.current[day] || []);
+      // 聊天里的原话、狐宇宙里的便签分开给他（便签另列一段，写明是狐宇宙里的；她 10 月 22 日说的“可以”）；照片两边的都算
+      if (!daysAtRef.current || !(dayMsgsRef.current[day] || []).length) await loadDays();
+      const chatMs = chatDaysRef.current[day] || [];
+      const foxMs = foxDaysRef.current[day] || [];
+      const both = materialsOf([...chatMs, ...foxMs]);
+      const mats = { quotes: materialsOf(chatMs).quotes, photos: both.photos };
+      const notes = materialsOf(foxMs).quotes.map((q) => ({ ...q, src: "便签" }));
+      // 他挑出来的照几点排（原话、便签掺在一起）
+      const noteIds = new Set(notes.map((q) => q.id));
+      const allQ = both.quotes.map((q) => (noteIds.has(q.id) ? { ...q, src: "便签" } : q));
       const chatT = (imgId) => (mats.photos.find((p) => p.imgId === imgId) || {}).t || "";
       const cands = [];
       const add = (ref, from, t) => {
@@ -4346,7 +4379,7 @@ export default function App({ account = {} }) {
         blocks.push({ type: "text", text: tag }, blk);
       }
       steps = [
-        { a: "看了这天的照片和聊天", b: `${shown.length} 张照片 · ${mats.quotes.length} 句原话`, ok: true },
+        { a: "看了这天的照片和聊天", b: `${shown.length} 张照片 · ${mats.quotes.length} 句原话${notes.length ? ` · ${notes.length} 句便签` : ""}`, ok: true },
         { a: "在排", b: "挑照片、挑原话、起标题", ok: false },
       ];
       making = withHers({ ...making, steps });
@@ -4380,7 +4413,7 @@ export default function App({ account = {} }) {
       const wxRec = (was && was.wx) || safeParse(store.peek(`${TY_KV}wx/${day}`), null);
       const wx = wxRec && Number.isFinite(wxRec.code) ? wxRec : null;
       const at = (was && was.at) || (wxRec && wxRec.at) || "";
-      const q = tyArrangeAsk({ label, her: namesRef.current.her || HER_NAME, quotes: mats.quotes, photos: shown, diary, wx, at, wish: ask.text, keep });
+      const q = tyArrangeAsk({ label, her: namesRef.current.her || HER_NAME, quotes: mats.quotes, notes, photos: shown, diary, wx, at, wish: ask.text, keep });
       let data;
       // 等他最多五分钟：一直没回（网卡住了），这一台上“在排”就一直转、别处也收拾不了（这一天在 tyBusy 里），当没排成
       const ac = new AbortController();
@@ -4413,7 +4446,7 @@ export default function App({ account = {} }) {
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join("\n");
-      const A = parseTyArrange(said, mats.quotes, shown.map((x) => x.tag));
+      const A = parseTyArrange(said, allQ, shown.map((x) => x.tag));
 
       // 他挑的聊天里的照片另存一份（长边 1000，同“聊天里的照片”放上纸那条路；聊天删了它还在）
       const srcOf = {};
@@ -4523,16 +4556,29 @@ export default function App({ account = {} }) {
       return mode;
     },
     // 框里要的几样：每一天聊了多少、某一天的话、聊天里的一张照片
+    // 聊天（heat、dayMsgs）和狐宇宙里的（noteHeat、noteMsgs，引用栏的便签那一栏）分开给。
+    // 归过一遍就照归好的给（没聊过天的日子不再从头翻一遍：10 月 22 日她报手帐卡，查到的一处）；还没归过的先归一遍
     frame: () => {
-      const heat = {};
-      Object.keys(dayMsgsRef.current).forEach((k) => {
-        heat[k] = (dayMsgsRef.current[k] || []).length;
-      });
+      const count = (byDay) => {
+        const h = {};
+        Object.keys(byDay).forEach((k) => {
+          h[k] = (byDay[k] || []).length;
+        });
+        return h;
+      };
+      const ready = async () => {
+        if (!daysAtRef.current) await loadDays();
+      };
       return {
-        heat,
+        heat: count(chatDaysRef.current),
+        noteHeat: count(foxDaysRef.current),
         dayMsgs: async (date) => {
-          if (!dayMsgsRef.current[date]) await loadDays();
-          return dayMsgsRef.current[date] || [];
+          await ready();
+          return chatDaysRef.current[date] || [];
+        },
+        noteMsgs: async (date) => {
+          await ready();
+          return foxDaysRef.current[date] || [];
         },
         chatImg: async (imgId) => imgsRef.current[imgId] || (await store.get("kfs2:img:" + imgId)) || null,
         onFail: markStorageFail,

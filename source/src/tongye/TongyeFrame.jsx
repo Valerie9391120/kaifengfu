@@ -51,7 +51,7 @@ const DARK = () => {
   }
 };
 
-export function TongyeFrame({ day, mode, heat, dayMsgs, chatImg, onFail, onAsk, onClose }) {
+export function TongyeFrame({ day, mode, heat, noteHeat, dayMsgs, noteMsgs, chatImg, onFail, onAsk, onClose }) {
   const box = useRef(null);
   // 同页还没摆好（那一页 6.5 MB 还在下载、没网取不到）：这边摆一颗回去的，不然她被这一层挡住出不去
   const [ready, setReady] = useState(false);
@@ -65,7 +65,15 @@ export function TongyeFrame({ day, mode, heat, dayMsgs, chatImg, onFail, onAsk, 
         if (frame && frame.contentWindow) frame.contentWindow.postMessage({ kfsTy: 1, ...msg }, "*");
       } catch (e) {}
     };
-    const server = makeServer({ store, dayMsgs, chatImg, onFail, onAsk, onClose: () => onClose(), onReady: () => setReady(true), cfgKey: JZCFG_KEY, geocode, weather: dayWeather, day });
+    // 框里在打字（同页的输入框、打的字拿到了焦点，框里告诉这边的）：框上记一笔，keyboard.js 照开封府自己的输入框那样把整层铺到键盘上面，
+    // 框跟着变矮，框里压在底下的输入框就露出来了（她 10 月 22 日报的：交给光义那一屏打字的时候被键盘挡住）。这一层外面挂着 data-kfs-kbfit
+    const onTyping = (on) => {
+      if (!frame) return;
+      if (on) frame.setAttribute("data-kfs-typing", "");
+      else frame.removeAttribute("data-kfs-typing");
+      window.dispatchEvent(new Event("kfs-kbcheck"));
+    };
+    const server = makeServer({ store, dayMsgs, noteMsgs, chatImg, onFail, onAsk, onTyping, onClose: () => onClose(), onReady: () => setReady(true), cfgKey: JZCFG_KEY, geocode, weather: dayWeather, day });
     const onMsg = async (e) => {
       if (!frame || e.source !== frame.contentWindow) return;
       const d = e.data;
@@ -103,7 +111,7 @@ export function TongyeFrame({ day, mode, heat, dayMsgs, chatImg, onFail, onAsk, 
     frame.setAttribute("allow", "web-share");
     frame.setAttribute("referrerpolicy", "no-referrer");
     frame.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;border:0;display:block";
-    frame.name = "kfs-ty:" + JSON.stringify({ ...server.init({ day, mode, heat, safe: safeNow() }), tok });
+    frame.name = "kfs-ty:" + JSON.stringify({ ...server.init({ day, mode, heat, noteHeat, safe: safeNow() }), tok });
     frame.src = TONGYE_URL;
     box.current.appendChild(frame);
     return () => {
@@ -120,7 +128,7 @@ export function TongyeFrame({ day, mode, heat, dayMsgs, chatImg, onFail, onAsk, 
     };
   }, []);
   return (
-    <div ref={box} className="kfs-ty absolute inset-0" style={{ zIndex: 60, background: DARK() ? "#0F1011" : "#EAEAE7" }}>
+    <div ref={box} className="kfs-ty absolute inset-0" data-kfs-kbfit="" style={{ zIndex: 60, background: DARK() ? "#0F1011" : "#EAEAE7" }}>
       {ready ? null : (
         <div className="kfs-ty-wait" style={{ position: "absolute", left: 0, right: 0, top: 0, paddingTop: safeTopPx(), zIndex: 2, pointerEvents: "none" }}>
           <button

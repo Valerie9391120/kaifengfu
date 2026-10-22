@@ -279,7 +279,10 @@ function fakeArrange(body) {
   const wish = (/她说想要：(.+)/.exec(all) || [])[1] || "";
   if (/排坏/.test(wish)) return { status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text: "我想了想，不排了。" }], usage } };
   if (/排空/.test(wish)) return { status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text: "[JZ]\n{}\n[/JZ]" }], usage } };
-  const qids = [...all.matchAll(/^(\S+)｜\d\d:\d\d｜/gm)].map((m) => m[1]);
+  // 她说想要“便签”：原话挑头一句、狐宇宙里的便签挑头一句（tests/e2e_quote.py 用）
+  const cut = all.indexOf("这天狐宇宙里的便签");
+  const idsIn = (t) => [...t.matchAll(/^(\S+)｜\d\d:\d\d｜/gm)].map((m) => m[1]);
+  const qids = /便签/.test(wish) && cut >= 0 ? idsIn(all.slice(0, cut)).slice(0, 1).concat(idsIn(all.slice(cut)).slice(0, 1)) : idsIn(all);
   const tags = [...new Set([...all.matchAll(/照片(\d+)（/g)].map((m) => "照片" + m[1]))];
   const o = {
     layout: "bento",
