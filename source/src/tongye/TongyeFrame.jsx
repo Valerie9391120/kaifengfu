@@ -99,7 +99,8 @@ export function TongyeFrame({ day, mode, heat, noteHeat, dayMsgs, noteMsgs, chat
     };
     const offPull = store.subscribe(push);
     const offMine = onTyChanged(push);
-    const onResize = () => authed && send({ safe: safeNow() });
+    // 刘海、横条多高；键盘开着没有（keyboard.js 把整层铺到键盘上面的时候记着 data-kfs-kb：框里照这个收起浮在底下的那两颗）
+    const onResize = () => authed && send({ safe: safeNow(), kb: document.documentElement.hasAttribute("data-kfs-kb") });
     window.addEventListener("resize", onResize);
     window.addEventListener("kfs-kb", onResize);
     const slowT = setTimeout(() => setSlow(true), 12000);

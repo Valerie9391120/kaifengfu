@@ -257,14 +257,16 @@ with sync_playwright() as p:
           const mt = s.querySelector('.mt'); mt.textContent = '底下打的一行字'; window.__mt = mt; mt.scrollIntoView({ block: 'end' }); return true; })()""")
         time.sleep(0.6)
         f.evaluate("(() => { const mt = window.__mt; mt.focus(); const r = document.createRange(); r.selectNodeContents(mt); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); })()")
-        time.sleep(0.3)
+        time.sleep(0.5)
+        ok(f.evaluate("getComputedStyle(document.getElementById('addFab')).display") != "none" and pa.evaluate(LAYER)["bottom"] == 852,
+           "字上有焦点、键盘还没起来（同页放上字贴自己把焦点放过去的那种）：整层不动，“＋”照样在")
         pa.evaluate("window.__kfsKeyboard(470, 0)"); time.sleep(1.0)
         lay = pa.evaluate(LAYER)
         ins = f.evaluate("(() => { const r = window.__mt.getBoundingClientRect(); const vis = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none'; };
           return { h: innerHeight, top: r.top, bottom: r.bottom, focus: document.activeElement === window.__mt, fab: vis('#addFab'), undo: vis('#undoPill') }; })()")
         ok(lay["kb"] and lay["typing"] and lay["bottom"] == 470 and ins["h"] == 470, f"纸上打字、键盘起来：整层铺到键盘上面（底边 {lay['bottom']}），框跟着变矮（{ins['h']}）")
         ok(ins["focus"] and 0 <= ins["top"] and ins["bottom"] <= 470, f"正打着的那一行字露在键盘上头（{ins['top']:.0f}–{ins['bottom']:.0f}）")
-        ok(not ins["fab"] and not ins["undo"], "打字的时候右下角“＋”、左下角“撤回”收起来（不压着正打着的那一行）")
+        ok(not ins["fab"] and not ins["undo"], "键盘起来、打着字：右下角“＋”、左下角“撤回”收起来（不压着正打着的那一行）")
         if SHOTS:
             pa.screenshot(path=os.path.join(SHOTS, "键盘-纸上打字.png"))
         f.evaluate("window.__mt.blur()"); pa.evaluate("window.__kfsKeyboard(null, 0)"); time.sleep(0.8)
