@@ -4549,6 +4549,8 @@ export default function App({ account = {} }) {
     // 她填过天气在哪儿、这一天还没取过，取一回（取到了告诉框里）
     prepare: async (day) => {
       await tyMigrate();
+      // 按天归的那一趟还在归（她刚打开闲笔集就点开了手帐）：等它归完，框里带进去的每天几句（日历的深浅）照新的
+      if (daysRunRef.current) await daysRunRef.current.catch(() => {});
       const mode = openMode(store, day);
       const cfg = safeParse(await store.get(JZCFG_KEY), {}) || {};
       // 天气等一小会儿（最多两秒半）：取到了再开，同页打开那一下天气签就画上了；取得慢的，取到了再告诉框里
@@ -4566,8 +4568,10 @@ export default function App({ account = {} }) {
         });
         return h;
       };
+      // 正在归的那一趟（她刚打开闲笔集）等它归完，不拿上一回归好的旧的给；从没归过的归一遍
       const ready = async () => {
-        if (!daysAtRef.current) await loadDays();
+        if (daysRunRef.current) await daysRunRef.current;
+        else if (!daysAtRef.current) await loadDays();
       };
       return {
         heat: count(chatDaysRef.current),

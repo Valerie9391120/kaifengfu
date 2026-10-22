@@ -158,8 +158,12 @@ with sync_playwright() as p:
         ftap(f, "#toSelf")
         f = tframe(pa, "document.documentElement.classList.contains('app-mode')")
         f.evaluate("(() => { window.__rt = 0; const o = renderTray; renderTray = function () { window.__rt++; return o.apply(this, arguments); }; })()")
+        ok(fwait(f, f"QF_DONE.has('{md(today)}') && !QF_PEND.has('{md(today)}') && (NOTELOG['{md(today)}'] || []).length === 3 && (CHATLOG['{md(today)}'] || []).length === {quotes}", 15),
+           "换到那一天就先把整天的话取回来了（聊天、便签都在），还没开引用栏")
         f.locator("#cats button[data-c=quote]").tap()
         ok(fwait(f, "document.querySelectorAll('#wxrow .qrow').length > 0", 20), "点开引用")
+        time.sleep(1.0)
+        ok(f.evaluate("window.__rt") == 1, f"点开引用栏只摆了一回（整天的话早取回来了，不再整排重摆一回：{f.evaluate('window.__rt')} 回）")
         st = f.evaluate("""(() => ({ tabs: [...document.querySelectorAll('#wxdays [data-qs]')].filter((x) => getComputedStyle(x).display !== 'none').map((x) => x.textContent),
           rows: document.querySelectorAll('#wxrow .qrow').length, more: (document.querySelector('#wxrow .kfs-qmore') || {}).textContent || '',
           anim: [...document.querySelectorAll('#wxrow .qrow')].slice(0, 5).map((x) => getComputedStyle(x).animationName),
@@ -174,14 +178,16 @@ with sync_playwright() as p:
         if SHOTS:
             pa.screenshot(path=os.path.join(SHOTS, "引用-聊天那一栏.png"))
 
-        f.evaluate("(() => { const r = document.querySelectorAll('#wxrow .qrow')[0]; r.__mark = 1; window.__n0 = document.getElementsByTagName('*').length; window.__rt = 0; })()")
+        f.evaluate("""(() => { const r = document.querySelectorAll('#wxrow .qrow')[0]; r.__mark = 1; window.__n0 = document.querySelectorAll('#wxrow *').length; window.__rt = 0; window.__qh = 0;
+          const o = window.__kfsQuoteHTML; window.__kfsQuoteHTML = function () { window.__qh++; return o.apply(this, arguments); }; })()""")
         f.locator("#wxrow .qrow").nth(0).tap()
         time.sleep(0.4)
         st = f.evaluate("""(() => { const r = document.querySelectorAll('#wxrow .qrow')[0]; return { same: r.__mark === 1, on: r.classList.contains('on'), rt: window.__rt,
-          dn: document.getElementsByTagName('*').length - window.__n0, bar: document.querySelector('#wxrow .qbar span').textContent,
+          dn: document.querySelectorAll('#wxrow *').length - window.__n0, qh: window.__qh, sup: document.querySelectorAll('#wxdays [data-qs="聊天"] sup').length, bar: document.querySelector('#wxrow .qbar span').textContent,
           btn: [...document.querySelectorAll('#wxrow .qbar [data-qa]')].map((b) => b.offsetParent !== null), tab: document.querySelector('#wxdays [data-qs="聊天"]').textContent,
           sel: QSEL['聊天'].slice() }; })()""")
-        ok(st["on"] and st["same"] and st["rt"] == 0 and st["dn"] == 0, f"手指点一句：那一句亮了，还是原来那一个（整排没重摆、页上一个元素不多：{st['rt']} 回、{st['dn']} 个）")
+        ok(st["on"] and st["same"] and st["rt"] == 0 and st["qh"] == 0 and st["dn"] == 0 and st["sup"] == 1,
+           f"手指点一句：那一句亮了，还是原来那一个（整排没重摆、整张单子一回都没拼、那一排里一个元素不多：{st['rt']} 回、{st['qh']} 回、{st['dn']} 个）")
         ok(st["bar"] == "已选 1 句" and st["btn"] == [True, True] and st["tab"] == "聊天1" and st["sel"] == [md(today) + "#0"], f"底下“已选 1 句”、两颗露出来；上面那一栏记着 1（{st['tab']}）")
         f.locator("#wxrow .qrow").nth(0).tap(); time.sleep(0.3)
         st = f.evaluate("({ on: document.querySelectorAll('#wxrow .qrow')[0].classList.contains('on'), bar: document.querySelector('#wxrow .qbar span').textContent, tab: document.querySelector('#wxdays [data-qs=\"聊天\"]').textContent, btn: [...document.querySelectorAll('#wxrow .qbar [data-qa]')].map((b) => b.offsetParent !== null), rt: window.__rt })")
@@ -262,8 +268,8 @@ with sync_playwright() as p:
            "字上有焦点、键盘还没起来（同页放上字贴自己把焦点放过去的那种）：整层不动，“＋”照样在")
         pa.evaluate("window.__kfsKeyboard(470, 0)"); time.sleep(1.0)
         lay = pa.evaluate(LAYER)
-        ins = f.evaluate("(() => { const r = window.__mt.getBoundingClientRect(); const vis = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none'; };
-          return { h: innerHeight, top: r.top, bottom: r.bottom, focus: document.activeElement === window.__mt, fab: vis('#addFab'), undo: vis('#undoPill') }; })()")
+        ins = f.evaluate("""(() => { const r = window.__mt.getBoundingClientRect(); const vis = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none'; };
+          return { h: innerHeight, top: r.top, bottom: r.bottom, focus: document.activeElement === window.__mt, fab: vis('#addFab'), undo: vis('#undoPill') }; })()""")
         ok(lay["kb"] and lay["typing"] and lay["bottom"] == 470 and ins["h"] == 470, f"纸上打字、键盘起来：整层铺到键盘上面（底边 {lay['bottom']}），框跟着变矮（{ins['h']}）")
         ok(ins["focus"] and 0 <= ins["top"] and ins["bottom"] <= 470, f"正打着的那一行字露在键盘上头（{ins['top']:.0f}–{ins['bottom']:.0f}）")
         ok(not ins["fab"] and not ins["undo"], "键盘起来、打着字：右下角“＋”、左下角“撤回”收起来（不压着正打着的那一行）")

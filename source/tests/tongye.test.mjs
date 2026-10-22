@@ -601,7 +601,7 @@ ok(html.includes("map(x=>window.__kfsAskRef?__kfsAskRef(x):x)") && html.includes
 ok(html.includes('const QSEL={"聊天":[],"便签":[],"吃了吗"') && html.includes("const CHATLOG={},NOTELOG={};") && html.includes('quoteSub==="便签"?NOTELOG:') && html.includes('${["聊天","便签","吃了吗","书摘","健康"].map(k=>')
   && html.includes('quoteSub==="便签"?window.__bzNoteHeat') && html.includes('"从狐宇宙里挑 · 原话一个字不改"') && html.includes('quoteSub==="聊天"||quoteSub==="便签"?"C:"') && html.includes("NOTELOG[k]=s.note.filter")
   && html.includes('["聊天","便签","书摘","健康"].forEach(function(t){QSEL[t]=') && html.includes("return __kfsQuoteHTML();") && html.includes("return __kfsWireQuote(_wq);")
-  && html.includes("if(C&&R.chat&&!(window.QF_DONE&&QF_DONE.has(R.day)))C[R.day]=R.chat.map("),
+  && html.includes("if(C&&R.chat&&!(window.QF_DONE&&QF_DONE.has(R.day)))C[R.day]=R.chat.map(") && html.includes('QSEL["聊天"]=[];QSEL["便签"]=[];QSEL["吃了吗"]=[];'),
   "引用栏那几处接上了：多一栏便签（选的、取的、日历、贴到页上、底下那一行字）；聊天、便签两栏摆出来、点一句交给开封府那一层");
 const KIT = tyKit(SRC);
 ok(KIT.layouts.length === 17 && KIT.styles.length === 26 && KIT.layouts.every(([id, n, t]) => TY_LAYOUTS[id] === n && t) && KIT.styles.every(([id, n, t]) => TY_STYLES[id] === n && t),
