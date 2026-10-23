@@ -1,4 +1,4 @@
-import { BASE_IDS, BOLD_OUTFIT_IDS, HEAD_FACE_ACCESSORY_IDS, ITEMS, MODERN_BOTTOM_IDS, MODERN_SHOES_IDS } from "./dressing-data.js";
+import { BASE_IDS, BOLD_OUTFIT_IDS, HEAD_FACE_ACCESSORY_IDS, ITEMS, MODERN_BOTTOM_IDS, MODERN_SHOES_IDS, V1_BASE_IDS } from "./dressing-data.js";
 import { dayDiff } from "./date-utils.js";
 import type { DressingState } from "./types.js";
 
@@ -24,6 +24,8 @@ export interface AchievementDefinition {
 const every=(need:string[],have:string[])=>need.every(x=>have.includes(x));
 const usedBaseCount=(used:string[],category:keyof typeof BASE_IDS)=>used.filter(x=>BASE_IDS[category].includes(x)).length;
 const allBaseUsed=(used:string[],category:keyof typeof BASE_IDS)=>BASE_IDS[category].every(x=>used.includes(x));
+// 只数一开始那一批（v1）：后来添的单品不会把“全部”撑大
+const allV1Used=(used:string[],category:keyof typeof V1_BASE_IDS)=>V1_BASE_IDS[category].every(x=>used.includes(x));
 const currentIds=(s:DressingState)=>[
   s.appearance.hair,s.appearance.makeup,s.appearance.scent,
   ...s.appearance.outfits,...s.appearance.bottoms,...s.appearance.shoes,...s.appearance.accessories
@@ -53,7 +55,7 @@ export const ACHIEVEMENTS:AchievementDefinition[]=[
   {id:"first_mirror",name:"初整衣冠",description:"第一次换装并完成搭配。",check:(s,c)=>Boolean(c.justCompleted)&&Object.values(s.touched).some(Boolean)},
   {id:"change_hair",name:"改头换面",description:"第一次更换与初始不同的发型。",check:s=>s.appearance.hair!=="hair_loose"},
   {id:"hair_3",name:"千丝万缕",description:"尝试 3 种不同发型。",check:s=>usedBaseCount(s.stats.usedHair,"hair")>=3},
-  {id:"hair_all",name:"理发店VIP",description:"尝试全部 10 种发型。",check:s=>allBaseUsed(s.stats.usedHair,"hair")},
+  {id:"hair_all",name:"理发店VIP",description:"尝试 10 种不同发型。",check:s=>usedBaseCount(s.stats.usedHair,"hair")>=10},
   {id:"makeup_first",name:"铅华淡淡妆成",description:"第一次使用淡妆或全妆。",check:s=>s.stats.usedMakeup.includes("makeup_light")||s.stats.usedMakeup.includes("makeup_full")},
   {id:"makeup_all",name:"浓淡相宜，国色芳华",description:"素面、淡妆、全妆三种妆面均使用过。",check:s=>allBaseUsed(s.stats.usedMakeup,"makeup")},
   {id:"scent_first",name:"暗香来",description:"第一次使用任意熏香。",check:s=>s.stats.usedScent.some(id=>id!=="scent_none")},
@@ -67,7 +69,7 @@ export const ACHIEVEMENTS:AchievementDefinition[]=[
   {id:"outfit_stack_3",name:"叠床架屋",description:"同时选择 3 件以上衣柜造型。",check:s=>s.appearance.outfits.length>=3},
   {id:"accessory_5",name:"衣冠楚楚",description:"同时佩戴 5 件以上配饰。",check:s=>s.appearance.accessories.length>=5},
   {id:"accessory_10",name:"珠围翠绕",description:"同时佩戴 10 件以上配饰。",check:s=>s.appearance.accessories.length>=10},
-  {id:"all_base_accessories",name:"行走的杂货铺",description:"一次性把 v1 基础配饰全部戴上。",check:s=>every(BASE_IDS.accessory,s.appearance.accessories)},
+  {id:"all_base_accessories",name:"行走的杂货铺",description:"一次性把 v1 基础配饰全部戴上。",check:s=>every(V1_BASE_IDS.accessory,s.appearance.accessories)},
   {id:"mirror_10_day",name:"照花前后镜",description:"同一天照镜 3 次。",when:"mirror",check:s=>(s.currentDay?.mirrorCount??0)>=3},
   {id:"five_looks_day",name:"时尚先锋",description:"连续 3 天最终造型都不完全相同。",check:s=>differentDays(s,3)},
   {id:"seven_days_new",name:"日日新",description:"连续 7 天最终造型都不完全相同。",check:s=>differentDays(s,7)},
@@ -94,12 +96,24 @@ export const ACHIEVEMENTS:AchievementDefinition[]=[
   {id:"pale_to_vivid",name:"淡极生艳",description:"素白寝衣与披发同时出现。",check:s=>s.appearance.outfits.includes("outfit_white_sleep")&&s.appearance.hair==="hair_loose"},
   {id:"most_indecent_menswear",name:"男人最淫荡的衣服",description:"穿上高领黑毛衣。",check:s=>s.appearance.outfits.includes("outfit_black_turtleneck")},
   {id:"shoes_5",name:"足下生风",description:"尝试 5 种不同鞋履。",check:s=>usedBaseCount(s.stats.usedShoes,"shoes")>=5},
-  {id:"shoes_all",name:"履迹纷纷",description:"尝试全部基础鞋履。",check:s=>allBaseUsed(s.stats.usedShoes,"shoes")},
+  {id:"shoes_all",name:"履迹纷纷",description:"尝试全部基础鞋履。",check:s=>allV1Used(s.stats.usedShoes,"shoes")},
   {id:"bottom_5",name:"下装自由",description:"尝试 5 种不同下装。",check:s=>usedBaseCount(s.stats.usedBottoms,"bottom")>=5},
-  {id:"bottom_all",name:"裤子也是衣服",description:"尝试全部基础下装。",check:s=>allBaseUsed(s.stats.usedBottoms,"bottom")},
-  {id:"bottom_stack_2",name:"层层叠叠",description:"同一次搭配里选择 2 件以上下装。",check:s=>s.appearance.bottoms.length>=2},
+  {id:"bottom_all",name:"裤子也是衣服",description:"尝试全部基础下装。",check:s=>allV1Used(s.stats.usedBottoms,"bottom")},
+  {id:"bottom_stack_2",name:"层层叠叠",description:"同时穿着 2 件及以上的下装。",check:s=>s.appearance.bottoms.length>=2},
   {id:"grounded_7",name:"脚踏实地",description:"连续 7 次完成搭配都没有选择跣足。",check:s=>s.stats.noBarefootCompleteStreak>=7},
-  {id:"head_to_toe",name:"从头到脚",description:"同一次造型中完成发型、妆面、熏香、衣柜、下装、鞋履的选择，并至少佩戴 1 件配饰。",check:(s,c)=>Boolean(c.justCompleted)&&s.touched.hair&&s.touched.makeup&&s.touched.scent&&s.appearance.outfits.length>0&&s.appearance.bottoms.length>0&&s.appearance.shoes.length>0&&s.appearance.accessories.length>0}
+  {id:"head_to_toe",name:"从头到脚",description:"同一次造型中完成发型、妆面、熏香、衣柜、下装、鞋履的选择，并至少佩戴 1 件配饰。",check:(s,c)=>Boolean(c.justCompleted)&&s.touched.hair&&s.touched.makeup&&s.touched.scent&&s.appearance.outfits.length>0&&s.appearance.bottoms.length>0&&s.appearance.shoes.length>0&&s.appearance.accessories.length>0},
+
+  // 0.3.0 卿卿添的十个
+  {id:"gentle_husband",name:"温柔人夫",description:"选择松散低盘发。",check:s=>s.appearance.hair==="hair_loose_low_bun"},
+  {id:"magic_fox_letter",name:"魔法狐狐的入学通知书",description:"同时搭配星月天鹅绒巫师长袍、扫把、尖顶巫师礼帽。",check:s=>s.appearance.outfits.includes("outfit_wizard_robe")&&every(["acc_broom","acc_wizard_hat"],s.appearance.accessories)},
+  {id:"starch_sausage_calling",name:"淀粉肠的呼唤",description:"穿上小猪套装。",check:s=>s.appearance.outfits.includes("outfit_piggy")},
+  {id:"mural_millennium",name:"画壁千年",description:"穿上飞天伎乐舞服。",check:s=>s.appearance.outfits.includes("outfit_feitian_dance")},
+  {id:"court_brawl",name:"已经装备武器，准备朝堂互殴",description:"带上牙笏。",check:s=>s.appearance.accessories.includes("acc_ivory_hu")},
+  {id:"black_elegy",name:"黑色挽歌",description:"同时搭配哥特黑婚纱和蕾丝黑头纱。",check:s=>s.appearance.outfits.includes("outfit_gothic_wedding")&&s.appearance.accessories.includes("acc_black_lace_veil")},
+  {id:"give_it_back",name:"还给你了",description:"选择妙脆角狐狐耳朵。",check:s=>s.appearance.accessories.includes("acc_fox_ears")},
+  {id:"cloud_ladder",name:"青云梯",description:"选择谢公屐。",check:s=>s.appearance.shoes.includes("shoes_xiegong_clogs")},
+  {id:"budget_airline",name:"廉航经济舱",description:"同时穿着五件及以上的下装。",check:s=>s.appearance.bottoms.length>=5},
+  {id:"sun_sand_waves_cactus",name:"阳光、沙滩、海浪、仙人掌",description:"穿上热带草裙套装。",check:s=>s.appearance.outfits.includes("outfit_tropical_grass_skirt")}
 ];
 
-if (ACHIEVEMENTS.length!==50) throw new Error(`Expected 50 achievements, got ${ACHIEVEMENTS.length}`);
+if (ACHIEVEMENTS.length!==60) throw new Error(`Expected 60 achievements, got ${ACHIEVEMENTS.length}`);

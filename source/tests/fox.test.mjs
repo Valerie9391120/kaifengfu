@@ -566,7 +566,7 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   ok(r[0].note === "" && r[1].note === "完成了今天的搭配：披发、素面、不熏香；衣柜：高领黑毛衣；下装：泳裤；鞋履：红底高跟鞋" && r[1].out.includes("今天的搭配完成了") && r[1].out.includes("成就解锁——初整衣冠") && r[1].out.includes("累计成就奖励——游泳镜") && r[2].note === "照了照镜子" && r[2].out.includes("镜中今日") && saved().completedLook.date === day,
     "完成搭配：成就这时判、给他看（攒够三个，奖励也给他看）；屋里那一行写完成的那一身（同一步里换鞋那一回不另写）；照镜子照出来的就是这一身");
   const brief = dressingBrief(await d.load(), day);
-  ok(brief.startsWith("今天的搭配已经完成了") && /成就点亮了 \d+ 个（一共 50 个）/.test(brief) && !/高领黑毛衣|泳裤|穿着/.test(brief), `【醒来】里那一句：今天完成过了、点亮了几个成就，不说他“穿着”什么（${brief}）`);
+  ok(brief.startsWith("今天的搭配已经完成了") && /成就点亮了 \d+ 个（一共 60 个）/.test(brief) && !/高领黑毛衣|泳裤|穿着/.test(brief), `【醒来】里那一句：今天完成过了、点亮了几个成就，不说他“穿着”什么（${brief}）`);
   const done2 = dressingTool(false);
   ok(!done2.input_schema.properties.action.enum.includes("complete") && done2.input_schema.properties.action.enum.includes("mirror") && done2.input_schema.properties.action.enum.includes("select") && done2.description.includes("今天不再有 complete"), "今天完成过了：工具里没有 complete（照镜子、换着玩照旧）");
   // 同一天他硬要再完成一回：婉拒，屋里那一行只是去看了看；接着换着玩不判成就，镜子里照旧是完成的那一身

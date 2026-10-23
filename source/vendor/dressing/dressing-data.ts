@@ -24,6 +24,8 @@ export const ITEMS: Record<string,StyleItem> = Object.fromEntries(([
   I({id:"hair_high_ponytail",name:"高马尾",category:"hair"}),
   I({id:"hair_braided",name:"编发",category:"hair"}),
   I({id:"hair_wet",name:"湿发",category:"hair"}),
+  I({id:"hair_side_loose",name:"单侧披发",category:"hair",batch:2}),
+  I({id:"hair_loose_low_bun",name:"松散低盘发",category:"hair",batch:2}),
 
   // 妆面
   I({id:"makeup_bare",name:"素面",category:"makeup"}),
@@ -77,6 +79,18 @@ export const ITEMS: Record<string,StyleItem> = Object.fromEntries(([
   I({id:"outfit_qipao",name:"高开叉旗袍",category:"outfit",sourceTags:["modern","bold","formal"],bold:true,formal:true}),
   I({id:"outfit_burgundy_sheer",name:"酒红透纱睡衣",category:"outfit",sourceTags:["sleepwear","bold"],bold:true}),
   I({id:"outfit_bathrobe",name:"白色浴袍",category:"outfit",sourceTags:["sleepwear"]}),
+  I({id:"outfit_gold_bead_lingerie",name:"黄金珠链内衣",category:"outfit",sourceTags:["modern","bold"],bold:true,batch:2}),
+  I({id:"outfit_tropical_grass_skirt",name:"热带草裙套装",category:"outfit",sourceTags:["costume"],batch:2}),
+  I({id:"outfit_feitian_dance",name:"飞天伎乐舞服",category:"outfit",sourceTags:["ancient"],batch:2}),
+  I({id:"outfit_wizard_robe",name:"星月天鹅绒巫师长袍",category:"outfit",sourceTags:["fantasy"],batch:2}),
+  I({id:"outfit_piggy",name:"小猪套装",category:"outfit",sourceTags:["costume"],batch:2}),
+  I({id:"outfit_sheer_gauze_robe",name:"素纱对襟薄透长衫",category:"outfit",sourceTags:["ancient","bold"],bold:true,batch:2}),
+  I({id:"outfit_black_fur_cloak",name:"黑裘大氅",category:"outfit",sourceTags:["ancient"],batch:2}),
+  I({id:"outfit_red_fur_cloak",name:"红裘大氅",category:"outfit",sourceTags:["ancient"],batch:2}),
+  I({id:"outfit_beige_suit",name:"米色西装套装",category:"outfit",sourceTags:["modern","formal"],formal:true,batch:2}),
+  I({id:"outfit_baroque_corset",name:"巴洛克蓝瓷鎏金鱼骨胸衣",category:"outfit",sourceTags:["modern","bold"],bold:true,batch:2}),
+  I({id:"outfit_miao_narrow_sleeve",name:"黑紫苗疆窄袖套装",category:"outfit",sourceTags:["ancient"],batch:2}),
+  I({id:"outfit_gothic_wedding",name:"哥特黑婚纱",category:"outfit",sourceTags:["modern","formal"],formal:true,batch:2}),
   I({id:"outfit_none",name:"不穿",category:"outfit",sourceTags:["minimal"]}),
 
   // 下装
@@ -90,6 +104,11 @@ export const ITEMS: Record<string,StyleItem> = Object.fromEntries(([
   I({id:"bottom_swim",name:"泳裤",category:"bottom",sourceTags:["modern","bold"]}),
   I({id:"bottom_mini_skirt",name:"超短裙",category:"bottom",sourceTags:["modern","bold"]}),
   I({id:"bottom_underwear_outer",name:"内裤外穿",category:"bottom",sourceTags:["modern","bold"]}),
+  I({id:"bottom_black_stockings",name:"黑色丝袜",category:"bottom",sourceTags:["modern","bold"],batch:2}),
+  I({id:"bottom_white_garter_stockings",name:"白色吊带袜",category:"bottom",sourceTags:["modern","bold"],batch:2}),
+  I({id:"bottom_purple_lace_briefs",name:"深紫蕾丝三角裤",category:"bottom",sourceTags:["modern","bold"],batch:2}),
+  I({id:"bottom_piggy_dot_briefs",name:"小猪粉波点内裤",category:"bottom",sourceTags:["modern","bold"],batch:2}),
+  I({id:"bottom_wave_mermaid_skirt",name:"海浪曳地鱼尾蓝纱裙",category:"bottom",sourceTags:["modern"],batch:2}),
   I({id:"bottom_none",name:"不穿",category:"bottom",sourceTags:["minimal"]}),
 
   // 鞋履
@@ -142,6 +161,22 @@ export const ITEMS: Record<string,StyleItem> = Object.fromEntries(([
   I({id:"acc_white_gloves",name:"白手套",category:"accessory",sourceTags:["modern","formal"]}),
   I({id:"acc_scarf",name:"丝巾",category:"accessory",sourceTags:["modern"]}),
   I({id:"acc_gold_anklet",name:"黄金脚链",category:"accessory",sourceTags:["modern"]}),
+  I({id:"acc_fox_ears",name:"妙脆角狐狐耳朵",category:"accessory",sourceTags:["costume"],headFace:true,batch:2}),
+  I({id:"acc_bunny_tail",name:"小兔尾巴",category:"accessory",sourceTags:["costume"],batch:2}),
+  I({id:"acc_flower_crown",name:"鲜花头冠",category:"accessory",sourceTags:["modern"],headFace:true,batch:2}),
+  I({id:"acc_broom",name:"扫把",category:"accessory",sourceTags:["fantasy"],batch:2}),
+  I({id:"acc_star_diamond_back_chain",name:"星钻背链",category:"accessory",sourceTags:["modern"],batch:2}),
+  I({id:"acc_gold_dragon_spine_chain",name:"黄金龙脊骨背链",category:"accessory",sourceTags:["modern"],batch:2}),
+  I({id:"acc_platinum_web_back_chain",name:"白金蛛网背链",category:"accessory",sourceTags:["modern"],batch:2}),
+  I({id:"acc_red_string_anklet",name:"红绳脚链",category:"accessory",sourceTags:["ancient"],batch:2}),
+  I({id:"acc_chest_harness",name:"束胸背带",category:"accessory",sourceTags:["modern","bold"],batch:2}),
+  I({id:"acc_jade_lotus_crown",name:"玉莲花冠",category:"accessory",sourceTags:["ancient"],headFace:true,batch:2}),
+  I({id:"acc_ivory_hu",name:"牙笏",category:"accessory",sourceTags:["ancient"],batch:2}),
+  I({id:"acc_broken_pearl_necklace",name:"破碎珍珠长项链",category:"accessory",sourceTags:["modern"],batch:2}),
+  I({id:"acc_miao_silver_moon_crown",name:"苗银碎月头冠",category:"accessory",sourceTags:["ancient"],headFace:true,batch:2}),
+  I({id:"acc_black_lace_veil",name:"蕾丝黑头纱",category:"accessory",sourceTags:["modern"],headFace:true,batch:2}),
+  I({id:"acc_wizard_hat",name:"尖顶巫师礼帽",category:"accessory",sourceTags:["fantasy"],headFace:true,batch:2}),
+  I({id:"acc_plain_hair_ribbon",name:"素色发带",category:"accessory",sourceTags:["ancient"],headFace:true,batch:2}),
 
   // 累计成就奖励。未解锁前不会出现在 catalog 中。
   I({id:"reward_swim_goggles",name:"游泳镜",category:"accessory",base:false,reward:true,sourceTags:["modern"],headFace:true,description:"一副很认真、很专业、却未必适合眼下造型的游泳镜。"}),
@@ -155,7 +190,7 @@ export const ITEMS: Record<string,StyleItem> = Object.fromEntries(([
   I({id:"reward_dinosaur_onesie",name:"恐龙连体睡衣",category:"outfit",base:false,reward:true,sourceTags:["costume","sleepwear"],description:"背后一排软刺，尾巴拖在身后，威严与保暖兼备。"}),
   I({id:"reward_diamond_swim_ring",name:"镶钻泳圈",category:"accessory",base:false,reward:true,sourceTags:["costume"],description:"一个在理论上并不需要镶钻的泳圈。"}),
   I({id:"reward_fox_tail",name:"超大号毛绒狐狸尾巴",category:"accessory",base:false,reward:true,sourceTags:["costume"],description:"蓬松到足以单独占据半张椅子。"}),
-  I({id:"reward_supreme_gold_crocs",name:"至尊黄金洞洞鞋",category:"shoes",base:false,reward:true,sourceTags:["costume","modern"],description:"全成就纪念品。金光璀璨，洞依然很多。"})
+  I({id:"reward_supreme_gold_crocs",name:"至尊黄金洞洞鞋",category:"shoes",base:false,reward:true,sourceTags:["costume","modern"],description:"满 50 成就纪念品。金光璀璨，洞依然很多。"})
 ] as StyleItem[]).map(x=>[x.id,x]));
 
 export const CATEGORY_LABELS: Record<Category,string> = {
@@ -170,6 +205,13 @@ export const BASE_IDS: Record<Category,string[]> = {
   bottom:Object.values(ITEMS).filter(x=>x.base&&x.category==="bottom").map(x=>x.id),
   shoes:Object.values(ITEMS).filter(x=>x.base&&x.category==="shoes").map(x=>x.id),
   accessory:Object.values(ITEMS).filter(x=>x.base&&x.category==="accessory").map(x=>x.id)
+};
+
+// 一开始那一批（v1）的基础单品：“全部基础鞋履／下装／配饰”几条只数这一批，后来添的不会把条件越撑越大
+const v1=(c:Category)=>BASE_IDS[c].filter(id=>!ITEMS[id]!.batch);
+export const V1_BASE_IDS: Record<Category,string[]> = {
+  hair:v1("hair"), makeup:v1("makeup"), scent:v1("scent"), outfit:v1("outfit"),
+  bottom:v1("bottom"), shoes:v1("shoes"), accessory:v1("accessory")
 };
 
 export const BOLD_OUTFIT_IDS = new Set(Object.values(ITEMS).filter(x=>x.base&&x.category==="outfit"&&x.bold).map(x=>x.id));
