@@ -2,15 +2,16 @@ import * as hall from "./art/hall.js";
 import * as crow from "./art/crow.js";
 import * as moon from "./art/moon.js";
 import * as peony from "./art/peony.js";
+import * as fox from "./art/fox.js";
 
-// ---------- 恩师画的那一套（侧栏四个方块上的：殿、三足乌、云月、牡丹） ----------
+// ---------- 恩师画的那一套（侧栏四个方块上的：殿、三足乌、云月、牡丹；南衙里狐宇宙那一行的狐狸，10 月 23 日添的） ----------
 // 线稿描成的路径，一样一个文件，在 art/ 里（tools/make_art.py 生成的，别手改）。
 // 和下面手绘的那一套有两处不一样：
 //   是一块填色的形状，不是描线的。所以自己写上填色、不描边，盖掉 Icon 给整张图定的那两样
 //   （不写“不描边”的话，它会被照 1.8 再描一圈，整个糊成一团）；
 //   大小不是 20：照各自文件里的 PT（都是 25）摆，线的粗细才是量好的那个。要多大问 artSize。
 // 画里面是空的：描出来的路径里，洞和外圈是反着绕的，本来就留空；evenodd 是另加的一道，哪天换了描法、绕的方向不讲究了也不怕。
-const ART = { hall, crow, moon, peony };
+const ART = { hall, crow, moon, peony, fox };
 const art = (a) => <path d={a.PATH} fill="currentColor" fillRule="evenodd" stroke="none" />;
 // 这一套里的图标该摆多大；不是这一套的回 0
 export const artSize = (name) => (ART[name] ? ART[name].PT : 0);
@@ -96,13 +97,6 @@ const ICON_PATHS = {
     </>
   ),
   wave: <path d="M5 10v4M8.5 7.5v9M12 4.5v15M15.5 7.5v9M19 10v4" />,
-  // 狐宇宙（南衙最顶上那一行，10 月 20 日添的，见 fox.js）：一个狐狸脑袋，两只尖耳朵，两腮往下收成尖嘴（圆下巴的像猫），眼睛两点，鼻头一点
-  fox: (
-    <>
-      <path d="M4.2 3.8 9 8.4h6l4.8-4.6.9 7.4L12 20.6 3.3 11.2Z" />
-      <path d="M9.2 12.6h.01M14.8 12.6h.01M12 18.2h.01" strokeWidth="2.5" />
-    </>
-  ),
   // 邸报（南衙里那一行，10 月 18 日挂上的，还在营造）：横着的一张报，左上一块题图，旁边和底下几行字
   gazette: (
     <>
@@ -173,6 +167,8 @@ const ICON_PATHS = {
   crow: art(crow),
   moon: art(moon),
   peony: art(peony),
+  // 狐宇宙（南衙最顶上那一行）：恩师画的一只坐着的狐狸，一笔下来，大尾巴卷回来把自己圈住（卿卿 10 月 23 日给的，替下原来手画的狐狸脑袋）
+  fox: art(fox),
 };
 
 export function Icon({ name, size = 22, color = "currentColor", sw = 1.8 }) {
