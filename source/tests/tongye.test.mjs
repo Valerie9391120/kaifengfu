@@ -327,6 +327,16 @@ ok((await H("imgPut", { id: "n1", data: "data:image/png;base64,QUJD" })) === tru
   "放照片：只收 jpeg、png、webp、gif 的图（svg、别的都不收），编号得规矩");
 await H("imgDel", { id: "n1" });
 ok(s7.peek(TY_IMG + "n1") === null, "删照片");
+// 「我的」里删一张之前：还有哪一页贴着它（每一天的页、他排的几版、废纸篓里的算；只在「我的」里、批注里提到的不算）
+await s7.set(`${TY_KV}page/2026-10-11`, J({ stk: [{ c: "mine", k: "mOnPage", x: 1, y: 2 }], hide: [] }));
+await s7.set(`${TY_KV}gens/2026-10-10`, J({ list: [{ n: 1, P: { stk: [{ c: "mine", k: "mInGen" }] } }] }));
+await s7.set(`${TY_KV}trash/2026-10-09_k1`, J({ day: "2026-10-09", at: 1, docs: { "page/2026-10-09": { stk: [{ c: "mine", k: "mInTrash" }] } } }));
+await s7.set(`${TY_KV}mine/mLone`, J({ id: "mLone", note: "只在架子上", asset: "a1" }));
+await s7.set(`${TY_KV}notes/2026-10-11`, J([{ text: "批注里写了 mInNote" }]));
+ok((await H("mineUsed", { id: "mOnPage" })) === true && (await H("mineUsed", { id: "mInGen" })) === true && (await H("mineUsed", { id: "mInTrash" })) === true,
+  "「我的」里删一张：别的日子的页、他排的几版、废纸篓里贴着它，算还贴着（只拿下来）");
+ok((await H("mineUsed", { id: "mLone" })) === false && (await H("mineUsed", { id: "mInNote" })) === false, "只在「我的」里、批注里提到的不算贴着（真删）");
+ok((await H("mineUsed", { id: "../x" })) === true && (await H("mineUsed", {})) === true, "编号不规矩：当它还贴着（不真删）");
 const src = await H("sources", { date: D });
 ok(src.date === D && src.chat.length === 2 && eq(src.book, []) && eq((await H("sources", { date: "2026/10/12" })).chat, []), "某一天的原话（日子不规矩的不给）");
 const ph = await H("chatPhotos", { date: D });
@@ -603,6 +613,10 @@ ok(html.includes('const QSEL={"聊天":[],"便签":[],"吃了吗"') && html.incl
   && html.includes('["聊天","便签","书摘","健康"].forEach(function(t){QSEL[t]=') && html.includes("return __kfsQuoteHTML();") && html.includes("return __kfsWireQuote(_wq);")
   && html.includes("if(C&&R.chat&&!(window.QF_DONE&&QF_DONE.has(R.day)))C[R.day]=R.chat.map(") && html.includes('QSEL["聊天"]=[];QSEL["便签"]=[];QSEL["吃了吗"]=[];'),
   "引用栏那几处接上了：多一栏便签（选的、取的、日历、贴到页上、底下那一行字）；聊天、便签两栏摆出来、点一句交给开封府那一层");
+const SHELF = PATCHES.filter(([, , , why]) => why.startsWith("「我的」是个架子"));
+ok(SHELF.length === 11 && SHELF.every(([, to]) => html.includes(to)) && html.includes("await __kfsMineUsed(k)")
+  && !html.includes("$$(`#page .stk.c-mine`).forEach(x=>{if(x.dataset.k===k)x.remove()})") && html.includes('toast("从「我的」拿下来了 · 页上贴着的还在")'),
+  "「我的」是个架子那几处接上了：列「我的」的几处只列架子上的；删一张不再把页上的撤掉，还贴着的只拿下来");
 const KIT = tyKit(SRC);
 ok(KIT.layouts.length === 17 && KIT.styles.length === 26 && KIT.layouts.every(([id, n, t]) => TY_LAYOUTS[id] === n && t) && KIT.styles.every(([id, n, t]) => TY_STYLES[id] === n && t),
   "同页的版式、风格（给他挑的那一份）照同页那一页抄：名字跟开封府这头记的对得上，每一种都有一句是什么样");
