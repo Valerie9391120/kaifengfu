@@ -148,6 +148,19 @@ ok(both.staticText.indexOf("【日记本】") < both.staticText.indexOf("【你�
   const w = wardrobeView(parse(s.m.get(DRESSING_KEY)));
   ok(w.startsWith("【你屋里·衣柜】") && ["梳发：", "妆面：", "熏香：", "衣柜：", "下装：", "鞋履：", "配饰："].every((x) => w.includes("\n" + x) || w.includes(x)) && w.includes("高领黑毛衣") && w.includes("跣足") && w.includes("不穿"),
     "衣柜：一样一行，有哪些（高领黑毛衣、跣足、不穿……）");
+  // 10 月 23 日她添的那一批（妆台 0.3.0）：每一栏都在，“不穿”还在最后
+  const w0 = wardrobeView(null);
+  const line = (k) => w0.split("\n").find((x) => x.startsWith(k + "：")) || "";
+  ok(line("梳发").endsWith("湿发、单侧披发、松散低盘发") && line("衣柜").includes("、哥特黑婚纱、不穿") && line("衣柜").includes("黄金珠链内衣") && line("下装").endsWith("海浪曳地鱼尾蓝纱裙、不穿") && line("下装").includes("小猪粉波点内裤") && line("配饰").includes("黄金龙脊骨背链") && line("配饰").endsWith("素色发带") && !w0.includes("龙脊谷"),
+    `衣柜：她 10 月 23 日添的都在，“不穿”还在最后（${line("梳发")}｜${line("下装")}）`);
+  ok(line("梳发").split("、").length === 12 && line("衣柜").split("、").length === 39 && line("下装").split("、").length === 16 && line("配饰").split("、").length === 50, "衣柜：发型 12、衣柜 39、下装 16、配饰 50");
+  {
+    const pig = kv();
+    await dress(pig, day(21), [["outfit", "outfit_piggy"], ["hair", "hair_loose_low_bun"]]);
+    const pv = await dressingView(parse(pig.m.get(DRESSING_KEY)), day(21));
+    ok(pv.includes("衣柜：小猪套装") && pv.includes("梳发：松散低盘发") && pv.includes("淀粉肠的呼唤——穿上小猪套装。") && pv.includes("温柔人夫——选择松散低盘发。") && /已解锁成就 \d+ \/ 60/.test(pv),
+      "妆台：新衣服穿得上，新成就点得亮（一共 60 个）");
+  }
   const swim = (st) => wardrobeView(st).includes("游泳镜");
   const st = parse(s.m.get(DRESSING_KEY));
   ok(st.unlockedRewards.length > 0 ? swim(st) && wardrobeView(st).includes("游泳镜（攒成就换来的）") : true, "攒成就换来的怪东西在衣柜里，标着是攒来的");

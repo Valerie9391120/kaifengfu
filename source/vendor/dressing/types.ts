@@ -15,6 +15,8 @@ export interface StyleItem {
   base: boolean;
   reward?: boolean;
   description?: string;
+  /** 第几批添进来的：不写是一开始那一批（v1），2 是 0.3.0 添的。“全部基础鞋履／下装／配饰”几条成就只数 v1 那一批 */
+  batch?: number;
 }
 
 export interface Appearance {
