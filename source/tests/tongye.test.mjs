@@ -329,14 +329,30 @@ await H("imgDel", { id: "n1" });
 ok(s7.peek(TY_IMG + "n1") === null, "删照片");
 // 「我的」里删一张之前：还有哪一页贴着它（每一天的页、他排的几版、废纸篓里的算；只在「我的」里、批注里提到的不算）
 await s7.set(`${TY_KV}page/2026-10-11`, J({ stk: [{ c: "mine", k: "mOnPage", x: 1, y: 2 }], hide: [] }));
-await s7.set(`${TY_KV}gens/2026-10-10`, J({ list: [{ n: 1, P: { stk: [{ c: "mine", k: "mInGen" }] } }] }));
-await s7.set(`${TY_KV}trash/2026-10-09_k1`, J({ day: "2026-10-09", at: 1, docs: { "page/2026-10-09": { stk: [{ c: "mine", k: "mInTrash" }] } } }));
+await s7.set(`${TY_KV}gens/2026-10-10`, J({ list: [{ n: 1, at: 1, layout: "column", style: "qingmo", stk: [{ c: "mine", k: "mInGen", x: 1, y: 2 }], hide: [] }] }));
+await s7.set(`${TY_KV}trash/10.9_mlq3k9x`, J({ day: "10.9", at: 1, docs: { "page/2026-10-09": { stk: [{ c: "mine", k: "mInTrash" }], hide: [], ts: 1 } }, local: {} }));
 await s7.set(`${TY_KV}mine/mLone`, J({ id: "mLone", note: "只在架子上", asset: "a1" }));
 await s7.set(`${TY_KV}notes/2026-10-11`, J([{ text: "批注里写了 mInNote" }]));
 ok((await H("mineUsed", { id: "mOnPage" })) === true && (await H("mineUsed", { id: "mInGen" })) === true && (await H("mineUsed", { id: "mInTrash" })) === true,
   "「我的」里删一张：别的日子的页、他排的几版、废纸篓里贴着它，算还贴着（只拿下来）");
 ok((await H("mineUsed", { id: "mLone" })) === false && (await H("mineUsed", { id: "mInNote" })) === false, "只在「我的」里、批注里提到的不算贴着（真删）");
 ok((await H("mineUsed", { id: "../x" })) === true && (await H("mineUsed", {})) === true, "编号不规矩：当它还贴着（不真删）");
+{
+  // 本地哪儿都没有：真删之前跟云端对一回（别的设备刚贴上的）；对不上、出错就当它还贴着
+  const mk = (sync, status = {}) => {
+    const s = mkStore({ [`${TY_KV}mine/mX`]: J({ id: "mX" }) });
+    s.syncNow = () => sync(s);
+    s.onStatus = (fn) => (fn(status), () => {});
+    return makeServer({ store: s, dayMsgs: async () => [], chatImg: async () => null, cfgKey: "kfs2:jzcfg", day: D });
+  };
+  const pulled = mk(async (s) => s.set(`${TY_KV}page/2026-10-12`, J({ stk: [{ c: "mine", k: "mX" }] })));
+  const quiet = mk(async () => 0);
+  const broke = mk(async () => { throw new Error("断了"); });
+  const offline = mk(async () => 0, { offline: true });
+  ok((await pulled.handle("mineUsed", { id: "mX" })) === true, "本地没有、跟云端一对，别的设备刚贴上了：算贴着（只拿下来）");
+  ok((await quiet.handle("mineUsed", { id: "mX" })) === false, "对过了，哪儿都没有：不算贴着（真删）");
+  ok((await broke.handle("mineUsed", { id: "mX" })) === true && (await offline.handle("mineUsed", { id: "mX" })) === true, "对不上（出错、没网）：当它还贴着（只拿下来）");
+}
 const src = await H("sources", { date: D });
 ok(src.date === D && src.chat.length === 2 && eq(src.book, []) && eq((await H("sources", { date: "2026/10/12" })).chat, []), "某一天的原话（日子不规矩的不给）");
 const ph = await H("chatPhotos", { date: D });

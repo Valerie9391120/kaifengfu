@@ -801,11 +801,23 @@ export function makeServer({ store, dayMsgs, noteMsgs, chatImg, onClose, onReady
       if (okId(id)) await store.del(TY_IMG + id);
       return true;
     },
-    // 「我的」里删一张之前（她 10 月 22 日、23 日定的“架子”）：还有没有哪一页贴着它？每一天的页（page）、他排的几版（gens）、
-    // 废纸篓（trash）里只要提到这个编号就算贴着（宁可多算：多算了只是从架子上拿下来、不真删）。手机上存档本地是一整份（engine.js），照本地的看
-    mineUsed: ({ id }) => {
+    // 「我的」里删一张之前（她 10 月 22 日、23 日定的“架子”）：还有没有哪一页贴着它？每一天的页（page）、她存的几代（gens）、
+    // 废纸篓（trash）里只要提到这个编号就算贴着（宁可多算：多算了只是从架子上拿下来、不真删）。先照本地的看（存档本地是一整份，engine.js）；
+    // 本地哪儿都没有，真删之前再跟云端对一回（别的设备刚贴上、还没同步过来的；最多等五秒，同 App.jsx 的 tySync），没网、对不上就当它还贴着
+    mineUsed: async ({ id }) => {
       if (!okId(id)) return true;
-      return ["page/", "gens/", "trash/"].some((p) => store.keys(TY_KV + p).some((k) => String(store.peek(k) ?? "").includes(id)));
+      const used = () => ["page/", "gens/", "trash/"].some((p) => store.keys(TY_KV + p).some((k) => String(store.peek(k) ?? "").includes(id)));
+      if (used()) return true;
+      if (typeof store.syncNow !== "function") return false;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+      let done = false;
+      try {
+        await Promise.race([Promise.resolve(store.syncNow()).then(() => (done = true)), new Promise((r) => setTimeout(r, 5000))]);
+      } catch (e) {}
+      let st = {};
+      if (typeof store.onStatus === "function") store.onStatus((s) => (st = s || {}))();
+      if (!done || st.offline || st.error) return true;
+      return used();
     },
     // 她在那一天头一回真的动了（同页要存那一页、存一代）：还没有 day 就起一个（见 ensureDay）
     touch: async ({ date }) => {
