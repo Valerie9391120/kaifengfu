@@ -695,6 +695,7 @@ export function askOf(id, o) {
 // 同页关在隔开的框里（sandbox，碰不到开封府），一问一答都走这儿，每一样都先看清楚要的是不是这一本的东西：
 //   get / set / del / list   只认 kfs2:ty:、kfs2:tyls: 开头的键
 //   img / imgPut / imgDel    只认 kfs2:jzimg:<编号>，放进来的得是图（data:image/…）
+//   mineUsed                 「我的」里删一张之前：别的日子的页、他排的几版、废纸篓里还有没有贴着它的
 //   sources / chatPhotos     某一天聊天里的原话（chat）、狐宇宙里的便签（note）、聊天里的照片（引用栏、放照片用）
 //   city / geocode / setCity 天气在哪儿
 //   touch                    她在那一天头一回真的动了：还没有 day 就起一个（点开的时候什么都不写，见 ensureDay）
@@ -799,6 +800,12 @@ export function makeServer({ store, dayMsgs, noteMsgs, chatImg, onClose, onReady
     imgDel: async ({ id }) => {
       if (okId(id)) await store.del(TY_IMG + id);
       return true;
+    },
+    // 「我的」里删一张之前（她 10 月 22 日、23 日定的“架子”）：还有没有哪一页贴着它？每一天的页（page）、他排的几版（gens）、
+    // 废纸篓（trash）里只要提到这个编号就算贴着（宁可多算：多算了只是从架子上拿下来、不真删）。手机上存档本地是一整份（engine.js），照本地的看
+    mineUsed: ({ id }) => {
+      if (!okId(id)) return true;
+      return ["page/", "gens/", "trash/"].some((p) => store.keys(TY_KV + p).some((k) => String(store.peek(k) ?? "").includes(id)));
     },
     // 她在那一天头一回真的动了（同页要存那一页、存一代）：还没有 day 就起一个（见 ensureDay）
     touch: async ({ date }) => {

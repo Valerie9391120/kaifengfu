@@ -233,6 +233,42 @@ export const PATCHES = [
   // 别的几栏（吃了吗、书摘、健康，开封府没有，藏着）照同页原来的
   ["function quotePickerHTML(){window.qFullDay&&qFullDay(qDay);", 'function quotePickerHTML(){if(window.__kfsQuoteHTML&&(quoteSub==="聊天"||quoteSub==="便签"))return __kfsQuoteHTML();window.qFullDay&&qFullDay(qDay);', 1, "引用栏不卡"],
   ["wireQuote=function(){_wq.apply(this,arguments);", 'wireQuote=function(){if(window.__kfsWireQuote&&(quoteSub==="聊天"||quoteSub==="便签"))return __kfsWireQuote(_wq);_wq.apply(this,arguments);', 1, "引用栏不卡"],
+  // 「我的」是个架子（她 10 月 22 日、23 日定的，见开发说明“「我的」是个架子”）：架子上只摆她在「我的」这一栏传的。
+  // 同页原来把直接贴进页的照片也记在「我的」里（kind: "photo"），在「我的」里一删，页上那张跟着撤掉。现在：
+  //   - 列「我的」的那几处（贴纸栏、贴纸库、几张、常用、给 agent 的清单）只列架子上的（bridge.js 的 __kfsOnShelf）：直接贴进页的照片、拿下来的（off）不列
+  //   - 页上取图照旧（getItem 不动）：拿下来的、直接贴的照片，页上都照样画得出来
+  //   - 在「我的」里删一张：这一页、别的日子的页、他排的几版、废纸篓里还贴着它，就只从架子上拿下来（记 off），页上照旧；哪儿都没贴着才真删（连图）
+  ['const gs=[...new Set(MINE_STK.map(x=>x.g||"未分组"))];', 'const gs=[...new Set(MINE_STK.filter(__kfsOnShelf).map(x=>x.g||"未分组"))];', 1, "「我的」是个架子：贴纸栏的分组"],
+  [
+    'slots=byUse("mine",MINE_STK.filter(x=>mineG==="全部"||(x.g||"未分组")===mineG).map(x=>[x.id,""]))',
+    'slots=byUse("mine",MINE_STK.filter(x=>__kfsOnShelf(x)&&(mineG==="全部"||(x.g||"未分组")===mineG)).map(x=>[x.id,""]))',
+    1,
+    "「我的」是个架子：贴纸栏",
+  ],
+  ["const own=MINE_STK.filter(x=>x.cat===cat).map(", "const own=MINE_STK.filter(x=>x.cat===cat&&__kfsOnShelf(x)).map(", 1, "「我的」是个架子：挪进别的栏的"],
+  ['g==="mine"?(MINE_STK.length?`${MINE_STK.length} 张自己传的', 'g==="mine"?(MINE_STK.filter(__kfsOnShelf).length?`${MINE_STK.filter(__kfsOnShelf).length} 张自己传的', 1, "「我的」是个架子：几张"],
+  [String.raw`&&!(c==="kao"&&/^\d+\|\d$/.test(k))&&getItem(c,k)}`, String.raw`&&!(c==="kao"&&/^\d+\|\d$/.test(k))&&(c!=="mine"||__kfsOnShelf(MINE_STK.find(x=>x.id===k)))&&getItem(c,k)}`, 1, "「我的」是个架子：常用里也不摆"],
+  [
+    'const hasUse=Object.keys(USE).some(id=>{const [c]=id.split("~");return LIB[c]});',
+    'const hasUse=Object.keys(USE).some(id=>{const [c]=id.split("~");return LIB[c]&&(c!=="mine"||typeof MINE_STK==="undefined"||__kfsOnShelf(MINE_STK.find(x=>x.id===id.slice(5))))});',
+    1,
+    "「我的」是个架子：常用里只剩拿下来的，“常用”那一颗也不摆",
+  ],
+  ['${c==="mine"&&MINE_STK.length?`<small>${MINE_STK.length}</small>`:""}', '${c==="mine"&&MINE_STK.filter(__kfsOnShelf).length?`<small>${MINE_STK.filter(__kfsOnShelf).length}</small>`:""}', 1, "「我的」是个架子：贴纸库那一栏的数"],
+  ['if(c==="mine")return MINE_STK.map(x=>x.id);', 'if(c==="mine")return MINE_STK.filter(__kfsOnShelf).map(x=>x.id);', 1, "「我的」是个架子：贴纸库"],
+  ['const ownHere=libCat==="mine"?[]:MINE_STK.filter(x=>x.cat===libCat);', 'const ownHere=libCat==="mine"?[]:MINE_STK.filter(x=>x.cat===libCat&&__kfsOnShelf(x));', 1, "「我的」是个架子：贴纸库别的栏"],
+  ['v.gen==="mine"?MINE_STK.map(m=>({key:m.id,note:m.note,group:m.g}))', 'v.gen==="mine"?MINE_STK.filter(__kfsOnShelf).map(m=>({key:m.id,note:m.note,group:m.g}))', 1, "「我的」是个架子：给 agent 的清单"],
+  [
+    '$$("[data-ld]").forEach(b=>b.onclick=async()=>{const k=b.dataset.ld;const m=MINE_STK.find(x=>x.id===k);MINE_STK=MINE_STK.filter(x=>x.id!==k);saveMineLocal();\n' +
+      '  if(m&&m.asset){if(mineCol)try{await mineCol.doc(m.id).delete()}catch(e){}if(ASSETS)try{await ASSETS.delete(m.asset)}catch(e){}}$$(`#page .stk.c-mine`).forEach(x=>{if(x.dataset.k===k)x.remove()});renderLib();buzz(6);toast("删掉了")})}',
+    '$$("[data-ld]").forEach(b=>b.onclick=async()=>{const k=b.dataset.ld;const m=MINE_STK.find(x=>x.id===k);if(!m||b.disabled)return;b.disabled=true;\n' +
+      '  let used=$$(`#page .stk.c-mine`).some(x=>x.dataset.k===k);if(!used)try{used=!!(await __kfsMineUsed(k))}catch(e){used=true}\n' +
+      '  if(used){m.off=1;if(mineCol&&m.asset)try{await mineCol.doc(m.id).update({off:1})}catch(e){delete m.off;b.disabled=false;toast("没拿下来，再试一下");return}saveMineLocal();renderLib();buzz(6);toast("从「我的」拿下来了 · 页上贴着的还在");return}\n' +
+      '  MINE_STK=MINE_STK.filter(x=>x.id!==k);saveMineLocal();\n' +
+      '  if(m.asset){if(mineCol)try{await mineCol.doc(m.id).delete()}catch(e){}if(ASSETS)try{await ASSETS.delete(m.asset)}catch(e){}}renderLib();buzz(6);toast("删掉了")})}',
+    1,
+    "「我的」是个架子：删一张",
+  ],
 ];
 
 // 一段脚本的指纹（写进这一页的安全规矩：只有这几段跑得了）

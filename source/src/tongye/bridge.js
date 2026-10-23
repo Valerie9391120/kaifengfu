@@ -499,6 +499,12 @@ async function closeNow() {
 }
 // 同页删掉这一页、找回一页以后要重新载入（回它的本子首页）：开封府这边本子首页就是闲笔集，关上回去（tools/tongye.mjs 换的那两处）
 window.__kfsReload = () => (ON ? closeNow() : location.reload());
+// 「我的」是个架子（她 10 月 22 日、23 日定的，见开发说明“「我的」是个架子”）：架子上只摆她在「我的」这一栏传的。
+// 直接贴进页的照片（同页记成 kind: "photo"）、从架子上拿下来可页上还贴着的（off）不摆；页上照样画得出来（tools/tongye.mjs 那几处补丁看这个）
+window.__kfsOnShelf = (x) => !!x && !x.off && x.kind !== "photo";
+// 在「我的」里删一张之前问外面：别的日子的页、他排的几版、废纸篓里还有没有贴着它的（host.js 的 mineUsed；这一页上的同页自己看）。
+// 问不到（没在开封府里、断了）当它还贴着：只拿下来，不真删
+window.__kfsMineUsed = (id) => ask("mineUsed", { id });
 // 找回之前那一天现在的 day 算不算有东西（同 host.js 的 madeOf 看 day 的那一半）：点开就起的那一页空的不算
 window.__kfsWorth = (R) => {
   if (!R || typeof R !== "object") return false;
