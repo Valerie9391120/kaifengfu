@@ -237,7 +237,8 @@ export const PATCHES = [
   // 同页原来把直接贴进页的照片也记在「我的」里（kind: "photo"），在「我的」里一删，页上那张跟着撤掉。现在：
   //   - 列「我的」的那几处（贴纸栏、贴纸库、几张、常用、给 agent 的清单）只列架子上的（bridge.js 的 __kfsOnShelf）：直接贴进页的照片、拿下来的（off）不列
   //   - 页上取图照旧（getItem 不动）：拿下来的、直接贴的照片，页上都照样画得出来
-  //   - 在「我的」里删一张：这一页、别的日子的页、他排的几版、废纸篓里还贴着它，就只从架子上拿下来（记 off），页上照旧；哪儿都没贴着才真删（连图）
+  //   - 在「我的」里删一张：这一页、别的日子的页、她存的几代、废纸篓里还贴着它，就只从架子上拿下来（记 off），页上照旧；哪儿都没贴着才真删（连图）。
+  //     这台设备上它的图还没取到（src 是空的）就先不拿：同页改一条是把整条连图写回去，取不到的图会写成空的，页上那张就再也画不出来了
   ['const gs=[...new Set(MINE_STK.map(x=>x.g||"未分组"))];', 'const gs=[...new Set(MINE_STK.filter(__kfsOnShelf).map(x=>x.g||"未分组"))];', 1, "「我的」是个架子：贴纸栏的分组"],
   [
     'slots=byUse("mine",MINE_STK.filter(x=>mineG==="全部"||(x.g||"未分组")===mineG).map(x=>[x.id,""]))',
@@ -263,7 +264,7 @@ export const PATCHES = [
       '  if(m&&m.asset){if(mineCol)try{await mineCol.doc(m.id).delete()}catch(e){}if(ASSETS)try{await ASSETS.delete(m.asset)}catch(e){}}$$(`#page .stk.c-mine`).forEach(x=>{if(x.dataset.k===k)x.remove()});renderLib();buzz(6);toast("删掉了")})}',
     '$$("[data-ld]").forEach(b=>b.onclick=async()=>{const k=b.dataset.ld;const m=MINE_STK.find(x=>x.id===k);if(!m||b.disabled)return;b.disabled=true;\n' +
       '  let used=$$(`#page .stk.c-mine`).some(x=>x.dataset.k===k);if(!used)try{used=!!(await __kfsMineUsed(k))}catch(e){used=true}\n' +
-      '  if(used){m.off=1;if(mineCol&&m.asset)try{await mineCol.doc(m.id).update({off:1})}catch(e){delete m.off;b.disabled=false;toast("没拿下来，再试一下");return}saveMineLocal();renderLib();buzz(6);toast("从「我的」拿下来了 · 页上贴着的还在");return}\n' +
+      '  if(used){if(!m.src){b.disabled=false;toast("这张的图还没取到，过一会儿再拿下来");return}m.off=1;if(mineCol&&m.asset)try{await mineCol.doc(m.id).update({off:1})}catch(e){}saveMineLocal();renderLib();buzz(6);toast("从「我的」拿下来了 · 页上贴着的还在");return}\n' +
       '  MINE_STK=MINE_STK.filter(x=>x.id!==k);saveMineLocal();\n' +
       '  if(m.asset){if(mineCol)try{await mineCol.doc(m.id).delete()}catch(e){}if(ASSETS)try{await ASSETS.delete(m.asset)}catch(e){}}renderLib();buzz(6);toast("删掉了")})}',
     1,
