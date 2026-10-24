@@ -153,11 +153,12 @@ export function AskCard({ qs, onDone, onClose }) {
   );
 }
 
-// 聊天里他那条话底下的一行：还没答“他问了你 N 个问题 · 点开答”（点了把卡片再弹出来），答完“他问了你 N 个问题 · 已答”
-export function AskRow({ n, done, onOpen }) {
+// 聊天里他那条话底下的一行：还没答“他问了你 N 个问题 · 点开答”（点了把卡片再弹出来），答完“他问了你 N 个问题 · 已答”。
+// animate：新冒出来的（跟气泡一样浮一下）
+export function AskRow({ n, done, onOpen, animate = false }) {
   const text = `他问了你 ${n} 个问题 · ${done ? "已答" : "点开答"}`;
   return (
-    <div className="flex" style={{ marginLeft: 42, marginTop: 8 }}>
+    <div className={animate ? "flex kfs-in" : "flex"} style={{ marginLeft: 42, marginTop: 8 }}>
       {done ? (
         <span className="kfs-ask-row" style={{ ...flat(0.38), borderRadius: 999, padding: "4px 12px", fontSize: 12, color: T.inkSoft }}>
           {text}

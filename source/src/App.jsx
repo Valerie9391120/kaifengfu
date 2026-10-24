@@ -5514,6 +5514,7 @@ export default function App({ account = {} }) {
                   key={row.key}
                   n={(row.item.qs || []).length}
                   done={!!row.item.done}
+                  animate={row.msg.ts >= listMount.current}
                   onOpen={() => {
                     if (call || isFoxChat(chatId)) return;
                     setAskView({ msgId: row.msg.id, idx: row.idx });

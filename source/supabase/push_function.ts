@@ -897,7 +897,8 @@ function askHasLabel(text: string): boolean {
 // 一张卡里头那几行，认出来的头一题（一题都没有回 null）
 function askFirst(body: string): string | null {
   const qs: Array<{ q: string; n: number }> = [];
-  let cur: { q: string; n: number } | null = null;
+  // 写成 as：不然类型检查只认得开头那个 null（start 里改的它看不见），后面 cur.n 报错
+  let cur = null as { q: string; n: number } | null;
   const start = (q: string) => {
     let text = askCut(q.trim(), 80).trim();
     while (ASK_MULTI_TAIL.test(text)) text = text.replace(ASK_MULTI_TAIL, "").trim();
