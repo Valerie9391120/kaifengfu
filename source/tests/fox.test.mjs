@@ -683,6 +683,20 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   cloud = cloudOf(Array.from({ length: 5 }, (_, i) => peek(i)));
   await askTask({ store: kv6(), cloud, ctx: ctxOf(), task: { key: "kfs2:fox:task:y", raw: "+5m", set: Date.now() }, chat: { id: "c1", title: "一段对话", msgs: [{ id: "h1", role: "her", ts: 1, text: "嗯" }] } });
   ok(cloud.bodies.length === 4 && !cloud.bodies.some((x) => lastText(x).includes("只剩这最后一步")) && !lastText(cloud.bodies[0]).includes("最多 12 步"), `任务到点那一回还是四步，不附提醒（问了 ${cloud.bodies.length} 回）`);
+  // 心里话一回醒着写一段就够（她 10 月 24 日凌晨定的“醒来写一回”）：醒在屋里的【醒来】里说一声；她关了“他写心里话”就不说；任务到点那一回也不说
+  const ONE = "心里话这一回醒着写一段就够：头一步写；后面几步只管做事";
+  const sysText = (body) => (Array.isArray(body.system) ? body.system.map((x) => x.text || "").join("\n") : String(body.system || ""));
+  cloud = cloudOf([said("醒了")]);
+  await askRoom({ store: kv6(), cloud, ctx: ctxOf(), ...opts });
+  ok(lastText(cloud.bodies[0]).includes(ONE) && sysText(cloud.bodies[0]).includes("先写 <thinking>"), "醒在屋里：【醒来】里说心里话这一回写一段就够（头一步写，后面几步只管做事）");
+  const offCtx = ctxOf();
+  offCtx.settings.thoughts = false;
+  cloud = cloudOf([said("醒了")]);
+  await askRoom({ store: kv6(), cloud, ctx: offCtx, ...opts });
+  ok(!lastText(cloud.bodies[0]).includes("心里话这一回") && !sysText(cloud.bodies[0]).includes("先写 <thinking>"), "她关了“他写心里话”：【醒来】里不提");
+  cloud = cloudOf([said("在吗")]);
+  await askTask({ store: kv6(), cloud, ctx: ctxOf(), task: { key: "kfs2:fox:task:z", raw: "+5m", set: Date.now() }, chat: { id: "c1", title: "一段对话", msgs: [{ id: "h1", role: "her", ts: 1, text: "嗯" }] } });
+  ok(!lastText(cloud.bodies[0]).includes("心里话这一回"), "任务到点那一回（醒在那段对话里）：不提");
 }
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);
