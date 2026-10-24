@@ -1924,7 +1924,9 @@ export default function App({ account = {} }) {
       await settleCalls(him, base, false, id);
       if (req.stopped && midTurn(him)) him.stopped = true;
       const extra = await added();
-      const next = forkAt(full, j, him).concat(extra);
+      // 点“重新回答”那一刻存下的那一整段：等的工夫里她答了上面的选项卡，那一笔改在 forkRef 里（见 patchAsk），照改过的拼
+      const whole = forkRef.current && forkRef.current.chat === id ? forkRef.current.full : full;
+      const next = forkAt(whole, j, him).concat(extra);
       forkRef.current = null;
       const here = chatIdRef.current === id;
       if (here) {
@@ -1946,6 +1948,7 @@ export default function App({ account = {} }) {
       if (extra.length && !req.stopped) pendingRef.current.add(id);
     } catch (e) {
       const extra = await added();
+      const whole = forkRef.current && forkRef.current.chat === id ? forkRef.current.full : full; // 同上
       forkRef.current = null;
       const fresh = e && e.code === "answered" ? safeParse(await store.get("kfs2:chat:" + id), null) : null;
       if (Array.isArray(fresh)) {
@@ -1966,7 +1969,7 @@ export default function App({ account = {} }) {
         // （按停的那一下 stopReply 也记过。这段对话她要是已经翻走了，那一笔是改在存档里的，这里手上的 extra 却是它改之前读出来的：
         // 不在这儿再记一遍，下面那一存会把它盖掉）
         const halted = !!(e && e.code === "stopped");
-        const back = halted && extra.length ? markStopped(full.concat(extra)) : full.concat(extra);
+        const back = halted && extra.length ? markStopped(whole.concat(extra)) : whole.concat(extra);
         if (chatIdRef.current === id) {
           messagesRef.current = back;
           setMessages(back);
@@ -2227,17 +2230,22 @@ export default function App({ account = {} }) {
   };
 
   // 选项卡上记一笔（见 ask.js）：答完了（done）、关掉了 / 她直接回了话（closed）。改的是眼下那一条（开过分支的，切走那一下会连这一笔一起存进 alts）
+  // 正在重新回答（forkRef 开着，见 saveChat、retryAt）：重新回答前存下的那一整段里的这一条也改上，
+  // 不然存档、新回答到了以后拼回去的，都是改之前的那一份（她等的工夫里答了上面一张卡，“已答”会丢；另一双眼睛挑出来的）
   const patchAsk = (msgId, idx, patch) => {
     let hit = false;
-    const next = messagesRef.current.map((m) => {
+    const fix = (m) => {
       const it = m.id === msgId && Array.isArray(m.items) ? m.items[idx] : null;
       if (!it || it.type !== "ask") return m;
       hit = true;
       const items = m.items.slice();
       items[idx] = { ...it, ...patch };
       return { ...m, items };
-    });
+    };
+    const next = messagesRef.current.map(fix);
     if (!hit) return;
+    const fk = forkRef.current;
+    if (fk && fk.chat === chatIdRef.current) forkRef.current = { ...fk, full: fk.full.map(fix) };
     messagesRef.current = next;
     setMessages(next);
     saveChat(chatIdRef.current, next);
@@ -2270,8 +2278,9 @@ export default function App({ account = {} }) {
   const sendHer = (payloads, opts = {}) => {
     const list = Array.isArray(payloads) ? payloads : [payloads];
     if (!list.length) return;
-    // 选项卡开着、她没答直接发了话（打字、表情包、照片……）：卡片收起来，照常发（她 10 月 24 日凌晨点头的那几条里的第三条）
-    if (askViewRef.current) closeAsk();
+    // 选项卡开着、她没答直接发了话（打字、表情包、照片……）：卡片收起来，照常发（她 10 月 24 日凌晨点头的那几条里的第五条）。
+    // 打着电话她开口说的不算（卡片那会儿压在通话页底下，她看不见；挂了以后还在，另一双眼睛挑出来的）
+    if (askViewRef.current && !callRef.current) closeAsk();
     const id = chatIdRef.current;
     const t0 = Date.now();
     const add = list.map((p, i) => ({ id: newId() + i, role: "her", ts: t0 + i, ...p }));
@@ -4009,6 +4018,7 @@ export default function App({ account = {} }) {
 
   // ---- 选项卡：他这条话蹦完了、里头有一张还没答的，就从输入框上面浮出来（她 10 月 24 日凌晨要的“跟 Claude 一样从底下弹”） ----
   // 只认最后一条（不算那几行小字）是他的、已经蹦完了的；答过的（done）、她关掉过的（closed）不再自己弹（底下那一行点了还能打开）。
+  // 一条里写了两张的，只自己弹头一张（后面那张点它那一行打开）：不然关掉头一张第二张马上冒出来、答完头一张它又不冒，两样（另一双眼睛挑出来的）。
   // 狐宇宙（他的屋子，她在那儿只留便签）、打着电话的时候不弹。
   // 开着的那张对不上了（那一条重新回答收起来了、翻了版本、删了、换了一段对话）：先收起来，再照上面的看要不要弹
   useEffect(() => {
@@ -4027,8 +4037,8 @@ export default function App({ account = {} }) {
       break;
     }
     if (!last || last.role !== "him" || (reveal && reveal.id === last.id)) return;
-    const idx = (last.items || []).findIndex((it) => it && it.type === "ask" && !it.done && !it.closed);
-    if (idx >= 0) setAskView({ msgId: last.id, idx });
+    const idx = (last.items || []).findIndex((it) => it && it.type === "ask");
+    if (idx >= 0 && !last.items[idx].done && !last.items[idx].closed) setAskView({ msgId: last.id, idx });
   }, [messages, reveal, chatId, call]);
 
   // ---- 键盘弹出来：外壳变矮了，聊天记录滚到最新那条（她在翻旧消息也一样：点开键盘就是要说话了） ----
@@ -5518,6 +5528,11 @@ export default function App({ account = {} }) {
                   onOpen={() => {
                     if (call || isFoxChat(chatId)) return;
                     setAskView({ msgId: row.msg.id, idx: row.idx });
+                  }}
+                  // 长按出的是他这一条的菜单（重新回答），跟长按他的气泡一样
+                  onLongPress={(rect) => {
+                    if (isFoxChat(chatId)) return;
+                    setMenu({ row: { ...row, role: "him" }, rect });
                   }}
                 />
               );

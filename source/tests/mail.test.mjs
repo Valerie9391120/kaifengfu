@@ -1207,6 +1207,11 @@ function resetWorld() {
     "先说一句\n[CALL]\n[ASK]\n问：电话里的不算\n[/ASK]",
     "[ASK]\n今天吃什么？\n火锅\n烧烤\n周末去哪?（多选）\n公园\n[/ASK]",
     "[ASK]\n- ｜光有说明\n晚饭\n火锅？\n[/ASK]",
+    "忘了收尾\n[ASK]\n问：吃什么？\n- 火锅\n- 烧烤\n[SPLIT]\n那我先去洗澡啦\n[SPLIT]\n回来再说",
+    "[ASK]\n问：吃什么？\n- 火锅\n- 烧烤[/ASK]。\n好了",
+    "[ASK]\n问：吃什么？\n- 火锅\n[/ASK][SPLIT]后面一句",
+    "[ASK]\n问：头一张忘了收尾\n- 甲\n[ASK]\n问：第二张\n- 乙\n[/ASK]\n尾巴",
+    "[ASK]\n问：x\r[/ASK]\u3000\n- a\n[/ASK]",
     "<thinking>嗯</thinking>\n在呢",
     "在\n[SPLIT]\n第二条\n[SPLIT]\n第三条",
     "<thinking>没关上的心里话",
@@ -1476,6 +1481,9 @@ function resetWorld() {
     ["[SPLIT] 两边各两万五千个空白", "在呢" + "\n".repeat(25000) + "[SPLIT]" + " ".repeat(25000) + "好", "在呢\n好"],
     ["[DOC: 后面四千个空格、没有右括号", "看\n[DOC:" + " ".repeat(4000) + "\n完", null],
     ["一万个没有右括号的 [MEME:", "[MEME:".repeat(10000), null],
+    ["选项卡里“问”后面五万九千个空格", "[ASK]\n问" + " ".repeat(59000) + "x\n[/ASK]", null],
+    ["九千张没收尾的选项卡（一行一个 [ASK]，小后端只看前六万个字）", "[ASK]\n".repeat(9000) + "问：x\n- a", "[选项卡] x"],
+    ["一万张没收尾的选项卡，最后才有一个 [SPLIT]", "[ASK]\n问：x\n".repeat(5000) + "[SPLIT]\n好", null],
   ];
   for (const [what, text, want] of slow) {
     const t0 = performance.now();

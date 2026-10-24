@@ -3,10 +3,12 @@
 //   顶上一行：题目；不止一题的时候右边“‹ 第 1 项，共 3 项 ›”切题；最右一个 ✕。
 //   每个选项一行：左边一个数字块，选项，底下可以带一行小字说明；行和行之间一根细线。
 //   最后一行：✎ 其他回答（自己写一句），右边一颗“跳过”，写了字、或者多选勾了几个，换成“好了”。
-// 单选的题点一下就跳到下一题；多选的勾好了点“好了”。还有没答的就跳到它，都答了（跳过也算答了）一起交：onDone(答案)。
+// 单选的题点一下就跳到下一题（“其他回答”里写着字的，一起带上）；多选的勾好了点“好了”。还有没答的就跳到它，
+// 都答了（跳过也算答了）一起交：onDone(答案)。交的是卡上眼下摆着的（翻回去改了勾、改了字，没再点“好了”的，也照改过的交）。
 import { useState } from "react";
 import { T, glass, fill, HAIRLINE, chipPrimary, flat } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
+import { useLongPress } from "../ui/press.js";
 
 const badge = (on) => ({
   width: 30,
@@ -37,13 +39,21 @@ export function AskCard({ qs, onDone, onClose }) {
   const other = others[page];
   const canDone = !!other.trim() || (multi && picks[page].length > 0);
 
+  // 都答了，交的时候照卡上眼下摆着的算（另一双眼睛挑出来的：原来交的是每一题点“好了”那一刻的，翻回去改了的不算）：
+  // 多选的是眼下勾着的，单选的是眼下亮着的那一个，再加上“其他回答”里眼下写着的；什么都没有就是跳过
+  const settle = (next) =>
+    qs.map((x, i) => {
+      const o = String(others[i] || "").trim();
+      const p = x.multi ? picks[i] : next[i] && next[i].picks ? next[i].picks : [];
+      return p.length || o ? { picks: p.slice(), other: o } : { skip: true };
+    });
   // 记下这一题的答案：还有没答的就跳过去（往后找，到头了从头找），都答了一起交
   const answer = (a) => {
     const next = ans.slice();
     next[page] = a;
     setAns(next);
     const left = Array.from({ length: n }, (_, k) => (page + 1 + k) % n).find((k) => !next[k]);
-    if (left === undefined) onDone(next);
+    if (left === undefined) onDone(settle(next));
     else setPage(left);
   };
   const pick = (k) => {
@@ -51,7 +61,7 @@ export function AskCard({ qs, onDone, onClose }) {
       setPicks((all) => all.map((p, i) => (i !== page ? p : p.includes(k) ? p.filter((x) => x !== k) : p.concat(k))));
       return;
     }
-    answer({ picks: [k], other: "" });
+    answer({ picks: [k], other: other.trim() });
   };
   const done = () => {
     if (!canDone) return;
@@ -154,17 +164,19 @@ export function AskCard({ qs, onDone, onClose }) {
 }
 
 // 聊天里他那条话底下的一行：还没答“他问了你 N 个问题 · 点开答”（点了把卡片再弹出来），答完“他问了你 N 个问题 · 已答”。
-// animate：新冒出来的（跟气泡一样浮一下）
-export function AskRow({ n, done, onOpen, animate = false }) {
+// animate：新冒出来的（跟气泡一样浮一下）。
+// 长按（电脑上右键）跟长按气泡一样出那个菜单（onLongPress(rect)）：他这一条只弹了一张卡、一个气泡都没有的时候，“重新回答”就在这儿（另一双眼睛挑出来的）
+export function AskRow({ n, done, onOpen, onLongPress, animate = false }) {
   const text = `他问了你 ${n} 个问题 · ${done ? "已答" : "点开答"}`;
+  const lp = useLongPress((rect) => onLongPress && onLongPress(rect));
   return (
     <div className={animate ? "flex kfs-in" : "flex"} style={{ marginLeft: 42, marginTop: 8 }}>
       {done ? (
-        <span className="kfs-ask-row" style={{ ...flat(0.38), borderRadius: 999, padding: "4px 12px", fontSize: 12, color: T.inkSoft }}>
+        <span {...lp} className="kfs-ask-row" style={{ ...flat(0.38), borderRadius: 999, padding: "4px 12px", fontSize: 12, color: T.inkSoft, WebkitTouchCallout: "none", userSelect: "none", WebkitUserSelect: "none" }}>
           {text}
         </span>
       ) : (
-        <button onClick={onOpen} className="kfs-tap kfs-ask-row flex items-center" style={{ ...flat(0.38), gap: 3, borderRadius: 999, padding: "4px 10px 4px 12px", fontSize: 12, color: T.inkSoft }}>
+        <button {...lp} onClick={onOpen} className="kfs-tap kfs-ask-row flex items-center" style={{ ...flat(0.38), gap: 3, borderRadius: 999, padding: "4px 10px 4px 12px", fontSize: 12, color: T.inkSoft, WebkitTouchCallout: "none", userSelect: "none", WebkitUserSelect: "none" }}>
           <span>{text}</span>
           <Icon name="chevR" size={13} />
         </button>
