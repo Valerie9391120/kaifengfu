@@ -44,6 +44,8 @@ import { buildRows } from "./chat/rows.js";
 import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/overview.js";
 import { BubbleRow } from "./chat/Bubble.jsx";
 import { CtrlRow, ThinkingRow, NoticeRow, TypingRow, RecapRow } from "./chat/Lines.jsx";
+import { AskCard, AskRow } from "./chat/AskCard.jsx";
+import { answerText } from "./ask.js";
 import { MsgMenu } from "./chat/MsgMenu.jsx";
 import { SplashByTheme } from "./Splash.jsx";
 import { NickTitle } from "./panels/NickTitle.jsx";
@@ -339,6 +341,14 @@ export default function App({ account = {} }) {
   const [viewer, setViewer] = useState(null);
   const photoInputRef = useRef(null);
   const [voiceNote, setVoiceNote] = useState("");
+  // 选项卡（他弹给她的几道选择题，见 ask.js、chat/AskCard.jsx）：眼下浮在输入框上面的是哪一张（{ msgId, idx }，没有是 null）。
+  // ref 跟着：她发话那一下（sendHer）要当场知道开着没有
+  const [askView, setAskViewState] = useState(null);
+  const askViewRef = useRef(null);
+  const setAskView = (v) => {
+    askViewRef.current = v;
+    setAskViewState(v);
+  };
   const [dictating, setDictating] = useState(false);
   const recRef = useRef(null);
   // 正在打电话（见 call/ 和开发说明“通话”那一节）：call 是通话页上摆的样子；callRef 里还有听写、念、放声音的那几样
@@ -2216,10 +2226,52 @@ export default function App({ account = {} }) {
     askGuangyi(chatIdRef.current, msgs);
   };
 
+  // 选项卡上记一笔（见 ask.js）：答完了（done）、关掉了 / 她直接回了话（closed）。改的是眼下那一条（开过分支的，切走那一下会连这一笔一起存进 alts）
+  const patchAsk = (msgId, idx, patch) => {
+    let hit = false;
+    const next = messagesRef.current.map((m) => {
+      const it = m.id === msgId && Array.isArray(m.items) ? m.items[idx] : null;
+      if (!it || it.type !== "ask") return m;
+      hit = true;
+      const items = m.items.slice();
+      items[idx] = { ...it, ...patch };
+      return { ...m, items };
+    });
+    if (!hit) return;
+    messagesRef.current = next;
+    setMessages(next);
+    saveChat(chatIdRef.current, next);
+  };
+  // 卡片右上角的 ✕：收起来，记一笔关掉了（不再自己弹；他那条底下那一行“点开答”还在）
+  const closeAsk = () => {
+    const v = askViewRef.current;
+    if (!v) return;
+    setAskView(null);
+    patchAsk(v.msgId, v.idx, { closed: true });
+  };
+  // 答完了：一题一行问、一行答发给他（她 10 月 24 日 03:13 挑的“问一行、答一行”）；全跳过了就当没答，什么都不发
+  const answerAsk = (answers) => {
+    const v = askViewRef.current;
+    if (!v) return;
+    setAskView(null);
+    const m = messagesRef.current.find((x) => x.id === v.msgId);
+    const it = m && Array.isArray(m.items) ? m.items[v.idx] : null;
+    if (!it || it.type !== "ask") return;
+    const text = answerText(it.qs, answers);
+    if (!text) {
+      patchAsk(v.msgId, v.idx, { closed: true });
+      return;
+    }
+    patchAsk(v.msgId, v.idx, { done: Date.now() });
+    sendHer({ kind: "text", text });
+  };
+
   // opts.now：马上发，不等她停手那两秒多（电话里她说完一句就是说完了，见 callSaid）
   const sendHer = (payloads, opts = {}) => {
     const list = Array.isArray(payloads) ? payloads : [payloads];
     if (!list.length) return;
+    // 选项卡开着、她没答直接发了话（打字、表情包、照片……）：卡片收起来，照常发（她 10 月 24 日凌晨点头的那几条里的第三条）
+    if (askViewRef.current) closeAsk();
     const id = chatIdRef.current;
     const t0 = Date.now();
     const add = list.map((p, i) => ({ id: newId() + i, role: "her", ts: t0 + i, ...p }));
@@ -3947,11 +3999,37 @@ export default function App({ account = {} }) {
           ? 900
           : nextItem.type === "avatar"
           ? 650
+          : nextItem.type === "ask"
+          ? 700
           : Math.min(1900, 550 + (nextItem.text ? nextItem.text.length : 0) * 28);
     }
     const t = setTimeout(step, delay);
     return () => clearTimeout(t);
   }, [reveal, messages, nextVoice]);
+
+  // ---- 选项卡：他这条话蹦完了、里头有一张还没答的，就从输入框上面浮出来（她 10 月 24 日凌晨要的“跟 Claude 一样从底下弹”） ----
+  // 只认最后一条（不算那几行小字）是他的、已经蹦完了的；答过的（done）、她关掉过的（closed）不再自己弹（底下那一行点了还能打开）。
+  // 狐宇宙（他的屋子，她在那儿只留便签）、打着电话的时候不弹。
+  // 开着的那张对不上了（那一条重新回答收起来了、翻了版本、删了、换了一段对话）：先收起来，再照上面的看要不要弹
+  useEffect(() => {
+    const v = askViewRef.current;
+    if (v) {
+      const m = messages.find((x) => x.id === v.msgId);
+      const it = m && Array.isArray(m.items) ? m.items[v.idx] : null;
+      if (it && it.type === "ask" && !it.done) return;
+      setAskView(null);
+    }
+    if (call || isFoxChat(chatId)) return;
+    let last = null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "event" || messages[i].note) continue;
+      last = messages[i];
+      break;
+    }
+    if (!last || last.role !== "him" || (reveal && reveal.id === last.id)) return;
+    const idx = (last.items || []).findIndex((it) => it && it.type === "ask" && !it.done && !it.closed);
+    if (idx >= 0) setAskView({ msgId: last.id, idx });
+  }, [messages, reveal, chatId, call]);
 
   // ---- 键盘弹出来：外壳变矮了，聊天记录滚到最新那条（她在翻旧消息也一样：点开键盘就是要说话了） ----
   // 只认输入框的键盘：在弹出面板里打字（改昵称、填 key）的时候，后面的聊天记录不跟着动
@@ -4776,6 +4854,10 @@ export default function App({ account = {} }) {
   // 聊天记录里那行“抄成了提要”的小字：只摆眼下作数的那一份（单子里更早的几份不摆，它们已经被这一份接过去了）
   const liveRecap = useMemo(() => pickRecap(messages, recaps).recap, [messages, recaps]);
   const rows = useMemo(() => buildRows(messages, reveal, stoppedId, liveRecap, moreId), [messages, reveal, stoppedId, liveRecap, moreId]);
+  // 眼下浮着的那张选项卡（见上面 askView）：那一条还在、那一样还是没答的卡，才摆。狐宇宙、打着电话的时候不摆
+  const askMsg = askView && !call && !isFoxChat(chatId) ? messages.find((m) => m.id === askView.msgId) : null;
+  const askHit = askMsg && Array.isArray(askMsg.items) ? askMsg.items[askView.idx] : null;
+  const askItem = askHit && askHit.type === "ask" && !askHit.done && Array.isArray(askHit.qs) && askHit.qs.length ? askHit : null;
   rowListRef.current = rows;
   // 打开 API 面板：看一眼念语音的小后端接上没有
   useEffect(() => {
@@ -5425,6 +5507,20 @@ export default function App({ account = {} }) {
             if (row.type === "recap") {
               return <RecapRow key={row.key} onOpen={() => setRecapView(row.recap)} />;
             }
+            if (row.type === "ask") {
+              // 他弹给她的选项卡：一行“他问了你 N 个问题 · 点开答”，点了卡片再浮出来；答完了“已答”（见 chat/AskCard.jsx）
+              return (
+                <AskRow
+                  key={row.key}
+                  n={(row.item.qs || []).length}
+                  done={!!row.item.done}
+                  onOpen={() => {
+                    if (call || isFoxChat(chatId)) return;
+                    setAskView({ msgId: row.msg.id, idx: row.idx });
+                  }}
+                />
+              );
+            }
             if (row.type === "thinking") {
               return (
                 <ThinkingRow
@@ -5506,6 +5602,10 @@ export default function App({ account = {} }) {
             {voiceNote}
           </div>
         )}
+
+        {/* 他弹给她的选项卡（见 chat/AskCard.jsx）：浮在输入框上面，输入框照旧能用（直接打字发出去，卡片就收起来）。
+            换了一张卡（哪怕同一条话同一个位置，翻了版本换成了别的题）从头答 */}
+        {askItem && <AskCard key={askView.msgId + "-" + askView.idx + "-" + JSON.stringify(askItem.qs)} qs={askItem.qs} onDone={answerAsk} onClose={closeAsk} />}
 
         {/* 输入框：照官方摆，上面写字，下面一排按钮，整块贴着底边。
             --kfs-sab 平时是底下横条要让的高度，iOS 底下空一条的时候是 0（见 input.css）。

@@ -2,6 +2,7 @@ import { plainOf } from "../rich.js";
 import { isCallMark, markText } from "../call/marks.js";
 import { isWakeMark } from "../fox.js";
 import { lotBrief } from "../qx/pool.js";
+import { askBanner } from "../ask.js";
 
 const cut18 = (t) => (t.length > 18 ? t.slice(0, 18) + "…" : t);
 
@@ -50,6 +51,9 @@ export function makePreview(msgs) {
   }
   if ((last.items || []).some((it) => it.type === "voice")) return "[语音]";
   if ((last.items || []).some((it) => it.type === "call")) return "[来电]";
+  // 他弹给她的选项卡（见 ask.js）：写头一题，跟横幅一样
+  const ask = (last.items || []).find((it) => it.type === "ask");
+  if (ask) return askBanner(ask.qs);
   const d = (last.items || []).find((it) => it.type === "doc");
   return d ? `[文档] ${d.name}` : "[表情包]";
 }

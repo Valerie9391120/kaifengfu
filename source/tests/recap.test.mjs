@@ -887,13 +887,13 @@ const thOn = buildSystem(thinkBase), thOn2 = buildSystem({ ...thinkBase, thought
 const thOnV = buildSystem({ ...thinkBase, voice: true }), thOffV = buildSystem({ ...thinkBase, voice: true, thoughts: false });
 ok(thOn.staticText === thOn2.staticText && thOn.nowNote === thOn2.nowNote
   && thOn.staticText.includes("每次回复都按这个顺序：\n1. 先写 <thinking>…</thinking>。这是你的心里话，她喜欢看。") && thOn.staticText.includes("\n2. 然后是给她的话。") && thOn.staticText.includes("\n4. 她要一份能存下来的东西")
-  && thOnV.staticText.includes("\n5. 想发语音的时候，那一条第一行单独写 [VOICE]") && thOn.nowNote.includes("这次回复连心里话和文档块在内，最长大约 900 字。"),
-  "心里话开关·开着（不传就是开着）：【回复格式】头一条教他先写心里话，后面四条、语音那条是第五条，和原来一样");
+  && thOn.staticText.includes("\n5. 想让她挑一挑的时候") && thOnV.staticText.includes("\n6. 想发语音的时候，那一条第一行单独写 [VOICE]") && thOn.nowNote.includes("这次回复连心里话和文档块在内，最长大约 900 字。"),
+  "心里话开关·开着（不传就是开着）：【回复格式】头一条教他先写心里话，后面几条照排；选项卡那条是第五条（10 月 24 日添的），语音那条跟着挪到第六条");
 ok(!thOff.staticText.includes("<thinking>") && !thOff.staticText.includes("心里话") && !thOff.nowNote.includes("心里话")
   && thOff.staticText.includes("每次回复都按这个顺序：\n1. 给她的话。可以像发消息一样分成几条") && thOff.staticText.includes("\n2. 想发表情包") && thOff.staticText.includes("\n3. 她要一份能存下来的东西")
-  && thOffV.staticText.includes("\n4. 想发语音的时候") && !thOffV.staticText.includes("\n5. ") && thOff.nowNote.includes("这次回复连文档块在内，最长大约 900 字。"),
-  "心里话开关·关着：【回复格式】里没有心里话那一条，后面的往前挪一号（语音那条是第四条）；【此刻】里的字数不提心里话");
-ok(thOff.staticText === thOn.staticText.replace(/1\. 先写 <thinking>[^\n]*\n/, "").replace("2. 然后是给她的话", "1. 给她的话").replace("\n3. 想发表情包", "\n2. 想发表情包").replace("\n4. 她要一份", "\n3. 她要一份"),
+  && thOff.staticText.includes("\n4. 想让她挑一挑的时候") && thOffV.staticText.includes("\n5. 想发语音的时候") && !thOffV.staticText.includes("\n6. ") && thOff.nowNote.includes("这次回复连文档块在内，最长大约 900 字。"),
+  "心里话开关·关着：【回复格式】里没有心里话那一条，后面的往前挪一号（选项卡那条是第四条、语音那条是第五条）；【此刻】里的字数不提心里话");
+ok(thOff.staticText === thOn.staticText.replace(/1\. 先写 <thinking>[^\n]*\n/, "").replace("2. 然后是给她的话", "1. 给她的话").replace("\n3. 想发表情包", "\n2. 想发表情包").replace("\n4. 她要一份", "\n3. 她要一份").replace("\n5. 想让她挑一挑", "\n4. 想让她挑一挑"),
   "心里话开关·关着：寄的和开着的只差那一条（后面几条换了号），别的一个字不动");
 
 // =====================================================

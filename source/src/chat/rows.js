@@ -82,6 +82,9 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId
           // 打着电话的时候他又写了 [CALL] 的：那会儿当照常说话念了，摆成他说的一句
           if (inCall) rows.push({ type: "bubble", key: m.id + "-" + j, role: "him", msg: m, item: { type: "text", text: it.text || "……" }, idx: j, call: true });
           else rows.push({ type: "notice", key: m.id + "-" + j, msg: m, kind: "call", text: `${HIS_NAME}来电` });
+        } else if (it.type === "ask") {
+          // 他弹给她的选项卡（见 ask.js、AskCard.jsx）：聊天里不是气泡，是一行“他问了你 N 个问题 · 点开答 / 已答”；卡片浮在输入框上面
+          rows.push({ type: "ask", key: m.id + "-" + j, msg: m, idx: j, item: it });
         } else if (it.type === "avatar") {
           rows.push({
             type: "notice",

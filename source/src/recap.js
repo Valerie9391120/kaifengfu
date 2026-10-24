@@ -32,6 +32,7 @@
 import { NAME_MARK } from "./names.js";
 import { pad } from "./days.js";
 import { lotText } from "./qx/pool.js";
+import { askSummary } from "./ask.js";
 
 export const RECAP_KEY = "kfs2:recap:";
 const RECAP_KEEP = 6; // 单子里最多留几份
@@ -132,7 +133,16 @@ export function askThick(m) {
   // 江湖棋局里的一步：记录里每张小卡片一行（见 prompt/recap.js 的 hisLines）
   const cards = (m.calls || []).reduce((a, c) => a + (c.card || []).reduce((b, line) => b + 10 + len(line), 0) + (c.note ? 10 + len(c.note) : 0), 0);
   if (!items) return THICK.row + Math.min(ROW_HEAD, len(m.raw)) + cards;
-  return items.reduce((a, it) => a + (it && it.type === "doc" ? 60 + Math.min(HIS_DOC_HEAD, len(it.text)) : it && it.type === "text" ? Math.min(ROW_HEAD, len(it.text)) + 4 : 30), THICK.row) + cards;
+  // 选项卡写成一行（题目、选项，见 ask.js 的 askSummary），跟字一样只带开头
+  const thick = (it) =>
+    it && it.type === "doc"
+      ? 60 + Math.min(HIS_DOC_HEAD, len(it.text))
+      : it && it.type === "text"
+      ? Math.min(ROW_HEAD, len(it.text)) + 4
+      : it && it.type === "ask"
+      ? Math.min(ROW_HEAD, len(askSummary(it.qs))) + 4
+      : 30;
+  return items.reduce((a, it) => a + thick(it), THICK.row) + cards;
 }
 
 const isPhoto = (m) => !!m && m.role === "her" && m.kind === "photo";

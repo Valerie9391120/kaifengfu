@@ -1,5 +1,6 @@
 import { NAME_MARK } from "./names.js";
 import { docBlocksToNote } from "./docs.js";
+import { askBlocksToNote } from "./ask.js";
 import { pad } from "./days.js";
 import { unvoice } from "./voice.js";
 import { stepLines } from "./game/jianghu.js";
@@ -61,7 +62,8 @@ export function dayTranscript(msgs, memeLookup, maxChars = 9000) {
         if (m.kind === "lot") return `卿卿：${lotBrief(m)}`; // 秘戏钱匣里丢进来的一签（见 qx/pool.js）
         return `卿卿：${m.text || ""}`;
       }
-      const raw = unvoice(docBlocksToNote(m.raw || ""))
+      // 文档块、选项卡（见 ask.js）各换成一句
+      const raw = unvoice(askBlocksToNote(docBlocksToNote(m.raw || "")))
         // 他打电话的记号（见 call/incoming.js）：写成一句话，后面跟着的是她接起来他先说的
         .replace(/^[ \t]*\[(?:CALL|Call|call)\][ \t]*/gm, "[给卿卿打电话] ")
         .replace(/\[(MEME|AVATAR)[:：][^\]]*\]/g, "")

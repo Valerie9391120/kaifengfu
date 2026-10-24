@@ -157,6 +157,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 @keyframes kfsSubPop { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 .kfs-sub-pop { animation: kfsSubPop .38s cubic-bezier(.2,.8,.2,1) both; }
 .kfs-sub-new { animation: kfsFade .35s ease both; }
+/* 他弹给她的选项卡（见 chat/AskCard.jsx）：从输入框上面往上浮出来（照 Claude 那张卡） */
+@keyframes kfsAsk { from { opacity: 0; transform: translateY(26px); } to { opacity: 1; transform: none; } }
+.kfs-ask { animation: kfsAsk .34s cubic-bezier(.2,.8,.2,1) both; }
 
-@media (prefers-reduced-motion: reduce) { .kfs-in, .kfs-sheet, .kfs-page, .kfs-breath, .kfs-splash-img, .kfs-moonglow, .kfs-kite, .kfs-lotus, .kfs-fade, .kfs-call-talk, .kfs-call-think, .kfs-sub-pop, .kfs-sub-new { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .kfs-in, .kfs-sheet, .kfs-page, .kfs-breath, .kfs-splash-img, .kfs-moonglow, .kfs-kite, .kfs-lotus, .kfs-fade, .kfs-call-talk, .kfs-call-think, .kfs-sub-pop, .kfs-sub-new, .kfs-ask { animation: none !important; } }
 `;

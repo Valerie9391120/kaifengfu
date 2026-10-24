@@ -7,6 +7,7 @@
 import { NAME_MARK, NAME_PLACEHOLDER, cleanMarkName } from "./names.js";
 import { splitDocBlocks, DOC_NAME_PLACEHOLDER } from "./docs.js";
 import { splitVoice } from "./voice.js";
+import { splitAskBlocks, askRaw } from "./ask.js";
 
 // 语音里不留 [VOICE] 这几个字：摘到没有为止（摘掉一个，两头拼起来可能又成了一个，像 [VOI[VOICE]CE]）。
 // 从头往后一个字一个字地收，收进来的末尾正好是一个，就把它扔掉：和一遍一遍摘到没有的结果一样，只走一趟（不来回试）。
@@ -105,7 +106,17 @@ export function parseReply(text) {
     if (woke.wake !== null) wake = woke.wake;
     // 打电话的记号前面的照常拆；后面的是她接起来他先说的话（见下面）
     const call = splitCall(woke.rest);
-    splitTurns(call ? call[0] : woke.rest).forEach((chunk) => {
+    // 选项卡（见 ask.js）：打电话的记号前面那一截里，整块摘出来（里头的字不当记号看），剩下的照常分条
+    const pieces = [];
+    splitAskBlocks(call ? call[0] : woke.rest).forEach((p) => {
+      if (p.type === "ask") pieces.push(p);
+      else splitTurns(p.value).forEach((chunk) => pieces.push(chunk));
+    });
+    pieces.forEach((chunk) => {
+      if (typeof chunk !== "string") {
+        items.push({ type: "ask", qs: chunk.qs });
+        return;
+      }
       // 一条里 [VOICE] 那一行起是语音（见 voice.js 的 splitVoice）。语音里的字并成一条语音，
       // 里头夹着的表情包、换头像、改名字照认，排在这条语音后面
       splitVoice(chunk).forEach((seg) => {
@@ -193,6 +204,8 @@ export function rawOf(items, rename) {
     // 打电话：记号和接起来说的头一行写在同一行（跟语音一个道理：头一行原来就跟在记号后面，
     // 单独另起一行的话，它要是长得像文档开头的记号，再拆就成了一份文档）
     if (it.type === "call") return `[CALL] ${it.text || ""}`;
+    // 选项卡：整块写回（她答没答、关没关是开封府这头的事，不写进去）
+    if (it.type === "ask") return askRaw(it.qs);
     if (it.type === "doc") {
       // 文件名正好是教写法时占位的那个：照抄会被当成“在讲写法”，套一层书名号（拆的时候会剥掉）
       const name = it.name === DOC_NAME_PLACEHOLDER ? `《${it.name.replace(/\.md$/, "")}》` : it.name;

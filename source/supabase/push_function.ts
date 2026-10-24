@@ -878,6 +878,73 @@ function splitVoice(chunk: string): Array<{ voice: boolean; text: string }> {
 
 // 他打电话的记号（卿卿 10 月 14 日定的）：一行开头写 [CALL]，后面的是她接起来他先说的话（横幅上不写，写一条 [来电]）。
 // 一段字（文档块外头的）里只认头一个。和网页那头（src/reply.js 的 splitCall）一样
+// 选项卡（他弹给她的几道选择题）：跟网页那头（src/ask.js 的 splitAskBlocks、parseAskBody）同一套认法，横幅上写“[选项卡] 头一题”。
+// 改一边要跟着改另一边：tests/mail.test.mjs 拿同一批回话两边各拆一遍
+const ASK_OPEN = /^[ \t]*\[(?:ASK|Ask|ask)\][ \t]*\r?$/gm;
+const ASK_CLOSE = /^[ \t]*\[\/(?:ASK|Ask|ask)\][ \t]*\r?$/gm;
+const ASK_Q = /^(?:问|Q|q)[ \t]*(?:[（(][ \t]*(多选)[ \t]*[）)])?[ \t]*[：:][ \t]*(.*)$/s;
+const ASK_O = /^(?:[-–•·*]|\d{1,2}[.、)）])[ \t]*(.*)$/s;
+const ASK_MULTI_TAIL = /[（(][ \t]*多选[ \t]*[）)]$/;
+const ASK_PLAIN_Q = /[？?](?:[ \t]*[（(][ \t]*多选[ \t]*[）)])*$/;
+function askCut(s: string, n: number): string {
+  const a = Array.from(s);
+  return a.length > n ? a.slice(0, n).join("") : s;
+}
+function askHasLabel(text: string): boolean {
+  const i = text.search(/[｜|]/);
+  return askCut((i < 0 ? text : text.slice(0, i)).trim(), 40).trim() !== "";
+}
+// 一张卡里头那几行，认出来的头一题（一题都没有回 null）
+function askFirst(body: string): string | null {
+  const qs: Array<{ q: string; n: number }> = [];
+  let cur: { q: string; n: number } | null = null;
+  const start = (q: string) => {
+    let text = askCut(q.trim(), 80).trim();
+    while (ASK_MULTI_TAIL.test(text)) text = text.replace(ASK_MULTI_TAIL, "").trim();
+    cur = { q: text, n: 0 };
+    qs.push(cur);
+  };
+  for (const raw of body.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const q = ASK_Q.exec(line);
+    if (q) {
+      start(q[2]);
+      continue;
+    }
+    const o = ASK_O.exec(line);
+    if (o) {
+      if (!cur) start("");
+      if (askHasLabel(o[1])) cur!.n++;
+      continue;
+    }
+    if (!cur || ASK_PLAIN_Q.test(line)) start(line);
+    else if (askHasLabel(line)) cur.n++;
+  }
+  const kept = qs.filter((x) => x.q || x.n);
+  return kept.length ? kept[0].q : null;
+}
+function splitAsks(source: string): Array<{ ask: string } | { text: string }> {
+  const parts: Array<{ ask: string } | { text: string }> = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  ASK_OPEN.lastIndex = 0;
+  while ((m = ASK_OPEN.exec(source)) !== null) {
+    const bodyStart = ASK_OPEN.lastIndex;
+    ASK_CLOSE.lastIndex = bodyStart;
+    const c = ASK_CLOSE.exec(source);
+    const body = c ? source.slice(bodyStart, c.index) : source.slice(bodyStart);
+    if (m.index > last) parts.push({ text: source.slice(last, m.index) });
+    const first = askFirst(body);
+    if (first !== null) parts.push({ ask: first ? `[选项卡] ${first}` : "[选项卡]" });
+    last = c ? ASK_CLOSE.lastIndex : source.length;
+    if (!c) break;
+    ASK_OPEN.lastIndex = last;
+  }
+  if (last < source.length) parts.push({ text: source.slice(last) });
+  return parts;
+}
+
 const CALL_MARK = /^[ \t]*\[(?:CALL|Call|call)\][ \t]*/m;
 function splitCall(text: string): [string, string] | null {
   const m = CALL_MARK.exec(text);
@@ -918,13 +985,31 @@ function visibleBubbles(reply: string): { lines: string[]; avatar: boolean } {
     // 打电话的记号前面的照常拆，后面的（她接起来他先说的话）不上横幅，写一条 [来电]
     const text0 = takeWake(part.text);
     const call = splitCall(text0);
-    // 按 [SPLIT] 切开，记号两头的空白不要：和网页那头（src/reply.js 的 splitTurns）一样。
-    // 不写成 /\s*\[SPLIT\]\s*/ 那样的正则：碰上几万个连着的空行，它一个位置一个位置地试，要算好几秒，这里一回请求只给两秒
-    const chunks = (call ? call[0] : text0).split("[SPLIT]");
-    for (let k = 0; k < chunks.length; k++) {
-      let chunk = chunks[k];
-      if (k > 0) chunk = chunk.trimStart();
-      if (k < chunks.length - 1) chunk = chunk.trimEnd();
+    // 选项卡整块摘出来（见上面 splitAsks），横幅写一条“[选项卡] 头一题”；剩下的照常分条
+    const pieces: string[] = [];
+    const askLine: Record<number, string> = {};
+    for (const p of splitAsks(call ? call[0] : text0)) {
+      if ("ask" in p) {
+        askLine[pieces.length] = p.ask;
+        pieces.push("");
+        continue;
+      }
+      // 按 [SPLIT] 切开，记号两头的空白不要：和网页那头（src/reply.js 的 splitTurns）一样。
+      // 不写成 /\s*\[SPLIT\]\s*/ 那样的正则：碰上几万个连着的空行，它一个位置一个位置地试，要算好几秒，这里一回请求只给两秒
+      const cs = p.text.split("[SPLIT]");
+      for (let k = 0; k < cs.length; k++) {
+        let chunk = cs[k];
+        if (k > 0) chunk = chunk.trimStart();
+        if (k < cs.length - 1) chunk = chunk.trimEnd();
+        pieces.push(chunk);
+      }
+    }
+    for (let k = 0; k < pieces.length; k++) {
+      if (k in askLine) {
+        lines.push(askLine[k]);
+        continue;
+      }
+      const chunk = pieces[k];
       for (const seg of splitVoice(chunk)) {
         // 表情包的文件名最长认两百个字：一长串没有右括号的，不来回试
         const marks = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]{1,200})\\s*\\]|" + NAME_LINE, "gm");
