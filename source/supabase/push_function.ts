@@ -881,8 +881,11 @@ function splitVoice(chunk: string): Array<{ voice: boolean; text: string }> {
 // 选项卡（他弹给她的几道选择题）：跟网页那头（src/ask.js 的 splitAskBlocks、parseAskBody）同一套认法，横幅上写“[选项卡] 头一题”。
 // 改一边要跟着改另一边：tests/mail.test.mjs 拿同一批回话两边各拆一遍
 const ASK_OPEN = /^[ \t]*\[(?:ASK|Ask|ask)\][ \t]*\r?$/gm;
-const ASK_CLOSE = /^[ \t]*\[\/(?:ASK|Ask|ask)\][ \t]*\r?$/gm;
-const ASK_Q = /^(?:问|Q|q)[ \t]*(?:[（(][ \t]*(多选)[ \t]*[）)])?[ \t]*[：:][ \t]*(.*)$/s;
+const ASK_NEXT_OPEN = /^[ \t]*\[(?:ASK|Ask|ask)\][ \t]*\r?$/gm;
+// 结尾的记号在哪儿都算；没写结尾的到下一个 [SPLIT]、下一张卡的开头为止（同网页那头的 askEnd）
+const ASK_CLOSE = /\[\/(?:ASK|Ask|ask)\][ \t]*/g;
+// （多选）后面的空白写在括号那一组里头：放外头碰上一长串空格会来回试，这里一回请求只给两秒
+const ASK_Q = /^(?:问|Q|q)[ \t]*(?:[（(][ \t]*(多选)[ \t]*[）)][ \t]*)?[：:][ \t]*(.*)$/s;
 const ASK_O = /^(?:[-–•·*]|\d{1,2}[.、)）])[ \t]*(.*)$/s;
 const ASK_MULTI_TAIL = /[（(][ \t]*多选[ \t]*[）)]$/;
 const ASK_PLAIN_Q = /[？?](?:[ \t]*[（(][ \t]*多选[ \t]*[）)])*$/;
@@ -925,21 +928,39 @@ function askFirst(body: string): string | null {
   const kept = qs.filter((x) => x.q || x.n);
   return kept.length ? kept[0].q : null;
 }
+// 一卡到哪儿为止（同网页那头的 askEnds）：找过的结尾记号、[SPLIT] 记着，几千张没收尾的卡不用每张都从头往后找一遍
+function askEnds(source: string): (from: number) => { at: number; next: number } {
+  let close: { at: number; len: number } | null | undefined;
+  let split: number | undefined;
+  return (from: number) => {
+    if (close === undefined || (close && close.at < from)) {
+      ASK_CLOSE.lastIndex = from;
+      const c = ASK_CLOSE.exec(source);
+      close = c ? { at: c.index, len: c[0].length } : null;
+    }
+    if (split === undefined || (split >= 0 && split < from)) split = source.indexOf("[SPLIT]", from);
+    ASK_NEXT_OPEN.lastIndex = from;
+    const nx = ASK_NEXT_OPEN.exec(source);
+    let end = { at: source.length, next: source.length };
+    if (close && close.at < end.at) end = { at: close.at, next: close.at + close.len };
+    if (split >= 0 && split < end.at) end = { at: split, next: split };
+    if (nx && nx.index < end.at) end = { at: nx.index, next: nx.index };
+    return end;
+  };
+}
 function splitAsks(source: string): Array<{ ask: string } | { text: string }> {
   const parts: Array<{ ask: string } | { text: string }> = [];
+  const askEnd = askEnds(source);
   let last = 0;
   let m: RegExpExecArray | null;
   ASK_OPEN.lastIndex = 0;
   while ((m = ASK_OPEN.exec(source)) !== null) {
     const bodyStart = ASK_OPEN.lastIndex;
-    ASK_CLOSE.lastIndex = bodyStart;
-    const c = ASK_CLOSE.exec(source);
-    const body = c ? source.slice(bodyStart, c.index) : source.slice(bodyStart);
+    const end = askEnd(bodyStart);
     if (m.index > last) parts.push({ text: source.slice(last, m.index) });
-    const first = askFirst(body);
+    const first = askFirst(source.slice(bodyStart, end.at));
     if (first !== null) parts.push({ ask: first ? `[选项卡] ${first}` : "[选项卡]" });
-    last = c ? ASK_CLOSE.lastIndex : source.length;
-    if (!c) break;
+    last = end.next;
     ASK_OPEN.lastIndex = last;
   }
   if (last < source.length) parts.push({ text: source.slice(last) });

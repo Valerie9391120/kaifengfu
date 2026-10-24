@@ -21,12 +21,16 @@ const Q_MAX = 80; // 题目最长几个字
 const LABEL_MAX = 40; // 选项
 const DESC_MAX = 60; // 选项底下那行小字
 
-// 开头、结尾的记号各占一行（跟文档块一个写法，见 docs.js 的 splitDocBlocks）
+// 开头的记号单独占一行（跟文档块一个写法，见 docs.js 的 splitDocBlocks）。
+// 结尾的记号在哪儿都算（“[/ASK]。”“- 烧烤[/ASK]”“[/ASK][SPLIT]”这样跟别的写在一行上的也算），同一行后面跟着的字照常是话。
+// 没写结尾的：到下一个 [SPLIT]（他这一条说完了）、下一张卡的开头为止，都没有就到末尾（另一双眼睛挑出来的：原来一直到末尾，后面的话全被吞成了选项）
 const OPEN = /^[ \t]*\[(?:ASK|Ask|ask)\][ \t]*\r?$/gm;
-const CLOSE = /^[ \t]*\[\/(?:ASK|Ask|ask)\][ \t]*\r?$/gm;
+const NEXT_OPEN = /^[ \t]*\[(?:ASK|Ask|ask)\][ \t]*\r?$/gm;
+const CLOSE = /\[\/(?:ASK|Ask|ask)\][ \t]*/g;
 // 一题：问：……（多选写成 问（多选）：……）
-// 带 s：一行里夹着 U+2028 这种“行分隔符”也照认（不然 . 走不过去，写回去再拆就对不上）
-const Q_LINE = /^(?:问|Q|q)[ \t]*(?:[（(][ \t]*(多选)[ \t]*[）)])?[ \t]*[：:][ \t]*(.*)$/s;
+// 带 s：一行里夹着 U+2028 这种“行分隔符”也照认（不然 . 走不过去，写回去再拆就对不上）。
+// （多选）后面的空白写在括号那一组里头：放在外头，“问”后面跟一长串空格的时候正则会来回试，几万个空格能卡好几秒（另一双眼睛量出来的）
+const Q_LINE = /^(?:问|Q|q)[ \t]*(?:[（(][ \t]*(多选)[ \t]*[）)][ \t]*)?[：:][ \t]*(.*)$/s;
 // 一个选项：- 选项、· 选项、1. 选项……
 const O_LINE = /^(?:[-–•·*]|\d{1,2}[.、)）])[ \t]*(.*)$/s;
 const MULTI_TAIL = /[（(][ \t]*多选[ \t]*[）)]$/;
@@ -90,24 +94,45 @@ export function parseAskBody(body) {
     .map((x) => ({ q: x.q, multi: x.multi, opts: x.opts.slice(0, ASK_MAX_O) }));
 }
 
+// 一卡到哪儿为止（从 from 往后找）：{ at 卡里的字到这儿为止, next 后面的字从这儿接着 }。
+// 结尾的记号、下一个 [SPLIT]、下一张卡的开头，哪个先到算哪个（结尾的记号连它后面同一行的空白一起不要；[SPLIT]、下一张卡留给后面）。
+// 找过的记着（ends 是一段字一份）：一段字里几千张没收尾的卡，每张都从头往后找一遍结尾的记号，几万个字能算好几秒
+function askEnds(src) {
+  let close; // 找到的那一个结尾记号 { at, len }；null：往后再也没有
+  let split; // 下一个 [SPLIT] 在哪儿；-1：往后再也没有
+  return (from) => {
+    if (close === undefined || (close && close.at < from)) {
+      CLOSE.lastIndex = from;
+      const c = CLOSE.exec(src);
+      close = c ? { at: c.index, len: c[0].length } : null;
+    }
+    if (split === undefined || (split >= 0 && split < from)) split = src.indexOf("[SPLIT]", from);
+    NEXT_OPEN.lastIndex = from;
+    const nx = NEXT_OPEN.exec(src);
+    let end = { at: src.length, next: src.length };
+    if (close && close.at < end.at) end = { at: close.at, next: close.at + close.len };
+    if (split >= 0 && split < end.at) end = { at: split, next: split };
+    if (nx && nx.index < end.at) end = { at: nx.index, next: nx.index };
+    return end;
+  };
+}
+
 // 一段字（文档块外头的）里把选项卡整块摘出来：[{ type: "text", value }, { type: "ask", qs }]。
-// 没有结尾的记号：到这一段的末尾都算（写回去的时候补上结尾，见 askRaw）。里头一题都认不出来的，整块不要
+// 到哪儿为止见上面 askEnds（写回去的时候补上结尾，见 askRaw）。里头一题都认不出来的，整块不要
 export function splitAskBlocks(text) {
   const src = String(text || "");
   const parts = [];
+  const askEnd = askEnds(src);
   let last = 0;
   let m;
   OPEN.lastIndex = 0;
   while ((m = OPEN.exec(src)) !== null) {
     const bodyStart = OPEN.lastIndex;
-    CLOSE.lastIndex = bodyStart;
-    const c = CLOSE.exec(src);
-    const body = c ? src.slice(bodyStart, c.index) : src.slice(bodyStart);
+    const end = askEnd(bodyStart);
     if (m.index > last) parts.push({ type: "text", value: src.slice(last, m.index) });
-    const qs = parseAskBody(body);
+    const qs = parseAskBody(src.slice(bodyStart, end.at));
     if (qs.length) parts.push({ type: "ask", qs });
-    last = c ? CLOSE.lastIndex : src.length;
-    if (!c) break;
+    last = end.next;
     OPEN.lastIndex = last;
   }
   if (last < src.length) parts.push({ type: "text", value: src.slice(last) });

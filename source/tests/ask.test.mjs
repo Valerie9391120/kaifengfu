@@ -74,7 +74,30 @@ const J = (x) => JSON.stringify(x);
   const cases = splitAskBlocks("[ask]\n问：小写\n- a\n[/Ask]\n  [ASK]  \n问：带空格\n- b\n[/ASK]");
   ok(cases.filter((p) => p.type === "ask").length === 2, "记号大小写、前后的空格都不管");
   const inline = splitAskBlocks("夹在句子里的 [ASK] 不算\n问：x");
-  ok(inline.length === 1 && inline[0].type === "text", "记号要独占一行才算");
+  ok(inline.length === 1 && inline[0].type === "text", "开头的记号要独占一行才算");
+}
+{
+  // 结尾写岔了（另一双眼睛挑出来的：原来一直吞到末尾，后面的话全成了选项）
+  const types = (r) => r.items.map((it) => it.type + (it.type === "ask" ? ":" + it.qs.map((x) => x.opts.map((o) => o.t).join("/")).join("|") : ":" + (it.text || ""))).join(" ");
+  const forgot = parseReply("[ASK]\n问：吃什么？\n- 火锅\n- 烧烤\n[SPLIT]\n那我先去洗澡啦\n[SPLIT]\n回来再说");
+  ok(types(forgot) === "ask:火锅/烧烤 text:那我先去洗澡啦 text:回来再说", `没写 [/ASK]：卡到下一个 [SPLIT] 为止，后面的照常分条（${types(forgot)}）`);
+  const sameLine = parseReply("[ASK]\n问：吃什么？\n- 火锅\n- 烧烤[/ASK]。\n好了");
+  ok(types(sameLine) === "ask:火锅/烧烤 text:。\n好了", `结尾的记号跟在选项后面、后面又跟着字：照样是结尾，后面的字照常是话（${types(sameLine)}）`);
+  const glued = parseReply("[ASK]\n问：吃什么？\n- 火锅\n[/ASK][SPLIT]后面一句");
+  ok(types(glued) === "ask:火锅 text:后面一句", `“[/ASK][SPLIT]”写在一行：照样分开（${types(glued)}）`);
+  const twoOpen = parseReply("[ASK]\n问：头一张忘了收尾\n- 甲\n[ASK]\n问：第二张\n- 乙\n[/ASK]\n尾巴");
+  ok(types(twoOpen) === "ask:甲 ask:乙 text:尾巴", `头一张忘了收尾：到第二张的开头为止（${types(twoOpen)}）`);
+  ok(J(parseReply(rawOf(forgot.items)).items) === J(forgot.items) && J(parseReply(rawOf(twoOpen.items)).items) === J(twoOpen.items), "这几种写回去再拆，还是这几样");
+}
+{
+  // “问”后面一长串空格：一眨眼拆完（原来的正则会来回试，五万九千个空格要三秒）
+  const t0 = performance.now();
+  const qs = parseAskBody("问" + " ".repeat(59000) + "x\nQ" + "\t".repeat(59000) + "（多选");
+  const took = performance.now() - t0;
+  ok(took < 100 && qs.length === 1 && qs[0].q === "问" && qs[0].opts.length === 1, `“问”后面五万九千个空格、“Q”后面五万九千个制表符（都没有冒号，不是题目的写法）：${Math.round(took)} 毫秒拆完`);
+  const t1 = performance.now();
+  const many = splitAskBlocks("[ASK]\n".repeat(10000) + "问：x\n- a");
+  ok(performance.now() - t1 < 200 && many.filter((p) => p.type === "ask").length === 1, "一万行没收尾的 [ASK]：一眨眼拆完");
 }
 
 // ---- 他的回话里 ----

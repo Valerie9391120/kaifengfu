@@ -239,6 +239,95 @@ with sync_playwright() as p:
        f"在“其他回答”里打字、键盘起来：卡片、输入框一起铺到键盘上面（输入框底边 {comp and comp['bottom']} ≤ 500）")
     shot(pa, "ask_5_keyboard.png")
     pa.evaluate("document.activeElement.blur()"); pa.evaluate("window.__kfsKeyboard(null)"); time.sleep(0.6)
+    pa.locator(".kfs-ask .kfs-ask-x").click(); time.sleep(0.5)
+
+    # ================= 另一双眼睛挑出来的那几样 =================
+    # 单选：“其他回答”里写着字再点选项，字一起带上
+    queue("[ASK]\n问：烧烤要几分辣？\n- 微辣\n- 中辣\n- 特辣\n[/ASK]")
+    say(pa, "晚上吃烧烤")
+    got, _ = wait_card(pa, "这一回没有字")
+    other = pa.locator(".kfs-ask .kfs-ask-other")
+    other.click(); other.fill("多放孜然"); time.sleep(0.2)
+    tap_opt(pa, "中辣")
+    time.sleep(0.5)
+    h = hers(pa)
+    ok(got and not card(pa) and h[-1].get("text") == "Q: 烧烤要几分辣？\nA: 中辣、多放孜然", f"单选：写着字再点选项，写的字一起带上（{h[-1].get('text')!r}）")
+    pa.get_by_text("收到：Q: 烧烤要几分辣？").last.wait_for(timeout=20000)
+    time.sleep(1.5)
+
+    # 翻回去改了勾、没再点“好了”：交的是改过的
+    queue("[ASK]\n问（多选）：周末带什么？\n- 伞\n- 水\n- 零食\n问：几点走？\n- 早上\n- 中午\n[/ASK]")
+    say(pa, "周末出去")
+    got, _ = wait_card(pa, "这一回没有字")
+    tap_opt(pa, "伞"); tap_opt(pa, "零食")
+    pa.locator(".kfs-ask .kfs-ask-ok").click(); time.sleep(0.4)
+    on2 = card(pa)["q"] == "几点走？"
+    pa.get_by_role("button", name="上一题").click(); time.sleep(0.3)
+    tap_opt(pa, "零食")
+    pa.get_by_role("button", name="下一题").click(); time.sleep(0.3)
+    tap_opt(pa, "早上")
+    time.sleep(0.5)
+    h = hers(pa)
+    ok(got and on2 and not card(pa) and h[-1].get("text") == "Q: 周末带什么？\nA: 伞\n\nQ: 几点走？\nA: 早上", f"多选答完了又翻回去勾掉一个、没再点“好了”：交的是卡上眼下勾着的（{h[-1].get('text')!r}）")
+    pa.get_by_text("收到：Q: 周末带什么？").last.wait_for(timeout=20000)
+    time.sleep(1.5)
+
+    # 一条话里两张卡：只自己弹头一张，关掉了第二张不跟着冒
+    queue("[ASK]\n问：第一张？\n- 一\n- 二\n[/ASK]\n[ASK]\n问：第二张？\n- 三\n- 四\n[/ASK]")
+    say(pa, "两张")
+    got, _ = wait_card(pa, "这一回没有字")
+    first_q = card(pa)["q"] if card(pa) else None
+    pa.locator(".kfs-ask .kfs-ask-x").click(); time.sleep(1.2)
+    ok(got and first_q == "第一张？" and not card(pa) and [r["text"] for r in rows(pa)[-2:]] == ["他问了你 1 个问题 · 点开答"] * 2,
+       "一条话里两张卡：只自己弹头一张；关掉了，第二张不跟着冒，两行都还能点开")
+    pa.locator(".kfs-ask-row").last.click(); time.sleep(0.5)
+    ok(card(pa) and card(pa)["q"] == "第二张？", "点第二张那一行：第二张浮出来")
+    pa.locator(".kfs-ask .kfs-ask-x").click(); time.sleep(0.4)
+
+    # 没写 [/ASK]：卡到 [SPLIT] 为止，后面那句照常是他的话
+    queue("[ASK]\n问：忘了收尾？\n- 甲\n- 乙\n[SPLIT]\n后面那句照常是话")
+    say(pa, "写岔")
+    got, early = wait_card(pa, "后面那句照常是话")
+    c = card(pa)
+    ok(got and not early and c and [o["text"] for o in c["opts"]] == ["1甲", "2乙"], f"没写 [/ASK]：卡到 [SPLIT] 为止，后面那句照常是他的气泡，蹦完了卡才出来（{c and [o['text'] for o in c['opts']]}）")
+    pa.locator(".kfs-ask .kfs-ask-x").click(); time.sleep(0.4)
+
+    # 只弹了一张卡、一个气泡都没有的那条：长按那一行出菜单，能重新回答
+    queue("[ASK]\n问：只有卡？\n- 是\n- 否\n[/ASK]")
+    say(pa, "只弹卡")
+    got, _ = wait_card(pa, "这一回没有字")
+    pa.locator(".kfs-ask .kfs-ask-x").click(); time.sleep(0.4)
+    queue("重答了\n[SPLIT]\n[ASK]\n问：重答的卡？\n- 好\n- 不好\n[/ASK]")
+    wait_js(pa, "!document.querySelector('.kfs-typing')", 30000)
+    pa.locator(".kfs-ask-row").last.click(button="right"); time.sleep(0.5)
+    acts = pa.locator(".z-50 button").all_inner_texts()
+    pa.locator(".z-50 button", has_text="重新回答").first.click()
+    got2, early = wait_card(pa, "重答了")
+    ok(got and acts == ["重新回答"] and got2 and not early and card(pa)["q"] == "重答的卡？",
+       f"只弹了一张卡的那条：长按（右键）那一行出菜单（{acts}），点“重新回答”，新回话照常蹦、新卡照常弹")
+    pa.locator(".kfs-ask .kfs-ask-x").click(); time.sleep(0.4)
+
+    # 重新回答等着的工夫里，答了上面那张卡：“已答”不丢
+    queue("[ASK]\n问：上面那张？\n- 左\n- 右\n[/ASK]")
+    say(pa, "上面一张")
+    got, _ = wait_card(pa, "这一回没有字")
+    say(pa, "先不答，再说一句")
+    pa.get_by_text("收到：先不答，再说一句").last.wait_for(timeout=20000)
+    time.sleep(1.5)
+    mock("/__debug/claude-hold?ms=6000")
+    queue("（重答的那一版）")
+    retry_last(pa)
+    time.sleep(0.8)
+    pa.locator(".kfs-ask-row").last.click(); time.sleep(0.5)
+    mid_q = card(pa)["q"] if card(pa) else None
+    tap_opt(pa, "右")
+    time.sleep(0.4)
+    pa.get_by_text("（重答的那一版）").last.wait_for(timeout=25000)
+    time.sleep(1.5)
+    up = [m for m in his_msgs(pa) if asks_of(m) and asks_of(m)[0]["qs"][0]["q"] == "上面那张？"]
+    ok(mid_q == "上面那张？" and up and asks_of(up[-1])[0].get("done") and pa.locator(".kfs-ask-row", has_text="已答").count() >= 1
+       and any(m.get("text") == "Q: 上面那张？\nA: 右" for m in hers(pa)),
+       "重新回答等着的工夫里点开上面那张卡答了：新回答到了以后那一行还是“已答”（存档里也记着），她答的那条照留着")
 
     ok(not errors, f"页面没报错（{errors[:3]}）")
     browser.close()
