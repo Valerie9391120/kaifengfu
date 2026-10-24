@@ -476,6 +476,8 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     dressing: dressingBrief(dressed, dressing.today()),
     steps: ROOM_STEPS,
     memos: memoLines(shown),
+    // 心里话一回醒着写一段（她 10 月 24 日 02:05 说十二步写了十二段、差不多都是一个意思，02:09 定的“醒来写一回”）；她关了“他写心里话”就不提
+    thoughts: ctx.settings.thoughts !== false,
   });
   const event = { id: newId(), role: "event", who: "him", kind: "wake", ts: now };
   // 妆台：这一回他完成了今天的搭配，便签就收起来（“下次穿”就是下一身，她 10 月 22 日凌晨定的：管到下一回完成搭配为止）。
