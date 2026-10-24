@@ -46,6 +46,7 @@ const docsjs = await loadBundle("src/docs.js");
 const namesjs = await loadBundle("src/names.js");
 const richjs = await loadBundle("src/rich.js");
 const notifyjs = await loadBundle("src/notify.js");
+const askjs = await loadBundle("src/ask.js");
 
 const vapid = makeVapidKeys();
 const USER = { id: "11111111-1111-1111-1111-111111111111", email: "qing@example.com" };
@@ -1186,6 +1187,7 @@ function resetWorld() {
       else if (it.type === "voice") lines.push("[语音]");
       else if (it.type === "call") lines.push("[来电]");
       else if (it.type === "doc") lines.push(`[文档] ${it.name}`);
+      else if (it.type === "ask") lines.push(askjs.askBanner(it.qs));
       else if (it.type === "avatar") avatar = true;
     }
     return lines.length ? lines : [avatar ? "[换了新头像]" : "……"];
@@ -1194,6 +1196,17 @@ function resetWorld() {
   const same = (text) => JSON.stringify(fn.bubblesOf(text)) === JSON.stringify(expect(text));
   const flat = (text) => fn.bubblesOf(text).join("\n");
   const corpus = [
+    "好的，来一个小问题：\n[ASK]\n问：今天晚饭想吃什么？\n- 火锅｜天冷了\n- 烧烤\n- 麻辣烫\n- 随便，你定\n[/ASK]",
+    "[ASK]\n问：一\n- a\n问（多选）：二\n- b\n- c\n[/ASK]\n[SPLIT]\n后面一句",
+    "前面\n[SPLIT]\n[ASK]\n今天吃什么\n火锅\n烧烤\n[/ASK]\n[MEME:a.jpg]",
+    "没收尾的\n[ASK]\n问：周末干嘛？（多选）\n- 看电影\n[WAKE:+3h]",
+    "[ASK]\n- 只有选项\n[/ASK]",
+    "[ASK]\n\n[/ASK]\n空的不算",
+    "[ASK]\n问：\n[/ASK]",
+    "[DOC:x.md]\n[ASK]\n问：文档里的不算\n[/DOC]",
+    "先说一句\n[CALL]\n[ASK]\n问：电话里的不算\n[/ASK]",
+    "[ASK]\n今天吃什么？\n火锅\n烧烤\n周末去哪?（多选）\n公园\n[/ASK]",
+    "[ASK]\n- ｜光有说明\n晚饭\n火锅？\n[/ASK]",
     "<thinking>嗯</thinking>\n在呢",
     "在\n[SPLIT]\n第二条\n[SPLIT]\n第三条",
     "<thinking>没关上的心里话",
@@ -1367,7 +1380,8 @@ function resetWorld() {
     "# ", "## ", "\n# ", "\n### ", "#", " #", " ##\n", "**", "***", "**粗**", "*斜*", "```", "\n```\n", "   ", "    ",
     "[VOICE]", "\n[VOICE]\n", "[VOICE] ", "\n[voice]", " [VOICE]", "[whispers] ", "\n\t[VOICE]\t",
     "[CALL]", "\n[CALL]\n", "[CALL] ", "\n[call]", " [CALL]", "\n\t[CALL]\t",
-    "[WAKE:+3h]", "\n[WAKE:+3h]\n", "\n[wake：off]\n", "[WAKE: 07:30 ]\r\n", " [WAKE:+1h] "];
+    "[WAKE:+3h]", "\n[WAKE:+3h]\n", "\n[wake：off]\n", "[WAKE: 07:30 ]\r\n", " [WAKE:+1h] ",
+    "[ASK]", "\n[ASK]\n", "\n[ask]\r\n", " [ASK] ", "[/ASK]", "\n[/ASK]\n", "\n[/Ask]\n", "问：", "\n问（多选）：", "\nQ:", "\n- ", "\n1. ", "｜", "|", "（多选）", "\n· 选项", "晚饭吃什么？", "?", "？（多选）", "\n火锅"];
   const off = [];
   const splitOff = [];
   for (let i = 0; i < 20000; i++) {
@@ -1418,6 +1432,8 @@ function resetWorld() {
     const callLine = () => /^[ \t]*\[(?:CALL|Call|call)\]/m;
     // 定下回几点醒的记号也一样（狐宇宙，见 src/fox.js）：原来跟别的字写在同一行（当字显示了），单独写回去就成了真记号，被摘掉
     const wakeLine = () => /^[ \t]*\[(?:WAKE|Wake|wake)[:：][^\[\]\n]{0,80}\][ \t]*\r?$/m;
+    // 选项卡开头的记号也一样（见 src/ask.js）：原来跟 [SPLIT] 写在同一行（当字显示了），切开以后单独占了一行，写回去就成了真的选项卡开头
+    const askLine = () => /^[ \t]*\[(?:ASK|Ask|ask)\][ \t]*\r?$/m;
     // 学不了的三种，都是他写岔了才有的样子（见 rawOf 上面那段）：
     //   一句话自己长得就像记号（改名的、文档开头的、语音的记号紧贴着别的东西写，原来当字显示了）；
     //   文档的正文里夹着一行结尾的记号（原来那一行后面跟着怪空白，没被认成结尾）；
@@ -1427,7 +1443,7 @@ function resetWorld() {
     const oddCall = (items) => items.some((it, i) => it.type === "call" && i + 1 < items.length && items[i + 1].type !== "avatar" && items[i + 1].type !== "doc");
     const odd = (items, rename) =>
       oddCall(items) ||
-      items.some((it) => (it.type === "text" && (nameLine().test(it.text) || voiceLine().test(it.text) || callLine().test(it.text) || wakeLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "voice" && (nameLine().test(it.text) || callLine().test(it.text) || wakeLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "call" && (nameLine().test(it.text) || wakeLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "doc" && docClose().test(it.text))) ||
+      items.some((it) => (it.type === "text" && (nameLine().test(it.text) || voiceLine().test(it.text) || callLine().test(it.text) || wakeLine().test(it.text) || askLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "voice" && (nameLine().test(it.text) || callLine().test(it.text) || wakeLine().test(it.text) || askLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "call" && (nameLine().test(it.text) || wakeLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "doc" && docClose().test(it.text))) ||
       (!!rename && namesjs.cleanMarkName(rename) !== rename);
     const flat = (items) => JSON.stringify(items.map((it) => (it.type === "doc" ? { ...it, name: docsjs.cleanDocName(it.name) } : it)));
     let tried = 0, skipped = 0;

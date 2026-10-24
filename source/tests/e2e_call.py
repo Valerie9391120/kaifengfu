@@ -71,7 +71,7 @@ HELLOS = ["卿卿？", "怎么了？", "你来了"]
 CALLFACE = "(() => { const i = document.querySelector('.kfs-call img'); return i ? i.src : ''; })()"
 CALLNAME = "(() => { const e = document.querySelector('.kfs-call-name'); return e ? e.textContent : ''; })()"
 # 电话里附给他的那一段（她 10 月 14 日 16:27 改的，一个字不差）
-CALL_NOTE_TEXT = "【通话】你们正在打电话：你回的每一句都会用你的声音念给她听，她这会儿看着的是通话页面，只能看到你的头像和昵称，对话界面的东西看不见，所以这时候不写心里话，不发表情包、不交文档、不写星号动作；每一句本来就会念出来，不用写 [VOICE]。语气标签照用。"
+CALL_NOTE_TEXT = "【通话】你们正在打电话：你回的每一句都会用你的声音念给她听，她这会儿看着的是通话页面，只能看到你的头像和昵称，对话界面的东西看不见，所以这时候不写心里话，不发表情包、不交文档、不弹选项卡、不写星号动作；每一句本来就会念出来，不用写 [VOICE]。语气标签照用。"
 errors = []
 mode = {"ears": "stt"}  # stt：ElevenLabs 的实时听写；sr：退回手机自带的听写
 

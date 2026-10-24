@@ -8,7 +8,7 @@ import { buildRows } from "../src/chat/rows.js";
 import { makePreview } from "../src/chat/overview.js";
 import { parseWake, splitWake, planNext, planTasks, nextChase, lastMark, fracOf, infoOf, RHYTHM_MIN, RHYTHM_MAX, RESUME_MIN, RESUME_MAX, PRESENT_PUSH, RETRY_MS, DAY_MS, OWED_MS, TASK_STALE } from "../alarm/plan.js";
 import { wakeSection, taskSection, wakeNowNote, tailTranscript, agoText, HER_WORDS } from "../alarm/note.js";
-import { doorsOf, idsDeep, putRows, putBlocks, toRescue, commitWake, owedOf, splitNewChat, normBundle, noCall, askRoom, askTask } from "../alarm/wake.js";
+import { doorsOf, idsDeep, putRows, putBlocks, toRescue, commitWake, owedOf, splitNewChat, normBundle, noCall, noAsk, askRoom, askTask } from "../alarm/wake.js";
 import { loadSecret } from "../alarm/secret.js";
 import { gardenOf, runGardenCalls, gardenBrief, gardenNote, GARDEN_KEY } from "../alarm/garden.js";
 import { dressingOf, runDressingCalls, dressingBrief, dressingTool, lookLine, cutDressing, DRESSING_KEY } from "../alarm/dressing.js";
@@ -391,6 +391,11 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   const onlyCall = noCall({ text: "", quiet: false, him: { id: "g", items: [{ type: "call", text: "" }] } });
   ok(called.him.items.map((x) => x.type + ":" + x.text).join("|") === "text:睡不着|text:喂，在吗" && onlyCall.quiet === true && onlyCall.him.items[0].text === "……",
     "屋里打不了电话：打电话那一截留成纸上的字；什么都不剩的那一步当没写字");
+  // 屋里也弹不了选项卡：卡片换成纸上的一行字（题目、选项照写）
+  const asked = noAsk({ text: "", quiet: false, him: { id: "g", items: [{ type: "text", text: "想问她" }, { type: "ask", qs: [{ q: "明天吃什么？", multi: false, opts: [{ t: "面" }, { t: "饭" }] }] }] } });
+  const plain = { text: "", quiet: false, him: { id: "g", items: [{ type: "text", text: "没卡" }] } };
+  ok(asked.him.items.map((x) => x.type + ":" + x.text).join("|") === "text:想问她|text:[选项卡] 明天吃什么？（面／饭）" && noAsk(plain) === plain,
+    "屋里弹不了选项卡：卡片换成纸上一行字，题目、选项照写；没有卡的原样不动");
   // 狐宇宙里那几行、别的对话里她看不见的那一行
   const go = { id: "w", role: "event", kind: "wake", ts: at(21, 0), go: { chat: "c1", title: "洗澡", how: "task" } };
   const goNew = { ...go, go: { chat: "n1", title: "想你了", how: "new" } };
@@ -473,6 +478,7 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   const inFox = wakeSection({ now, herLast: { ts: at(15, 50), title: "狐宇宙", fox: true }, lastWake: at(15, 0), n: 2, gap: 30, max: 12, transcript: "", pending: [{ title: "洗澡", at: at(17, 0), label: "去找卿卿" }] });
   ok(inFox.includes("她最后一回来，是 10 分钟前") && inFox.includes("便签纸") && inFox.includes("[新对话:起个名字]") && inFox.includes("不弹横幅") && inFox.includes("《洗澡》") && inFox.includes("“去找卿卿”"),
     "【醒来】：醒在自己屋里（写的字落在便签纸上、不敲她）；想找她开新对话；她最后是来屋里留的便签；他定过、还没到点的闹钟");
+  ok(s.includes("屋里打不了电话、也弹不了选项卡") && s.includes("在那段里打、在那段里弹"), "【醒来】：屋里打不了电话、也弹不了选项卡，想让她挑就开新对话");
   const ts1 = taskSection({ now, label: "去找卿卿", set: at(15, 0), round: 1, max: 12, mcps: [] });
   const ts3 = taskSection({ now, label: "", set: at(15, 0), round: 3, max: 12, mcps: ["tavily"] });
   ok(ts1.includes("你记着的是“去找卿卿”") && ts1.includes("到点了，她还没回这段对话") && ts1.includes("[WAKE:+5m]") && ts1.includes("最多 12 回") && ts3.includes("接着追她的第 3 回") && ts3.includes("“tavily”"),

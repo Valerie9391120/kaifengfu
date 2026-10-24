@@ -13,6 +13,7 @@ import { isCallMark, markRecap } from "../call/marks.js";
 import { isWakeMark, wakeRecap } from "../fox.js";
 import { stepLines } from "../game/jianghu.js";
 import { lotText } from "../qx/pool.js";
+import { askSummary } from "../ask.js";
 
 const GAP = 30 * 60 * 1000; // 隔了这么久，中间写一行钟点
 
@@ -51,6 +52,8 @@ function hisLines(m, memeLookup) {
     else if (it.type === "voice") out.push(say(HIS_NAME, `[语音] ${head(heardOf(it.text) || "……", ROW_HEAD)}`));
     // 他打电话：接没接、接起来说了什么，看后面那一行（“通话开始”“未接来电”，见 call/marks.js 的 markRecap）
     else if (it.type === "call") out.push(`[${HIS_NAME}给${HER_NAME}打电话]`);
+    // 他弹给她的选项卡（见 ask.js）：题目、选项一行；她答了什么看她下一句（“Q: … A: …”）
+    else if (it.type === "ask") out.push(say(HIS_NAME, head(askSummary(it.qs), ROW_HEAD)));
     else out.push(say(HIS_NAME, head(it.text || "……", ROW_HEAD)));
   });
   // 江湖棋局里这一步下了什么（聊天里那几张小卡片，见 game/jianghu.js）：掷了几点、走到哪、花了几两

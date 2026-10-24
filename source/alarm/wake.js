@@ -36,6 +36,7 @@ import { gardenOf, gardenBrief, gardenToy } from "./garden.js";
 import { dressingOf, dressingBrief, dressingToy } from "./dressing.js";
 import { completedToday } from "../vendor/dressing/dressing-engine.ts";
 import { wakeSection, taskSection, wakeNowNote, tailTranscript, LAST_STEP_NOTE, THOUGHT_DONE_NOTE } from "./note.js";
+import { askSummary } from "../src/ask.js";
 
 // 他的默认头像（同 src/ui/Avatar.jsx 的 HIS_DEFAULT；那个文件带着界面，这里不引）
 const HIS_DEFAULT = { type: "meme", file: "fox_reading_book.jpg" };
@@ -423,6 +424,14 @@ export function noCall(step) {
   return { ...step, quiet: !step.him.calls && !step.him.rename, him: { ...step.him, items: [{ type: "text", text: "……" }] } };
 }
 
+// 屋里也弹不了选项卡（她不在屋里，见 src/ask.js）：卡片换成纸上的一行字，题目、选项照写（她来转一圈看得见他想问什么）。
+// 开了新对话的那一截不归这里管：那段对话里照常弹
+export function noAsk(step) {
+  const items = step.him.items || [];
+  if (!items.some((it) => it.type === "ask")) return step;
+  return { ...step, him: { ...step.him, items: items.map((it) => (it.type === "ask" ? { type: "text", text: askSummary(it.qs) } : it)) } };
+}
+
 // 一回醒来的几行里，看得见的字都没有的那几步收成醒了那一行（心里话、定的几点醒记在这一行上）
 function roomRows(event, steps) {
   const quiet = steps.every((s) => s.quiet);
@@ -551,7 +560,7 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     const av = (last.him.items || []).find((it) => it.type === "avatar");
     if (av) for (const h of pieces) h.items = (h.items || []).map((it) => (it.type === "avatar" ? { ...it, prev: av.prev } : it));
   }
-  for (let i = 0; i < steps.length; i++) steps[i] = noCall(i < steps.length - 1 ? withoutNewChat(steps[i]) : steps[i]);
+  for (let i = 0; i < steps.length; i++) steps[i] = noAsk(noCall(i < steps.length - 1 ? withoutNewChat(steps[i]) : steps[i]));
   const ev = fresh ? { ...event, go: { chat: fresh.id, title: fresh.title, how: "new" } } : event;
   const room = roomRows(ev, steps);
   let rows = room.quiet && fresh ? room.rows.map((x) => (x.id === ev.id ? { ...x, quiet: undefined } : x)) : room.rows;
