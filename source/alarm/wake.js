@@ -35,7 +35,7 @@ import { ROOM_TOOLS, ROOM_NAMES, isRoomCall, runRoomCalls, roomSection, cutRoom,
 import { gardenOf, gardenBrief, gardenToy } from "./garden.js";
 import { dressingOf, dressingBrief, dressingToy } from "./dressing.js";
 import { completedToday } from "../vendor/dressing/dressing-engine.ts";
-import { wakeSection, taskSection, wakeNowNote, tailTranscript, LAST_STEP_NOTE } from "./note.js";
+import { wakeSection, taskSection, wakeNowNote, tailTranscript, LAST_STEP_NOTE, THOUGHT_DONE_NOTE } from "./note.js";
 
 // 他的默认头像（同 src/ui/Avatar.jsx 的 HIS_DEFAULT；那个文件带着界面，这里不引）
 const HIS_DEFAULT = { type: "meme", file: "fox_reading_book.jpg" };
@@ -206,7 +206,7 @@ function withoutNewChat(step) {
 // room：醒在平常的对话里（任务到点那一回）是 { chat, title }：同手机那头，带着回屋看一眼、留换装便签那两样（src/room.js），他调了就替他办；
 //   醒在屋里那一回不给（他就在屋里，园子、妆台自己带着）
 // 回 { steps: [{ him, text, quiet }], cost, newAvatar, newName, title, part }：part(text, step) 把某一步的一截字整理成那边的一条（拆新对话用，不再记钱）
-async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = null, toys = [], most = MOST_STEPS, lastNote = "", room = null }) {
+async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = null, toys = [], most = MOST_STEPS, lastNote = "", thoughtNote = "", room = null }) {
   const st = ctx.settings;
   const model = st.model || DEFAULT_MODEL;
   const maxTokens = st.maxTokens || 2048;
@@ -249,13 +249,14 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     slugs[mcpSlug(m.name, i)] = m.name;
   });
   // final：这是最后一步，【醒来】后面附上提醒（附在缓存记号后面，前面那些照样读缓存）
-  const bodyFor = (list, at, final = false) => {
+  // thought：这一回醒着前面几步里已经写过心里话（thoughtNote，醒在屋里那一回才有；同样附在缓存记号后面）
+  const bodyFor = (list, at, final = false, thought = false) => {
     const { messages, tail } = buildMessages(list, ctx.avatars, memeLookup, imgLookup, thumbLookup, docLookup, { recaps, tier });
     const body = {
       model,
       max_tokens: maxTokens,
       system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
-      messages: withNowNote(messages, final && lastNote ? woke + "\n\n" + lastNote : woke, at.cache, tail),
+      messages: withNowNote(messages, woke + (thought && thoughtNote ? "\n\n" + thoughtNote : "") + (final && lastNote ? "\n\n" + lastNote : ""), at.cache, tail),
     };
     const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, QX_TOOLS, room ? ROOM_TOOLS : [], toys.map((t) => t.tool));
     if (at.mcp) {
@@ -272,11 +273,11 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   // 同手机那头：带缓存 → 不带缓存 → 不带 MCP，哪种通了用哪种
   const attempts = [{ cache: true, mcp: mcps.length > 0 }, { cache: false, mcp: mcps.length > 0 }];
   if (mcps.length) attempts.push({ cache: false, mcp: false });
-  const askHim = async (list, final = false) => {
+  const askHim = async (list, final = false, thought = false) => {
     let lastErr = null;
     for (const at of attempts) {
       try {
-        const data = await cloud.callClaude(bodyFor(list, at, final), at.mcp ? "mcp-client-2025-11-20" : "");
+        const data = await cloud.callClaude(bodyFor(list, at, final, thought), at.mcp ? "mcp-client-2025-11-20" : "");
         return { data, used: at };
       } catch (e) {
         lastErr = e;
@@ -376,7 +377,8 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   for (let i = 0; i < most; i++) {
     const { data, used } = await askHim(
       msgs.concat(steps.map((s) => s.him)),
-      i > 0 && i === most - 1
+      i > 0 && i === most - 1,
+      steps.some((s) => s.him.thinking)
     );
     const step = digest(data, used);
     steps.push(step);
@@ -511,7 +513,8 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     return out;
   };
   const toys = [gardenToy(garden), { ...dress, run: dressRun }];
-  const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section, toys, most: ROOM_STEPS, lastNote: LAST_STEP_NOTE });
+  // 心里话写过了的那几步，附上 THOUGHT_DONE_NOTE（她关了“他写心里话”就不附）
+  const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section, toys, most: ROOM_STEPS, lastNote: LAST_STEP_NOTE, thoughtNote: ctx.settings.thoughts !== false ? THOUGHT_DONE_NOTE : "" });
   // 便签：完成搭配那一下没收成的，醒完再收一遍
   try {
     await retire();

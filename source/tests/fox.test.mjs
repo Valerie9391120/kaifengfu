@@ -697,6 +697,20 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   cloud = cloudOf([said("在吗")]);
   await askTask({ store: kv6(), cloud, ctx: ctxOf(), task: { key: "kfs2:fox:task:z", raw: "+5m", set: Date.now() }, chat: { id: "c1", title: "一段对话", msgs: [{ id: "h1", role: "her", ts: 1, text: "嗯" }] } });
   ok(!lastText(cloud.bodies[0]).includes("心里话这一回"), "任务到点那一回（醒在那段对话里）：不提");
+  // 她 02:32 试了还是一步一写：心里话不递回给他，他看不见自己前面写过。前面哪一步写过了，后面每一步跟前告诉他这一回已经写过了
+  const DONE = "这一回醒着，心里话你前面已经写过了";
+  const thinkUse = (i, think) => ({ stop_reason: "tool_use", content: [...(think ? [{ type: "text", text: "<thinking>醒了，先去看看花</thinking>" }] : []), use("t" + i, "play_garden", { action: "admire" })] });
+  cloud = cloudOf([thinkUse(1, true), thinkUse(2, false), said("看完了")]);
+  await askRoom({ store: kv6(), cloud, ctx: ctxOf(), ...opts });
+  ok(cloud.bodies.length === 3 && !lastText(cloud.bodies[0]).includes(DONE) && lastText(cloud.bodies[1]).includes(DONE) && lastText(cloud.bodies[2]).includes(DONE)
+    && !cloud.bodies.some((x) => JSON.stringify(x.messages).includes("醒了，先去看看花")),
+    "头一步写了心里话：后面每一步跟前都告诉他这一回已经写过了（心里话本身照旧不递回给他）");
+  cloud = cloudOf([thinkUse(1, false), thinkUse(2, true), said("看完了")]);
+  await askRoom({ store: kv6(), cloud, ctx: ctxOf(), ...opts });
+  ok(!lastText(cloud.bodies[1]).includes(DONE) && lastText(cloud.bodies[2]).includes(DONE), "头一步没写：第二步不说；第二步写了，第三步才说");
+  cloud = cloudOf([thinkUse(1, true), said("看完了")]);
+  await askRoom({ store: kv6(), cloud, ctx: offCtx, ...opts });
+  ok(!lastText(cloud.bodies[1]).includes(DONE), "她关了“他写心里话”：不说");
 }
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);
