@@ -13,6 +13,7 @@ import { isCallMark, markRecap } from "../call/marks.js";
 import { isWakeMark, wakeRecap } from "../fox.js";
 import { stepLines } from "../game/jianghu.js";
 import { lotText } from "../qx/pool.js";
+import { pdText } from "../pindou/parts.js";
 import { askSummary } from "../ask.js";
 
 const GAP = 30 * 60 * 1000; // 隔了这么久，中间写一行钟点
@@ -158,6 +159,11 @@ export function buildRecapAsk({ msgs, prev = null, thick = 0, memeLookup, imgLoo
       // 秘戏钱匣里丢进来的一签（见 qx/pool.js）：照寄给他的样子写，不截
       if (m.kind === "lot") {
         buf.push(lotText(m));
+        return;
+      }
+      // 拼豆作里发给他的一幅（见 pindou/parts.js）：照寄给他的那一句写，图不带
+      if (m.kind === "pindou") {
+        buf.push(pdText(m));
         return;
       }
       buf.push(say(HER_NAME, head(m.text || "……", ROW_HEAD)));

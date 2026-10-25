@@ -24,11 +24,11 @@ let claudeRelease = null; // 正压着的那一回：叫它现在就答
 // 测试用：排好的回话（tests/look.py 截图用）。平常的话按次序一句一句取，取完了照旧回“收到：…”；
 // 写日记、抄提要那几种不取。/__debug/reply-queue?text=… 往后排一句，/__debug/reset 清空
 const replyQueue = [];
-// 他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js）：/__debug/tool-queue?name=play_garden&input={"action":"water"}&text=先去看看花 往后排一步调工具
-// （name 写 play_dressing_room 就是去妆台）。带着那几样工具的那一回照排好的调；结果递回来以后，还有排着的接着调，没有了照 reply-queue 说
+// 他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js、拼豆板 alarm/pindou.js）：/__debug/tool-queue?name=play_garden&input={"action":"water"}&text=先去看看花 往后排一步调工具
+// （name 写 play_dressing_room 就是去妆台，写 play_pindou 就是去桌上拼拼豆）。带着那几样工具的那一回照排好的调；结果递回来以后，还有排着的接着调，没有了照 reply-queue 说
 // （没排就说一句“（测试园子）结果的头一行”）
 const toolQueue = [];
-const TOYS = new Set(["play_garden", "play_dressing_room"]);
+const TOYS = new Set(["play_garden", "play_dressing_room", "play_pindou"]);
 function fakeGarden(body) {
   const msgs = body.messages || [];
   const blocksOf = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || []);
@@ -217,7 +217,7 @@ function fakeQx(body) {
 }
 
 // 回屋看一眼、留换装便签的假的那边的我（tests/e2e_room.py 用；带着 room_look、room_memo 的时候，见 src/room.js）。照她最后说的那句话：
-//   “回屋看看园子”“回屋看看妆台”“回屋翻翻衣柜”：先说“我回屋看看。”，再调 room_look
+//   “回屋看看园子”“回屋看看妆台”“回屋翻翻衣柜”“回屋看看拼豆”：先说“我回屋看看。”，再调 room_look
 //   “记得下次穿 某某”：先说“好，记下了。”，再调 room_memo（便签上写“答应了卿卿下次穿某某”）
 //   “看到一半”：说“看着看着”、调了 room_look，可回话停在 max_tokens 上（写到长度上限被截断）：开封府不该替他办
 //   结果递回来：说“（测试回屋）”加结果的头一行（便签那一样说“（测试回屋）记好了”，不把便签上写的念出来：测她的页面上看不到便签上写的）
@@ -259,7 +259,7 @@ function fakeRoom(body) {
     if (herAt !== msgs.length - 1) return null;
   }
   if (/看到一半/.test(herSay)) return { status: 200, json: { model: body.model, stop_reason: "max_tokens", content: [{ type: "text", text: "看着看着" }, use("room_look", { what: "garden" })], usage } };
-  const what = /回屋看看园子/.test(herSay) ? "garden" : /回屋看看妆台/.test(herSay) ? "dressing" : /回屋翻翻衣柜/.test(herSay) ? "wardrobe" : "";
+  const what = /回屋看看园子/.test(herSay) ? "garden" : /回屋看看妆台/.test(herSay) ? "dressing" : /回屋翻翻衣柜/.test(herSay) ? "wardrobe" : /回屋看看拼豆/.test(herSay) ? "pindou" : "";
   if (what) return step("我回屋看看。", use("room_look", { what }));
   const wear = /记得下次穿\s*(\S+)/.exec(herSay);
   if (wear) return step("好，记下了。", use("room_memo", { text: `答应了卿卿下次穿${wear[1]}` }));

@@ -104,8 +104,8 @@ def run(browser):
         fx = d["rows"][0] if d["rows"] else {}
         ok(fx.get("size") == [25, 25] and fx.get("fill") == d["color"] and fx.get("stroke") == "none",
            f"南衙菜单最顶上狐宇宙那一行是恩师画的狐狸：同这四格，25 个点见方、填色不描边、跟着主题色（{fx}）")
-        ok(all(r["size"] == [20, 20] and r["fill"] == "none" and r["stroke"] == d["color"] for r in d["rows"][1:]) and len(d["rows"]) == 7 and d["close"]["size"] == [16, 16] and d["close"]["fill"] == "none" and d["close"]["stroke"] != "none",
-           f"手绘的那一套照旧：南衙菜单里别的六行的图标（江湖棋局那一颗骰子、邸报那一张报也是）还是 20、描线不填色，右上角的叉还是 16（{[r['size'][0] for r in d['rows']]}，{d['close']['size'][0]}）")
+        ok(all(r["size"] == [20, 20] and r["fill"] == "none" and r["stroke"] == d["color"] for r in d["rows"][1:]) and len(d["rows"]) == 8 and d["close"]["size"] == [16, 16] and d["close"]["fill"] == "none" and d["close"]["stroke"] != "none",
+           f"手绘的那一套照旧：南衙菜单里别的七行的图标（江湖棋局那一颗骰子、拼豆作那四颗豆子、邸报那一张报也是）还是 20、描线不填色，右上角的叉还是 16（{[r['size'][0] for r in d['rows']]}，{d['close']['size'][0]}）")
     else:
         ok(False, "手绘的那一套照旧（南衙的菜单没打开，没看成）")
 

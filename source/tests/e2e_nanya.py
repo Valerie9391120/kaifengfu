@@ -111,10 +111,10 @@ def run(browser):
     rs = rows(pg)
     # 10 月 15 日闲笔集后面添了一行“江湖棋局”（见 tests/e2e_jianghu.py），四行；10 月 17 日藏音匣盖好了（见 tests/e2e_cangyin.py）；
     # 10 月 18 日凌晨网易云后面挂上“邸报”（还在营造），五行；10 月 20 日最顶上添了“狐宇宙”（他自己醒来的地方，细的见 tests/e2e_fox.py），六行；
-    # 10 月 21 日藏音匣后面添了“秘戏钱匣”（细的见 tests/e2e_qx.py），七行
-    ok([(r["name"], r["sub"]) for r in rs] == [("狐宇宙", "还没让他自己醒"), ("闲笔集", "今天还没写"), ("江湖棋局", "还没开局"), ("藏音匣", "还空着"), ("秘戏钱匣", "签库还空着"), ("网易云", "营造中"), ("邸报", "营造中")],
-       f"菜单七行：狐宇宙、闲笔集、江湖棋局、藏音匣、秘戏钱匣、网易云、邸报；闲笔集那行的小字和格子上的是同一句（{[(r['name'], r['sub']) for r in rs]}）")
-    ok([r["soon"] for r in rs] == ["", "", "", "", "", "1", "1"] and [r["svgs"] for r in rs] == [2, 2, 2, 2, 2, 1, 1] and [r["dim"] for r in rs] == ["1", "1", "1", "1", "1", "0.55", "0.55"] and [r["chip"] for r in rs] == ["1", "1", "1", "1", "1", "0.55", "0.55"],
+    # 10 月 21 日藏音匣后面添了“秘戏钱匣”（细的见 tests/e2e_qx.py），七行；10 月 25 日秘戏钱匣后面添了“拼豆作”（细的见 tests/e2e_pindou.py），八行
+    ok([(r["name"], r["sub"]) for r in rs] == [("狐宇宙", "还没让他自己醒"), ("闲笔集", "今天还没写"), ("江湖棋局", "还没开局"), ("藏音匣", "还空着"), ("秘戏钱匣", "签库还空着"), ("拼豆作", "还没拼过"), ("网易云", "营造中"), ("邸报", "营造中")],
+       f"菜单八行：狐宇宙、闲笔集、江湖棋局、藏音匣、秘戏钱匣、拼豆作、网易云、邸报；闲笔集那行的小字和格子上的是同一句（{[(r['name'], r['sub']) for r in rs]}）")
+    ok([r["soon"] for r in rs] == ["", "", "", "", "", "", "1", "1"] and [r["svgs"] for r in rs] == [2, 2, 2, 2, 2, 2, 1, 1] and [r["dim"] for r in rs] == ["1", "1", "1", "1", "1", "1", "0.55", "0.55"] and [r["chip"] for r in rs] == ["1", "1", "1", "1", "1", "1", "0.55", "0.55"],
        f"能进去的那几行右边带箭头；还没盖的网易云、邸报淡一档、没有箭头（箭头 {[r['svgs'] - 1 for r in rs]}，名字的浓淡 {[r['dim'] for r in rs]}）")
 
     # ---- 藏音匣：点了进那一页（里面的见 tests/e2e_cangyin.py），左上角返回回到侧栏 ----
@@ -132,13 +132,13 @@ def run(browser):
     ok(pg.locator(".kfs-cangyin").count() == 0 and pg.locator(".kfs-nanya").count() == 0 and pg.evaluate(TILE_ON_TOP), "藏音匣左上角返回：回到侧栏，不回菜单")
     open_menu(pg)
     # ---- 还没盖的网易云：点了只冒一句话 ----
-    pg.locator(".kfs-nanya-row").nth(5).click()
+    pg.locator(".kfs-nanya-row").nth(6).click()
     said = wait_has(pg, "网易云还在营造")
     still = pg.locator(".kfs-nanya").count() == 1 and pg.locator(".kfs-page").count() == 0
     gone2 = wait_has(pg, "网易云还在营造", want=False)
     ok(said and still and gone2 and len(calls()) == c0,
        "点网易云：冒一句“网易云还在营造”，菜单还开着，那句话一会儿自己消失；前后也没往那边发什么")
-    pg.locator(".kfs-nanya-row").nth(6).click()
+    pg.locator(".kfs-nanya-row").nth(7).click()
     said = wait_has(pg, "邸报还在营造")
     still = pg.locator(".kfs-nanya").count() == 1 and pg.locator(".kfs-page").count() == 0
     gone2 = wait_has(pg, "邸报还在营造", want=False)

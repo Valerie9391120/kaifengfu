@@ -40,6 +40,10 @@ import { QxPage } from "./qx/QxPage.jsx";
 import { LotRow } from "./qx/LotRow.jsx";
 import { QX_KEY, QX_TOOLS, QX_NAMES, CUT_QX, QX_FAIL_NOTE, isQxCall, readPool, packPool, emptyPool, runQxCalls, qxSection, poolSize, hasLots, cleanLines } from "./qx/pool.js";
 import { ROOM_TOOLS, ROOM_NAMES, isRoomCall, runRoomCalls, roomSection, cutRoom, localDay } from "./room.js";
+import { PindouPage } from "./pindou/PindouPage.jsx";
+import { PindouRow } from "./pindou/PindouRow.jsx";
+import { PD_STATE, PD_WORK, PD_HIS, readState, packState, listWorks, packWork, readHis, fromCode, countBeads, pdSub } from "./pindou/parts.js";
+import { pngFor } from "./pindou/draw.js";
 import { buildRows } from "./chat/rows.js";
 import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/overview.js";
 import { BubbleRow } from "./chat/Bubble.jsx";
@@ -443,6 +447,12 @@ export default function App({ account = {} }) {
   // owe：开着的这一阵里有要回的（她丢了签、进来之前刚说完一句、别处想叫他回被拦下了）。关上的时候只认这个：
   // 什么都没丢、也没拦下过，就不替她叫他（江湖棋局里“点这里让我接着说”的那一步、别的设备的那一步，照旧不自己接）
   const qxHold = useRef({ on: false, owe: false });
+  // 拼豆作（见 pindou/）：那一层开着没有；她的作品集（kfs2:pd:work:<编号>，新的在前）；他屋里那块板子（kfs2:pindou，家里的闹钟写的）。
+  // 开着的时候她发给他的那几幅也照秘戏钱匣先攒着（借 qxHold，两样不会同时开着），关上了再回（见 openPd、closePd）
+  const [pdOpen, setPdOpen] = useState(false);
+  const [pdWorks, setPdWorks] = useState([]);
+  const [pdHis, setPdHis] = useState(null);
+  const pdStart = useRef(null); // 打开那一下她那块板子的样子（递给那一页，只递这一回）
   const [renaming, setRenaming] = useState(null); // 正在改名的那段对话
   const [usage, setUsage] = useState(null);
   const [monthUsage, setMonthUsage] = useState(null);
@@ -636,6 +646,7 @@ export default function App({ account = {} }) {
       refreshBox();
       refreshFox();
       refreshQx();
+      refreshPd();
       setBooted(true);
     })();
   }, []);
@@ -706,6 +717,8 @@ export default function App({ account = {} }) {
       if (has(FOX_STATE)) refreshFox();
       // 秘戏钱匣：别的设备导了签库、删了加了签、改了抽哪几样
       if (keys.includes(QX_KEY)) refreshQx();
+      // 拼豆作：别的设备存了、删了一幅；家里的闹钟写了他那块板子
+      if (has(PD_WORK) || keys.includes(PD_HIS)) refreshPd();
       // 别的设备念好的语音同步下来了（这台设备上要念的那一条就不用再念了）
       if (has(VOICE_KEY) && speakerRef.current) speakerRef.current.synced(keys.filter((k) => k.startsWith(VOICE_KEY)));
       if (has("kfs2:memindex") || has("kfs2:mem:")) {
@@ -832,8 +845,8 @@ export default function App({ account = {} }) {
   };
 
   const openChat = async (id) => {
-    // 秘戏钱匣开着的时候翻到别的对话（点了通知）：先关上，丢在眼前这段的签这就交出去（closeQx 排上、flushPending 马上送）
-    if (qxHold.current.on) closeQx();
+    // 秘戏钱匣、拼豆作开着的时候翻到别的对话（点了通知）：先关上，丢在眼前这段的签、拼豆这就交出去（closeHeld 排上、flushPending 马上送）
+    if (qxHold.current.on) closeHeld();
     flushPending();
     stopVoice();
     setEditing(null);
@@ -894,7 +907,7 @@ export default function App({ account = {} }) {
 
   // game：开的是一局江湖棋局（编号以 jh 开头，见 game/jianghu.js；南衙里“开新的一局”）
   const newChat = (game = false) => {
-    if (qxHold.current.on) closeQx(); // 同 openChat
+    if (qxHold.current.on) closeHeld(); // 同 openChat
     flushPending();
     stopVoice();
     setEditing(null);
@@ -1292,15 +1305,70 @@ export default function App({ account = {} }) {
     qxHold.current = { on: true, owe: disarm() };
     setQxOpen(true);
   };
-  const closeQx = () => {
+  // 秘戏钱匣、拼豆作关上的时候：开着的时候丢了签、发了拼豆（或者有要回的被拦下了）、他还没回，这就回
+  // （正回着别的一段的话，记下来，回完那段轮到这里，同 triggerReply）。两样合用这一道（同一时间只开得了一样）
+  const releaseHold = () => {
     const h = qxHold.current;
     qxHold.current = { on: false, owe: false };
-    setQxOpen(false);
-    // 开着的时候丢了签（或者有要回的被拦下了）、他还没回：这就回（正回着别的一段的话，记下来，回完那段轮到这里，同 triggerReply）
     if (h.owe && owes(messagesRef.current)) {
       if (loadingRef.current) pendingRef.current.add(chatIdRef.current);
       else scheduleReply(700);
     } else if (!loadingRef.current) nextPending();
+  };
+  const closeQx = () => {
+    setQxOpen(false);
+    releaseHold();
+  };
+  // 开着的时候翻到别的对话（点了通知）、他打来电话她接了：哪一层开着就关哪一层，攒着的这就交出去
+  const closeHeld = () => {
+    setQxOpen(false);
+    setPdOpen(false);
+    releaseHold();
+  };
+
+  // ---- 拼豆作（见 pindou/、开发说明“拼豆作”那一节）----
+  // 她的作品集、他屋里那块板子：引擎手里现成的，同步取
+  const refreshPd = () => {
+    setPdWorks(listWorks(store.keys(PD_WORK).map((k) => [k, store.peek(k)])));
+    setPdHis(readHis(store.peek(PD_HIS)));
+  };
+  // 她眼下这块板子（那一页隔一会儿叫一声）：一整份存在一条里
+  const savePdState = (st) => {
+    store.set(PD_STATE, packState(st)).then((ok) => {
+      if (!ok) markStorageFail();
+    });
+  };
+  // 存进作品集：一幅一条（两台设备各存各的，不互相盖掉）。这台手机上没存进去也照样记在手上、推上云端，提示她一声（同别处）
+  const savePdWork = async ({ name, code }) => {
+    if (!fromCode(code)) return false;
+    if ((await store.set(PD_WORK + newId(), packWork({ name, code, at: Date.now() }))) === false) markStorageFail();
+    refreshPd();
+    return true;
+  };
+  const dropPdWork = async (id) => {
+    await store.del(PD_WORK + id);
+    refreshPd();
+    return true;
+  };
+  // 她点了“发给光义”：这一幅丢进眼前这段对话（她的一条话，kind: "pindou"，带着这一下画好的图，寄给他的时候他看得见）。
+  // 开着的时候他先不回（qxHold），关上了一起回。狐宇宙那段对话（他的屋子，她只留便签）里不丢：那一页不摆“发给光义”（canSend），这里也拦一道
+  const sendPindou = ({ name, code }) => {
+    const b = fromCode(code);
+    if (!b || !countBeads(b.g) || !chatIdRef.current || isFoxChat(chatIdRef.current)) return false;
+    const png = pngFor(b.n, b.g);
+    if (qxHold.current.on) qxHold.current.owe = true;
+    sendHer({ kind: "pindou", name: name || "", code, png }, { hold: true });
+    return true;
+  };
+  const openPd = () => {
+    // 同 openQx：她进来之前刚说完一句、还在等她停手的那两秒，先不回，记着欠一句，关上了一起回
+    qxHold.current = { on: true, owe: disarm() };
+    pdStart.current = readState(store.peek(PD_STATE));
+    setPdOpen(true);
+  };
+  const closePd = () => {
+    setPdOpen(false);
+    releaseHold();
   };
   // 她来他屋里转一圈，在便签纸上留了一句（FoxNotePad）：放进狐宇宙，记 note: true——不叫他、不等回话，他下回醒来看得见
   const saveFoxNote = (text) => {
@@ -3178,7 +3246,7 @@ export default function App({ account = {} }) {
     const r = ringRef.current;
     if (!r) return;
     // 秘戏钱匣开着的时候他打来、她接了：先关上（打着电话说的话得马上回，不能攒着）
-    if (qxHold.current.on) closeQx();
+    if (qxHold.current.on) closeHeld();
     endRing(r, "answer");
     startCall({ callOf: r.msgId, segs: r.segs, pre: r.pre });
   };
@@ -4787,7 +4855,7 @@ export default function App({ account = {} }) {
   // 只认一根手指。落下了第二根，这一回就不算划侧栏了（拖到一半的弹回去），等手指全抬起来再从头认：
   // 整页不许捏以后，两根手指往里一捏，头一根正好是往右走的，原来会被当成右划、把侧栏带出来
   const onTouchStart = (e) => {
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen || qxOpen) return;
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen || qxOpen || pdOpen) return;
     if (e.touches.length > 1) {
       touch.current = null;
       setDragX(null);
@@ -4800,7 +4868,7 @@ export default function App({ account = {} }) {
     const s = touch.current;
     if (!s) return;
     // 手指还按着的工夫里冒出了菜单、面板（长按气泡就是）：底下的侧栏不跟着这根手指走，这一回也不算了
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen || qxOpen) {
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen || qxOpen || pdOpen) {
       touch.current = null;
       setDragX(null);
       return;
@@ -5148,7 +5216,7 @@ export default function App({ account = {} }) {
       return (
         <Sheet title="南衙" onClose={() => setSheet(null)}>
           <NanyaPanel
-            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length), qx: hasLots(qxPool) ? `签库里 ${poolSize(qxPool)} 条签` : "签库还空着" }}
+            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length), qx: hasLots(qxPool) ? `签库里 ${poolSize(qxPool)} 条签` : "签库还空着", pindou: pdSub(pdWorks, pdHis) }}
             open={{
               // 狐宇宙：菜单收起，翻到那段对话（他自己醒来说的话都在那儿，见 fox.js）
               fox: () => {
@@ -5174,6 +5242,13 @@ export default function App({ account = {} }) {
                 setSheet(null);
                 setDrawerOpen(false);
                 openQx();
+              },
+              // 拼豆作：同秘戏钱匣，菜单、侧栏都收起，盖上那一层（见 pindou/PindouPage.jsx）；叉一点回到眼前这段对话（她发给他的那几幅在这儿，他关上以后回）
+              pindou: () => {
+                stopVoice();
+                setSheet(null);
+                setDrawerOpen(false);
+                openPd();
               },
             }}
             onSoon={(name) => setToast(soonToast(name))}
@@ -5497,6 +5572,10 @@ export default function App({ account = {} }) {
             if (row.type === "lot") {
               // 她从秘戏钱匣里丢进来的一签（见 qx/LotRow.jsx）
               return <LotRow key={row.key} msg={row.msg} animate={row.msg.ts >= listMount.current} />;
+            }
+            if (row.type === "pindou") {
+              // 她从拼豆作里发给他的一幅（见 pindou/PindouRow.jsx）
+              return <PindouRow key={row.key} msg={row.msg} animate={row.msg.ts >= listMount.current} />;
             }
             if (row.type === "game") {
               // 江湖棋局：他这一步下了什么（掷了几点、走到哪、花了几两，见 game/jianghu.js 的 cardsOf）
@@ -5938,6 +6017,25 @@ export default function App({ account = {} }) {
       {/* 并蒂莲：盖在最上面（比照片、提示那几层还高），叉一点就整层拆掉，回到侧栏 */}
       {lotusOpen && <LotusPage theme={theme} onClose={() => setLotusOpen(false)} />}
       {qxOpen && <QxPage pool={qxPool} onPool={saveQx} sendLot={sendLot} canSend={!isFoxChat(chatId)} onClose={closeQx} />}
+
+      {pdOpen && (
+        <PindouPage
+          state={pdStart.current}
+          works={pdWorks}
+          his={pdHis}
+          wake={wakeOn(settings)}
+          canSend={!isFoxChat(chatId)}
+          onState={savePdState}
+          onSave={savePdWork}
+          onDelete={dropPdWork}
+          onSend={async (w) => sendPindou(w)}
+          onClose={closePd}
+          onFail={() => {
+            closePd();
+            setToast("拼豆作没打开，可能是网不好，过一会儿再试");
+          }}
+        />
+      )}
 
       {/* 通话页：盖在最上面（见 call/CallPage.jsx）。她点屏幕那一下（iPhone 不让自己接着听的时候）接着听 */}
       {call && <CallPage call={call} avatar={avatars.him} name={names.him || HIS_NAME} onMute={toggleMute} onHangUp={hangUp} onTap={callTap} />}

@@ -45,6 +45,10 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId
       // 她从秘戏钱匣里丢进来的一签（见 qx/pool.js）：聊天正中一个方框，不是她那一边的气泡
       rows.push({ type: "lot", key: m.id, msg: m });
       if (stoppedId && m.id === stoppedId) rows.push({ type: "stopped", key: "sp-" + m.id, msg: m });
+    } else if (m.role === "her" && m.kind === "pindou") {
+      // 她从拼豆作里发给他的一幅（见 pindou/parts.js）：同签，聊天正中一个方框
+      rows.push({ type: "pindou", key: m.id, msg: m });
+      if (stoppedId && m.id === stoppedId) rows.push({ type: "stopped", key: "sp-" + m.id, msg: m });
     } else if (m.role === "her") {
       rows.push({
         type: "bubble",

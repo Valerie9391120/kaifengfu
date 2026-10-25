@@ -128,6 +128,9 @@ const side = async (entry, name, extra = {}) => {
 };
 const cangyinName = await side("src/cangyin/page.js", "cangyin", { define: { "process.env.NODE_ENV": '"production"', __KFS_CANGYIN_ASSETS__: JSON.stringify(cyAssets) } });
 define.__KFS_CANGYIN__ = JSON.stringify(`./${cangyinName}`);
+// 拼豆作那一页（src/pindou/page.js）：同藏音匣，另打一包，头一回点进去才取。名字写在包里，换了以后上一版的留一份（见开发说明“改前端”）
+const pindouName = await side("src/pindou/page.js", "pindou");
+define.__KFS_PINDOU__ = JSON.stringify(`./${pindouName}`);
 // 词典里全是汉字：照 UTF-8 原样写（esbuild 默认写成 \\uXXXX，大一倍）。
 // opencc-js 是 MIT，词典是 OpenCC 的（Apache-2.0）：两份授权原文跟着包走（写在包的末尾）
 const openccLic = ["node_modules/opencc-js/LICENSE", "node_modules/opencc-js/THIRD_PARTY_LICENSES.md"].map((f) => fs.readFileSync(f, "utf8").replace(/\*\//g, "* /")).join("\n\n");
@@ -315,6 +318,7 @@ console.log(`  sw.js  ${size(`${OUT}/sw.js`)}`);
 console.log(`  ${lotusName}  ${size(`${OUT}/assets/${lotusName}`)}`);
 console.log(`  ${jianghuName}  ${size(`${OUT}/assets/${jianghuName}`)}`);
 console.log(`  ${cangyinName}  ${size(`${OUT}/assets/${cangyinName}`)}`);
+console.log(`  ${pindouName}  ${size(`${OUT}/assets/${pindouName}`)}`);
 console.log(`  ${s2tName}  ${size(`${OUT}/assets/${s2tName}`)}`);
 console.log(`  ${tyName}  ${size(`${OUT}/assets/${tyName}`)}（同页，${ty.scripts} 段脚本记了指纹）`);
 console.log(`  ${tyFonts.dir}/（同页的字：${tyFonts.fonts} 块，连样式表、授权一共 ${(tyFonts.bytes / 1048576).toFixed(1)} MB）`);

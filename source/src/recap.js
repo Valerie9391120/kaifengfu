@@ -32,6 +32,7 @@
 import { NAME_MARK } from "./names.js";
 import { pad } from "./days.js";
 import { lotText } from "./qx/pool.js";
+import { pdText } from "./pindou/parts.js";
 import { askSummary } from "./ask.js";
 
 export const RECAP_KEY = "kfs2:recap:";
@@ -94,7 +95,8 @@ export function tierOf(key, room = Infinity, most = Infinity) {
 // ---------- 一条有多厚 ----------
 // 照片、表情包折成字。照片长边压到 1280（images.js），那边看一张是一千五到两千个 token，折一千五百字；
 // 表情包的缩略图三百像素，一百来个 token
-export const THICK = { row: 8, photo: 1500, meme: 150, doc: 2000 };
+// 拼豆作里发给他的一幅：那张图长边最多五百多像素，四五百个 token，折四百五十字（见 pindou/draw.js 的 pngFor）
+export const THICK = { row: 8, photo: 1500, meme: 150, doc: 2000, pd: 450 };
 
 const len = (s) => (typeof s === "string" ? s.length : 0);
 
@@ -109,6 +111,7 @@ export function thick(m) {
     if (m.kind === "doc") return THICK.row + 80 + (Number(m.chars) > 0 ? Number(m.chars) : THICK.doc);
     if (m.kind === "voice") return THICK.row + 30 + len(m.text);
     if (m.kind === "lot") return THICK.row + len(lotText(m)); // 秘戏钱匣里丢进来的一签（见 qx/pool.js）
+    if (m.kind === "pindou") return THICK.row + THICK.pd + len(pdText(m)); // 拼豆作里发给他的一幅：一张图加一句（见 pindou/parts.js）
     return THICK.row + len(m.text);
   }
   // 他的：寄回去的是 raw（心里话不寄）。他换了头像的，后面跟一行提示带着图。
@@ -127,6 +130,7 @@ export function askThick(m) {
     if (m.kind === "meme") return THICK.row + 30;
     if (m.kind === "doc") return THICK.row + 80 + Math.min(DOC_HEAD, Number(m.chars) > 0 ? Number(m.chars) : THICK.doc);
     if (m.kind === "lot") return THICK.row + len(lotText(m));
+    if (m.kind === "pindou") return THICK.row + len(pdText(m)); // 叫他抄提要的时候不带图，只写那一句
     return THICK.row + Math.min(ROW_HEAD, len(m.text)) + (m.kind === "voice" ? 12 : 0);
   }
   const items = Array.isArray(m.items) && m.items.length ? m.items : null;
@@ -146,7 +150,8 @@ export function askThick(m) {
 }
 
 const isPhoto = (m) => !!m && m.role === "her" && m.kind === "photo";
-const hasPicture = (m) => !!m && m.role === "her" && (m.kind === "photo" || m.kind === "meme");
+// 拼豆作里发给他的那几幅也算有图，跟表情包一样数张数（图小，几 KB）
+const hasPicture = (m) => !!m && m.role === "her" && (m.kind === "photo" || m.kind === "meme" || m.kind === "pindou");
 
 // 截一段字，不从一个字的两半中间切（表情那种字占两格，切开了整段话那边都不认）
 export function clip(text, max) {
