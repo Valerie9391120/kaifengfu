@@ -5,6 +5,7 @@ import { isCallMark, markNote } from "../call/marks.js";
 import { apiBlocks } from "../game/jianghu.js";
 import { isWakeMark, wakeNote } from "../fox.js";
 import { lotText } from "../qx/pool.js";
+import { pdText } from "../pindou/parts.js";
 
 function avatarBlock(av, thumbLookup = () => null) {
   if (!av) return null;
@@ -147,7 +148,8 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
   const from = plan.from;
   // 她发的图太多的时候，老的那几张不带图，只留那一句话（见 ../recap.js 的 staleImages）
   const memeData = (file) => (MEME_MAP[file] ? MEME_MAP[file].b64 : thumbLookup(file) || "");
-  const stale = staleImages(msgs, from, (m) => ((m.kind === "photo" ? imgLookup(m.imgId) : memeData(m.file)) || "").length);
+  // 拼豆作里发给他的那几幅：图跟着那一条存着（png），跟表情包一样数张数（见 ../recap.js 的 hasPicture）
+  const stale = staleImages(msgs, from, (m) => ((m.kind === "photo" ? imgLookup(m.imgId) : m.kind === "pindou" ? m.png : memeData(m.file)) || "").length);
   const arr = [];
   msgs.forEach((m, at) => {
     if (at < from) return;
@@ -232,6 +234,15 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
       // 她从秘戏钱匣里丢进来的一签（见 qx/pool.js）：【秘戏钱匣】卿卿抽了一签（风花雪月）：一样一行
       if (m.kind === "lot") {
         arr.push({ role: "user", content: [{ type: "text", text: lotText(m) }] });
+        return;
+      }
+      // 她从拼豆作里发给他的一幅（见 pindou/parts.js）：发的那一下画好的图，后面一句【拼豆作】卿卿拼了一幅《…》（几号板、几颗、几种颜色）。
+      // 图太多的时候老的不带（同表情包），那一句里写明，免得他当成她没发过图
+      if (m.kind === "pindou") {
+        const blk = noImg ? null : dataUrlBlock(m.png);
+        const blocks = blk ? [blk] : [];
+        blocks.push({ type: "text", text: pdText(m, { img: !!blk, stale: noImg }) });
+        arr.push({ role: "user", content: blocks });
         return;
       }
       // 她来狐宇宙（他的屋子）转了一圈，在便签纸上留的（fox.js 的 note）：不是跟他说话，照实告诉他

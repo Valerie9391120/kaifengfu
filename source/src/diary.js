@@ -5,6 +5,7 @@ import { pad } from "./days.js";
 import { unvoice } from "./voice.js";
 import { stepLines } from "./game/jianghu.js";
 import { lotBrief } from "./qx/pool.js";
+import { pdBrief } from "./pindou/parts.js";
 
 // ---------- 日记本 ----------
 export const dayKeyOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -60,6 +61,7 @@ export function dayTranscript(msgs, memeLookup, maxChars = 9000) {
         if (m.kind === "doc") return `卿卿：[文档《${m.name || "文档"}》]`;
         if (m.kind === "voice") return `卿卿：[语音] ${m.text || ""}`;
         if (m.kind === "lot") return `卿卿：${lotBrief(m)}`; // 秘戏钱匣里丢进来的一签（见 qx/pool.js）
+        if (m.kind === "pindou") return `卿卿：${pdBrief(m)}`; // 拼豆作里发给他的一幅（见 pindou/parts.js）
         return `卿卿：${m.text || ""}`;
       }
       // 文档块、选项卡（见 ask.js）各换成一句

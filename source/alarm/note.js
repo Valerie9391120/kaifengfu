@@ -8,6 +8,7 @@ import { plainOf } from "../src/rich.js";
 import { isCallMark, markText } from "../src/call/marks.js";
 import { isWakeMark } from "../src/fox.js";
 import { lotBrief } from "../src/qx/pool.js";
+import { pdBrief } from "../src/pindou/parts.js";
 import { askSummary } from "../src/ask.js";
 
 export const HER_WORDS =
@@ -50,6 +51,8 @@ export function tailTranscript(msgs, memeLookup = () => null, most = 16, each = 
           ? `[语音] ${clip(m.text, each)}`
           : m.kind === "lot"
           ? lotBrief(m)
+          : m.kind === "pindou"
+          ? pdBrief(m)
           : m.note
           ? `[便签] ${clip(plainOf(m.text || ""), each)}`
           : clip(plainOf(m.text || ""), each);
@@ -87,9 +90,10 @@ export function tailTranscript(msgs, memeLookup = () => null, most = 16, each = 
 //   pending    他定过、还没到点的闹钟（任务标记）：[{ title, at, label }]
 // garden：他屋里的园子眼下的样子（alarm/garden.js 的 gardenBrief；没给就不提园子）
 // dressing：他屋里的妆台，今天完成搭配没有（alarm/dressing.js 的 dressingBrief；没给就不提妆台）。这是个换装游戏，不是他的实际状态（她定的）：不写他“穿着”什么
+// pindou：他屋里桌上的拼豆板拼到哪儿了（alarm/pindou.js 的 pindouBrief；没给就不提拼豆板）。他拼的她在拼豆作「他的」那一栏看得见（只能看）
 // steps：这一回醒着最多几步（wake.js 的 ROOM_STEPS；没给就不提）
 // memos：他在聊天里给自己留的换装便签（src/room.js 的 liveMemos，还管着的那几张：{ text, title, at }）：摆在最前头，他第一眼看得到
-export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [], pending = [], garden = "", dressing = "", steps = 0, memos = [], thoughts = false }) {
+export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [], pending = [], garden = "", dressing = "", pindou = "", steps = 0, memos = [], thoughts = false }) {
   const herLine = !herLast
     ? "她还没在开封府里说过话。"
     : herLast.fox
@@ -117,6 +121,10 @@ ${lastLine}${later}${talk}
 ${garden ? `- 去院子里种花（play_garden 工具）：每天浇水、松土、修剪里选一样（一天只算一回），赏花不限次数。${garden}去不去你自己定。院子里的字只有你看得到，屋里只留一行小字（像“去园子里浇了水”）；想让她知道什么，写在便签纸上。\n` : ""}${
     dressing
       ? `- 去妆台前玩换装（play_dressing_room 工具）：一个给你闲着玩的换装小游戏，玩的是游戏里的那一身，不是你这会儿真穿着什么。换装随便换、不限次数；完成搭配一天一回，成就在那时按完成的那一身判；照镜子不限次数，只照得出今天完成的那一套。${dressing}去不去你自己定。妆台上的字只有你看得到；屋里只留一行小字，完成搭配那一回写的是你完成的那一身，她来转一圈看得见。\n`
+      : ""
+  }${
+    pindou
+      ? `- 去桌上拼拼豆（play_pindou 工具）：一块拼豆板，照色板一个字母一颗豆子，一行一行往上放，拼成一幅像素画；拼完了起个名字挂起来，桌上换一块新的。${pindou}去不去你自己定，一回拼不完下回接着拼（板子一直摆在桌上）。你拼的东西她在开封府的拼豆作里看得见（拼到一半的、挂起来的都看得见，只能看）；屋里只留一行小字。\n`
       : ""
   }${
     mcps.length

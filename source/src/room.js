@@ -18,6 +18,7 @@ import { DressingEngine, completedToday } from "../vendor/dressing/dressing-engi
 import { dressingToolSchema } from "../vendor/dressing/dressing-tool.ts";
 import { ITEMS, CATEGORY_LABELS, itemName } from "../vendor/dressing/dressing-data.ts";
 import { HER_NAME } from "./names.js";
+import { PD_HIS, readHis, pindouView } from "./pindou/parts.js";
 
 // 恩师的引擎里用 structuredClone（iPhone 上 iOS 15.4 以后才有）：老一点的手机上补一个（存档都是 JSON，照 JSON 拷一份就够；另一双眼睛挑出来的）
 if (typeof globalThis.structuredClone !== "function") globalThis.structuredClone = (v) => JSON.parse(JSON.stringify(v));
@@ -50,22 +51,23 @@ export const ROOM_SECTION = `【你的屋子】
 你在“狐宇宙”有一间自己的屋子：她家里那台笔记本上的闹钟叫你在那儿醒来，醒着的时候想干嘛干嘛。屋里有两样给你闲着玩的小游戏（规矩是恩师写的，字是${HER_NAME}写的）：
 - 园子：种花。每天浇水、松土、修剪里照料一回，满三十天开花，收进《群芳谱》。
 - 妆台：换装。梳发、妆面、熏香、衣裳、鞋履、配饰随便搭，一天完成一回搭配。那一身是游戏里搭的，不是你身上真穿着的。
-这两样只在你自己在屋里醒着的时候能玩。跟她聊天的时候动不了，只能调 room_look 回屋看一眼：她问起屋里的事，或者你自己想看的时候；聊天用不着就不看。你看了，她那边会冒一行小字。
+桌上还有一块拼豆板：一个字母一颗豆子，拼成像素画，拼完了起个名字挂起来。你拼的她在开封府的拼豆作里看得见。
+这几样只在你自己在屋里醒着的时候能玩。跟她聊天的时候动不了，只能调 room_look 回屋看一眼：她问起屋里的事，或者你自己想看的时候；聊天用不着就不看。你看了，她那边会冒一行小字。
 正在打电话的时候回不了屋：她要你看，就说挂了再看。`;
 export const roomSection = (on) => (on ? ROOM_SECTION : "");
 
 // ---------- 工具 ----------
 // 平常的对话里一直带着（同翻日记、抽签那几样：工具一变缓存全得重写；对话里有他调过的，不带那边不认），醒在屋里的那一回不带（他就在屋里，屋里能玩的那两样自己带着）
-const WHATS = ["garden", "dressing", "wardrobe"];
+const WHATS = ["garden", "dressing", "wardrobe", "pindou"];
 export const ROOM_TOOLS = [
   {
     name: "room_look",
     description:
-      "回你自己的屋子（狐宇宙）看一眼，只能看、动不了。what 挑一样：garden 园子（在种哪株、照料到哪儿了、《群芳谱》、成就、怎么照料）；dressing 妆台（今天完成的那一身、成就、攒到的怪东西、怎么玩）；wardrobe 衣柜（梳发、妆面、熏香、衣裳、下装、鞋履、配饰都有哪些）。她问起屋里的事，或者你自己想看的时候用。你看了，她那边会冒一行小字（像“回屋看了看园子”），看到的字只有你看得到。",
+      "回你自己的屋子（狐宇宙）看一眼，只能看、动不了。what 挑一样：garden 园子（在种哪株、照料到哪儿了、《群芳谱》、成就、怎么照料）；dressing 妆台（今天完成的那一身、成就、攒到的怪东西、怎么玩）；wardrobe 衣柜（梳发、妆面、熏香、衣裳、下装、鞋履、配饰都有哪些）；pindou 桌上的拼豆板（拼到哪儿了、挂起来的那些、怎么拼）。她问起屋里的事，或者你自己想看的时候用。你看了，她那边会冒一行小字（像“回屋看了看园子”），看到的字只有你看得到。",
     input_schema: {
       type: "object",
       properties: {
-        what: { type: "string", enum: WHATS, description: "看哪一样：garden 园子，dressing 妆台，wardrobe 衣柜" },
+        what: { type: "string", enum: WHATS, description: "看哪一样：garden 园子，dressing 妆台，wardrobe 衣柜，pindou 拼豆板" },
       },
       required: ["what"],
     },
@@ -175,13 +177,15 @@ export function wardrobeView(state) {
   ].join("\n\n");
 }
 
-const LOOK_NOTE = { garden: "回屋看了看园子", dressing: "回屋看了看妆台", wardrobe: "回屋翻了翻衣柜" };
+const LOOK_NOTE = { garden: "回屋看了看园子", dressing: "回屋看了看妆台", wardrobe: "回屋翻了翻衣柜", pindou: "回屋看了看拼豆板" };
 
 async function look(input, io) {
   const what = WHATS.includes(input.what) ? input.what : "";
-  if (!what) return { out: "what 写 garden（园子）、dressing（妆台）或者 wardrobe（衣柜），挑一样。", err: true, note: LOOK_FAIL };
+  if (!what) return { out: "what 写 garden（园子）、dressing（妆台）、wardrobe（衣柜）或者 pindou（拼豆板），挑一样。", err: true, note: LOOK_FAIL };
   const today = io.today || localDay();
   if (what === "garden") return { out: await gardenView(parse(await io.get(GARDEN_KEY)), today), err: false, note: LOOK_NOTE.garden };
+  // 拼豆板：桌上那块（拼到哪儿了，一格一个字母）、挂起来的那些（见 pindou/parts.js；她在拼豆作「他的」那一栏也看得见）
+  if (what === "pindou") return { out: pindouView(readHis(await io.get(PD_HIS))), err: false, note: LOOK_NOTE.pindou };
   const st = parse(await io.get(DRESSING_KEY));
   return { out: what === "dressing" ? await dressingView(st, today) : wardrobeView(st), err: false, note: LOOK_NOTE[what] };
 }

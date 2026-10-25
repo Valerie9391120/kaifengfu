@@ -69,8 +69,8 @@ ok(!others.some((n) => ROOM_NAMES.has(n)) && new Set([...DIARY_TOOLS, ...QX_TOOL
   "跟翻日记、抽签、江湖棋局、屋里的园子妆台那几样不重名");
 const lookT = ROOM_TOOLS[0];
 const memoT = ROOM_TOOLS[1];
-ok(JSON.stringify(lookT.input_schema.properties.what.enum) === '["garden","dressing","wardrobe"]' && lookT.input_schema.required.join() === "what" && lookT.description.includes("只能看、动不了") && lookT.description.includes("一行小字"),
-  "room_look：what 挑园子、妆台、衣柜一样；说明里写着只能看、她那边冒一行小字");
+ok(JSON.stringify(lookT.input_schema.properties.what.enum) === '["garden","dressing","wardrobe","pindou"]' && lookT.input_schema.required.join() === "what" && lookT.description.includes("只能看、动不了") && lookT.description.includes("一行小字"),
+  "room_look：what 挑园子、妆台、衣柜、拼豆板一样（拼豆板 10 月 25 日添的，见 tests/pindou.test.mjs）；说明里写着只能看、她那边冒一行小字");
 ok(memoT.input_schema.required.join() === "text" && memoT.description.includes("只在她明说要你下回在妆台穿什么的时候用，平常用不着") && memoT.description.includes(`“${MEMO_NOTE}”`) && memoT.description.includes("最多三天") && MEMO_NOTE === "记录了下次换装偏好",
   "room_memo：只在她明说要他下回穿什么的时候用（她 02:41 定的：说明书里写死）；她那边那一行是她的原话“记录了下次换装偏好”；管到下一回完成搭配，最多三天");
 

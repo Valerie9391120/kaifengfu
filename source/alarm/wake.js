@@ -34,6 +34,7 @@ import { QX_KEY, QX_TOOLS, QX_NAMES, CUT_QX, QX_FAIL_NOTE, isQxCall, readPool, r
 import { ROOM_TOOLS, ROOM_NAMES, isRoomCall, runRoomCalls, roomSection, cutRoom, localDay, MEMO_KEY, liveMemos, memoStands, memoLines } from "../src/room.js";
 import { gardenOf, gardenBrief, gardenToy } from "./garden.js";
 import { dressingOf, dressingBrief, dressingToy } from "./dressing.js";
+import { pindouOf, pindouBrief, pindouToy } from "./pindou.js";
 import { completedToday } from "../vendor/dressing/dressing-engine.ts";
 import { wakeSection, taskSection, wakeNowNote, tailTranscript, LAST_STEP_NOTE, THOUGHT_DONE_NOTE } from "./note.js";
 import { askSummary } from "../src/ask.js";
@@ -201,7 +202,7 @@ function withoutNewChat(step) {
 // 问他一回（几步）。msgs 是寄过去的那段对话（最后一条是醒了那一行），section 是【此刻】后面附的【醒来】那一段。
 // game：那段对话里下过江湖棋局（同手机那头：摆开过又收了的平常对话，对话里有他调过引擎的，四样工具照带，不带那边不认）。
 //   闹钟不替他下棋（引擎在手机那头）：一律当收着棋（{ off: true }，【此刻】里写一句收起来了）；他真调了，这一步到此为止
-// toys：他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js 的 gardenToy、dressingToy；只有醒在屋里的时候给，她 10 月 21 日定的）：
+// toys：他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js、拼豆板 alarm/pindou.js 的 gardenToy、dressingToy、pindouToy；只有醒在屋里的时候给，她 10 月 21 日定的，拼豆板 10 月 25 日添的）：
 //   一样带一样工具，他调了就替他办、递回去接着要。一样是 { tool, names, is(call), cut(call), run(calls) }
 // most：最多几步（调一回工具、拿到结果接着往下说算一步）；lastNote：到了最后一步（前面一步调了工具，接着要的那一回）附在【醒来】后面的提醒，没给就不提醒
 // room：醒在平常的对话里（任务到点那一回）是 { chat, title }：同手机那头，带着回屋看一眼、留换装便签那两样（src/room.js），他调了就替他办；
@@ -441,8 +442,8 @@ function roomRows(event, steps) {
 }
 
 // 平常那种：醒在狐宇宙（他的屋子）
-// gardenOpts、dressingOpts：测试里把园子的钟、骰子，妆台的钟换成假的（见 alarm/garden.js 的 gardenOf、alarm/dressing.js 的 dressingOf）
-export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log = () => {}, pending = [], gardenOpts = undefined, dressingOpts = undefined }) {
+// gardenOpts、dressingOpts、pindouOpts：测试里把园子的钟、骰子，妆台的钟，拼豆板的钟换成假的（见 alarm/garden.js 的 gardenOf、alarm/dressing.js 的 dressingOf、alarm/pindou.js 的 pindouOf）
+export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log = () => {}, pending = [], gardenOpts = undefined, dressingOpts = undefined, pindouOpts = undefined }) {
   const st = ctx.settings;
   const memeLookup = lookupOf(ctx);
   const transcript = ctx.herLast && !ctx.herLast.fox ? tailTranscript(parse(await store.get(chatKey(ctx.herLast.id)), []), memeLookup) : "";
@@ -452,6 +453,8 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
   // 他屋里的妆台：【醒来】里只说今天完成搭配没有（这是游戏，不是他的实际状态）；今天完成过了，这一回就不给“完成搭配”这个选项（她 10 月 21 日定的）
   const dressing = dressingOf(store, dressingOpts);
   const dressed = await dressing.load();
+  // 他屋里桌上的拼豆板（10 月 25 日添的）：【醒来】里告诉他拼到哪儿了，去不去他自己定；拼的东西她在拼豆作「他的」那一栏看得见
+  const pd = pindouOf(store, pindouOpts);
   // 他在聊天里给自己留的换装便签（src/room.js）：还管着的摆在【醒来】里；过了三天的、留它的那一步已经不在那段对话里的（她改了话、重新回答、删了那段），收起来
   const memos = liveMemos(await Promise.all(store.keys(MEMO_KEY).map(async (key) => ({ key, text: await store.get(key) }))), now);
   const chats = new Map();
@@ -485,6 +488,7 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     pending,
     garden: gardenBrief(await garden.load(), garden.today()),
     dressing: dressingBrief(dressed, dressing.today()),
+    pindou: pindouBrief(await pd.load()),
     steps: ROOM_STEPS,
     memos: memoLines(shown),
     // 心里话一回醒着写一段（她 10 月 24 日 02:05 说十二步写了十二段、差不多都是一个意思，02:09 定的“醒来写一回”）；她关了“他写心里话”就不提
@@ -521,7 +525,7 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     }
     return out;
   };
-  const toys = [gardenToy(garden), { ...dress, run: dressRun }];
+  const toys = [gardenToy(garden), { ...dress, run: dressRun }, pindouToy(pd)];
   // 心里话写过了的那几步，附上 THOUGHT_DONE_NOTE（她关了“他写心里话”就不附）
   const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section, toys, most: ROOM_STEPS, lastNote: LAST_STEP_NOTE, thoughtNote: ctx.settings.thoughts !== false ? THOUGHT_DONE_NOTE : "" });
   // 便签：完成搭配那一下没收成的，醒完再收一遍
