@@ -8,7 +8,8 @@
 //   板子的颜色跟着青绿、丁香、黑夜换
 //
 // 存档（都是加密了跟着云端走）：
-//   kfs2:pd:state       她眼下这块板子和几样习惯（几号板、拼到哪了、手上的颜色、看的样子、对称、辅助线、自己调的颜色）
+//   kfs2:pd:state       她眼下这块板子（几号板、拼到哪了、自己调的颜色）。只在板子真动了的时候写，写的时候认一认是不是接着存着的那一份拼的
+//                       （见 readState、App.jsx 的 savePdState）；手上的颜色、看的样子这些习惯记在每台设备自己那儿（readPrefs，不跟云端走）
 //   kfs2:pd:work:<编号> 她存进作品集的一幅，一幅一条（两台设备各存各的不互相盖掉）
 //   kfs2:pindou         他屋里桌上那块板子和挂起来的那些，只有家里的闹钟写（同园子 kfs2:garden、妆台 kfs2:dressing）
 //
@@ -89,11 +90,13 @@ const emptyGrid = (n) => new Array(n * n).fill(null);
 // ---------- 作品码 ----------
 // PD1~边长~颜色（不带井号，逗号隔开）~一格一格：用到的颜色依次记成 a、b、c……，空格记成点，连着一样的后面跟个数
 const CODE_AB = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+// 一块板子最多几种颜色（一种一个字母，写不下更多；那一页拼第五十三种新颜色的时候不让放，见 page.js 的 roomFor）
+export const COLOR_MAX = CODE_AB.length;
 export function toCode(n, g) {
   const cols = [];
   const idx = new Map();
   for (const v of g) if (v && !idx.has(v)) idx.set(v, cols.push(v) - 1);
-  if (cols.length > CODE_AB.length) return "";
+  if (cols.length > COLOR_MAX) return "";
   let out = "";
   let prev = "";
   let run = 0;
@@ -201,17 +204,37 @@ const parse = (text) => {
 const VIEWS = ["bead", "fused", "pixel"];
 const TOOLS = ["pen", "eraser", "fill", "picker"];
 export const CUSTOM_MAX = 20;
-// 她眼下这块板子和习惯：读不出来回 null（那一页照默认的来）
+// 她眼下这块板子：{ v: 1, code, custom, r, t }。r 是这一回写的记号（每写一回换一个）：
+//   那一页打开的时候（或者同步下来换上的时候）记着是哪一份，存的时候存着的已经不是那一份了，就是别的设备后来又拼过（见 App.jsx 的 savePdState）。
+//   不比时间：两台设备的钟不一定对得上。t 是哪会儿写的，只给人看
+// 读不出来回 null（那一页照一块空的 24×24 来）
 export function readState(text) {
   const s = parse(text);
   if (!s) return null;
   const b = fromCode(s.code);
   const custom = Array.isArray(s.custom) ? s.custom.map(normHex).filter(isHex).filter((h, i, a) => !BY_HEX.has(h) && a.indexOf(h) === i).slice(0, CUSTOM_MAX) : [];
-  const color = normHex(s.color);
   return {
     n: b ? b.n : 24,
     g: b ? b.g : emptyGrid(24),
     custom,
+    r: typeof s.r === "string" ? s.r : "",
+    t: Number(s.t) || 0,
+  };
+}
+// 写成一条（r 是这一回的记号）。作品码写不出来（颜色太多）回 null：不存，存着的还是上一回好的那一份
+export function packState(st, r) {
+  const code = toCode(st.n, st.g);
+  if (!code) return null;
+  return JSON.stringify({ v: 1, code, custom: st.custom || [], r: String(r || ""), t: Date.now() });
+}
+
+// 这台设备上的习惯（看的样子、手上的工具和颜色、对称、辅助线、“单指拼豆”那句提示看过没有）：记在这台设备上（localStorage），不跟云端走。
+// 跟板子分开：只换了个颜色、换了个样子，不去写板子那一条（那样别的设备上刚拼的会被这台设备上旧的、还没同步下来的空板子盖掉）
+export const PD_PREFS = "kfs-pindou-prefs";
+export function readPrefs(text) {
+  const s = parse(text) || {};
+  const color = normHex(s.color);
+  return {
     color: isHex(color) ? color : "#EE7A2D",
     view: VIEWS.includes(s.view) ? s.view : "bead",
     tool: TOOLS.includes(s.tool) ? s.tool : "pen",
@@ -220,20 +243,7 @@ export function readState(text) {
     hint: !!s.hint,
   };
 }
-export function packState(st) {
-  return JSON.stringify({
-    v: 1,
-    code: toCode(st.n, st.g),
-    custom: st.custom || [],
-    color: st.color,
-    view: st.view,
-    tool: st.tool,
-    mirror: !!st.mirror,
-    guides: !!st.guides,
-    hint: !!st.hint,
-    t: Date.now(),
-  });
-}
+export const packPrefs = (p) => JSON.stringify({ v: 1, color: p.color, view: p.view, tool: p.tool, mirror: !!p.mirror, guides: !!p.guides, hint: !!p.hint });
 
 // 作品集里的一幅：{ v: 1, name, code, at }。认不出板子的回 null
 export function readWork(text) {
@@ -272,7 +282,7 @@ export function pdText(m, { img = true, stale = false } = {}) {
 // 南衙那一行的小字：作品集里几幅、他那边怎么样
 export function pdSub(works, his) {
   const mine = works && works.length ? `作品集里 ${works.length} 幅` : "";
-  const h = his && his.touched ? (his.done.length ? `他挂起来 ${his.done.length} 幅` : countBeads(his.g) ? "他桌上那块拼到一半" : "") : "";
+  const h = his && his.touched ? (his.done.length ? `他挂起来 ${his.done.length} 幅` : countBeads(his.g) ? "他桌上那块拼到一半" : "他桌上那块空着") : "";
   return [mine, h].filter(Boolean).join("，") || "还没拼过";
 }
 // 历史对话的预览、名字、日记摘录：短一点
@@ -343,7 +353,7 @@ const dateText = (t) => {
 // 桌上这块眼下的样子（他 look 的时候、拼完一笔回给他的都是这一段）
 export function boardText(his) {
   const beads = countBeads(his.g);
-  const head = `桌上这块拼豆板：${his.n}×${his.n}，${beads ? `拼了 ${beads} 颗` : "还空着"}。字母是颜色（见色板），. 是空着；x 是列号、y 是行号，都从 0 数。`;
+  const head = `桌上这块拼豆板：${his.n}×${his.n}，${beads ? `拼了 ${beads} 颗` : "还空着"}。字母是颜色（见色板），. 是空着；左边的数是第几行（y），上面两行的数是第几列（x），都从 0 数。`;
   const used = beads ? `\n用到的颜色：${usageText(his.g)}。` : "";
   return `${head}\n${gridText(his.n, his.g)}${used}`;
 }

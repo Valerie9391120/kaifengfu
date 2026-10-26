@@ -4,14 +4,14 @@
 //
 // 原来是官方 App 里那一页（一个文件）：拼豆、取豆、填色、吸色、左右对称、撤销重做、三种样子、双指缩放、换板子、模板、作品集、作品码、导出图片、用量。
 // 搬进来改的几处：
-//   存档交给开封府（她眼下这块板子、作品集都加密了跟着云端走），原来那一套“存不存得住”的自查、钉在作品集里的那一幅都拿掉了
+//   存档交给开封府（她眼下这块板子、作品集都加密了跟着云端走；手上的颜色、看的样子这些习惯记在这台设备上），原来那一套“存不存得住”的自查、钉在作品集里的那一幅都拿掉了
 //   （仓库是公开的，她拼的东西不进仓库；原来那一幅她拿作品码粘进来）
 //   作品那一栏多一颗“发给光义”（狐宇宙里不摆，同秘戏钱匣），多一栏「他的」（他在屋里拼的，只能看）
 //   颜色跟着开封府的主题走；左上角一个叉回到聊天
 //   工具那一排只留图标，底下那一排字拿掉了（她 10 月 25 日 23:33 说的：“感觉十分拥挤 而且功能很清晰了其实”；读屏照样念得出名字）
 import { CSS } from "./style.js";
 import { makeSprite, paintWork, rrect, boundsOf } from "./draw.js";
-import { PALETTE, SIZES, CUSTOM_MAX, colorName, normHex, isHex, countBeads, usageOf, toCode, fromCode, resizeGrid, floodGrid, cleanName } from "./parts.js";
+import { PALETTE, SIZES, CUSTOM_MAX, COLOR_MAX, PD_PREFS, readPrefs, packPrefs, colorName, normHex, isHex, countBeads, usageOf, toCode, fromCode, resizeGrid, floodGrid, cleanName } from "./parts.js";
 
 const PAL = PALETTE.map((c) => [c.name, c.hex]);
 const NAME = new Map(PAL.map(([n, h]) => [h, n]));
@@ -144,6 +144,22 @@ function ensureStyles() {
 }
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+// 这台设备上的习惯（见 parts.js 的 readPrefs）。localStorage 用不了（隐私模式、存满了）就当没有
+function loadPrefs() {
+  try {
+    return readPrefs(localStorage.getItem(PD_PREFS));
+  } catch (e) {
+    return readPrefs(null);
+  }
+}
+// 从主屏幕上打开的开封府（没有地址栏、没有返回）：点“下载 PNG”会跳到那张图上回不来，那一颗不摆，长按图片存
+function standalone() {
+  try {
+    return !!(window.navigator.standalone || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches));
+  } catch (e) {
+    return false;
+  }
+}
 const fmtDate = (t) => {
   const d = new Date(t);
   return `${d.getMonth() + 1}月${d.getDate()}日`;
@@ -155,8 +171,9 @@ const fmtTime = (t) => {
 const nameOfHex = (h) => NAME.get(h) || colorName(h);
 
 // api：{ state（parts.js 的 readState，没有就是 null）, works（listWorks）, his（readHis，没有就是 null）, wake（“他自己醒”开着没有）, canSend,
-//        onState(st)（她这块板子变了，存下来）, onSave({ name, code }) → 存成了没有, onDelete(id), onSend({ name, code }) → 发成了没有, onClose() }
-// 回 { update({ works, his, wake, canSend }), destroy() }
+//        onState({ n, g, custom }, rev)（她这块板子真动了，存下来；rev 是眼下这块是从存着的哪一份接着拼的）→ { rev, kept }（存成的那一份的记号；
+//          别的设备后来又拼过、那一份存进了作品集：kept）, onSave({ name, code }) → 存成了没有, onDelete(id), onSend({ name, code }) → 发成了没有, onClose() }
+// 回 { update({ works, his, wake, canSend, state }), destroy() }：state 是同步下来的板子（别的设备上拼的）
 export function mountBoard(root, api) {
   ensureStyles();
   root.classList.add("kfs-pindou");
@@ -171,15 +188,18 @@ export function mountBoard(root, api) {
   };
 
   // ---------- 状态 ----------
+  // 板子跟着云端走（App.jsx 递进来）；习惯记在这台设备上
   const st0 = api.state || null;
+  const pf0 = loadPrefs();
   let N = st0 ? st0.n : 24;
   let grid = st0 ? st0.g.slice() : new Array(N * N).fill(null);
-  let tool = st0 ? st0.tool : "pen";
-  let color = st0 ? st0.color : "#EE7A2D";
-  let mirror = st0 ? st0.mirror : false;
-  let view = st0 ? st0.view : "bead";
-  let guides = st0 ? st0.guides : false;
-  let hintSeen = st0 ? st0.hint : false;
+  let rev = st0 ? st0.r : ""; // 眼下这块是存着的哪一份（存的时候交给 App.jsx 认一认，见 savePdState）
+  let tool = pf0.tool;
+  let color = pf0.color;
+  let mirror = pf0.mirror;
+  let view = pf0.view;
+  let guides = pf0.guides;
+  let hintSeen = pf0.hint;
   let customColors = st0 ? st0.custom.slice() : [];
   for (const v of grid) if (v && !NAME.has(v) && !customColors.includes(v)) customColors.push(v);
   let zoom = 1;
@@ -357,6 +377,15 @@ export function mountBoard(root, api) {
   }
 
   // ---------- 拼、取、填 ----------
+  // 一块板子最多 COLOR_MAX 种颜色（作品码一种颜色一个字母，再多写不下，存不住）：板子上已经这么多种了，再拼一种新的不让放，说一声
+  function roomFor(v) {
+    if (!v || grid.includes(v)) return true;
+    const used = new Set();
+    for (const c of grid) if (c) used.add(c);
+    if (used.size < COLOR_MAX) return true;
+    toast(`一块板子最多 ${COLOR_MAX} 种颜色，「${nameOfHex(v)}」放不上了，先用板子上有的颜色吧`);
+    return false;
+  }
   function setCell(x, y, v) {
     const i = y * N + x;
     if (grid[i] === v) return false;
@@ -472,6 +501,7 @@ export function mountBoard(root, api) {
     if (pointers.size > 2 || blockUntilUp) return;
     const p = cellAt(e);
     if (tool === "pen" || tool === "eraser") {
+      if (tool === "pen" && !roomFor(color)) return;
       mode = "draw";
       stroke = { snap: grid.slice(), changed: false, last: p };
       if (p && paintAt(p.x, p.y)) stroke.changed = true;
@@ -548,6 +578,7 @@ export function mountBoard(root, api) {
   function doTap(p) {
     if (!p) return;
     if (tool === "fill") {
+      if (!roomFor(color)) return;
       const snap = grid.slice();
       let ch = floodGrid(N, grid, p.x, p.y, color) > 0;
       if (mirror && floodGrid(N, grid, N - 1 - p.x, p.y, color) > 0) ch = true;
@@ -657,14 +688,14 @@ export function mountBoard(root, api) {
       b.classList.toggle("on", o);
       b.setAttribute("aria-pressed", String(o));
     });
-    scheduleSave();
+    savePrefs();
   }
   function selectColor(h) {
     color = h;
     $(".pd-bico").style.setProperty("--c", h);
     $$(".pd-pal .pd-cell[data-hex]").forEach((el) => el.classList.toggle("on", el.dataset.hex === h));
     $(".pd-palname").textContent = nameOfHex(h);
-    scheduleSave();
+    savePrefs();
   }
   function setMirror(v) {
     mirror = v;
@@ -672,19 +703,19 @@ export function mountBoard(root, api) {
     b.classList.toggle("on", v);
     b.setAttribute("aria-pressed", String(v));
     requestRender();
-    scheduleSave();
+    savePrefs();
   }
   function setGuides(v) {
     guides = v;
     $('[data-act="guides"]').setAttribute("aria-checked", String(v));
     requestRender();
-    scheduleSave();
+    savePrefs();
   }
   function setView(v) {
     view = v;
     $$('[data-seg="view"] button').forEach((b) => b.classList.toggle("on", b.dataset.view === v));
     requestRender();
-    scheduleSave();
+    savePrefs();
   }
   function setTab(t) {
     tab = t;
@@ -733,14 +764,17 @@ export function mountBoard(root, api) {
   function addCustom(v) {
     const h = normHex(v);
     if (!isHex(h)) return;
+    let added = false;
     if (!NAME.has(h) && !customColors.includes(h)) {
       customColors.push(h);
       if (customColors.length > CUSTOM_MAX) customColors.shift();
+      added = true;
     }
     color = h;
     renderPalette();
     selectColor(h);
     if (tool !== "fill") setTool("pen");
+    if (added) scheduleSave(); // 自己调的颜色跟着板子存（换到别的设备上也在）
     toast("加进色板了");
   }
 
@@ -816,8 +850,8 @@ export function mountBoard(root, api) {
       el.appendChild(b);
     }
   }
-  function loadGrid(n, g, msg, name = "") {
-    curName = name;
+  // 换上一整块板子（模板、作品码、作品集里打开的、同步下来的）：原来那块记进撤销；板子上不在色板里的颜色添进“自己调的”
+  function putBoard(n, g, custom = []) {
     pushUndo(grid, N);
     N = n;
     grid = g.slice();
@@ -825,7 +859,7 @@ export function mountBoard(root, api) {
     ox = oy = 0;
     spriteCache.clear();
     let added = false;
-    for (const v of grid)
+    for (const v of custom.concat(grid))
       if (v && !NAME.has(v) && !customColors.includes(v)) {
         customColors.push(v);
         added = true;
@@ -837,9 +871,29 @@ export function mountBoard(root, api) {
     renderSizes();
     updateZoomUI();
     requestRender();
+  }
+  function loadGrid(n, g, msg, name = "") {
+    curName = name;
+    putBoard(n, g);
     afterChange();
     hideHint();
     toast(msg, "撤销", undo);
+  }
+  // 同步下来的板子（别的设备上后来又拼过）：手上没有还没存的，换上它（不用再存，存着的就是它）；
+  // 有的话不换，存的时候 App.jsx 那头认出来，把那一份存进作品集（见 savePdState）
+  function adopt(s) {
+    if (!s || s.r === rev || saveT || saving) return;
+    if (toCode(s.n, s.g) === toCode(N, grid)) {
+      rev = s.r;
+      return;
+    }
+    curName = "";
+    putBoard(s.n, s.g, s.custom || []);
+    rev = s.r;
+    updateCount();
+    updateSend();
+    if (tab === "use") renderUsage();
+    toast("另一台设备上拼的这一块同步过来了", "撤销", undo);
   }
   function clearBoard() {
     if (!hasBeads()) {
@@ -904,7 +958,9 @@ export function mountBoard(root, api) {
     const d = new Date();
     return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   }
+  let savingWork = false; // 存进作品集正在存（点了两下、回车又点了一下，只存一幅）
   async function saveWork() {
+    if (savingWork) return;
     if (!hasBeads()) {
       toast("先拼几颗再存");
       return;
@@ -917,11 +973,13 @@ export function mountBoard(root, api) {
     const inp = $(".pd-name");
     const name = cleanName(inp.value) || defaultName();
     let ok = false;
+    savingWork = true;
     try {
       ok = await api.onSave({ name, code });
     } catch (e) {
       ok = false;
     }
+    savingWork = false;
     if (dead) return;
     if (ok) {
       inp.value = "";
@@ -1113,6 +1171,8 @@ export function mountBoard(root, api) {
       $('[data-act="code-go"]').textContent = "铺到板子上";
     }
     codeMode = m;
+    // 粘贴的那一张挂在顶上：要在框里打字（粘贴），摆在底下的话键盘一起来，框和底下那颗“铺到板子上”都压在键盘底下
+    $('[data-modal="code"]').classList.toggle("pd-up", m === "paste");
     openModal("code");
     if (m === "copy")
       setTimeout(() => {
@@ -1132,6 +1192,7 @@ export function mountBoard(root, api) {
           ok = true;
         }
       } catch (e) {}
+      if (dead) return; // 复制的那一下她把这一页关了
       if (!ok) {
         try {
           ta.focus();
@@ -1223,6 +1284,7 @@ export function mountBoard(root, api) {
     const url = renderExport(exBg === "board");
     $(".pd-eximg").src = url;
     const a = $(".pd-exdl");
+    a.hidden = standalone();
     a.href = url;
     a.download = "拼豆 " + defaultName().replace(":", "") + ".png";
   }
@@ -1275,18 +1337,23 @@ export function mountBoard(root, api) {
     h.classList.add("gone");
     if (!hintSeen) {
       hintSeen = true;
-      scheduleSave();
+      savePrefs();
     }
   }
 
   // ---------- 存：交给开封府 ----------
+  // 板子真动了才存（拼、取、填、换板子、模板、作品码、撤销、自己调的颜色），隔六百毫秒存一回；只换了颜色、样子不存板子（习惯记在这台设备上，savePrefs）。
+  // 存的时候带上眼下这块是从存着的哪一份接着拼的（rev）：App.jsx 那头认一认，别的设备后来又拼过的那一份不盖掉，存进作品集（见 savePdState）。
+  // 一回一回排着存：前一回还没存完，后一回等它（不然后一回拿着旧的记号去认，认成别的设备拼的）
   let saveT = 0;
+  let saving = null;
+  let again = false;
   let booted = false;
   // 板子上有没有豆子（写成一个小函数：直接写那一句，打包样式表的时候会被认成一个样式名，白白多出一条）
   function hasBeads() {
     return grid.some(Boolean);
   }
-  const snapshot = () => ({ n: N, g: grid.slice(), custom: customColors.slice(), color, view, tool, mirror, guides, hint: hintSeen });
+  const snapshot = () => ({ n: N, g: grid.slice(), custom: customColors.slice() });
   function scheduleSave() {
     if (!booted || dead) return;
     clearTimeout(saveT);
@@ -1296,8 +1363,40 @@ export function mountBoard(root, api) {
     if (!saveT) return;
     clearTimeout(saveT);
     saveT = 0;
+    if (saving) {
+      again = true;
+      return;
+    }
+    doSave();
+  }
+  // 关上了、整页卸掉了也照样存完（排着的那一回不丢）；提示条只在还开着的时候说
+  function doSave() {
+    let p;
     try {
-      api.onState(snapshot());
+      p = Promise.resolve(api.onState(snapshot(), rev));
+    } catch (e) {
+      p = Promise.resolve(null);
+    }
+    saving = p
+      .then(
+        (r) => {
+          if (r && typeof r.rev === "string") rev = r.rev;
+          if (r && r.kept && !dead) toast("另一台设备上后来也拼过：那边的那一块存进作品集了");
+        },
+        () => {}
+      )
+      .then(() => {
+        saving = null;
+        if (again) {
+          again = false;
+          doSave();
+        }
+      });
+  }
+  function savePrefs() {
+    if (!booted || dead) return;
+    try {
+      localStorage.setItem(PD_PREFS, packPrefs({ color, view, tool, mirror, guides, hint: hintSeen }));
     } catch (e) {}
   }
 
@@ -1395,6 +1494,11 @@ export function mountBoard(root, api) {
   });
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-kfs-theme"] });
   cleanups.push(() => mo.disconnect());
+  // 切到后台（上划回主屏幕、锁屏）：眼下这块马上存，不等那六百毫秒（在后台被系统杀掉，最后那几笔也在）
+  on(document, "visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushSave();
+  });
+  on(window, "pagehide", flushSave);
   let ro = null;
   if (window.ResizeObserver) {
     ro = new ResizeObserver(() => layout());
@@ -1427,9 +1531,13 @@ export function mountBoard(root, api) {
     update(next = {}) {
       if (dead) return;
       if (next.works) {
+        // 作品集没变（同步下来的是别的东西）不重画：重画了，点到一半的“确认删除”就没了
+        const sig = (l) => l.map((w) => `${w.id}:${w.at}:${w.name}`).join("|");
+        const same = sig(next.works) === sig(works);
         works = next.works;
-        renderWorks();
+        if (!same) renderWorks();
       }
+      if (next.state) adopt(next.state);
       if ("his" in next) his = next.his;
       if ("wake" in next) wake = !!next.wake;
       if (("his" in next || "wake" in next) && tab === "his") renderHis();

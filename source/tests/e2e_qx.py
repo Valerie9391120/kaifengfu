@@ -118,7 +118,7 @@ def run(browser):
     open_nanya(pg)
     rows = pg.evaluate(NANYA)
     qx = next((r for r in rows if r["name"] == "秘戏钱匣"), None)
-    ok([r["name"] for r in rows][3:6] == ["藏音匣", "秘戏钱匣", "网易云"] and qx and qx["sub"] == "签库还空着" and qx["shapes"] == ["circle", "rect"],
+    ok([r["name"] for r in rows][3:6] == ["藏音匣", "秘戏钱匣", "拼豆作"] and qx and qx["sub"] == "签库还空着" and qx["shapes"] == ["circle", "rect"],
        f"南衙：藏音匣后面一行“秘戏钱匣”，图标是外圆内方的铜钱，小字“签库还空着”（{[r['name'] for r in rows]}，{qx}）")
     ok(not got, "点之前没去下载锦盒那一页")
     pg.locator(".kfs-nanya .kfs-nanya-row", has_text="秘戏钱匣").click()

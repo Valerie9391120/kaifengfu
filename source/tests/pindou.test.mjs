@@ -4,7 +4,7 @@
 // 仓库是公开的：这里的板子都是编的（几颗豆子、一个小方块），不是她拼的。
 import {
   PALETTE, SIZES, HIS_SIZE, PD_STATE, PD_WORK, PD_HIS, colorName, keyOf, hexOfKey, toCode, fromCode, resizeGrid, floodGrid, cleanName,
-  countBeads, usageOf, readState, packState, readWork, packWork, listWorks, readHis, packHis, gridText, boardText, galleryText,
+  countBeads, usageOf, readState, packState, readPrefs, packPrefs, PD_PREFS, COLOR_MAX, readWork, packWork, listWorks, readHis, packHis, gridText, boardText, galleryText,
   PINDOU_TOOL, isPindouCall, PD_NOTE, hisApply, pindouBrief, pindouView, pdText, pdBrief, pdInfo, pdSub, DONE_MAX, NAME_MAX,
 } from "../src/pindou/parts.js";
 import { pindouOf, runPindouCalls, cutPindou, pindouToy, PINDOU_NAMES } from "../alarm/pindou.js";
@@ -92,12 +92,23 @@ ok(Array.from(cleanName("🦊".repeat(30))).length === NAME_MAX && !cleanName("�
 // =====================================================
 // 她的板子、作品集
 // =====================================================
-const st = readState(packState({ n: 24, g: g24, custom: ["#123456", "#123456", W], color: O, view: "fused", tool: "fill", mirror: true, guides: true, hint: true }));
-ok(st && st.n === 24 && eq(st.g, g24) && eq(st.custom, ["#123456"]) && st.color === O && st.view === "fused" && st.tool === "fill" && st.mirror && st.guides && st.hint,
-  "她的板子存进去读出来一样；自己调的颜色去掉重复的、去掉色板里本来就有的");
-const st0 = readState(JSON.stringify({ v: 1, code: "坏了", color: "红", view: "3d", tool: "刷子" }));
-ok(st0 && st0.n === 24 && countBeads(st0.g) === 0 && st0.color === O && st0.view === "bead" && st0.tool === "pen" && !st0.mirror, "存档里的板子、颜色、样子、工具认不出：照默认的来（24×24 空板子、狐橘、拼豆、拼）");
+const stText = packState({ n: 24, g: g24, custom: ["#123456", "#123456", W], color: O, view: "fused" }, "rev-1");
+const st = readState(stText);
+const raw = JSON.parse(stText);
+ok(st && st.n === 24 && eq(st.g, g24) && eq(st.custom, ["#123456"]) && st.r === "rev-1" && st.t > 0,
+  "她的板子存进去读出来一样（带着这一回写的记号）；自己调的颜色去掉重复的、去掉色板里本来就有的");
+ok(eq(Object.keys(raw).sort(), ["code", "custom", "r", "t", "v"]), "板子那一条里只有板子：手上的颜色、看的样子这些习惯不往里写（各台设备记各自的）");
+const st0 = readState(JSON.stringify({ v: 1, code: "坏了" }));
+ok(st0 && st0.n === 24 && countBeads(st0.g) === 0 && st0.r === "" && st0.t === 0, "存档里的板子认不出：一块空的 24×24；没有记号（老的写法）记号是空的");
 ok(readState(null) === null && readState("不是 JSON") === null && readState("[1]") === null, "没存过、存坏了：回 null（那一页照默认的开）");
+const rainbow = blank(64);
+for (let i = 0; i < 53; i++) rainbow[i] = "#" + (0x100000 + i).toString(16).toUpperCase();
+ok(packState({ n: 64, g: rainbow, custom: [] }, "x") === null && COLOR_MAX === 52, "一块板子上五十三种颜色：作品码写不出来，不存（存着的还是上一回好的）");
+const pf = readPrefs(packPrefs({ color: Z, view: "pixel", tool: "fill", mirror: true, guides: true, hint: true }));
+ok(pf.color === Z && pf.view === "pixel" && pf.tool === "fill" && pf.mirror && pf.guides && pf.hint, "这台设备上的习惯：存进去读出来一样");
+const pf0 = readPrefs(JSON.stringify({ color: "红", view: "3d", tool: "刷子" }));
+ok(eq(pf0, readPrefs(null)) && pf0.color === O && pf0.view === "bead" && pf0.tool === "pen" && !pf0.mirror && !pf0.hint && PD_PREFS === "kfs-pindou-prefs",
+  "习惯认不出、没存过：照默认的来（狐橘、拼豆的样子、拼）；记在这台设备上（localStorage），钥匙不是 kfs2: 开头的（不跟云端走）");
 const w1 = readWork(packWork({ name: " 《头一幅》 ", code: c24, at: 1000 }));
 ok(w1 && w1.name === "头一幅" && w1.n === 24 && w1.beads === 9 && w1.code === c24 && w1.at === 1000, "作品集里的一幅：名字收拾过、几号板、几颗、几点存的");
 ok(readWork(JSON.stringify({ v: 1, name: "坏", code: "PD1~24~~", at: 1 })) === null && readWork("x") === null, "板子认不出的那一幅：不要");
@@ -180,6 +191,8 @@ ok(pindouBrief(p1.his) === "桌上那块 24×24 拼了 6 颗，拼到一半。" 
 ok(pindouView(h0).startsWith("【你屋里·拼豆板】（回屋看了一眼。只能看，动不了") && pindouView(h0).includes("拼豆板你还没动过") && pindouView(h0).includes("怎么玩："), "回屋看一眼：只能看动不了；没动过照实说；后面是怎么玩");
 ok(pindouView(gh).includes("桌上这块拼豆板：24×24，还空着") && pindouView(gh).includes("1.《三颗橘》"), "回屋看一眼：桌上那块、挂起来的那些都看得到");
 ok(pdSub(list, gh) === "作品集里 3 幅，他挂起来 2 幅" && pdSub([], p1.his) === "他桌上那块拼到一半", "南衙那一行的小字带上他那边");
+const cleared = hisApply(p1.his, { action: "clear" }, T0 + 5000).his;
+ok(cleared.touched && pdSub([], cleared) === "他桌上那块空着", "他拼过又清空了、还没挂起来过：写“他桌上那块空着”（不写“还没拼过”）");
 
 // =====================================================
 // 工具

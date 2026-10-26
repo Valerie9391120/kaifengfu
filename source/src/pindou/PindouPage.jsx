@@ -19,33 +19,46 @@ export const loadPindou = () => {
   return pageP;
 };
 
-// state：她眼下这块板子（parts.js 的 readState，没有是 null，只在打开的那一下递一回）；works：作品集；his：他的板子；wake：“他自己醒”开着没有；
-// canSend：摆不摆“发给光义”（狐宇宙里不摆）；onState(st)、onSave({ name, code })、onDelete(id)、onSend({ name, code })、onClose()；
-// 那一包取不回来（网不好）：onFail
-export function PindouPage({ state, works, his, wake, canSend, onState, onSave, onDelete, onSend, onClose, onFail }) {
+// state：她眼下这块板子（parts.js 的 readState，没有是 null，只在打开的那一下递一回）；incoming：开着的时候同步下来的她那块（别的设备上后来又拼过的）；
+// works：作品集；his：他的板子；wake：“他自己醒”开着没有；canSend：摆不摆“发给光义”（狐宇宙里不摆）；
+// onState(st, rev) → { rev, kept }、onSave({ name, code })、onDelete(id)、onSend({ name, code })、onClose()；那一包取不回来（网不好）：onFail
+export function PindouPage({ state, incoming, works, his, wake, canSend, onState, onSave, onDelete, onSend, onClose, onFail }) {
   const ref = useRef(null);
   const inst = useRef(null);
   const latest = useRef(null);
-  latest.current = { state, works, his, wake, canSend, onState, onSave, onDelete, onSend, onClose, onFail };
+  latest.current = { state, incoming, works, his, wake, canSend, onState, onSave, onDelete, onSend, onClose, onFail };
   useEffect(() => {
     let gone = false;
+    const page = { was: null };
     loadPindou().then(
       (m) => {
         if (gone || !ref.current) return;
         const L = () => latest.current;
+        // 那一包取回来之前同步下来的那一块比打开那一下的新
         inst.current = m.mountBoard(ref.current, {
-          state: L().state,
+          state: L().incoming || L().state,
           works: L().works,
           his: L().his,
           wake: L().wake,
           canSend: L().canSend,
-          onState: (st) => L().onState(st),
+          onState: (st, rev) => L().onState(st, rev),
           onSave: (w) => L().onSave(w),
           onDelete: (id) => L().onDelete(id),
           onSend: (w) => L().onSend(w),
           onClose: () => L().onClose(),
         });
         if (typeof window !== "undefined") window.__kfsPindou = inst.current; // 端到端测试看板子用
+        // 那一页铺好了：壳子上那层底色撤掉（那一页自己有桌面的颜色 --desk，壳子上的写在元素上，分量重，盖着它）；
+        // 网页底色也换成桌面的颜色（同秘戏钱匣、并蒂莲：底下空一条的手机，系统画的那条取网页底色），关上的时候换回去
+        const el = ref.current;
+        el.style.background = "";
+        const desk = getComputedStyle(el).getPropertyValue("--desk").trim();
+        if (desk) {
+          const r = document.documentElement;
+          const b = document.body;
+          page.was = [r.style.backgroundColor, b.style.backgroundColor];
+          r.style.backgroundColor = b.style.backgroundColor = desk;
+        }
       },
       () => {
         if (!gone) latest.current.onFail();
@@ -53,6 +66,11 @@ export function PindouPage({ state, works, his, wake, canSend, onState, onSave, 
     );
     return () => {
       gone = true;
+      if (page.was) {
+        document.documentElement.style.backgroundColor = page.was[0];
+        document.body.style.backgroundColor = page.was[1];
+        page.was = null;
+      }
       if (inst.current) inst.current.destroy();
       inst.current = null;
       if (typeof window !== "undefined") window.__kfsPindou = null;
@@ -67,5 +85,8 @@ export function PindouPage({ state, works, his, wake, canSend, onState, onSave, 
   useEffect(() => {
     if (inst.current) inst.current.update({ canSend });
   }, [canSend]);
+  useEffect(() => {
+    if (inst.current && incoming) inst.current.update({ state: incoming });
+  }, [incoming]);
   return <div ref={ref} className="kfs-pindou-shell kfs-fade absolute inset-0" style={{ zIndex: 60, background: "rgb(var(--k-base))" }} />;
 }

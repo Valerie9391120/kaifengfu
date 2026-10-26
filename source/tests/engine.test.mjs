@@ -175,6 +175,24 @@ const F = createEngine({ local: new FakeLocal(), remote: slow, vault, uid: "u1" 
 await F.load(); await F.pull();
 ok(F.get("kfs2:chat:live") === "第二版", "下一轮补传的是最新的第二版");
 
+// 封着（加密）的那一下又改了：也留着下一轮。10 月 26 日拼豆作审出来的：原来这一条记的版本号是封完以后才取的，
+// 封的那一下改了的，记成了新的版本号、传上去的却是旧的那一版，标成已上传；下一回拉的时候云端那一份旧的回来盖掉了本地新的
+const R2 = new FakeRemote();
+const E2 = createEngine({ local: new FakeLocal(), remote: R2, vault, uid: "u1" });
+await E2.load();
+await E2.set("kfs2:pd:state", "第一版");
+const p2 = E2.push();
+for (let i = 0; i < 5; i++) await Promise.resolve(); // 让它走到封（加密）那一步
+E2.set("kfs2:pd:state", "第二版");
+await p2;
+ok(E2.getStatus().pending === 1, "封着的那一下又改了一次：这一条留着，不会误标成已上传");
+await E2.pull();
+ok(E2.get("kfs2:pd:state") === "第二版", "接着拉一回：云端那一份旧的没回来盖掉本地新的");
+await E2.push();
+const F2 = createEngine({ local: new FakeLocal(), remote: R2, vault, uid: "u1" });
+await F2.load(); await F2.pull();
+ok(F2.get("kfs2:pd:state") === "第二版", "下一轮补传的是第二版");
+
 // 关掉重开：没传上去的还在排队
 const localG = new FakeLocal();
 const G1 = createEngine({ local: localG, remote: new FakeRemote(), vault, uid: "u1" });

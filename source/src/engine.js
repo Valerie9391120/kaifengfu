@@ -140,11 +140,14 @@ export function createEngine({ local, remote, vault, uid, onError }) {
           const batch = [];
           let chars = 0;
           for (const k of Array.from(dirty)) {
+            // 版本号跟要传的那一份一起取（封的那一下又改了的，版本号对不上，留着下一轮）。原来是封完才取的：封的那一下改了，
+            // 记成新的版本号、传上去的是旧的那一份，标成了已上传，下一回拉的时候云端那一份旧的回来盖掉了本地新的（10 月 26 日审拼豆作的时候认出来的）
+            const version = ver.get(k);
             const isDel = deleted.has(k);
             const snapshot = isDel ? null : cache.get(k);
             const payload = isDel ? { k, d: 1 } : { k, v: snapshot };
             const value = await seal(vault, JSON.stringify(payload));
-            batch.push({ k, version: ver.get(k), isDel, snapshot, row: { user_id: uid, key: await rowKeyFor(vault, k), value } });
+            batch.push({ k, version, isDel, snapshot, row: { user_id: uid, key: await rowKeyFor(vault, k), value } });
             chars += value.length;
             if (chars > MAX_BATCH_CHARS) break;
           }

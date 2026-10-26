@@ -77,6 +77,9 @@ export function makeSprite(hex, mode, S) {
   return c;
 }
 
+// 三套主题的底板（那一页的 --board，见 style.js 开头怎么挑的；聊天里那一幅也铺在上面，见 PindouRow.jsx）
+export const BOARD_OF = { qinglv: "#CEE2DA", dingxiang: "#EEE4F8", heiye: "#6C8090" };
+
 // 有豆子的那一块（上下左右各留 pad 格），一颗都没有回 null
 export function boundsOf(n, g, pad = 0) {
   let x0 = n;
@@ -139,15 +142,19 @@ export function paintWork(canvas, n, g, { S, mode = "fused", crop = null, board 
   return canvas;
 }
 
-// 发给他的那张图：熨烫的样子，只截有豆子的那一块（四周留一格），浅色的底板（不用透明的：透明的地方那边看成什么颜色说不准，深色的豆子会看不见）。
-// 长边最多 PNG_MAX 像素（他看图按像素算 token，这么大一张四五百个 token，一颗豆子十几个像素，看得清）
+// 发给他的那张图：像素的样子（实心方格），只截有豆子的那一块（四周留一格），铺一块底板（不用透明的：透明的地方那边看成什么颜色说不准，深色的豆子会看不见）。
+// 不用熨烫的样子：圆角、描边、渐变压不小，一张八九十 KB 到一百多 KB；实心方格一张十来 KB（图跟着那一条存在对话里，那一段对话每存一回都整段加密推上去）。
+// 她在聊天里看到的那一幅是照作品码现画的熨烫样子（PindouRow.jsx），不是这一张。
+// 长边最多 PNG_MAX 像素（他看图按像素算 token，这么大一张四五百个 token）；一颗豆子 6 到 24 个像素（24×24 的板子二十来个，48×48 的十来个），看得清。
+// 底色是一块灰里带一点黄的板子（同 style.js 那三块底板的挑法：跟三十九种豆子里最近的那一种差得最远，按 CIE Lab 算，最近的是鼠灰，16.7）。
+// 原来用的浅灰 #E4E6EA 跟雪白只差 8.2：实心方格没有外沿，白豆子在上面看不大出来。换色板的时候要重新量
 export const PNG_MAX = 576;
-export const PNG_BOARD = "#E4E6EA";
+export const PNG_BOARD = "#B1AE9C";
 export function pngFor(n, g) {
   const b = boundsOf(n, g, 1);
   if (!b) return "";
   const S = Math.max(6, Math.min(24, Math.floor(PNG_MAX / Math.max(b.w, b.h))));
-  const c = paintWork(document.createElement("canvas"), n, g, { S, mode: "fused", crop: b, board: PNG_BOARD });
+  const c = paintWork(document.createElement("canvas"), n, g, { S, mode: "pixel", crop: b, board: PNG_BOARD });
   try {
     return c.toDataURL("image/png");
   } catch (e) {

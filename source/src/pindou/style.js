@@ -3,12 +3,14 @@
 // 底板的颜色是挑过的：三十九种豆子跟它都差得开（按 CIE Lab 算的色差最近的一种也有十二三），白豆子、灰豆子落在板上看得出来。
 //   青绿 #CEE2DA（最近的是雾灰、青瓷）  丁香 #EEE4F8（最近的是泡桐紫）  黑夜 #6C8090（最近的是石墨、鼠灰）
 // 空格的棋盘格、钉子照底板深一点浅一点。换了底板颜色要重新量（开发说明“拼豆作”那一节写着怎么量）
+import { BOARD_OF } from "./draw.js";
+
 export const CSS = `
 .kfs-pindou {
   --desk: rgb(222, 230, 216); --paper: rgb(246, 249, 244); --paper-2: rgb(233, 240, 230); --line: rgba(52, 74, 68, 0.15);
   --ink: rgb(36, 51, 47); --mute: rgba(52, 74, 68, 0.68); --accent: rgb(63, 106, 98); --accent-ink: #fff; --accent-soft: rgba(63, 106, 98, 0.14);
   --seal: rgb(184, 70, 60); --danger: rgb(168, 71, 61);
-  --board: #CEE2DA; --board-rim: rgba(63, 106, 98, 0.24); --rim-hi: rgba(255, 255, 255, 0.6); --peg: #B4CDC2;
+  --board: ${BOARD_OF.qinglv}; --board-rim: rgba(63, 106, 98, 0.24); --rim-hi: rgba(255, 255, 255, 0.6); --peg: #B4CDC2;
   --check-a: #D5E8E0; --check-b: #C6DCD3; --well: rgb(226, 234, 222);
   --toast-bg: rgb(36, 51, 47); --toast-ink: #fff; --scrim: rgba(20, 32, 28, 0.42); --shadow: 0 14px 28px -16px rgba(28, 44, 38, 0.5);
   --serif: 'Songti SC', 'STSong', 'Noto Serif SC', 'Source Han Serif SC', serif;
@@ -20,14 +22,14 @@ export const CSS = `
 html[data-kfs-theme="dingxiang"] .kfs-pindou {
   --desk: rgb(241, 232, 244); --paper: rgb(251, 248, 253); --paper-2: rgb(241, 234, 247); --line: rgba(84, 68, 118, 0.15);
   --ink: rgb(48, 38, 70); --mute: rgba(84, 68, 118, 0.68); --accent: rgb(112, 88, 176); --accent-soft: rgba(112, 88, 176, 0.14);
-  --board: #EEE4F8; --board-rim: rgba(112, 88, 176, 0.24); --peg: #D9CBEB; --check-a: #F3EBFB; --check-b: #E7DCF3; --well: rgb(236, 228, 243);
+  --board: ${BOARD_OF.dingxiang}; --board-rim: rgba(112, 88, 176, 0.24); --peg: #D9CBEB; --check-a: #F3EBFB; --check-b: #E7DCF3; --well: rgb(236, 228, 243);
   --toast-bg: rgb(48, 38, 70); --scrim: rgba(36, 24, 54, 0.42); --shadow: 0 14px 28px -16px rgba(60, 40, 100, 0.5);
 }
 html[data-kfs-theme="heiye"] .kfs-pindou {
   --desk: rgb(9, 13, 25); --paper: rgb(20, 27, 45); --paper-2: rgb(28, 37, 60); --line: rgba(226, 235, 248, 0.13);
   --ink: rgb(226, 235, 248); --mute: rgba(226, 235, 248, 0.6); --accent: rgb(143, 171, 220); --accent-ink: rgb(10, 16, 32); --accent-soft: rgba(143, 171, 220, 0.18);
   --seal: rgb(196, 76, 66); --danger: rgb(255, 138, 148);
-  --board: #6C8090; --board-rim: rgba(226, 235, 248, 0.16); --rim-hi: rgba(255, 255, 255, 0.1); --peg: #8296A6;
+  --board: ${BOARD_OF.heiye}; --board-rim: rgba(226, 235, 248, 0.16); --rim-hi: rgba(255, 255, 255, 0.1); --peg: #8296A6;
   --check-a: #72869A; --check-b: #657889; --well: rgb(12, 18, 32);
   --toast-bg: rgb(226, 235, 248); --toast-ink: rgb(13, 18, 33); --scrim: rgba(0, 0, 0, 0.55); --shadow: 0 14px 28px -16px rgba(0, 0, 0, 0.8);
   color-scheme: dark;
@@ -174,6 +176,10 @@ html[data-kfs-theme="heiye"] .kfs-pindou {
 .pd-modal { position: absolute; inset: 0; z-index: 65; display: grid; align-items: end; justify-items: center; background: var(--scrim); }
 .pd-sheet { width: min(100%, 520px); max-height: 92%; overflow: auto; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); border-radius: 22px 22px 0 0; background: var(--paper); }
 @media (min-width: 600px) { .pd-modal { align-items: center; } .pd-sheet { border-radius: 22px; } }
+/* 粘贴作品码的那一张挂在顶上（要打字：摆在底下会压在键盘底下） */
+.pd-modal.pd-up { align-items: start; }
+.pd-modal.pd-up .pd-sheet { border-radius: 0 0 22px 22px; padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 16px; }
+@media (min-width: 600px) { .pd-modal.pd-up { align-items: center; } .pd-modal.pd-up .pd-sheet { border-radius: 22px; padding: 16px; } }
 .pd-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .pd-sheet-head b { font-size: 16px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-sheet .pd-note { margin-top: 0; }
