@@ -1,13 +1,15 @@
 # 拼豆作（卿卿 2026 年 10 月 25 日要的，见开发说明“拼豆作”那一节；零件在 src/pindou/，单测在 tests/pindou.test.mjs）：手机这头走一遍，家里的闹钟用真的那一份（测试包）。
 #   南衙里多一行“拼豆作”（四颗豆子的图标），排在秘戏钱匣后面，小字“还没拼过”；点之前不下载那一页，点了菜单、侧栏都收起，盖一层全屏（层高 60）；
-#   拼几颗、粘贴作品码铺一幅；存进作品集（存档里一幅一条，名字、作品码都对）；她这块板子隔一会儿存一回；
+#   拼几颗、粘贴作品码铺一幅；存进作品集（存档里一幅一条，名字、作品码都对）；她这块板子隔一会儿存一回，切到后台马上存；
 #   “发给光义”：变“已发”，开着的时候他先不回（不往那边问）；板子动了又能发；叉一点回到聊天，正中两个方框（不是气泡），他把两幅一起看了才回；
 #   寄过去的是图加一句“【拼豆作】卿卿拼了一幅《…》”；
-#   重新打开开封府：板子、作品集都还在；另一台设备登进来：作品集同步过来了；删一幅（点两下）存档里也没了；
+#   只换样子不写板子那一条（习惯记在这台设备上）；重新打开开封府：板子、作品集都还在；另一台设备登进来：作品集同步过来了，板子也是那块；
+#   两台设备：开着的那一台手上没有没存的，同步下来就换上；两台都拼了，后存的那一台认出来，先前那一块存进作品集不盖掉；
+#   删一幅（点两下；中间同步了一回不打断）存档里也没了；
 #   「他的」那一栏：“他自己醒”关着照实说；闹钟叫醒他一回，他在桌上拼了、挂起来一幅、又拼了几颗：手机上同步下来，「他的」那一栏看得见桌上那块和挂起来的那一幅（点开看大图）；
 #   狐宇宙里两行小字（一样的只留一行）；醒在屋里那一回工具里带着 play_pindou，【醒来】里有拼豆板那一行；
 #   聊天里“回屋看看拼豆”：一行小字“回屋看了看拼豆板”，看到的字（桌上那块、挂起来的）只在寄给他的结果里；
-#   狐宇宙里打开拼豆作：不摆“发给光义”；底板跟着三套主题换颜色。
+#   狐宇宙里打开拼豆作：不摆“发给光义”；底板跟着三套主题换颜色；一块板子最多 52 种颜色，再拼一种新的不让放。
 # 真的浏览器、假 Supabase、假的 Anthropic。账号、板子都是编的。
 # 先在 source/ 里 npm run build:test、KFS_TEST_URL=http://127.0.0.1:8787 node alarm/build.mjs，起好两个服务（见开发说明），再：python3 tests/e2e_pindou.py
 # 要截图给人看：KFS_SHOTS=某个文件夹 python3 tests/e2e_pindou.py
@@ -191,6 +193,10 @@ def run(browser):
     ok(lay and lay["z"] == "60" and lay["rect"] == [0, 0, 393, 852] and not lay["sheet"] and lay["canvas"], f"点了：菜单收起，盖一层全屏（层高 60），里面一块板子（{lay}）")
     ok(len(got) == 1, f"那一页这时候才下载，下了一回（{len(got)}）")
     ok(pg.evaluate(CODE) == "PD1~24~~.576" and pg.evaluate("document.querySelector('.kfs-pindou .pd-sizes .on').textContent") == "24×24", "头一回打开：一块空的 24×24")
+    pg.locator(".kfs-pindou [data-view=fused]").click(); pg.wait_for_timeout(900)
+    prefs = json.loads(pg.evaluate("localStorage.getItem('kfs-pindou-prefs') || 'null'") or "null")
+    ok(prefs and prefs.get("view") == "fused" and not pg.evaluate(KV, "kfs2:pd:state"), "只换了个样子：记在这台设备上（localStorage），板子那一条不写（板子没动，不拿这台设备上的空板子去盖云端那一块）")
+    pg.locator(".kfs-pindou [data-view=bead]").click(); pg.wait_for_timeout(200)
     tab(pg, "his")
     ok("“他自己醒”还关着" in pg.locator(".kfs-pindou .pd-his").inner_text(), "「他的」那一栏：他还没拼过、“他自己醒”关着，照实说")
     tab(pg, "pal")
@@ -219,6 +225,15 @@ def run(browser):
     ok(pg.locator(".kfs-pindou .pd-work").count() == 1 and "测试小排" in pg.locator(".kfs-pindou .pd-work").inner_text() and "16×16，5 颗" in pg.locator(".kfs-pindou .pd-work").inner_text(),
        "作品集里多一行：名字、几号板、几颗")
     ok(poll(lambda: (kv_json(pg, "kfs2:pd:state") or {}).get("code") == SAMPLE, 4), "她这块板子隔一会儿存一回（kfs2:pd:state）")
+    # 切到后台：眼下这块马上存，不等那六百毫秒（点了一格，不到半秒就存上了）；回来以后撤销那一格，板子还是那一幅
+    bb = pg.locator(".kfs-pindou .pd-cv").bounding_box()
+    pg.mouse.click(bb["x"] + bb["width"] * 15.5 / 16, bb["y"] + bb["width"] * 15.5 / 16)
+    pg.evaluate("window.__away(true)")
+    code2 = pg.evaluate(CODE)
+    ok(code2 != SAMPLE and poll(lambda: (kv_json(pg, "kfs2:pd:state") or {}).get("code") == code2, 0.4, 0.05), "切到后台：眼下这块马上存了，不等那六百毫秒")
+    pg.evaluate("window.__away(false)"); pg.wait_for_timeout(300)
+    act(pg, "undo")
+    ok(pg.evaluate(CODE) == SAMPLE, "撤销那一格：还是那一幅")
 
     # ---- 发给光义：开着的时候他先不回 ----
     c0 = len(calls())
@@ -260,16 +275,49 @@ def run(browser):
     open_pd(pg2)
     tab(pg2, "works")
     ok(poll(lambda: pg2.locator(".kfs-pindou .pd-work").count() == 1, 10) and "测试小排" in pg2.locator(".kfs-pindou .pd-work").inner_text(), "另一台设备登进来：作品集同步过来了（加密了跟着云端走）")
+    ok(pg2.evaluate(CODE) == code_now, "另一台设备上打开：板子是头一台走的时候那块（跟着云端走）")
+    # 头一台又拼了一颗，推上去；另一台开着、手上没有没存的：同步下来就换上
+    open_pd(pg)
+    tap_cell(pg, 1, 1)
+    code_a = pg.evaluate(CODE)
+    ok(code_a != code_now and poll(lambda: (kv_json(pg, "kfs2:pd:state") or {}).get("code") == code_a, 4), "头一台又拼了一颗，存上了")
+    pg.evaluate("window.__away(true)"); time.sleep(1.5); pg.evaluate("window.__away(false)")
+    resync(pg2)
+    ok(poll(lambda: pg2.evaluate(CODE) == code_a, 8) and "同步过来了" in toast(pg2), "另一台开着：头一台新拼的同步下来，换上了（它手上没有没存的），说一声")
+    # 两台都拼了：头一台又拼一颗推上去；另一台切走又切回来的那一下拼了一颗（还没存），同步下来的那一块不换上；
+    # 存的时候认出存着的已经不是它接着拼的那一份：那一份存进作品集，不盖掉
+    tap_cell(pg, 2, 2)
+    code_b = pg.evaluate(CODE)
+    ok(poll(lambda: (kv_json(pg, "kfs2:pd:state") or {}).get("code") == code_b, 4), "头一台又拼一颗，存上了")
+    pg.evaluate("window.__away(true)"); time.sleep(1.5); pg.evaluate("window.__away(false)")
+    pg2.evaluate("window.__away(true)")
+    tap_cell(pg2, 3, 3)
+    pg2.evaluate("window.__away(false)")
+    code_c = pg2.evaluate(CODE)
+    def kept():
+        ws = [kv_json(pg2, k) for k in pg2.evaluate(KEYS, "kfs2:pd:work:")]
+        return [w for w in ws if w and w.get("name") == "另一台设备上的那块"]
+    ok(poll(lambda: len(kept()) == 1, 8) and kept()[0].get("code") == code_b, "另一台存的时候认出来：头一台后来拼的那一块存进了作品集（“另一台设备上的那块”），没被盖掉")
+    ok(poll(lambda: (kv_json(pg2, "kfs2:pd:state") or {}).get("code") == code_c, 4) and pg2.evaluate(CODE) == code_c and "存进作品集了" in toast(pg2),
+       "另一台眼前那一幅照旧（存上的是它），说一声那一块存进作品集了")
+    close_pd(pg)
     ctx2.close()
 
     # ---- 删一幅 ----
     open_pd(pg)
     tab(pg, "works")
+    ok(poll(lambda: len(pg.evaluate(KEYS, "kfs2:pd:work:")) == 2 and pg.locator(".kfs-pindou .pd-work").count() == 2, 10), "头一台的作品集里也有了那一块（同步过来的）：两幅")
+    keys2 = sorted(pg.evaluate(KEYS, "kfs2:pd:work:"))
     dl = pg.locator(".kfs-pindou .pd-mini.del").first
     dl.click(); pg.wait_for_timeout(200)
-    ok(dl.inner_text() == "确认删除" and pg.evaluate(KEYS, "kfs2:pd:work:") == keys, "删除点一下：变“确认删除”，还没删")
+    ok(dl.inner_text() == "确认删除" and sorted(pg.evaluate(KEYS, "kfs2:pd:work:")) == keys2, "删除点一下：变“确认删除”，还没删")
+    resync(pg)
+    ok(dl.inner_text() == "确认删除", "这时候同步了一回（作品集没变）：“确认删除”还在，没被重画掉")
     dl.click()
-    ok(poll(lambda: not pg.evaluate(KEYS, "kfs2:pd:work:"), 5) and pg.locator(".kfs-pindou .pd-work").count() == 0, "再点一下：删了，存档里也没了")
+    ok(poll(lambda: len(pg.evaluate(KEYS, "kfs2:pd:work:")) == 1, 5) and pg.locator(".kfs-pindou .pd-work").count() == 1, "再点一下：删了一幅，存档里也没了")
+    dl = pg.locator(".kfs-pindou .pd-mini.del").first
+    dl.click(); pg.wait_for_timeout(200); dl.click()
+    ok(poll(lambda: not pg.evaluate(KEYS, "kfs2:pd:work:"), 5) and pg.locator(".kfs-pindou .pd-work").count() == 0, "另一幅也删了：作品集空了")
     close_pd(pg)
 
     # ---- 他在屋里拼：闹钟叫醒他一回 ----
@@ -340,6 +388,26 @@ def run(browser):
             shot(pg, "pd_6_heiye")
     ok(boards == ["#CEE2DA", "#EEE4F8", "#6C8090"], f"底板跟着三套主题换颜色（{boards}）")
     pg.evaluate("document.documentElement.removeAttribute('data-kfs-theme')")
+
+    # ---- 一块板子最多 52 种颜色（作品码写不下更多）：再拼一种新的不让放 ----
+    cols = [f"1{i:02X}0A0" for i in range(52)]
+    tab(pg, "works")
+    act(pg, "paste-code")
+    pg.locator(".kfs-pindou .pd-code").fill("PD1~16~" + ",".join(cols) + "~abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.204")
+    act(pg, "code-go")
+    full = pg.evaluate(CODE)
+    ok(full.startswith("PD1~16~") and len(full.split("~")[2].split(",")) == 52, "铺上一块五十二种颜色的板子")
+    tab(pg, "pal")
+    pg.locator(".kfs-pindou .pd-pal .pd-cell[data-hex='#EE7A2D']").click(); pg.wait_for_timeout(150)
+    tap_cell(pg, 8, 8)
+    ok(pg.evaluate(CODE) == full and "最多 52 种颜色" in toast(pg), "再拼一种新的（狐橘）：不让放，说一声，板子没变")
+    pg.locator(".kfs-pindou [data-tool=fill]").click(); pg.wait_for_timeout(100)
+    tap_cell(pg, 8, 8)
+    ok(pg.evaluate(CODE) == full and "最多 52 种颜色" in toast(pg), "填色也一样")
+    pg.locator(f".kfs-pindou .pd-pal .pd-cell[data-hex='#{cols[-1]}']").click(); pg.wait_for_timeout(150)  # 自己调的颜色只留后二十种
+    pg.locator(".kfs-pindou [data-tool=pen]").click(); pg.wait_for_timeout(100)
+    tap_cell(pg, 8, 8)
+    ok(pg.evaluate(CODE) != full, "板子上有的颜色照样拼")
     close_pd(pg)
 
 

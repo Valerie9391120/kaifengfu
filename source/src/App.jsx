@@ -42,7 +42,7 @@ import { QX_KEY, QX_TOOLS, QX_NAMES, CUT_QX, QX_FAIL_NOTE, isQxCall, readPool, p
 import { ROOM_TOOLS, ROOM_NAMES, isRoomCall, runRoomCalls, roomSection, cutRoom, localDay } from "./room.js";
 import { PindouPage } from "./pindou/PindouPage.jsx";
 import { PindouRow } from "./pindou/PindouRow.jsx";
-import { PD_STATE, PD_WORK, PD_HIS, readState, packState, listWorks, packWork, readHis, fromCode, countBeads, pdSub } from "./pindou/parts.js";
+import { PD_STATE, PD_WORK, PD_HIS, readState, packState, listWorks, packWork, readHis, fromCode, toCode, countBeads, pdSub } from "./pindou/parts.js";
 import { pngFor } from "./pindou/draw.js";
 import { buildRows } from "./chat/rows.js";
 import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/overview.js";
@@ -453,6 +453,9 @@ export default function App({ account = {} }) {
   const [pdWorks, setPdWorks] = useState([]);
   const [pdHis, setPdHis] = useState(null);
   const pdStart = useRef(null); // 打开那一下她那块板子的样子（递给那一页，只递这一回）
+  const [pdIncoming, setPdIncoming] = useState(null); // 开着的时候同步下来的板子（别的设备上后来又拼过的；那一页手上没有没存的才换上）
+  const pdSync = useRef(Promise.resolve()); // 打开那一下跟云端对的那一回（头一回存板子之前等它，见 savePdState）
+  const pdSaving = useRef(Promise.resolve()); // 存板子一回一回排着来
   const [renaming, setRenaming] = useState(null); // 正在改名的那段对话
   const [usage, setUsage] = useState(null);
   const [monthUsage, setMonthUsage] = useState(null);
@@ -717,8 +720,9 @@ export default function App({ account = {} }) {
       if (has(FOX_STATE)) refreshFox();
       // 秘戏钱匣：别的设备导了签库、删了加了签、改了抽哪几样
       if (keys.includes(QX_KEY)) refreshQx();
-      // 拼豆作：别的设备存了、删了一幅；家里的闹钟写了他那块板子
+      // 拼豆作：别的设备存了、删了一幅；家里的闹钟写了他那块板子；别的设备上拼了她那块（开着的话那一页换上，见 page.js 的 adopt）
       if (has(PD_WORK) || keys.includes(PD_HIS)) refreshPd();
+      if (keys.includes(PD_STATE)) setPdIncoming(readState(store.peek(PD_STATE)));
       // 别的设备念好的语音同步下来了（这台设备上要念的那一条就不用再念了）
       if (has(VOICE_KEY) && speakerRef.current) speakerRef.current.synced(keys.filter((k) => k.startsWith(VOICE_KEY)));
       if (has("kfs2:memindex") || has("kfs2:mem:")) {
@@ -1332,11 +1336,29 @@ export default function App({ account = {} }) {
     setPdWorks(listWorks(store.keys(PD_WORK).map((k) => [k, store.peek(k)])));
     setPdHis(readHis(store.peek(PD_HIS)));
   };
-  // 她眼下这块板子（那一页隔一会儿叫一声）：一整份存在一条里
-  const savePdState = (st) => {
-    store.set(PD_STATE, packState(st)).then((ok) => {
-      if (!ok) markStorageFail();
+  // 她眼下这块板子（那一页隔一会儿叫一声，板子真动了才叫）：一整份存在一条里。base 是那一页眼下这块是从存着的哪一份接着拼的（parts.js 的 readState 里的 r）。
+  // 存着的已经不是那一份了：别的设备后来又拼过（这台设备打开的时候还没同步下来，或者开着放了很久）。那一份存进作品集再写，不盖掉，回 kept 让那一页说一声。
+  // 不认的话会这样（审稿的时候认出来的，她那边没碰上过）：另一台设备上打开、还没同步下来，那一页是一块空板子，一存就把她拼了一半的那块盖成空的，推上云端，她手机上也跟着空了。
+  // 头一回存之前等打开那一下的同步对完（openPd）；作品码写不出来（颜色太多）不存，存着的还是上一回好的那一份
+  const savePdState = (st, base = "") => {
+    const run = pdSaving.current.then(async () => {
+      await pdSync.current;
+      const r = newId();
+      const text = packState(st, r);
+      if (!text) return { rev: base };
+      const cur = readState(store.peek(PD_STATE));
+      let kept = false;
+      if (cur && cur.r !== base && countBeads(cur.g)) {
+        const code = toCode(cur.n, cur.g);
+        if (code && code !== toCode(st.n, st.g)) kept = await savePdWork({ name: "另一台设备上的那块", code });
+      }
+      if ((await store.set(PD_STATE, text)) === false) markStorageFail();
+      // 切到后台的那一下存的（那一页的 visibilitychange 排在开封府自己那一道后面，那一道已经推过了）：再推一回，不等她回来
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") store.flush().catch(() => {});
+      return { rev: r, kept };
     });
+    pdSaving.current = run.catch(() => {});
+    return run;
   };
   // 存进作品集：一幅一条（两台设备各存各的，不互相盖掉）。这台手机上没存进去也照样记在手上、推上云端，提示她一声（同别处）
   const savePdWork = async ({ name, code }) => {
@@ -1364,12 +1386,24 @@ export default function App({ account = {} }) {
     // 同 openQx：她进来之前刚说完一句、还在等她停手的那两秒，先不回，记着欠一句，关上了一起回
     qxHold.current = { on: true, owe: disarm() };
     pdStart.current = readState(store.peek(PD_STATE));
+    // 跟云端对一回：这台设备上存着的可能是旧的，或者还没同步下来（另一台设备上刚拼过）。同步下来变了的，那一页换上（pdIncoming）
+    pdSync.current = store.syncNow().catch(() => {});
+    setPdIncoming(null);
     setPdOpen(true);
   };
   const closePd = () => {
     setPdOpen(false);
     releaseHold();
   };
+  // 拼豆作开着、她切回来（中间可能在别的设备上拼过）：再跟云端对一回，下一回存板子之前等它对完（见 savePdState）
+  useEffect(() => {
+    if (!pdOpen) return;
+    const back = () => {
+      if (document.visibilityState === "visible") pdSync.current = store.syncNow().catch(() => {});
+    };
+    document.addEventListener("visibilitychange", back);
+    return () => document.removeEventListener("visibilitychange", back);
+  }, [pdOpen]);
   // 她来他屋里转一圈，在便签纸上留了一句（FoxNotePad）：放进狐宇宙，记 note: true——不叫他、不等回话，他下回醒来看得见
   const saveFoxNote = (text) => {
     if (chatIdRef.current !== FOX_CHAT) return;
@@ -6021,6 +6055,7 @@ export default function App({ account = {} }) {
       {pdOpen && (
         <PindouPage
           state={pdStart.current}
+          incoming={pdIncoming}
           works={pdWorks}
           his={pdHis}
           wake={wakeOn(settings)}
