@@ -1,5 +1,5 @@
 # 拼豆作（卿卿 2026 年 10 月 25 日要的，见开发说明“拼豆作”那一节；零件在 src/pindou/，单测在 tests/pindou.test.mjs）：手机这头走一遍，家里的闹钟用真的那一份（测试包）。
-#   南衙里多一行“拼豆作”（四颗豆子的图标），排在秘戏钱匣后面，小字“还没拼过”；点之前不下载那一页，点了菜单、侧栏都收起，盖一层全屏（层高 60）；
+#   南衙里多一行“拼豆作”（四颗豆子的图标），排在秘戏钱匣后面，小字“文思院出品”（一句不变的）；点之前不下载那一页，点了菜单、侧栏都收起，盖一层全屏（层高 60）；
 #   拼几颗、粘贴作品码铺一幅；存进作品集（存档里一幅一条，名字、作品码都对）；她这块板子隔一会儿存一回，切到后台马上存；
 #   “发给光义”：变“已发”，开着的时候他先不回（不往那边问）；板子动了又能发；叉一点回到聊天，正中两个方框（不是气泡），他把两幅一起看了才回；
 #   寄过去的是图加一句“【拼豆作】卿卿拼了一幅《…》”；
@@ -184,7 +184,7 @@ def run(browser):
     names = [r["name"] for r in rows]
     pd = next((r for r in rows if r["name"] == "拼豆作"), None)
     ok(pd and names.index("拼豆作") == names.index("秘戏钱匣") + 1 and names.index("拼豆作") < names.index("网易云"), f"南衙里多一行“拼豆作”，排在秘戏钱匣后面、还没盖好的那两行前面（{names}）")
-    ok(pd and pd["sub"] == "还没拼过" and pd["shapes"] == ["circle"] * 4, f"那一行：小字“还没拼过”，图标是四颗豆子（{pd}）")
+    ok(pd and pd["sub"] == "文思院出品" and pd["shapes"] == ["circle"] * 4, f"那一行：小字“文思院出品”，图标是四颗豆子（{pd}）")
     ok(not got, "点之前没去下载那一页")
     shot(pg, "pd_1_nanya")
     pg.locator(".kfs-nanya .kfs-nanya-row", has_text="拼豆作").click()
@@ -193,10 +193,11 @@ def run(browser):
     ok(lay and lay["z"] == "60" and lay["rect"] == [0, 0, 393, 852] and not lay["sheet"] and lay["canvas"], f"点了：菜单收起，盖一层全屏（层高 60），里面一块板子（{lay}）")
     ok(len(got) == 1, f"那一页这时候才下载，下了一回（{len(got)}）")
     ok(pg.evaluate(CODE) == "PD1~24~~.576" and pg.evaluate("document.querySelector('.kfs-pindou .pd-sizes .on').textContent") == "24×24", "头一回打开：一块空的 24×24")
-    pg.locator(".kfs-pindou [data-view=fused]").click(); pg.wait_for_timeout(900)
+    ok(pg.locator(".kfs-pindou [data-seg=view]").count() == 0 and pg.locator(".kfs-pindou [data-view]").count() == 0, "只有像素的样子：顶上没有拼豆、熨烫、像素那一排切换")
+    act(pg, "mirror"); pg.wait_for_timeout(900)
     prefs = json.loads(pg.evaluate("localStorage.getItem('kfs-pindou-prefs') || 'null'") or "null")
-    ok(prefs and prefs.get("view") == "fused" and not pg.evaluate(KV, "kfs2:pd:state"), "只换了个样子：记在这台设备上（localStorage），板子那一条不写（板子没动，不拿这台设备上的空板子去盖云端那一块）")
-    pg.locator(".kfs-pindou [data-view=bead]").click(); pg.wait_for_timeout(200)
+    ok(prefs and prefs.get("mirror") is True and "view" not in prefs and not pg.evaluate(KV, "kfs2:pd:state"), "只开了个左右对称：记在这台设备上（localStorage），板子那一条不写（板子没动，不拿这台设备上的空板子去盖云端那一块）")
+    act(pg, "mirror"); pg.wait_for_timeout(200)
     tab(pg, "his")
     ok("“他自己醒”还关着" in pg.locator(".kfs-pindou .pd-his").inner_text(), "「他的」那一栏：他还没拼过、“他自己醒”关着，照实说")
     tab(pg, "pal")
@@ -342,7 +343,7 @@ def run(browser):
     ok(len(his.get("done", [])) == 1 and his["done"][0]["name"] == "一块小糕" and his.get("code", "").startswith("PD1~24~F6A3BC~a3."), f"存档里：挂起来一幅《一块小糕》，桌上那块又拼了三颗（{his.get('code', '')[:30]}）")
     open_nanya(pg)
     pdrow = next((r for r in pg.evaluate(NANYA) if r["name"] == "拼豆作"), {})
-    ok(pdrow.get("sub") == "他挂起来 1 幅", f"南衙那一行的小字跟着变：他挂起来 1 幅（{pdrow.get('sub')}）")
+    ok(pdrow.get("sub") == "文思院出品", f"南衙那一行的小字不跟着变，还是“文思院出品”（{pdrow.get('sub')}）")
     pg.locator(".kfs-nanya .kfs-nanya-row", has_text="拼豆作").click()
     pg.locator(".kfs-pindou .pd-cv").wait_for(timeout=15000); pg.wait_for_timeout(400)
     tab(pg, "his")

@@ -9,14 +9,13 @@
 //   作品那一栏多一颗“发给光义”（狐宇宙里不摆，同秘戏钱匣），多一栏「他的」（他在屋里拼的，只能看）
 //   颜色跟着开封府的主题走；左上角一个叉回到聊天
 //   工具那一排只留图标，底下那一排字拿掉了（她 10 月 25 日 23:33 说的：“感觉十分拥挤 而且功能很清晰了其实”；读屏照样念得出名字）
+//   三种样子只留像素（实心方格），顶上的切换拿掉了；色板、工具里那颗颜色也画成方块（她 10 月 26 日 02:33 说的：“拼豆和熨烫这俩其实可以拿掉 只要像素”）
 import { CSS } from "./style.js";
-import { makeSprite, paintWork, rrect, boundsOf } from "./draw.js";
+import { paintWork, boundsOf } from "./draw.js";
 import { PALETTE, SIZES, CUSTOM_MAX, COLOR_MAX, PD_PREFS, readPrefs, packPrefs, colorName, normHex, isHex, countBeads, usageOf, toCode, fromCode, resizeGrid, floodGrid, cleanName } from "./parts.js";
 
 const PAL = PALETTE.map((c) => [c.name, c.hex]);
 const NAME = new Map(PAL.map(([n, h]) => [h, n]));
-const EXPORT_BOARD = "#F5F6F8";
-const EXPORT_PEG = "#DCDFE5";
 
 // 四个模板（官方 App 里那一份带过来的；一个字母一种颜色，点是空的）
 const TK = { k: "#1F1D24", w: "#FBFBF8", h: "#63402B", s: "#F5C6A5", p: "#F6A3BC", m: "#8E5636", M: "#E0457D", b: "#2A57C4", d: "#5C5F69", o: "#EE7A2D", i: "#FFD4DF", v: "#6C3FA1", y: "#E2AC2B", g: "#9A9CA6", G: "#C7C9D0", n: "#F6A3BC", P: "#F6A3BC", r: "#FFD4DF" };
@@ -43,9 +42,6 @@ const TEMPLATE = `
   <header class="pd-top">
     <button type="button" class="pd-close" aria-label="关上拼豆作">${ICON.x}</button>
     <div class="pd-title"><h1>拼豆作</h1><span class="pd-seal" aria-hidden="true">炅</span></div>
-    <div class="pd-seg" data-seg="view" role="group" aria-label="显示方式">
-      <button type="button" data-view="bead" class="on">拼豆</button><button type="button" data-view="fused">熨烫</button><button type="button" data-view="pixel">像素</button>
-    </div>
   </header>
   <main class="pd-layout">
     <section class="pd-bench">
@@ -197,7 +193,6 @@ export function mountBoard(root, api) {
   let tool = pf0.tool;
   let color = pf0.color;
   let mirror = pf0.mirror;
-  let view = pf0.view;
   let guides = pf0.guides;
   let hintSeen = pf0.hint;
   let customColors = st0 ? st0.custom.slice() : [];
@@ -219,8 +214,6 @@ export function mountBoard(root, api) {
   const wrap = $(".pd-wrap");
   const cv = $(".pd-cv");
   const ctx = cv.getContext("2d");
-  const spriteCache = new Map();
-  let spriteSize = 0;
   let V = 0;
   let dpr = 1;
   const theme = {};
@@ -228,7 +221,6 @@ export function mountBoard(root, api) {
     const cs = getComputedStyle(root);
     const g = (k, d) => cs.getPropertyValue(k).trim() || d;
     theme.board = g("--board", "#CEE2DA");
-    theme.peg = g("--peg", "#B4CDC2");
     theme.checkA = g("--check-a", "#D5E8E0");
     theme.checkB = g("--check-b", "#C6DCD3");
     theme.accent = g("--accent", "#3F6A62");
@@ -255,23 +247,8 @@ export function mountBoard(root, api) {
     oy *= ratio;
     zoom = clamp(zoom, 1, maxZoom());
     clampPan();
-    spriteCache.clear();
     updateZoomUI();
     render();
-  }
-  function sprite(hex) {
-    const S = Math.max(4, Math.ceil((cellSize() * dpr) / 2) * 2);
-    if (S !== spriteSize) {
-      spriteCache.clear();
-      spriteSize = S;
-    }
-    const key = view + hex;
-    let s = spriteCache.get(key);
-    if (!s) {
-      s = makeSprite(hex, view, S);
-      spriteCache.set(key, s);
-    }
-    return s;
   }
   let raf = 0;
   const requestRender = () => {
@@ -291,39 +268,17 @@ export function mountBoard(root, api) {
     const x1 = Math.min(N - 1, Math.floor((ox + V) / c));
     const y0 = Math.max(0, Math.floor(oy / c));
     const y1 = Math.min(N - 1, Math.floor((oy + V) / c));
-    if (view === "pixel") {
-      for (let y = y0; y <= y1; y++) {
-        const T = Math.round((y * c - oy) * dpr);
-        const B = Math.round(((y + 1) * c - oy) * dpr);
-        for (let x = x0; x <= x1; x++) {
-          const L = Math.round((x * c - ox) * dpr);
-          const R = Math.round(((x + 1) * c - ox) * dpr);
-          const v = grid[y * N + x];
-          ctx.fillStyle = v || ((x + y) & 1 ? theme.checkB : theme.checkA);
-          ctx.fillRect(L, T, R - L, B - T);
-        }
+    // 一格一个实心方块，空格是两种深浅的棋盘格；格子的边取整数，相邻两格中间不露缝
+    for (let y = y0; y <= y1; y++) {
+      const T = Math.round((y * c - oy) * dpr);
+      const B = Math.round(((y + 1) * c - oy) * dpr);
+      for (let x = x0; x <= x1; x++) {
+        const L = Math.round((x * c - ox) * dpr);
+        const R = Math.round(((x + 1) * c - ox) * dpr);
+        const v = grid[y * N + x];
+        ctx.fillStyle = v || ((x + y) & 1 ? theme.checkB : theme.checkA);
+        ctx.fillRect(L, T, R - L, B - T);
       }
-    } else {
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      if (view === "bead") {
-        const pr = c * 0.16;
-        ctx.beginPath();
-        for (let y = y0; y <= y1; y++)
-          for (let x = x0; x <= x1; x++) {
-            if (grid[y * N + x]) continue;
-            const cx = x * c - ox + c / 2;
-            const cy = y * c - oy + c / 2;
-            ctx.moveTo(cx + pr, cy);
-            ctx.arc(cx, cy, pr, 0, Math.PI * 2);
-          }
-        ctx.fillStyle = theme.peg;
-        ctx.fill();
-      }
-      for (let y = y0; y <= y1; y++)
-        for (let x = x0; x <= x1; x++) {
-          const v = grid[y * N + x];
-          if (v) ctx.drawImage(sprite(v), x * c - ox, y * c - oy, c, c);
-        }
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawOverlays(c);
@@ -432,7 +387,6 @@ export function mountBoard(root, api) {
       N = s.n;
       zoom = 1;
       ox = oy = 0;
-      spriteCache.clear();
       renderSizes();
       updateZoomUI();
     }
@@ -711,12 +665,6 @@ export function mountBoard(root, api) {
     requestRender();
     savePrefs();
   }
-  function setView(v) {
-    view = v;
-    $$('[data-seg="view"] button').forEach((b) => b.classList.toggle("on", b.dataset.view === v));
-    requestRender();
-    savePrefs();
-  }
   function setTab(t) {
     tab = t;
     $$(".pd-tabs [data-tab]").forEach((b) => {
@@ -801,7 +749,6 @@ export function mountBoard(root, api) {
     grid = r.g;
     zoom = 1;
     ox = oy = 0;
-    spriteCache.clear();
     renderSizes();
     updateZoomUI();
     requestRender();
@@ -857,7 +804,6 @@ export function mountBoard(root, api) {
     grid = g.slice();
     zoom = 1;
     ox = oy = 0;
-    spriteCache.clear();
     let added = false;
     for (const v of custom.concat(grid))
       if (v && !NAME.has(v) && !customColors.includes(v)) {
@@ -1126,17 +1072,17 @@ export function mountBoard(root, api) {
     }
     el.appendChild(list);
   }
-  // 他的那几块画成小图：拼豆的样子（带钉子，看得出是一块板子），空板子也画得出来
+  // 他的那几块画成小图：空格画成棋盘格（同板子，看得出是一块板子、多大），空板子也画得出来
   function paintThumb(c, n, g, css) {
     const S = (css * Math.min(window.devicePixelRatio || 1, 3)) / n;
-    paintWork(c, n, g, { S, mode: "bead", board: theme.board, peg: theme.peg });
+    paintWork(c, n, g, { S, check: [theme.checkA, theme.checkB] });
     c.style.width = c.style.height = css + "px";
   }
   function openView(title, n, g, meta) {
     $(".pd-vtitle").textContent = title;
     const c = $(".pd-vcv");
     const S = Math.max(4, Math.floor((480 * Math.min(window.devicePixelRatio || 1, 3)) / n));
-    paintWork(c, n, g, { S, mode: view === "pixel" ? "pixel" : view, board: theme.board, peg: theme.peg });
+    paintWork(c, n, g, { S, check: [theme.checkA, theme.checkB] });
     $(".pd-bigmeta").textContent = meta + "。他的板子只能看，动不了。";
     openModal("view");
   }
@@ -1225,58 +1171,22 @@ export function mountBoard(root, api) {
 
   // ---------- 导出图片 ----------
   let exBg = "board";
+  // 带底板：白底，四周留一点边，整块板子（空格是白的）；透明底：只截有豆子的那一块（四周留一格）
   function renderExport(withBoard) {
-    let bx = 0;
-    let by = 0;
-    let bw = N;
-    let bh = N;
-    if (!withBoard) {
-      const b = boundsOf(N, grid, 1);
-      if (b) ({ x: bx, y: by, w: bw, h: bh } = b);
-    }
-    const S = Math.max(12, Math.floor(900 / Math.max(bw, bh)));
+    const crop = withBoard ? null : boundsOf(N, grid, 1);
+    const w = crop ? crop.w : N;
+    const h = crop ? crop.h : N;
+    const S = Math.max(12, Math.floor(900 / Math.max(w, h)));
     const pad = withBoard ? Math.round(S * 0.6) : 0;
     const out = document.createElement("canvas");
-    out.width = bw * S + pad * 2;
-    out.height = bh * S + pad * 2;
+    out.width = w * S + pad * 2;
+    out.height = h * S + pad * 2;
     const g = out.getContext("2d");
     if (withBoard) {
-      if (view === "pixel") {
-        g.fillStyle = "#FFFFFF";
-        g.fillRect(0, 0, out.width, out.height);
-      } else {
-        g.fillStyle = EXPORT_BOARD;
-        g.beginPath();
-        rrect(g, 0, 0, out.width, out.height, S * 0.9);
-        g.fill();
-      }
-      if (view === "bead") {
-        g.fillStyle = EXPORT_PEG;
-        g.beginPath();
-        const pr = S * 0.16;
-        for (let y = 0; y < bh; y++)
-          for (let x = 0; x < bw; x++) {
-            if (grid[(y + by) * N + x + bx]) continue;
-            const cx = pad + x * S + S / 2;
-            const cy = pad + y * S + S / 2;
-            g.moveTo(cx + pr, cy);
-            g.arc(cx, cy, pr, 0, Math.PI * 2);
-          }
-        g.fill();
-      }
+      g.fillStyle = "#FFFFFF";
+      g.fillRect(0, 0, out.width, out.height);
     }
-    const cache = new Map();
-    for (let y = 0; y < bh; y++)
-      for (let x = 0; x < bw; x++) {
-        const v = grid[(y + by) * N + x + bx];
-        if (!v) continue;
-        let sp = cache.get(v);
-        if (!sp) {
-          sp = makeSprite(v, view, S);
-          cache.set(v, sp);
-        }
-        g.drawImage(sp, pad + x * S, pad + y * S);
-      }
+    g.drawImage(paintWork(document.createElement("canvas"), N, grid, { S, crop }), pad, pad);
     return out.toDataURL("image/png");
   }
   function refreshExport() {
@@ -1396,13 +1306,12 @@ export function mountBoard(root, api) {
   function savePrefs() {
     if (!booted || dead) return;
     try {
-      localStorage.setItem(PD_PREFS, packPrefs({ color, view, tool, mirror, guides, hint: hintSeen }));
+      localStorage.setItem(PD_PREFS, packPrefs({ color, tool, mirror, guides, hint: hintSeen }));
     } catch (e) {}
   }
 
   // ---------- 接线 ----------
   $$("[data-tool]").forEach((b) => on(b, "click", () => setTool(b.dataset.tool)));
-  $$('[data-seg="view"] button').forEach((b) => on(b, "click", () => setView(b.dataset.view)));
   $$(".pd-tabs [data-tab]").forEach((b) => on(b, "click", () => setTab(b.dataset.tab)));
   $$('[data-seg="bg"] button').forEach((b) =>
     on(b, "click", () => {
@@ -1485,10 +1394,9 @@ export function mountBoard(root, api) {
       else if (k === "escape") api.onClose();
     }
   });
-  // 换了主题：底板、钉子、空格的颜色跟着换（<html> 上的 data-kfs-theme，见 theme.js）
+  // 换了主题：底板、空格的颜色跟着换（<html> 上的 data-kfs-theme，见 theme.js）
   const mo = new MutationObserver(() => {
     readTheme();
-    spriteCache.clear();
     requestRender();
     if (tab === "his") renderHis();
   });
@@ -1514,7 +1422,6 @@ export function mountBoard(root, api) {
   renderTemplates();
   renderWorks();
   setTool(tool);
-  setView(view);
   setMirror(mirror);
   setGuides(guides);
   if (hintSeen) $(".pd-hint").classList.add("gone");

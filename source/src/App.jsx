@@ -42,7 +42,7 @@ import { QX_KEY, QX_TOOLS, QX_NAMES, CUT_QX, QX_FAIL_NOTE, isQxCall, readPool, p
 import { ROOM_TOOLS, ROOM_NAMES, isRoomCall, runRoomCalls, roomSection, cutRoom, localDay } from "./room.js";
 import { PindouPage } from "./pindou/PindouPage.jsx";
 import { PindouRow } from "./pindou/PindouRow.jsx";
-import { PD_STATE, PD_WORK, PD_HIS, readState, packState, listWorks, packWork, readHis, fromCode, toCode, countBeads, pdSub } from "./pindou/parts.js";
+import { PD_STATE, PD_WORK, PD_HIS, readState, packState, listWorks, packWork, readHis, fromCode, toCode, countBeads, PD_SUB } from "./pindou/parts.js";
 import { pngFor } from "./pindou/draw.js";
 import { buildRows } from "./chat/rows.js";
 import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/overview.js";
@@ -5250,7 +5250,7 @@ export default function App({ account = {} }) {
       return (
         <Sheet title="南衙" onClose={() => setSheet(null)}>
           <NanyaPanel
-            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length), qx: hasLots(qxPool) ? `签库里 ${poolSize(qxPool)} 条签` : "签库还空着", pindou: pdSub(pdWorks, pdHis) }}
+            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length), qx: hasLots(qxPool) ? `签库里 ${poolSize(qxPool)} 条签` : "签库还空着", pindou: PD_SUB }}
             open={{
               // 狐宇宙：菜单收起，翻到那段对话（他自己醒来说的话都在那儿，见 fox.js）
               fox: () => {
