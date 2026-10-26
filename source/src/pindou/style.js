@@ -159,6 +159,8 @@ html[data-kfs-theme="heiye"] .kfs-pindou {
 .pd-ulist { display: grid; gap: 4px; }
 .pd-urow { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border-radius: 10px; text-align: left; background: linear-gradient(90deg, var(--accent-soft) var(--w), transparent var(--w)); }
 .pd-ubd { width: 20px; height: 20px; border-radius: 4px; background: var(--c); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.16); }
+/* 黑夜里方块的边描成浅的：墨黑、藏青、葡萄几种深色落在深色的底上，描深色的边看不出方块 */
+html[data-kfs-theme="heiye"] .kfs-pindou .pd-cell .bd, html[data-kfs-theme="heiye"] .kfs-pindou .pd-ubd { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3); }
 .pd-un { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pd-uk { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
