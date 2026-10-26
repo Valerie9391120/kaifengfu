@@ -201,7 +201,6 @@ const parse = (text) => {
 };
 
 // ---------- 她的板子、作品集 ----------
-const VIEWS = ["bead", "fused", "pixel"];
 const TOOLS = ["pen", "eraser", "fill", "picker"];
 export const CUSTOM_MAX = 20;
 // 她眼下这块板子：{ v: 1, code, custom, r, t }。r 是这一回写的记号（每写一回换一个）：
@@ -228,22 +227,22 @@ export function packState(st, r) {
   return JSON.stringify({ v: 1, code, custom: st.custom || [], r: String(r || ""), t: Date.now() });
 }
 
-// 这台设备上的习惯（看的样子、手上的工具和颜色、对称、辅助线、“单指拼豆”那句提示看过没有）：记在这台设备上（localStorage），不跟云端走。
-// 跟板子分开：只换了个颜色、换了个样子，不去写板子那一条（那样别的设备上刚拼的会被这台设备上旧的、还没同步下来的空板子盖掉）
+// 这台设备上的习惯（手上的工具和颜色、对称、辅助线、“单指拼豆”那句提示看过没有）：记在这台设备上（localStorage），不跟云端走。
+// 跟板子分开：只换了个颜色、开了个对称，不去写板子那一条（那样别的设备上刚拼的会被这台设备上旧的、还没同步下来的空板子盖掉）。
+// 原来还记着看的是拼豆、熨烫还是像素，10 月 26 日只留了像素（她说的“只要像素”），这一样不记了，存着的旧的不认
 export const PD_PREFS = "kfs-pindou-prefs";
 export function readPrefs(text) {
   const s = parse(text) || {};
   const color = normHex(s.color);
   return {
     color: isHex(color) ? color : "#EE7A2D",
-    view: VIEWS.includes(s.view) ? s.view : "bead",
     tool: TOOLS.includes(s.tool) ? s.tool : "pen",
     mirror: !!s.mirror,
     guides: !!s.guides,
     hint: !!s.hint,
   };
 }
-export const packPrefs = (p) => JSON.stringify({ v: 1, color: p.color, view: p.view, tool: p.tool, mirror: !!p.mirror, guides: !!p.guides, hint: !!p.hint });
+export const packPrefs = (p) => JSON.stringify({ v: 1, color: p.color, tool: p.tool, mirror: !!p.mirror, guides: !!p.guides, hint: !!p.hint });
 
 // 作品集里的一幅：{ v: 1, name, code, at }。认不出板子的回 null
 export function readWork(text) {
@@ -279,12 +278,10 @@ export function pdText(m, { img = true, stale = false } = {}) {
   const tail = img ? "" : stale ? "（图这一回没带上）" : "（图没带上）";
   return `【拼豆作】${HER_NAME}拼了${what}${size}${tail}`;
 }
-// 南衙那一行的小字：作品集里几幅、他那边怎么样
-export function pdSub(works, his) {
-  const mine = works && works.length ? `作品集里 ${works.length} 幅` : "";
-  const h = his && his.touched ? (his.done.length ? `他挂起来 ${his.done.length} 幅` : countBeads(his.g) ? "他桌上那块拼到一半" : "他桌上那块空着") : "";
-  return [mine, h].filter(Boolean).join("，") || "还没拼过";
-}
+// 南衙那一行的小字：一句不变的“文思院出品”（那一页底下那一句的头五个字）。卿卿 10 月 26 日 02:37 说的：
+// “南衙功能块里 拼豆作下面那行字 可以改成你先前写的那个文思院出品”，接着点的只要这五个字（不要整句）。
+// 原来写作品集里几幅、他挂起来几幅（pdSub），换了以后那里不再写这些
+export const PD_SUB = "文思院出品";
 // 历史对话的预览、名字、日记摘录：短一点
 export const pdBrief = (m) => {
   const n = cleanName(m && m.name);

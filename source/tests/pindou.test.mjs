@@ -5,7 +5,7 @@
 import {
   PALETTE, SIZES, HIS_SIZE, PD_STATE, PD_WORK, PD_HIS, colorName, keyOf, hexOfKey, toCode, fromCode, resizeGrid, floodGrid, cleanName,
   countBeads, usageOf, readState, packState, readPrefs, packPrefs, PD_PREFS, COLOR_MAX, readWork, packWork, listWorks, readHis, packHis, gridText, boardText, galleryText,
-  PINDOU_TOOL, isPindouCall, PD_NOTE, hisApply, pindouBrief, pindouView, pdText, pdBrief, pdInfo, pdSub, DONE_MAX, NAME_MAX,
+  PINDOU_TOOL, isPindouCall, PD_NOTE, hisApply, pindouBrief, pindouView, pdText, pdBrief, pdInfo, PD_SUB, DONE_MAX, NAME_MAX,
 } from "../src/pindou/parts.js";
 import { pindouOf, runPindouCalls, cutPindou, pindouToy, PINDOU_NAMES } from "../alarm/pindou.js";
 import { wakeSection } from "../alarm/note.js";
@@ -104,11 +104,11 @@ ok(readState(null) === null && readState("不是 JSON") === null && readState("[
 const rainbow = blank(64);
 for (let i = 0; i < 53; i++) rainbow[i] = "#" + (0x100000 + i).toString(16).toUpperCase();
 ok(packState({ n: 64, g: rainbow, custom: [] }, "x") === null && COLOR_MAX === 52, "一块板子上五十三种颜色：作品码写不出来，不存（存着的还是上一回好的）");
-const pf = readPrefs(packPrefs({ color: Z, view: "pixel", tool: "fill", mirror: true, guides: true, hint: true }));
-ok(pf.color === Z && pf.view === "pixel" && pf.tool === "fill" && pf.mirror && pf.guides && pf.hint, "这台设备上的习惯：存进去读出来一样");
-const pf0 = readPrefs(JSON.stringify({ color: "红", view: "3d", tool: "刷子" }));
-ok(eq(pf0, readPrefs(null)) && pf0.color === O && pf0.view === "bead" && pf0.tool === "pen" && !pf0.mirror && !pf0.hint && PD_PREFS === "kfs-pindou-prefs",
-  "习惯认不出、没存过：照默认的来（狐橘、拼豆的样子、拼）；记在这台设备上（localStorage），钥匙不是 kfs2: 开头的（不跟云端走）");
+const pf = readPrefs(packPrefs({ color: Z, tool: "fill", mirror: true, guides: true, hint: true }));
+ok(pf.color === Z && pf.tool === "fill" && pf.mirror && pf.guides && pf.hint && !("view" in pf) && !("view" in JSON.parse(packPrefs(pf))), "这台设备上的习惯：存进去读出来一样；不再记看的样子（只剩像素）");
+const pf0 = readPrefs(JSON.stringify({ color: "红", view: "fused", tool: "刷子" }));
+ok(eq(pf0, readPrefs(null)) && pf0.color === O && pf0.tool === "pen" && !pf0.mirror && !pf0.hint && PD_PREFS === "kfs-pindou-prefs",
+  "习惯认不出、没存过：照默认的来（狐橘、拼）；存着的旧的“看的样子”不认；记在这台设备上（localStorage），钥匙不是 kfs2: 开头的（不跟云端走）");
 const w1 = readWork(packWork({ name: " 《头一幅》 ", code: c24, at: 1000 }));
 ok(w1 && w1.name === "头一幅" && w1.n === 24 && w1.beads === 9 && w1.code === c24 && w1.at === 1000, "作品集里的一幅：名字收拾过、几号板、几颗、几点存的");
 ok(readWork(JSON.stringify({ v: 1, name: "坏", code: "PD1~24~~", at: 1 })) === null && readWork("x") === null, "板子认不出的那一幅：不要");
@@ -120,7 +120,7 @@ const list = listWorks([
   [PD_WORK + "d", packWork({ name: "", code: c24, at: 2000 })],
 ]);
 ok(eq(list.map((w) => [w.id, w.name]), [["b", "新的"], ["d", ""], ["a", "旧的"]]), "作品集：新的在前；坏了的、别处的钥匙不算");
-ok(pdSub([], readHis(null)) === "还没拼过" && pdSub(list, readHis(null)) === "作品集里 3 幅", "南衙那一行的小字：还没拼过；作品集里几幅");
+ok(PD_SUB === "文思院出品", "南衙那一行的小字：文思院出品（一句不变的）");
 
 // =====================================================
 // 他的板子
@@ -190,9 +190,6 @@ ok(pindouBrief(h0) === "拼豆板还空着：一块 24×24 的板子，色板上
 ok(pindouBrief(p1.his) === "桌上那块 24×24 拼了 6 颗，拼到一半。" && pindouBrief(gh) === "桌上是一块空的 24×24；挂起来的有 2 幅，最近一幅是《三颗橘》。", "拼到一半、挂起来了几幅（最近一幅叫什么）");
 ok(pindouView(h0).startsWith("【你屋里·拼豆板】（回屋看了一眼。只能看，动不了") && pindouView(h0).includes("拼豆板你还没动过") && pindouView(h0).includes("怎么玩："), "回屋看一眼：只能看动不了；没动过照实说；后面是怎么玩");
 ok(pindouView(gh).includes("桌上这块拼豆板：24×24，还空着") && pindouView(gh).includes("1.《三颗橘》"), "回屋看一眼：桌上那块、挂起来的那些都看得到");
-ok(pdSub(list, gh) === "作品集里 3 幅，他挂起来 2 幅" && pdSub([], p1.his) === "他桌上那块拼到一半", "南衙那一行的小字带上他那边");
-const cleared = hisApply(p1.his, { action: "clear" }, T0 + 5000).his;
-ok(cleared.touched && pdSub([], cleared) === "他桌上那块空着", "他拼过又清空了、还没挂起来过：写“他桌上那块空着”（不写“还没拼过”）");
 
 // =====================================================
 // 工具
