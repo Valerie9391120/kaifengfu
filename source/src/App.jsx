@@ -203,6 +203,7 @@ const FRESH_MS = 500; // 回话摆出来以后这么多毫秒里按的停，可�
 const RECAP_WAIT = 1500; // 他回完一句以后等这么久再去看该不该抄（回话还在一条一条蹦，别抢在这一下）
 const RECAP_BACK = 2000; // 她回到眼前以后等这么久再接着抄（iOS 上一回来就发的请求会悬很久）
 const RECAP_CHAIN = 4; // 他回完一句，最多接连抄这么多趟（一趟一段）；还没抄到头的，等他下回回完话接着抄
+const MANUAL_CHAIN = 12; // 她点“整理提要”，最多接连抄这么多趟（一趟一分钟上下）；还没抄到头的，她再点一下接着抄
 const RECAP_ROOM = 4000; // 抄的那一回最多让他写这么多 token：一段最长九百字、并出来的最长一千二，写超一点也放得下；再长就是写飞了，不要
 // 自己会先想一阵再写的模型（models.js 的 thinksFirst）：想的那些字也算在这个数里，所以放宽一倍，免得想的把写的挤掉。
 // 只放宽上限，别的不动：想多想少（effort）一改，名帖那一大段就接不上聊天时写下的缓存了
@@ -3761,8 +3762,9 @@ export default function App({ account = {} }) {
 
   // 看一段对话该不该抄，该抄就抄一趟存好。回 "done" 抄了一趟（也许还有下一趟）；"none" 用不着抄；
   // "later" 这会儿不方便，回头再看；"gone" 那段对话没了。没抄成抛错
-  // manual：是她在 API 面板里点“现在抄一趟”点的（流水账里记一笔）
-  const writeRecap = async (id, manual = false) => {
+  // how.manual：是她在 API 面板里点“整理提要”点的（流水账里记着）；how.force：不等攒够也抄（见 recap.js 的 dueRecap）
+  const writeRecap = async (id, how = {}) => {
+    const manual = !!how.manual;
     // 正在重新回答的那段对话：画面上旧回答先收起来了，这会儿看到的不是整段。等它完了（那一头回完也会叫一声）
     if (forkRef.current && forkRef.current.chat === id) return "later";
     const here = () => chatIdRef.current === id;
@@ -3783,7 +3785,7 @@ export default function App({ account = {} }) {
       const have = imgsRef.current[m.imgId];
       photos[m.imgId] = (have === undefined ? await store.get("kfs2:img:" + m.imgId) : have) || "";
     }
-    const due = dueRecap(msgs, await readRecaps(id), recallTier(staticText), (m) => (photos[m.imgId] || "").length);
+    const due = dueRecap(msgs, await readRecaps(id), recallTier(staticText), (m) => (photos[m.imgId] || "").length, !!how.force);
     if (!due) return "none";
     let ask = null;
     if (due.kind === "merge") ask = buildMergeAsk({ parts: splitForMerge(due.prev, due.count).old });
@@ -3855,34 +3857,47 @@ export default function App({ account = {} }) {
     });
   };
 
-  // 她在 API 面板里点“现在抄一趟”：眼前这段对话，不等他回完话、不管上回没成以后该隔多久，当场抄一趟。
-  // 只抄一趟（一段），抄完了照常（没抄到头的，他回完话接着抄）。没成照样记进那本账（下回自动的照样隔一阵再试）
+  // 她在 API 面板里点“整理提要”（10 月 30 日她定的）：眼前这段对话，上回抄到的地方以后新聊的都抄进提要，一直抄到头；
+  // 还没抄过的从头抄起。不等他回完话、不等攒够、不管上回没成以后该隔多久。一趟一段，接连抄，最多 MANUAL_CHAIN 趟。
+  // 抄到头是照规矩能抄到的地方：最后二三十条、最近那一截照旧留原话（本来就整段寄给他）。
+  // 她切走了就停（这一趟断了的不存，抄好的那几趟都存着）；哪一趟没成就停，照样记进隔多久再试的那本账
   const recapNow = async () => {
     const id = chatIdRef.current;
     const job = recapJob.current;
     if (!id || (recapTry && !recapTry.done)) return;
     if (job.busy.has(id)) {
-      setRecapTry({ chat: id, done: true, ok: false, text: "后台正在抄着这段，等它回来再看" });
+      setRecapTry({ chat: id, done: true, ok: false, text: "后台正在抄着这段，等它抄完再点" });
       return;
     }
     job.busy.add(id);
-    setRecapTry({ chat: id, t0: Date.now() });
+    let done = 0;
     let note = null;
+    const had = !!pickRecap(messagesRef.current, await readRecaps(id)).recap;
     try {
-      const out = await writeRecap(id, true);
-      if (out === "done") {
-        if (job.failed[id]) {
-          delete job.failed[id];
-          saveBad();
-        }
-        note = { ok: true, text: "抄成了一趟。聊天里往上翻能看到那行小字" };
-      } else if (out === "none") note = { ok: true, text: "这段对话这会儿用不着抄（还没攒够，或者已经抄到头了）" };
-      else if (out === "later") note = { ok: false, text: "这段对话正在重新回答，等它回完再点" };
-      else note = { ok: false, text: "这段对话没了" };
+      for (let pass = 0; pass < MANUAL_CHAIN && !note; pass++) {
+        setRecapTry({ chat: id, t0: Date.now(), pass: pass + 1 });
+        const out = await writeRecap(id, { manual: true, force: true });
+        if (out === "done") {
+          done++;
+          if (job.failed[id]) {
+            delete job.failed[id];
+            saveBad();
+          }
+          if (document.visibilityState !== "visible") note = { ok: false, text: `你切走了，停在这儿：这回抄好的 ${done} 趟存着，再点一下接着抄` };
+        } else if (out === "none") {
+          note = done
+            ? { ok: true, text: `整理好了：这回抄了 ${done} 趟` }
+            : had
+            ? { ok: true, text: "提要已经是最新的了：上回抄到以后新聊的还太少，用不着抄" }
+            : { ok: true, text: "这段对话还短，用不着抄：最近的原话本来就整段寄给他" };
+        } else if (out === "later") note = { ok: false, text: "这段对话正在重新回答，等它回完再点" };
+        else note = { ok: false, text: "这段对话没了" };
+      }
+      if (!note) note = { ok: true, text: `抄了 ${done} 趟，还没抄到头，再点一下接着抄` };
     } catch (e) {
       job.failed[id] = e && e.code === "away" ? afterAway(job.failed[id], Date.now()) : afterFail(job.failed[id], Date.now());
       saveBad();
-      note = { ok: false, text: `没抄成：${recapWhy(e)}` };
+      note = { ok: false, text: `${done ? `抄好了 ${done} 趟，存着；` : ""}第 ${done + 1} 趟没抄成：${recapWhy(e)}` };
     }
     job.busy.delete(id);
     setRecapTry({ chat: id, done: true, ...note });
@@ -5322,6 +5337,8 @@ export default function App({ account = {} }) {
               log: recapLog,
               trying: recapTry && recapTry.chat === chatId ? recapTry : null,
               onNow: recapNow,
+              // 看一眼提要：和聊天里点那行小字打开的是同一页（盖在 API 面板上面，关了回到面板）
+              onView: liveRecap ? () => setRecapView(liveRecap) : null,
             }}
           />
         </Sheet>

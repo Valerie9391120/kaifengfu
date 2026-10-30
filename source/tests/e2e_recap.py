@@ -2,7 +2,7 @@
 # 真的浏览器里走一遍：短对话和原来一样；早就聊得很长的旧对话头一回寄（硬切、写明前面还有）；他回完以后在后台一趟一趟抄；
 # 抄好以后那行小字、点开看；往后寄的是提要加原话；抄的工夫里她照常聊；另一台设备同步得到；丢掉重抄；
 # 抄不成照旧寄原话、不反复试（重开了也认）；她切走了先不抄、回来接着抄；抄到一半她走了；段数多了并；照片带图；
-# 三档；删对话；收漏网的提要。
+# 两档（原来三档，“长”10 月 30 日拿掉了）；删对话；收漏网的提要。
 # 先在 source/ 里 npm run build:test，起好两个服务（见开发说明），再：python3 tests/e2e_recap.py
 import json, re, sys, time
 from datetime import datetime
@@ -275,11 +275,12 @@ with sync_playwright() as p:
     body = chat_calls()[-1]["body"]
     ok(any(t.startswith(f"【前情提要】这段对话聊得很长了，头 {rec2['n']} 条") for t in first_texts(body)) and rows_on(pa) == 1 and len(recap_calls()) == r0, "重新回答的那一回：提要照用，那行小字还在，也不为它再抄一趟")
 
-    # API 面板：三档
+    # API 面板：两档
     open_api(pa)
     note_text = lambda: pa.locator(".kfs-recall-note").inner_text()
-    ok(pa.locator(".kfs-recall").get_attribute("data-recall") == "mid" and pa.get_by_text("他记多长").is_visible() and re.search("攒到大约 5.0 万字.*最近 1.5 万字上下留原话", note_text()) and "屋子小" not in note_text(),
-       "API 面板：“他记多长”三档，没选过是适中（攒到五万字抄一回，最近一万五千字留原话）")
+    ok(pa.locator(".kfs-recall").get_attribute("data-recall") == "mid" and pa.get_by_text("他记多长").is_visible() and re.search("攒到大约 5.0 万字.*最近 1.5 万字上下留原话", note_text()) and "屋子小" not in note_text()
+       and [b.inner_text() for b in pa.locator(".kfs-recall button").all()] == ["短", "适中"],
+       "API 面板：“他记多长”两档（短、适中），没选过是适中（攒到五万字抄一回，最近一万五千字留原话）")
     pa.locator(".kfs-recall button", has_text="短").click(); pa.wait_for_timeout(500)
     ok(pa.locator(".kfs-recall").get_attribute("data-recall") == "short" and json.loads(pa.evaluate(KV, "kfs2:settings")).get("recall") == "short" and re.search("攒到大约 2.0 万字.*最近 6000 字上下留原话", note_text())
        and pa.locator(".kfs-recall button", has_text="短").get_attribute("aria-pressed") == "true",
@@ -290,7 +291,7 @@ with sync_playwright() as p:
     length.get_by_role("button", name="长", exact=True).click(); pa.wait_for_timeout(500)
     st = json.loads(pa.evaluate(KV, "kfs2:settings"))
     ok(st.get("maxTokens") == 4096 and st.get("recall") == "mid" and length.get_by_role("button", name="长", exact=True).get_attribute("aria-pressed") == "true" and pa.locator(".kfs-recall").get_attribute("data-recall") == "mid",
-       "“回复最长多少”那一组（和三档是同一种滑块）照常能拨，拨它不带着“他记多长”动")
+       "“回复最长多少”那一组（和“他记多长”是同一种滑块）照常能拨，拨它不带着“他记多长”动")
     length.get_by_role("button", name="适中", exact=True).click(); pa.wait_for_timeout(500)
     ok(json.loads(pa.evaluate(KV, "kfs2:settings")).get("maxTokens") == 2048, "拨回去")
     close_api(pa)

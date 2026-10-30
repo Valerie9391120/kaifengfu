@@ -1,5 +1,5 @@
 # 抄提要的流水账（10 月 30 日添的）：每试一回抄提要记一笔，API 面板里写出来（成没成、为什么没成、等了多久），
-# 眼前这段对话抄到哪儿了、攒了多厚，上回没成的几点以后再试；“现在抄一趟”当场抄一趟。
+# 眼前这段对话抄到哪儿了、攒了多厚，上回没成的几点以后再试；“整理提要”当场一趟一趟抄到头；“看一眼提要”；“他记多长”只剩两档。
 # 先在 source/ 里 npm run build:test，起好两个服务（见开发说明），再：python3 tests/e2e_recap_log.py
 import json, re, sys, time
 from playwright.sync_api import sync_playwright
@@ -57,7 +57,8 @@ def state_text(page): return page.locator(".kfs-recap-state").inner_text()
 def log_lines(page): return [l.inner_text() for l in page.locator(".kfs-recap-log").all()]
 def now_note(page): return page.locator(".kfs-recap-now-note").inner_text() if page.locator(".kfs-recap-now-note").count() else ""
 def press_now(page): page.locator(".kfs-recap-now").click()
-def wait_note(page, timeout=20000):
+def view_btn(page): return page.locator(".kfs-recap-view")
+def wait_note(page, timeout=30000):
     return wait_js(page, "(() => { const n = document.querySelector('.kfs-recap-now-note'); return !!n && n.dataset.ok != null; })()", timeout)
 USAGE_ROW = """(name) => { const k = [...document.querySelectorAll('.kfs-sheet span')].find((e) => e.textContent === name); return k && k.nextElementSibling ? k.nextElementSibling.textContent : null; }"""
 
@@ -70,17 +71,32 @@ with sync_playwright() as p:
     pa.on("pageerror", lambda e: errors.append("A: " + str(e)))
     first_time(pa)
 
-    # ================= 短对话：那一块写着还空着、用不着抄 =================
+    # ================= 空对话、两档 =================
     open_api(pa)
-    ok("还空着" in state_text(pa) and pa.locator(".kfs-recap-log-none").count() == 1 and pa.locator(".kfs-recap-now").is_disabled(), "新开的空对话：写着还空着；这台手机上还没试过；“现在抄一趟”点不了")
-    pa.screenshot(path="/tmp/kfs_recap_empty.png")
+    ok("还空着" in state_text(pa) and pa.locator(".kfs-recap-log-none").count() == 1 and pa.locator(".kfs-recap-now").is_disabled() and view_btn(pa).is_disabled(),
+       "新开的空对话：写着还空着；这台手机上还没试过；“整理提要”“看一眼提要”都点不了")
+    labels = [b.inner_text() for b in pa.locator(".kfs-recall button").all()]
+    ok(labels == ["短", "适中"] and pa.locator(".kfs-recall").get_attribute("data-recall") == "mid", "“他记多长”只剩短、适中两档（“长”拿掉了），没选过是适中")
+    ok(pa.locator(".kfs-recap-now").inner_text() == "整理提要" and view_btn(pa).inner_text() == "看一眼提要", "两个钮：整理提要、看一眼提要")
     close_api(pa)
+    # 原来拨在“长”的设备：当适中
+    pa.wait_for_timeout(2500)
+    st = json.loads(pa.evaluate(KV, "kfs2:settings") or "{}")
+    st["recall"] = "long"
+    pa.evaluate(SEED, [["kfs2:settings", json.dumps(st, ensure_ascii=False)]])
+    pa.reload(); kite(pa); pa.wait_for_timeout(800)
+    open_api(pa)
+    ok(pa.locator(".kfs-recall").get_attribute("data-recall") == "mid" and pa.locator('.kfs-recall button[aria-pressed="true"]').inner_text() == "适中" and "攒到大约 5.0 万字" in pa.locator(".kfs-recall-note").inner_text(),
+       "设置里原来拨在“长”的：面板上亮的是适中，数也照适中写")
+    close_api(pa)
+
+    # ================= 短对话：点了用不着抄 =================
     chat(pa, "头一句")
     open_api(pa)
     ok("一共 2 条" in state_text(pa) and "还没抄过提要" in state_text(pa) and "该抄了" not in state_text(pa), "短对话：一共几条、还没抄过、没攒够")
     r0 = len(recap_calls())
     press_now(pa)
-    ok(wait_note(pa) and "用不着抄" in now_note(pa) and len(recap_calls()) == r0 and log_of(pa) == [], "短对话点“现在抄一趟”：用不着抄，没去问，流水账不记")
+    ok(wait_note(pa) and "这段对话还短，用不着抄" in now_note(pa) and len(recap_calls()) == r0 and log_of(pa) == [], "短对话点“整理提要”：用不着抄，没去问，流水账不记")
     close_api(pa)
 
     # ================= 长对话，那边一直太挤：自动的那一回记一笔“没抄成” =================
@@ -103,58 +119,94 @@ with sync_playwright() as p:
     ok(len(lines) == 1 and "没抄成" in lines[0] and "太挤" in lines[0] and "等了" in lines[0] and pa.locator('.kfs-recap-log[data-ok="no"]').count() == 1, "最近几回：写着没抄成、为什么、等了多久（红字）")
     ok(pa.locator(".kfs-recap-retry").count() == 1 and "以后他回完话再自己试" in pa.locator(".kfs-recap-retry").inner_text(), "上回没成：写着几点以后再自己试")
     ok(pa.evaluate(USAGE_ROW, "上一回抄提要") is None, "没回话的那一回没花钱：用量里不摆“上一回抄提要”")
+    ok(view_btn(pa).is_disabled(), "还没有提要：“看一眼提要”点不了")
     pa.screenshot(path="/tmp/kfs_recap_failed.png")
 
-    # ================= 点“现在抄一趟”：不等那十分钟，当场试；写到上限被截断 =================
+    # ================= 点“整理提要”：不等那十分钟，当场试；头一趟写到上限被截断，就停 =================
     mock("/__debug/claude-fail?kind=recap-cut")
     r0 = len(recap_calls())
     press_now(pa)
-    ok(wait_note(pa) and len(recap_calls()) == r0 + 1, "点了“现在抄一趟”：不等那十分钟，当场去抄")
+    ok(wait_note(pa) and len(recap_calls()) == r0 + 1, "点了“整理提要”：不等那十分钟，当场去抄；头一趟没成就停，不接着试")
     note = now_note(pa)
-    ok("没抄成" in note and "写到上限被截断" in note and "400 token" in note and re.search(r"上限 \d+", note) and pa.locator('.kfs-recap-now-note[data-ok="no"]').count() == 1, "这回写到上限被截断：写明用了多少 token、上限多少（红字）")
+    ok("第 1 趟没抄成" in note and "写到上限被截断" in note and "400 token" in note and re.search(r"上限 \d+", note) and pa.locator('.kfs-recap-now-note[data-ok="no"]').count() == 1, "写到上限被截断：写明第几趟、用了多少 token、上限多少（红字）")
     lines = log_lines(pa)
     ok(len(lines) == 2 and "（你点的）" in lines[0] and "写到上限被截断" in lines[0] and "太挤" in lines[1], "最近几回多了一行，新的在最上面，写着是你点的")
     ok((ledger(pa).get("old-chat-1") or {}).get("times") == 2, "点的那一趟没成，照样记进隔多久再试的那本账")
     ok(pa.evaluate(USAGE_ROW, "上一回抄提要") is not None, "写到一半的那一回花了钱：用量里摆出“上一回抄提要”")
 
-    # ================= 那边好了：点一下抄成了 =================
+    # ================= 那边好了：点一下，一趟一趟抄到头 =================
     mock("/__debug/claude-fail")
     r0 = len(recap_calls())
     press_now(pa)
-    ok(wait_note(pa) and "抄成了一趟" in now_note(pa) and len(recap_calls()) == r0 + 1, "那边好了，再点一下：抄成了一趟（只抄一趟）")
+    ok(wait_note(pa, 60000), "那边好了，再点一下：抄完了")
+    got = len(recap_calls()) - r0
+    rec = (recaps_of(pa, "old-chat-1") or [{}])[-1]
+    ok(got >= 3 and f"整理好了：这回抄了 {got} 趟" in now_note(pa) and len(rec.get("parts") or []) == got and rec.get("more") is False,
+       f"一趟接一趟抄到头（这回 {got} 趟，存着的提要 {len(rec.get('parts') or [])} 段，抄完了）")
     lines = log_lines(pa)
-    ok(len(lines) == 3 and "抄成了" in lines[0] and "（你点的）" in lines[0] and pa.locator('.kfs-recap-log[data-ok="yes"]').count() == 1, "最近几回：最上面那行是抄成了")
+    ok(len(lines) == 3 and all("抄成了" in l and "（你点的）" in l for l in lines) and len(log_of(pa)) == 6, "最近几回：最上面几行都是你点的、抄成了；流水账只留最近六笔")
     ok("old-chat-1" not in ledger(pa) and pa.locator(".kfs-recap-retry").count() == 0, "抄成了：隔多久再试那一笔清掉，“几点以后再试”那句也没了")
     st = state_text(pa)
-    ok("提要抄到" in st and "1 段" in st and "还没抄完" in st, "这段对话那一句改成：提要抄到几点、一段、还没抄完")
+    ok("提要抄到" in st and f"{got} 段" in st and "还没抄完" not in st and "该抄了" not in st, "这段对话那一句改成：提要抄到几点、几段，没有“还没抄完”")
     pa.screenshot(path="/tmp/kfs_recap_ok.png")
+
+    # 看一眼提要：盖在 API 面板上面，关了回到面板
+    ok(view_btn(pa).is_enabled(), "有提要了：“看一眼提要”点得了")
+    view_btn(pa).click()
+    pa.locator(".kfs-recap-body").wait_for(timeout=5000)
+    ok("（测试提要）" in pa.locator(".kfs-recap-body").inner_text() and f"{got} 段" in pa.locator(".kfs-recap-meta").inner_text(), "点“看一眼提要”：就是他抄的那一份（几段、正文），和聊天里点那行小字打开的是同一页")
+    pa.screenshot(path="/tmp/kfs_recap_view.png")
+    pa.get_by_role("button", name="关闭").last.click(); pa.wait_for_timeout(500)
+    ok(pa.locator(".kfs-recap-body").count() == 0 and pa.locator(".kfs-recap-check").is_visible(), "关掉提要那一页：回到 API 面板")
+
+    # 抄到头了再点：用不着抄
+    r0 = len(recap_calls())
+    press_now(pa)
+    ok(wait_note(pa) and "提要已经是最新的了" in now_note(pa) and len(recap_calls()) == r0, "抄到头了再点：提要已经是最新的了，没去问")
     close_api(pa)
     ok(len(talk_calls()) == t0, "开着 API 面板点了这么几下：一句话都没替她发出去（只问了抄提要的那几回）")
-    ok(rows_on(pa) == 1 and len((recaps_of(pa, "old-chat-1") or [])) == 1, "聊天里多了那行小字，存档里有了那一份提要")
+    ok(rows_on(pa) == 1, "聊天里那行小字在")
 
     # 重开：流水账还在，用量里“上一回抄提要”照它写
     pa.reload(); kite(pa); pa.wait_for_timeout(800)
     back_to_last(pa)
     open_api(pa)
     ok(len(log_lines(pa)) == 3 and pa.evaluate(USAGE_ROW, "上一回抄提要") is not None, "划掉重开：流水账还在（记在这台手机上），“上一回抄提要”也照它写")
+    close_api(pa)
 
-    # ================= 点了以后她切走：这一趟断了 =================
+    # ================= 另一段长对话：点了以后她切走 =================
+    OLD2 = old_chat("乙", TURNS, 100, 300)
+    plant(pa, "old-chat-2", OLD2, "第二段旧对话")
+    open_api(pa)
     mock("/__debug/claude-hold?ms=90000&kind=recap")
     press_now(pa)
-    ok(wait_mock(held, 15) and "别切走" in now_note(pa), "点了，压着没回：写着等了多久、别切走")
+    ok(wait_mock(held, 15) and "正在抄第 1 趟" in now_note(pa) and "别切走" in now_note(pa), "点了，压着没回：写着正在抄第几趟、别切走")
     pa.wait_for_timeout(1200)
-    ok(re.search(r"等了 \d+ 秒", now_note(pa)) and pa.locator(".kfs-recap-now").is_disabled(), "一秒一跳写着等了几秒；钮点不了")
+    ok(re.search(r"等了 \d+ 秒", now_note(pa)) and pa.locator(".kfs-recap-now").is_disabled() and pa.locator(".kfs-recap-now").inner_text() == "正在整理…", "一秒一跳写着等了几秒；钮点不了")
     pa.screenshot(path="/tmp/kfs_recap_busy.png")
     away(pa, True)
     mock("/__debug/claude-fail?kind=recap")
     mock("/__debug/claude-release")
     pa.wait_for_timeout(1500)
     away(pa, False)
-    ok(wait_note(pa) and "切走" in now_note(pa) and "你切走了" in log_lines(pa)[0], "抄的工夫里她切走了：写着你切走了，这一趟断了")
+    ok(wait_note(pa) and "第 1 趟没抄成" in now_note(pa) and "你切走了" in now_note(pa) and "你切走了" in log_lines(pa)[0], "抄的工夫里她切走了、这一趟断了：写着第 1 趟没抄成、你切走了")
     mock("/__debug/claude-fail")
+
+    # 一趟抄成的时候她已经切走了：停在这儿，抄好的存着
+    mock("/__debug/claude-hold?ms=90000&kind=recap")
+    r0 = len(recap_calls())
+    press_now(pa)
+    ok(wait_mock(held, 15), "再点：压着头一趟")
+    away(pa, True)
+    mock("/__debug/claude-release")
+    pa.wait_for_timeout(2500)
+    ok(len(recap_calls()) == r0 + 1, "她不在眼前：抄成这一趟以后不接着抄")
+    away(pa, False)
+    ok(wait_note(pa) and "停在这儿" in now_note(pa) and "抄好的 1 趟存着" in now_note(pa) and len((recaps_of(pa, "old-chat-2") or [{}])[-1].get("parts") or []) == 1,
+       "回来一看：你切走了，停在这儿，抄好的那一趟存着")
     close_api(pa)
 
-    # 他回完话自动抄的那一回成了，流水账也记（不是她点的）
+    # 他回完话自动接着抄的那一回成了，流水账也记（不是她点的）
     pa.evaluate("localStorage.removeItem('kfs-recap-bad')")
     pa.reload(); kite(pa); pa.wait_for_timeout(800)
     back_to_last(pa)
@@ -163,7 +215,10 @@ with sync_playwright() as p:
     ok(wait_mock(lambda: len(recap_calls()) >= r0 + 1, 15), "他回完话：自动接着抄")
     pa.wait_for_timeout(4000)
     lg = log_of(pa)
-    ok(lg and lg[0]["ok"] is True and lg[0]["manual"] is False and len(lg) <= 6, "自动抄成的也记一笔（不是她点的）；流水账最多留六笔")
+    ok(lg and lg[0]["ok"] is True and lg[0]["manual"] is False and lg[0]["chat"] == "old-chat-2", "自动抄成的也记一笔（不是她点的）")
+    open_api(pa)
+    ok(any("（另一段对话）" in l for l in log_lines(pa)) is False and "（你点的）" not in log_lines(pa)[0], "最近几回：都是眼前这段的；最上面那行是自动抄的")
+    close_api(pa)
 
     ok(not errors, "页面没报错" + ("：" + " | ".join(errors[:3]) if errors else ""))
     browser.close()

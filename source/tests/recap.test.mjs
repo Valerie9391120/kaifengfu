@@ -35,6 +35,8 @@ function talk(turns, herLen = 40, hisLen = 60) {
 const sum = (list) => list.reduce((a, m) => a + thick(m), 0);
 const oldWindowStart = (n) => (n <= 40 ? 0 : Math.floor((n - 20) / 20) * 20); // 原来 prompt/messages.js 里的那一句
 const MID = tierOf("mid");
+// 原来“长”那一档的数（她 10 月 30 日拿掉了那一档）：照片那几条拿它当“字数远没攒够”的一档用
+const LONG = { trigger: 120000, keep: 36000, hard: 180000, room: Infinity, most: Infinity };
 const noLookup = () => null;
 const AV = { her: null, him: null };
 const build = (msgs, ctx = {}, img = noLookup, thumb = noLookup, docs = noLookup) => buildMessages(msgs, AV, noLookup, img, thumb, docs, ctx).messages;
@@ -95,15 +97,16 @@ ok(same && rowFloor(40) === 0 && rowFloor(41) === 20 && rowFloor(60) === 40 && r
 // =====================================================
 // 三档、屋子
 // =====================================================
-ok(DEFAULT_RECALL === "mid" && RECALL.short.trigger < RECALL.mid.trigger && RECALL.mid.trigger < RECALL.long.trigger && Object.values(RECALL).every((t) => t.keep < t.trigger && t.label),
-  "三档：短、适中、长，默认适中；每一档留的原话都比攒的少");
+ok(DEFAULT_RECALL === "mid" && Object.keys(RECALL).join() === "short,mid" && RECALL.short.trigger < RECALL.mid.trigger && Object.values(RECALL).every((t) => t.keep < t.trigger && t.label),
+  "两档：短、适中，默认适中；每一档留的原话都比攒的少（“长”那一档 10 月 30 日拿掉了）");
+ok(JSON.stringify(tierOf("long")) === JSON.stringify(MID), "设备上原来拨在“长”的：当适中");
 ok(MID.trigger === 50000 && MID.keep === 15000 && MID.hard === 75000 && MID.room === Infinity && MID.most === Infinity, "适中：攒到五万字抄，最近一万五千字留原话，抄不成的时候老的那一段最多寄七万五");
 ok(JSON.stringify(tierOf("没有这一档")) === JSON.stringify(MID) && JSON.stringify(tierOf(undefined)) === JSON.stringify(MID) && JSON.stringify(tierOf("constructor")) === JSON.stringify(MID) && JSON.stringify(tierOf("__proto__")) === JSON.stringify(MID),
   "没选过、认不得的档（连“constructor”这种怪名字）：当适中");
 const big = roomFor(1000000, 60000, 2048);
 const small = roomFor(200000, 60000, 2048);
 const smallSure = roomFor(200000, 60000, 2048, true);
-ok(big > RECALL.long.trigger * 1.5 && tierOf("long", big).hard === 180000, "一百万的屋子：名帖记忆库六万字也放得下“长”那一档");
+ok(big > RECALL.mid.trigger * 1.5 && tierOf("mid", big).hard === 75000, "一百万的屋子：名帖记忆库六万字也放得下“适中”那一档");
 const tight = tierOf("mid", small, smallSure);
 ok(small > 20000 && small < 30000 && tight.room === small && tight.hard === Math.round(small * 0.8) && tight.trigger === Math.round(tight.hard / 1.5) && tight.keep === Math.round(tight.trigger * 0.3) && tight.trigger < MID.trigger,
   `二十万的屋子、名帖记忆库六万字：往多里算只放得下 ${small} 字的对话，适中那一档跟着缩（攒到 ${tight.trigger} 字就抄）`);
@@ -192,7 +195,7 @@ for (const [turns, a, b] of [[30, 10, 20], [200, 50, 100], [400, 300, 900], [60,
   const chat = talk(turns, a, b);
   for (let n = 1; n <= chat.length; n += 7) {
     const cut = chat.slice(0, n);
-    for (const tier of [tierOf("short"), MID, tierOf("long"), tierOf("mid", 20000)]) {
+    for (const tier of [tierOf("short"), MID, LONG, tierOf("mid", 20000)]) {
       if (planWindow(cut, [], tier).from > oldWindowStart(n)) neverLess = false;
       // 带着一份抄到各处的提要也一样（抄到最后二三十条里头的也算上）
       for (const at of [0, Math.floor(n / 2), n - 1]) if (planWindow(cut, [R(cut[at].id)], tier).from > oldWindowStart(n)) neverLess = false;
@@ -351,14 +354,14 @@ ok(half.passes.length === 5 && halfPlan.recap.more === true && halfPlan.gap > 10
 // 她把“他记多长”拨小了、换了屋子小的模型：也是一趟一趟追，不丢
 seq = 0;
 const roomy = talk(350, 110, 200); // 700 条，十一万多字：在“长”那一档底下用不着抄
-ok(dueRecap(roomy, [], tierOf("long")) === null && planWindow(roomy, [], tierOf("long")).from === 0, "七百条、十一万多字，“长”那一档：全寄原话，用不着抄");
+ok(dueRecap(roomy, [], LONG) === null && planWindow(roomy, [], LONG).from === 0, "七百条、十一万多字，“长”那一档：全寄原话，用不着抄");
 const shortTier = tierOf("short");
 const firstShort = dueRecap(roomy, [], shortTier);
 ok(planWindow(roomy, [], shortTier).gap > 0 && firstShort.kind === "piece" && firstShort.from === 0, "拨到“短”：这一回寄的硬切了，可抄提要是从头一条抄起的（不是从切口抄起）");
 run = chase(roomy, [], shortTier);
 fin = pickRecap(roomy, run.list).recap;
 ok(rowsCovered(fin) === fin.n && fin.more === false && sum(roomy.slice(fin.n)) <= shortTier.keep + 400, `在“短”那一档追完：头 ${fin.n} 条都抄进提要了，一条没跳`);
-p = planWindow(roomy, run.list, tierOf("long"));
+p = planWindow(roomy, run.list, LONG);
 ok(p.from === fin.n && p.gap === 0 && p.over === 0, "再拨回“长”：寄的是提要加它后面的原话，没有哪一段既没寄也没抄");
 const haiku = tierOf("mid", roomFor(200000, 60000, 2048), roomFor(200000, 60000, 2048, true));
 run = chase(roomy, [], haiku);
@@ -499,9 +502,9 @@ let album = [];
 for (let i = 0; i < 45; i++) album.push(photo("a" + i), him("这张好"));
 album = album.concat(talk(30, 5, 5));
 const bytes300 = () => 300000;
-const dueAlbum = dueRecap(album, [], tierOf("long"), bytes300);
-ok(sum(album) < RECALL.long.trigger && dueAlbum && dueAlbum.kind === "piece" && photosIn(album, dueAlbum) === 11 && photosIn(album, dueAlbum) <= PIECE_PHOTOS && dueAlbum.thick <= PIECE_MAX && dueAlbum.more === true, "四十五张照片（字数还没攒到“长”那一档）：照片过了三十张也抄；一趟放得下十一张，剩下的下一趟");
-run = chase(album, [], tierOf("long"), bytes300);
+const dueAlbum = dueRecap(album, [], LONG, bytes300);
+ok(sum(album) < LONG.trigger && dueAlbum && dueAlbum.kind === "piece" && photosIn(album, dueAlbum) === 11 && photosIn(album, dueAlbum) <= PIECE_PHOTOS && dueAlbum.thick <= PIECE_MAX && dueAlbum.more === true, "四十五张照片（字数还没攒到“长”那一档）：照片过了三十张也抄；一趟放得下十一张，剩下的下一趟");
+run = chase(album, [], LONG, bytes300);
 fin = pickRecap(album, run.list).recap;
 ok(run.passes.every((d) => photosIn(album, d) <= PIECE_PHOTOS) && album.slice(fin.n).filter((m) => m.kind === "photo").length <= 12 && album.slice(0, fin.n).filter((m) => m.kind === "photo").length >= 33,
   `照片这样追了 ${run.passes.length} 趟：每趟不超过十二张，留下的原话里照片不超过十二张`);
@@ -509,27 +512,27 @@ seq = 0;
 let bigAlbum = [];
 for (let i = 0; i < 20; i++) bigAlbum.push(photo("b" + i), him("这张好"));
 bigAlbum = bigAlbum.concat(talk(30, 5, 5));
-ok(dueRecap(bigAlbum, [], tierOf("long"), () => 300000) === null && dueRecap(bigAlbum, [], tierOf("long"), () => 500000) !== null, "二十张照片：一共六兆不抄，一共十兆就抄（照片太大也算）");
+ok(dueRecap(bigAlbum, [], LONG, () => 300000) === null && dueRecap(bigAlbum, [], LONG, () => 500000) !== null, "二十张照片：一共六兆不抄，一共十兆就抄（照片太大也算）");
 seq = 0;
 let fresh = talk(40, 5, 5);
 for (let i = 0; i < 10; i++) fresh.push(photo("c" + i), him("这张好"));
-ok(dueRecap(fresh, [], tierOf("long"), () => 1500000) === null, "十张很大的照片全在最后二十条里、前面没照片也不厚：没什么可抄的，不抄");
+ok(dueRecap(fresh, [], LONG, () => 1500000) === null, "十张很大的照片全在最后二十条里、前面没照片也不厚：没什么可抄的，不抄");
 // 照片太大：一趟带的图不过九兆；薄可照片重的也抄
 seq = 0;
 let bigs = [];
 for (let i = 0; i < 20; i++) bigs.push(photo("bg" + i), him("好看"));
 bigs = bigs.concat(talk(30, 5, 5));
 const twoMeg = (m) => (m.kind === "photo" ? 2000000 : 0);
-const dueBig = dueRecap(bigs, [], tierOf("long"), twoMeg);
-run = chase(bigs, [], tierOf("long"), twoMeg);
+const dueBig = dueRecap(bigs, [], LONG, twoMeg);
+run = chase(bigs, [], LONG, twoMeg);
 ok(PIECE_BYTES === 9000000 && dueBig && photosIn(bigs, dueBig) === 4 && dueBig.more === true && run.passes.every((d) => photosIn(bigs, d) === 4) && bigs.slice(pickRecap(bigs, run.list).recap.n).filter((m) => m.kind === "photo").length <= 4,
   "二十张两兆的照片：一趟带的图不过九兆（四张），一趟一趟抄；留下的原话里照片不到八兆");
 seq = 0;
 let thinHeavy = [];
 for (let i = 0; i < 5; i++) thinHeavy.push(photo("th" + i), him("好看"));
 thinHeavy = thinHeavy.concat(talk(30, 5, 5));
-const dueThin = dueRecap(thinHeavy, [], tierOf("long"), twoMeg);
-ok(sum(thinHeavy) < 12000 && dueThin && dueThin.kind === "piece" && photosIn(thinHeavy, dueThin) === 4 && thinHeavy.slice(dueThin.to + 1).filter((m) => m.kind === "photo").length === 1 && dueRecap(thinHeavy, [], tierOf("long"), () => 100000) === null,
+const dueThin = dueRecap(thinHeavy, [], LONG, twoMeg);
+ok(sum(thinHeavy) < 12000 && dueThin && dueThin.kind === "piece" && photosIn(thinHeavy, dueThin) === 4 && thinHeavy.slice(dueThin.to + 1).filter((m) => m.kind === "photo").length === 1 && dueRecap(thinHeavy, [], LONG, () => 100000) === null,
   "五张照片一共十兆、字数很薄：也抄（不嫌薄），留一张（三兆以内）不抄；照片不大的时候这么薄是不抄的");
 // 照片和表情包一共过了四十张、表情包又不够去：表情包去光为止，照片的图不动（照片自己过了四十张才去）
 seq = 0;
@@ -539,7 +542,7 @@ for (let i = 0; i < 15; i++) crowded.push(meme("m" + i + ".jpg"), him("哈"));
 crowded = crowded.concat(talk(30, 5, 5));
 const mixBytes = (m) => (m.kind === "photo" ? 200000 : 8000);
 st = staleImages(crowded, 0, mixBytes);
-ok(st.size === 15 && [...st].every((i) => crowded[i].kind === "meme") && dueRecap(crowded, [], tierOf("long"), mixBytes) === null,
+ok(st.size === 15 && [...st].every((i) => crowded[i].kind === "meme") && dueRecap(crowded, [], LONG, mixBytes) === null,
   "三十张照片加十五张表情包（一共四十五张）：十五张表情包的图去光，照片的图一张不去；照片没过三十张，也还不用抄");
 // 一张一张添表情包：去过图的不会又带上（原来照片会被去了又带上、带上又去，前面跟着来回变）
 let grown = crowded.slice(0, 60);
@@ -562,7 +565,7 @@ for (let i = 0; i < 45; i++) manyPhotos.push(photo("mp" + i), him("好看"));
 for (let i = 0; i < 15; i++) manyPhotos.push(meme("m" + i + ".jpg"), him("哈"));
 manyPhotos = manyPhotos.concat(talk(30, 5, 5));
 st = staleImages(manyPhotos, 0, mixBytes);
-ok([...st].filter((i) => manyPhotos[i].kind === "photo").length === 20 && st.has(0) && st.has(38) && !st.has(40) && [...st].filter((i) => manyPhotos[i].kind === "meme").length === 15 && dueRecap(manyPhotos, [], tierOf("long"), mixBytes) !== null,
+ok([...st].filter((i) => manyPhotos[i].kind === "photo").length === 20 && st.has(0) && st.has(38) && !st.has(40) && [...st].filter((i) => manyPhotos[i].kind === "meme").length === 15 && dueRecap(manyPhotos, [], LONG, mixBytes) !== null,
   "四十五张照片加十五张表情包：照片从最老的去二十张（一跳二十张），表情包去光；照片过了三十张，该抄提要了（抄的那一回是带着图看的）");
 // 照片的大小只算照片：表情包再大也不挤照片
 seq = 0;
@@ -764,6 +767,30 @@ const gR = gauge(longTalk, withOne, tierOf("short"));
 ok(gR.recap && gR.recap.id === "g1" && gR.body === sum(longTalk.slice(firstDue.to + 1, rowFloor(600))), "抄过一段：作数的那一份是它，攒了多厚从它之后数起");
 const gM = gauge(talk(30), [], tierOf("short"));
 ok(gM.n === 60 && gM.body < 20000 && !gM.due, "短对话：没攒够，不该抄");
+ok(gS.can && gR.can !== undefined && !g0.can && !gM.can, "点“整理提要”有没有能抄的：长的有，空的、四十条以内的没有");
+
+// 她点“整理提要”（force）：不等攒够，上回抄到的地方以后新聊的都抄；别的规矩照旧
+seq = 0;
+const mild = talk(150, 40, 60); // 300 条，将近两万字：“适中”那一档还没攒够
+ok(sum(mild) > MID.keep + 3000 && sum(mild) < MID.trigger && dueRecap(mild, [], MID) === null, "将近两万字，“适中”那一档：照规矩还用不着抄");
+ok(dueRecap(talk(100, 40, 60), [], MID, () => 0, true) === null, "整段还没有最近那一截（适中是一万五千字）厚：点了也用不着抄，本来就整段寄原话");
+const fz = dueRecap(mild, [], MID, () => 0, true);
+ok(fz && fz.kind === "piece" && fz.from === 0 && fz.to < rowFloor(mild.length) && mild[fz.to].role === "him" && sum(mild.slice(fz.to + 1)) >= Math.min(MID.keep, sum(mild.slice(rowFloor(mild.length)))),
+  "点了“整理提要”：不等攒够，从头一条抄起，切在一轮的末尾；最后二三十条、最近那一截照旧留原话");
+ok(dueRecap(talk(15), [], MID, () => 0, true) === null, "四十条以内：点了也用不着抄（整段都寄原话）");
+let fr = addRecap([], nextRecap(fz, "抄的一段" + fill(300), mild, { id: "f1", at: 1, model: "测试模型" }));
+let guard = 0;
+while (guard++ < 20) {
+  const d = dueRecap(mild, fr, MID, () => 0, true);
+  if (!d) break;
+  fr = addRecap(fr, nextRecap(d, "抄的一段" + fill(300), mild, { id: "f" + (guard + 1), at: guard + 1, model: "测试模型" }));
+}
+const fdone = pickRecap(mild, fr).recap;
+ok(guard < 20 && rowsCovered(fdone) === fdone.n && !fdone.more && sum(mild.slice(fdone.n)) <= MID.keep + 400 && sum(mild.slice(fdone.n)) > MID.keep - 1500,
+  "接连点着抄：一趟接一趟追到头，一条没跳；留下的原话就是最近那一截（适中是一万五千字上下）");
+const afterMild = mild.concat(talk(3, 40, 60));
+ok(dueRecap(afterMild, fr, MID, () => 0, true) === null, "抄到头以后只新聊了几句：点了也不抄（太薄）");
+ok(dueRecap(mild, fr, MID) === null, "点着抄完了：照规矩自动的那一回也不会再来抄");
 
 // =====================================================
 // 平时寄的那一整段
@@ -1074,7 +1101,7 @@ function randomChat(r, rowCount) {
   }
   return out;
 }
-const tiers = [tierOf("short"), MID, tierOf("long"), haiku];
+const tiers = [tierOf("short"), MID, LONG, haiku];
 // 寄的时候带的图用一张小的顶替（省得测试里搬几个兆的字）；算照片多大的时候另给一个像样的数
 const imgOf = () => SMALL;
 const bytesOfRow = (m) => (m.kind === "photo" ? 200000 + ((String(m.imgId).length * 37 + String(m.imgId).charCodeAt(String(m.imgId).length - 1) * 911) % 600000) : 0);
