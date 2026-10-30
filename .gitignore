@@ -9,3 +9,5 @@ source/tests/look/
 source/dist-test2/
 source/tests/look_jz/
 source/alarm/dist/
+source/dist-test3/
+source/node_modules

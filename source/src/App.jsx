@@ -69,6 +69,8 @@ import { ModelPanel } from "./panels/ModelPanel.jsx";
 import { NanyaPanel, soonToast } from "./panels/NanyaPanel.jsx";
 import { BOX_KEY, BOX_AUDIO, packEntry, keptText, listEntries, sameVoiceIds, findBySrc, boxSub } from "./cangyin/parts.js";
 import { CangyinPage, TRAD_KEY } from "./cangyin/CangyinPage.jsx";
+import { TH_KEY, TH_IMG, THUMB_SIDE, packEntry as packTh, packGone, readEntry as readTh, listEntries as listTh, sayOf, drawsOf, toCollect, thSub } from "./tuhua.js";
+import { TuhuaPage } from "./panels/TuhuaPage.jsx";
 import { CallPage } from "./call/CallPage.jsx";
 import { FOX_CHAT, FOX_TITLE, FOX_STATE, FOX_DOORS, FOX_TASK, isFoxChat, wakeOn, readFoxState, foxSub, taskNote } from "./fox.js";
 import { FoxSection } from "./panels/FoxSection.jsx";
@@ -422,6 +424,10 @@ export default function App({ account = {} }) {
   // 藏音匣（见 cangyin/）：开着没有；里面那几条（从新到旧，parts.js 的 listEntries）
   const [boxOpen, setBoxOpen] = useState(false);
   const [boxList, setBoxList] = useState([]);
+  // 图画院（见 tuhua.js）：开着没有、收着的那几张；这次打开以后把所有对话翻过一遍没有（翻过就不再翻，别的设备同步来新画好的图再翻）
+  const [thOpen, setThOpen] = useState(false);
+  const [thList, setThList] = useState([]);
+  const thSwept = useRef(false);
   const boxRef = useRef([]);
   // 藏音匣借走了放声音的东西（见 boxAudio）：这边要停下它的时候（切到后台、来电话）告诉那一页一声
   const audioOwner = useRef(null);
@@ -666,6 +672,7 @@ export default function App({ account = {} }) {
         .catch(() => {});
 
       refreshBox();
+      refreshTh();
       refreshFox();
       refreshQx();
       refreshPd();
@@ -735,6 +742,9 @@ export default function App({ account = {} }) {
       if (has(RECAP_KEY)) showRecaps(chatIdRef.current);
       // 藏音匣：别的设备存了、移出了
       if (has(BOX_KEY)) refreshBox();
+      if (has(TH_KEY)) refreshTh();
+      // 别的设备画好的图同步来了（那台设备要是还没有图画院，它不收）：下回点开图画院再翻一遍
+      if (has("kfs2:img:draw.")) thSwept.current = false;
       // 狐宇宙：闹钟写了心跳
       if (has(FOX_STATE)) refreshFox();
       // 秘戏钱匣：别的设备导了签库、删了加了签、改了抽哪几样
@@ -957,6 +967,9 @@ export default function App({ account = {} }) {
     // 删的是眼前这一段、它的话正排着队：不发了。别的对话里要是还有话等着轮到，接着轮
     if (id === chatIdRef.current && disarm() && !loadingRef.current) nextPending();
     const old = safeParse(await store.get("kfs2:chat:" + id), []) || [];
+    // 他在这段对话里画的画：先收进图画院（还没收的），大图拷一份过来，再删（卿卿 10 月 30 日定的：删了对话，图画院里的还在）
+    await collectDraws(old, id);
+    await keepThImgs(old);
     collectImgIds(old).forEach((imgId) => store.del("kfs2:img:" + imgId));
     collectDocIds(old).forEach((docId) => store.del(DOC_KEY + docId));
     // 他在这段对话里（连同翻过去的那些版本）念过的语音：一起删；还没念的不念了，正念着的那一问掐掉
@@ -1236,9 +1249,14 @@ export default function App({ account = {} }) {
           drawsRef.current = next;
           setDraws(next);
         },
-        onImage: (imgId, data) => {
+        onImage: (imgId, data, info) => {
           imgsRef.current = { ...imgsRef.current, [imgId]: data };
           setImgs(imgsRef.current);
+          // 画好一张就收进图画院
+          if (info && info.chat) {
+            const msgs = chatIdRef.current === info.chat ? messagesRef.current : safeParse(store.peek("kfs2:chat:" + info.chat), []) || [];
+            collectDraws(msgs, info.chat);
+          }
         },
       });
     }
@@ -1580,6 +1598,58 @@ export default function App({ account = {} }) {
     setBoxList(list);
     return list;
   };
+  // ---- 图画院（见 tuhua.js、开发说明“图画院”那节）----
+  const refreshTh = () => {
+    const list = listTh(store.keys(TH_KEY).map((k) => [k, store.peek(k)]));
+    setThList(list);
+    return list;
+  };
+  // 一段对话里画好了、还没收的那几张，收进来：记一条，另做一张小图摆一格一格用。
+  // 大图不另存：聊天里那一张还在的时候就看那一张，删对话的时候才拷一份过来（见 keepThImgs），不然一张画在库房里占两份地方
+  const collectDraws = async (msgs, chat) => {
+    const list = toCollect(msgs, (k) => store.peek(k) != null);
+    if (!list.length) return;
+    for (const x of list) {
+      const data = store.peek("kfs2:img:draw." + x.key);
+      if (!data) continue;
+      let thumb = "";
+      try {
+        thumb = await dataUrlToPhoto(data, THUMB_SIDE);
+      } catch (e) {
+        thumb = data;
+      }
+      if (store.peek(TH_KEY + x.key) != null) continue; // 缩小图的工夫里别处收了、删了
+      await store.set(TH_KEY + x.key, packTh({ chat, at: x.m.ts || Date.now(), say: sayOf(x.m, x.j), ratio: (x.m.items[x.j] || {}).ratio || "", thumb, saved: Date.now() }));
+    }
+    refreshTh();
+  };
+  // 要删一段对话了：那段对话里收在图画院的画（没删的），大图拷一份过来（kfs2:thya:），聊天里那一张删了这里还看得见
+  const keepThImgs = async (msgs) => {
+    for (const x of drawsOf(msgs)) {
+      const e = readTh(x.key, store.peek(TH_KEY + x.key));
+      const data = store.peek("kfs2:img:draw." + x.key);
+      if (e && !e.gone && data && store.peek(TH_IMG + x.key) == null) await store.set(TH_IMG + x.key, data);
+    }
+  };
+  // 图画院里看大图：聊天里那一张还在就看那一张，不在了看拷过来的那一份
+  const thImgOf = (id) => store.peek("kfs2:img:draw." + id) || store.peek(TH_IMG + id) || "";
+  // 点开图画院：所有对话翻一遍，画好了还没收的收进来（有图画院以前画的、别的设备上还没有图画院时画的）。这次打开以后翻过就不再翻
+  const sweepTh = async () => {
+    if (thSwept.current) return;
+    thSwept.current = true;
+    for (const c of indexRef.current) {
+      const msgs = c.id === chatIdRef.current ? messagesRef.current : safeParse(store.peek("kfs2:chat:" + c.id), []) || [];
+      await collectDraws(msgs, c.id);
+    }
+  };
+  // 图画院里长按“删掉这张”：这一条留个记号（别的设备、往后翻的时候认得出是她删的，不再收回来），拷过来的大图删掉。
+  // 聊天里那一张不动（对话还在的话，聊天里照旧摆着）
+  const dropTh = async (id) => {
+    await store.set(TH_KEY + id, packGone(Date.now()));
+    if (store.peek(TH_IMG + id) != null) await store.del(TH_IMG + id);
+    refreshTh();
+  };
+
   // 长按他的语音条“存入藏音匣”：念好的声音整份拷一份（删了对话也还在），字是转出来的那些（标签摘干净）；
   // 存过的那一条，同一个地方写“移出藏音匣”
   const keepVoice = async (r) => {
@@ -2471,6 +2541,11 @@ export default function App({ account = {} }) {
     // 没蹦到的那几样里的画：不画了（画到一半的那一笔、画好的都收掉）
     const unpainted = out.dropped.map((it, i) => (it.type === "draw" ? drawKeyOf(msgId, kept + i) : "")).filter(Boolean);
     if (unpainted.length) getPainter().drop(unpainted);
+    // 那几张要是已经画好、收进了图画院（掐断以前就画好了）：一起拿掉（她没看见他说出来的，不算他画的）
+    unpainted.forEach((k) => {
+      if (store.peek(TH_KEY + k) != null) store.del(TH_KEY + k);
+    });
+    if (unpainted.length) refreshTh();
     const av = out.dropped.find((it) => it.type === "avatar");
     if (av && sameAv(avatarsRef.current.him || null, { type: "meme", file: av.file })) changeHisAvatar(av.prev || null);
   };
@@ -5128,7 +5203,7 @@ export default function App({ account = {} }) {
   // 只认一根手指。落下了第二根，这一回就不算划侧栏了（拖到一半的弹回去），等手指全抬起来再从头认：
   // 整页不许捏以后，两根手指往里一捏，头一根正好是往右走的，原来会被当成右划、把侧栏带出来
   const onTouchStart = (e) => {
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen || qxOpen || pdOpen) return;
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || thOpen || docView || recapView || lotusOpen || qxOpen || pdOpen) return;
     if (e.touches.length > 1) {
       touch.current = null;
       setDragX(null);
@@ -5141,7 +5216,7 @@ export default function App({ account = {} }) {
     const s = touch.current;
     if (!s) return;
     // 手指还按着的工夫里冒出了菜单、面板（长按气泡就是）：底下的侧栏不跟着这根手指走，这一回也不算了
-    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || docView || recapView || lotusOpen || qxOpen || pdOpen) {
+    if (sheet || historyOpen || splash || viewer || menu || diaryOpen || boxOpen || thOpen || docView || recapView || lotusOpen || qxOpen || pdOpen) {
       touch.current = null;
       setDragX(null);
       return;
@@ -5268,7 +5343,7 @@ export default function App({ account = {} }) {
   // 对话页（或侧栏）在最上面时，底边自己接得上那条色块，告诉 main.jsx 别再盖淡出
   // 并蒂莲那一层不算在里头：那层淡出（main.jsx 的 BottomMist）在外壳外头、层高 60，会盖到并蒂莲上面；
   // 那一层开着的时候网页底色是黑的，本来也不该淡进浅色（见 panels/LotusPage.jsx）
-  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !boxOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming && !docView && !recapView;
+  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !boxOpen && !thOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming && !docView && !recapView;
   useEffect(() => {
     const r = document.documentElement;
     if (chatOnTop) r.setAttribute("data-kfs-chat", "");
@@ -5515,7 +5590,7 @@ export default function App({ account = {} }) {
       return (
         <Sheet title="南衙" onClose={() => setSheet(null)}>
           <NanyaPanel
-            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length), qx: hasLots(qxPool) ? `签库里 ${poolSize(qxPool)} 条签` : "签库还空着", pindou: PD_SUB }}
+            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length), tuhua: thSub(thList.length), qx: hasLots(qxPool) ? `签库里 ${poolSize(qxPool)} 条签` : "签库还空着", pindou: PD_SUB }}
             open={{
               // 狐宇宙：菜单收起，翻到那段对话（他自己醒来说的话都在那儿，见 fox.js）
               fox: () => {
@@ -5533,6 +5608,12 @@ export default function App({ account = {} }) {
                 stopVoice();
                 setSheet(null);
                 setBoxOpen(true);
+              },
+              // 图画院：菜单收起，那一页滑进来；左上角返回回到侧栏（跟藏音匣一样）。进来的时候翻一遍还没收的
+              tuhua: () => {
+                setSheet(null);
+                setThOpen(true);
+                sweepTh();
               },
               // 秘戏钱匣：菜单、侧栏都收起，盖上那一层（见 qx/QxPage.jsx）；叉一点回到眼前这段对话（她丢进来的签在这儿，他关上以后回）。
               // 聊天里正放着的语音停下（锦盒自己有声音）
@@ -6266,6 +6347,8 @@ export default function App({ account = {} }) {
           }}
         />
       )}
+
+      {thOpen && <TuhuaPage entries={thList} imgOf={thImgOf} now={now} onBack={() => setThOpen(false)} onRemove={dropTh} />}
 
       {historyOpen && (
         <HistoryPage
