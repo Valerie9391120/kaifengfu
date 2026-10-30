@@ -1,8 +1,10 @@
+import { useEffect, useState } from "react";
 import { modelLabel, money, usageKey } from "../models.js";
 import { RECALL, DEFAULT_RECALL } from "../recap.js";
 import { VOICE_STAB, DEFAULT_STAB } from "../voice.js";
 import { PAUSES, pauseOf } from "../call/listen.js";
 import { fmtChars } from "../util.js";
+import { sepLabel } from "../days.js";
 import { T, glass, chip } from "../ui/style.js";
 import { Toggle } from "../ui/parts.jsx";
 
@@ -14,6 +16,78 @@ function voiceLine(c) {
   if (c.state === "nofn") return `${c.say || "Supabase 里还没有 voice 这个函数"}。`;
   if (c.state === "auth") return "登录过期了，重新登录一下。";
   return c.say ? `${c.say}。` : "连不上念语音的小后端。";
+}
+
+// 抄提要眼下怎么样（10 月 30 日添的，见开发说明“抄提要的流水账”那节）：
+// 眼前这段对话抄到哪儿了、攒了多厚；最近几回试的结果（没成的写为什么）；上回没成的话几点以后再试；“现在抄一趟”。
+// chat 眼前这段对话的编号；gauge 见 recap.js 的 gauge；retry 几点以后再试（0 是不用等）；log 流水账；
+// trying 她点的那一趟（{ t0 } 正在抄，{ done, ok, text } 有结果了）；onNow 点“现在抄一趟”
+const secs = (ms) => `${Math.max(1, Math.round(ms / 1000))} 秒`;
+const kChars = (n) => fmtChars(n < 10000 ? Math.round(n / 100) * 100 : n);
+function RecapCheck({ chat, gauge, retry, log, trying, onNow }) {
+  const [, tick] = useState(0);
+  const busy = !!(trying && !trying.done);
+  // 正在抄的时候一秒一跳，写着等了多久
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
+  const now = new Date();
+  const g = gauge || { n: 0, recap: null, body: 0, trigger: 0, due: false };
+  let state;
+  if (!g.n) state = "这段对话还空着。";
+  else {
+    const head = g.recap
+      ? `这段对话一共 ${g.n} 条，提要抄到${g.recap.ts ? sepLabel(g.recap.ts, now) : "某一条"}，${g.recap.parts.length} 段${g.recap.more ? "，还没抄完" : ""}。提要之后、`
+      : `这段对话一共 ${g.n} 条，还没抄过提要。`;
+    state = `${head}最后二三十条以前的原话攒了 ${kChars(g.body)}，攒到 ${kChars(g.trigger)}就抄${g.due ? "：够了，该抄了。" : "。"}`;
+  }
+  const recent = (log || []).slice(0, 3);
+  const line = (x) =>
+    `${sepLabel(x.at, now)}${x.manual ? "（你点的）" : ""}，${modelLabel(x.model)}，等了 ${secs(x.ms)}：${x.ok ? "抄成了" : `没抄成，${x.why || "不知道为什么"}`}${x.chat !== chat ? "（另一段对话）" : ""}`;
+  return (
+    <div className="kfs-recap-check" data-retry={retry || 0} style={{ ...glass(0.45, 14), borderRadius: 18, padding: "12px 14px", marginTop: 10 }}>
+      <p className="kfs-recap-state" style={{ fontSize: 12, color: T.inkSoft, lineHeight: 1.65 }}>
+        {state}
+      </p>
+      <div style={{ fontSize: 12, color: T.inkSoft, margin: "10px 0 4px" }}>最近几回抄提要</div>
+      {recent.length ? (
+        recent.map((x, i) => (
+          <p key={i} className="kfs-recap-log" data-ok={x.ok ? "yes" : "no"} style={{ fontSize: 11.5, color: x.ok ? T.inkSoft : T.red, lineHeight: 1.6, marginTop: i ? 4 : 0 }}>
+            {line(x)}
+          </p>
+        ))
+      ) : (
+        <p className="kfs-recap-log-none" style={{ fontSize: 11.5, color: T.inkFaint, lineHeight: 1.6 }}>
+          这台手机上还没试过。
+        </p>
+      )}
+      {retry > 0 && (
+        <p className="kfs-recap-retry" style={{ fontSize: 11.5, color: T.inkFaint, lineHeight: 1.6, marginTop: 6 }}>
+          这段对话上回没抄成，{sepLabel(retry, now)} 以后他回完话再自己试。等不及就点下面。
+        </p>
+      )}
+      <div className="flex items-center flex-wrap" style={{ gap: 10, marginTop: 10 }}>
+        <button onClick={onNow} disabled={busy || !g.n} className="kfs-tap kfs-recap-now" style={{ ...chip, opacity: busy || !g.n ? 0.5 : 1 }}>
+          {busy ? "正在抄…" : "现在抄一趟"}
+        </button>
+        {busy && (
+          <span className="kfs-recap-now-note" style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.5 }}>
+            等了 {secs(Date.now() - trying.t0)}，别切走
+          </span>
+        )}
+        {trying && trying.done && (
+          <span className="kfs-recap-now-note" data-ok={trying.ok ? "yes" : "no"} style={{ fontSize: 12.5, color: trying.ok ? T.inkSoft : T.red, lineHeight: 1.5 }}>
+            {trying.text}
+          </span>
+        )}
+      </div>
+      <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 8, lineHeight: 1.6 }}>
+        照眼前这段对话抄一趟，不等他回完话。抄的时候别切走、别锁屏，切走这一趟就断了。抄一趟比他平常回一句贵几倍。
+      </p>
+    </div>
+  );
 }
 
 // 三选一的那种滑块（“回复最长多少”“他记多长”都是它；账户面板里“他自己醒”的两道闸也借它，见 FoxSection.jsx）
@@ -44,7 +118,8 @@ export function Pick({ options, value, onPick, label }) {
 
 // fit：“他记多长”那一档照眼下这个模型算出来的数（屋子小的模型会比那一档写的小，见 recap.js 的 tierOf）
 // voiceCheck、onVoiceTest、voiceTestNote、voiceTesting：语音条那一段（他能发语音、念得稳不稳、试听一句）
-export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage, monthUsage, recapUsage, fit, voiceCheck, onVoiceTest, voiceTestNote, voiceTesting, onEchoProbe }) {
+// recapCheck：抄提要眼下怎么样那一块（见上面 RecapCheck），没给就不摆
+export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage, monthUsage, recapUsage, fit, recapCheck, voiceCheck, onVoiceTest, voiceTestNote, voiceTesting, onEchoProbe }) {
   const lengths = [
     { v: 1024, t: "短" },
     { v: 2048, t: "适中" },
@@ -94,6 +169,7 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
         一段对话里的原话攒到大约 {about(eff.trigger)}，他把前面的抄成提要，最近 {about(eff.keep)}上下留原话；一张照片算一千五百字。最后二三十条不管多长都留原话。记得越长，每句话越贵。
         {shrunk ? `眼下用的 ${modelLabel(settings.model)} 屋子小，这一档到不了 ${fmtChars(RECALL[recall].trigger)}，照上面的数来。` : ""}
       </p>
+      {recapCheck && <RecapCheck {...recapCheck} />}
 
       <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>语音条</div>
       <div className="kfs-voice-set" data-on={settings.voice ? "yes" : "no"} style={{ ...glass(0.45, 14), borderRadius: 18, padding: "12px 14px" }}>
@@ -155,7 +231,11 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
               row("写出", (usage.output_tokens || 0).toLocaleString()),
             ]
           : row("上一条", "这次打开还没说话")}
-        {recapUsage && row("上一回抄提要", `约 ${money(recapUsage.cost)}，${modelLabel(recapUsage.model)}`)}
+        {(() => {
+          // 这次打开还没抄过的：照流水账里最近一回花了钱的写（流水账记在这台手机上，重开了也在）
+          const last = recapUsage || ((recapCheck && recapCheck.log) || []).find((x) => x.cost != null) || null;
+          return last ? row("上一回抄提要", `约 ${money(last.cost)}，${modelLabel(last.model)}`) : null;
+        })()}
       </div>
       {noCache && (
         <p className="kfs-no-cache" style={{ fontSize: 11.5, color: T.red, marginTop: 6, lineHeight: 1.6 }}>

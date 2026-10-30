@@ -67,18 +67,19 @@ export async function callClaude(body, beta, signal) {
       ...(signal ? { signal } : {}),
     });
   } catch (e) {
-    throw new Error("连不上开封府的后端，看看网络");
+    throw Object.assign(new Error("连不上开封府的后端，看看网络"), { code: "net" });
   }
+  // 出了岔子的都带上状态码（抄提要的流水账要分清是哪一头的毛病，见 recap.js 的 recapWhy）；话还是原来那句
   let d = null;
   try {
     d = await res.json();
   } catch (e) {
-    throw new Error(`后端没回话（${res.status}）`);
+    throw Object.assign(new Error(`后端没回话（${res.status}）`), { status: res.status });
   }
   // 回话正好读完的那一下她按了停：不交出去
   if (signal && signal.aborted) throw Object.assign(new Error("停了"), { code: "stopped" });
-  if (d && d.error) throw new Error(explainError(res.status, d.error));
-  if (!res.ok) throw new Error((d && (d.message || d.msg)) || `出错了（${res.status}）`);
+  if (d && d.error) throw Object.assign(new Error(explainError(res.status, d.error)), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error((d && (d.message || d.msg)) || `出错了（${res.status}）`), { status: res.status });
   return d;
 }
 
