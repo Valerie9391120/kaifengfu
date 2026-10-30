@@ -1,0 +1,16 @@
+{
+  "client_id": "https://valerie9391120.github.io/kaifengfu/oauth/draw-client.json",
+  "client_name": "开封府",
+  "client_uri": "https://valerie9391120.github.io/kaifengfu/",
+  "redirect_uris": [
+    "https://hrfjammapxnzmtlafykq.supabase.co/functions/v1/draw"
+  ],
+  "grant_types": [
+    "authorization_code",
+    "refresh_token"
+  ],
+  "response_types": [
+    "code"
+  ],
+  "token_endpoint_auth_method": "none"
+}
