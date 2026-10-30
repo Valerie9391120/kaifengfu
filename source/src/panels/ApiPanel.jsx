@@ -19,12 +19,13 @@ function voiceLine(c) {
 }
 
 // 抄提要眼下怎么样（10 月 30 日添的，见开发说明“抄提要的流水账”那节）：
-// 眼前这段对话抄到哪儿了、攒了多厚；最近几回试的结果（没成的写为什么）；上回没成的话几点以后再试；“现在抄一趟”。
+// 眼前这段对话抄到哪儿了、攒了多厚；最近几回试的结果（没成的写为什么）；上回没成的话几点以后再试；
+// “整理提要”“看一眼提要”两个钮（她 10 月 30 日下午定的，原来是一个“现在抄一趟”）。
 // chat 眼前这段对话的编号；gauge 见 recap.js 的 gauge；retry 几点以后再试（0 是不用等）；log 流水账；
-// trying 她点的那一趟（{ t0 } 正在抄，{ done, ok, text } 有结果了）；onNow 点“现在抄一趟”
+// trying 她点的那一回（{ t0, pass } 正在抄第几趟，{ done, ok, text } 有结果了）；onNow 点“整理提要”；onView 点“看一眼提要”（还没有提要的是 null）
 const secs = (ms) => `${Math.max(1, Math.round(ms / 1000))} 秒`;
 const kChars = (n) => fmtChars(n < 10000 ? Math.round(n / 100) * 100 : n);
-function RecapCheck({ chat, gauge, retry, log, trying, onNow }) {
+function RecapCheck({ chat, gauge, retry, log, trying, onNow, onView }) {
   const [, tick] = useState(0);
   const busy = !!(trying && !trying.done);
   // 正在抄的时候一秒一跳，写着等了多久
@@ -34,7 +35,7 @@ function RecapCheck({ chat, gauge, retry, log, trying, onNow }) {
     return () => clearInterval(t);
   }, [busy]);
   const now = new Date();
-  const g = gauge || { n: 0, recap: null, body: 0, trigger: 0, due: false };
+  const g = gauge || { n: 0, recap: null, body: 0, trigger: 0, due: false, can: false };
   let state;
   if (!g.n) state = "这段对话还空着。";
   else {
@@ -65,26 +66,29 @@ function RecapCheck({ chat, gauge, retry, log, trying, onNow }) {
       )}
       {retry > 0 && (
         <p className="kfs-recap-retry" style={{ fontSize: 11.5, color: T.inkFaint, lineHeight: 1.6, marginTop: 6 }}>
-          这段对话上回没抄成，{sepLabel(retry, now)} 以后他回完话再自己试。等不及就点下面。
+          这段对话上回没抄成，{sepLabel(retry, now)} 以后他回完话再自己试。等不及就点“整理提要”。
         </p>
       )}
       <div className="flex items-center flex-wrap" style={{ gap: 10, marginTop: 10 }}>
         <button onClick={onNow} disabled={busy || !g.n} className="kfs-tap kfs-recap-now" style={{ ...chip, opacity: busy || !g.n ? 0.5 : 1 }}>
-          {busy ? "正在抄…" : "现在抄一趟"}
+          {busy ? "正在整理…" : "整理提要"}
         </button>
-        {busy && (
-          <span className="kfs-recap-now-note" style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.5 }}>
-            等了 {secs(Date.now() - trying.t0)}，别切走
-          </span>
-        )}
-        {trying && trying.done && (
-          <span className="kfs-recap-now-note" data-ok={trying.ok ? "yes" : "no"} style={{ fontSize: 12.5, color: trying.ok ? T.inkSoft : T.red, lineHeight: 1.5 }}>
-            {trying.text}
-          </span>
-        )}
+        <button onClick={onView || undefined} disabled={!onView} className="kfs-tap kfs-recap-view" style={{ ...chip, opacity: onView ? 1 : 0.5 }}>
+          看一眼提要
+        </button>
       </div>
+      {busy && (
+        <p className="kfs-recap-now-note" style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.5, marginTop: 8 }}>
+          正在抄第 {trying.pass || 1} 趟，等了 {secs(Date.now() - trying.t0)}，别切走
+        </p>
+      )}
+      {trying && trying.done && (
+        <p className="kfs-recap-now-note" data-ok={trying.ok ? "yes" : "no"} style={{ fontSize: 12.5, color: trying.ok ? T.inkSoft : T.red, lineHeight: 1.5, marginTop: 8 }}>
+          {trying.text}
+        </p>
+      )}
       <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 8, lineHeight: 1.6 }}>
-        照眼前这段对话抄一趟，不等他回完话。抄的时候别切走、别锁屏，切走这一趟就断了。抄一趟比他平常回一句贵几倍。
+        整理提要：照眼前这段对话，把上回抄到的地方以后新聊的抄进提要，一直抄到头；还没抄过的从头抄起。最近的几十条照旧留原话。一趟一分钟上下，抄的时候别切走、别锁屏，切走就停，已经抄好的照样存着。一趟比他平常回一句贵几倍，从头抄一段长对话要好几趟。
       </p>
     </div>
   );

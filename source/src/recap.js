@@ -55,7 +55,8 @@ export const HIS_DOC_HEAD = 1200; // 他交的文档
 export const ROW_HEAD = 10000; // 一条话
 
 // ---------- 他记多长 ----------
-// 三档，API 面板里拨。单位是字：
+// 两档，API 面板里拨。单位是字（原来还有一档“长”：攒到十二万字才抄、最近三万六千字留原话，
+// 她 10 月 30 日说拿掉。设备上原来拨在“长”的，tierOf 认不得，当适中）：
 //   trigger  原话攒到这么厚，叫他把前面的抄成提要
 //   keep     抄的时候，最近这么厚留原话不抄
 // 抄不成的时候（没网、那边不肯写）照旧寄原话，寄到 trigger 的一倍半（hard）为止，再厚就硬切。
@@ -64,7 +65,6 @@ export const ROW_HEAD = 10000; // 一条话
 export const RECALL = {
   short: { label: "短", trigger: 20000, keep: 6000 },
   mid: { label: "适中", trigger: 50000, keep: 15000 },
-  long: { label: "长", trigger: 120000, keep: 36000 },
 };
 export const DEFAULT_RECALL = "mid";
 const HARD_RATIO = 1.5;
@@ -368,7 +368,9 @@ export function staleImages(msgs, from, bytesOf) {
 //   切在一轮的末尾：抄到他的一条回话为止，留下的从她的话开头
 //   要抄的太薄（不到 trigger 的一成）不值当，不抄
 // bytesOf(m)：那一条照片有多大（base64 的字数），没有回 0
-export function dueRecap(msgs, recaps, tier, bytesOf = () => 0) {
+// force：她在 API 面板里点了“整理提要”（10 月 30 日添的）：不等攒够 trigger，上回抄到的地方以后新聊的都抄；
+//   嫌薄的那把尺子也放到最小（不到 SLIVER 才不抄）。别的规矩一样：最后二三十条、最近 keep 那么厚照旧留原话，一趟照旧只抄一段
+export function dueRecap(msgs, recaps, tier, bytesOf = () => 0, force = false) {
   const n = msgs.length;
   const { recap: prev, at } = pickRecap(msgs, recaps);
   const start = at + 1;
@@ -396,7 +398,7 @@ export function dueRecap(msgs, recaps, tier, bytesOf = () => 0) {
   // 这一回寄的时候中间有一截没寄（硬切了；屋子小的模型放不下）：不等攒够，也不嫌薄，把那一截抄了。
   // 这样没寄的那一截不会一直空着：寄的加上抄的，迟早凑得齐整段对话
   const cut = planWindow(msgs, recaps, tier).gap > 0;
-  if (!chasing && !cut && body < tier.trigger && !heavy) return null;
+  if (!force && !chasing && !cut && body < tier.trigger && !heavy) return null;
 
   // 抄到哪儿为止：从最后往前数，留下的不超过 keep、照片不超过那两个数；最后二三十条无论如何留着
   let t = n;
@@ -416,8 +418,8 @@ export function dueRecap(msgs, recaps, tier, bytesOf = () => 0) {
   t = Math.min(t, floor);
   // 一轮的末尾：前一条是他的、这一条不是
   const edge = (i) => i > start && i < n && msgs[i - 1].role === "him" && msgs[i].role !== "him";
-  // 多薄算太薄：不到 trigger 的一成（至少 SLIVER 那么多）
-  const thin = Math.max(SLIVER, Math.round(tier.trigger * 0.1));
+  // 多薄算太薄：不到 trigger 的一成（至少 SLIVER 那么多）；她点了“整理提要”的，只嫌不到 SLIVER 的
+  const thin = force ? SLIVER : Math.max(SLIVER, Math.round(tier.trigger * 0.1));
   const spanTo = (end) => {
     let sum = 0;
     for (let i = start; i < end; i++) sum += thick(msgs[i]);
@@ -675,6 +677,7 @@ export function recapWhy(e) {
 //   body       能抄的那一段（上一份之后、最后二三十条以前）攒了多厚
 //   trigger    攒到多厚就抄
 //   due        照规矩这会儿该不该抄（dueRecap 回不回东西；照片多大不知道的，按 0 算）
+//   can        点“整理提要”有没有能抄的（dueRecap 带 force）
 export function gauge(msgs, recaps, tier) {
   const list = Array.isArray(msgs) ? msgs : [];
   const n = list.length;
@@ -682,7 +685,7 @@ export function gauge(msgs, recaps, tier) {
   const floor = rowFloor(n);
   let body = 0;
   for (let i = at + 1; i < floor; i++) body += thick(list[i]);
-  return { n, recap, body, trigger: tier.trigger, due: !!dueRecap(list, recaps, tier) };
+  return { n, recap, body, trigger: tier.trigger, due: !!dueRecap(list, recaps, tier), can: !!dueRecap(list, recaps, tier, () => 0, true) };
 }
 
 // 新抄的一份放进单子：抄到同一条的旧的那份换掉；单子太长，最早抄的先不要。
