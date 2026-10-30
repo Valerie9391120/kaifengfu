@@ -876,6 +876,16 @@ function splitVoice(chunk: string): Array<{ voice: boolean; text: string }> {
   return out.filter((s, i) => s.voice || i === 0).map((s) => ({ voice: s.voice, text: s.lines.join("\n") }));
 }
 
+// 他画画（卿卿 10 月 30 日要的）：一条（[SPLIT] 隔开的那一段）里一行开头写 [DRAW]（或 [DRAW:竖]、[DRAW：横]、[DRAW:方]），
+// 从这儿起是一张画，记号后面的都是“画什么”（横幅上不写，写一条 [画]；“画什么”是空的不算）；记号前面的照常拆。
+// 一条里只认头一个。和网页那头（src/draw.js 的 splitDraw）一样
+const DRAW_MARK = /^[ \t]*\[(?:DRAW|Draw|draw)(?:[:：][ \t]*(横|竖|方)[ \t]*)?\][ \t]*/m;
+function splitDraw(chunk: string): { before: string; prompt: string } | null {
+  const m = DRAW_MARK.exec(chunk);
+  if (!m) return null;
+  return { before: chunk.slice(0, m.index), prompt: chunk.slice(m.index + m[0].length).trim() };
+}
+
 // 他打电话的记号（卿卿 10 月 14 日定的）：一行开头写 [CALL]，后面的是她接起来他先说的话（横幅上不写，写一条 [来电]）。
 // 一段字（文档块外头的）里只认头一个。和网页那头（src/reply.js 的 splitCall）一样
 // 选项卡（他弹给她的几道选择题）：跟网页那头（src/ask.js 的 splitAskBlocks、parseAskBody）同一套认法，横幅上写“[选项卡] 头一题”。
@@ -1031,7 +1041,8 @@ function visibleBubbles(reply: string): { lines: string[]; avatar: boolean } {
         lines.push(askLine[k]);
         continue;
       }
-      const chunk = pieces[k];
+      const drawn = splitDraw(pieces[k]);
+      const chunk = drawn ? drawn.before : pieces[k];
       for (const seg of splitVoice(chunk)) {
         // 表情包的文件名最长认两百个字：一长串没有右括号的，不来回试
         const marks = new RegExp("\\[(MEME|AVATAR)[:：]\\s*([^\\]\\s]{1,200})\\s*\\]|" + NAME_LINE, "gm");
@@ -1065,6 +1076,7 @@ function visibleBubbles(reply: string): { lines: string[]; avatar: boolean } {
           for (const x of after) lines.push(x);
         }
       }
+      if (drawn && drawn.prompt) lines.push("[画]");
     }
     if (call) lines.push("[来电]");
   }

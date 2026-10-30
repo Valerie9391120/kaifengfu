@@ -8,3 +8,4 @@ export const SUPABASE_KEY =
 export const FUNCTION_URL = SUPABASE_URL + "/functions/v1/claude";
 export const PUSH_URL = SUPABASE_URL + "/functions/v1/push";
 export const VOICE_URL = SUPABASE_URL + "/functions/v1/voice";
+export const DRAW_URL = SUPABASE_URL + "/functions/v1/draw";

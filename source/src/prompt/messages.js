@@ -1,6 +1,7 @@
 import { wrapDocForModel, missingDocNote } from "../docs.js";
 import { MEME_MAP } from "../memes.js";
-import { tierOf, planWindow, staleImages, stamp } from "../recap.js";
+import { tierOf, planWindow, staleImages, stamp, rowFloor } from "../recap.js";
+import { drawsIn, drawNote } from "../draw.js";
 import { isCallMark, markNote } from "../call/marks.js";
 import { apiBlocks } from "../game/jianghu.js";
 import { isWakeMark, wakeNote } from "../fox.js";
@@ -139,7 +140,8 @@ function avatarNote(av, lead, defaultText, unknownText, memeLookup, thumbLookup)
   return [{ type: "text", text: name ? `${lead}「${name}」，这张图暂时附不上。` : `${lead}（这张图暂时附不上）` }];
 }
 
-// ctx：{ recaps, tier }。recaps 是这段对话抄过的提要（没有就不带）；tier 是“他记多长”那一档眼下的几个数（见 ../recap.js 的 tierOf）
+// ctx：{ recaps, tier, drawLookup }。recaps 是这段对话抄过的提要（没有就不带）；tier 是“他记多长”那一档眼下的几个数（见 ../recap.js 的 tierOf）；
+// drawLookup(key)：他画的那一张眼下什么样（{ img（画好的图）, why（没画成的缘故） }，见 ../draw.js），不给就不提他画的画
 // 回 { messages, tail }：messages 是寄的那一整段；tail 是要附在最后一句话后面的几块字（在别的对话里又换过头像的那句提示），
 // 多半是空的。它不直接接在 messages 里：得放在缓存记号后面（见 system.js 的 withNowNote），
 // 不然这一回记号落在它上头，下一回它又挪到新的最后一句后面去了，上一回写下的缓存就再也对不上
@@ -262,6 +264,19 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
     if (steps) arr.push({ role: "user", content: steps.results });
     // 光义自己换了头像：下一轮让他亲眼看到新头像的样子
     const av = (m.items || []).filter((it) => it.type === "avatar").pop();
+    // 他画的画（见 ../draw.js）：下一轮让他亲眼看到画成了什么样。最近那几十条（rowFloor 以后，永远寄原话的那一截）里画好的带图，
+    // 再早的只说一句“画好了、图没带上”（图跟着最近那几十条走：张数有个数，那一截往后挪的时候才变，缓存接得上）
+    const drawn = ctx.drawLookup ? drawsIn(m) : [];
+    if (drawn.length) {
+      const blocks = [];
+      drawn.forEach((d) => {
+        const st = ctx.drawLookup(d.key) || {};
+        const blk = st.img && at >= rowFloor(msgs.length) ? dataUrlBlock(st.img) : null;
+        blocks.push({ type: "text", text: drawNote(blk ? { img: true } : st.img ? { old: true } : st.why ? { why: st.why } : st.none ? { none: true } : null) });
+        if (blk) blocks.push(blk);
+      });
+      arr.push({ role: "user", content: blocks });
+    }
     if (av) {
       const img = avatarBlock({ type: "meme", file: av.file }, thumbLookup);
       const blocks = [

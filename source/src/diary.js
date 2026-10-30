@@ -68,6 +68,8 @@ export function dayTranscript(msgs, memeLookup, maxChars = 9000) {
       const raw = unvoice(askBlocksToNote(docBlocksToNote(m.raw || "")))
         // 他打电话的记号（见 call/incoming.js）：写成一句话，后面跟着的是她接起来他先说的
         .replace(/^[ \t]*\[(?:CALL|Call|call)\][ \t]*/gm, "[给卿卿打电话] ")
+        // 他画画的记号（见 draw.js）：写成一句话，后面跟着的是他写的画什么
+        .replace(/^[ \t]*\[(?:DRAW|Draw|draw)(?:[:：][ \t]*(?:横|竖|方)[ \t]*)?\][ \t]*/gm, "[给卿卿画了一张画] ")
         .replace(/\[(MEME|AVATAR)[:：][^\]]*\]/g, "")
         .replace(NAME_RE(), "")
         .replace(/\s*\[SPLIT\]\s*/g, " ")

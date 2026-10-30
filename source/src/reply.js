@@ -1,5 +1,5 @@
 // =====================================================
-// 拆他的回话：心里话、一条一条的话、表情包、换头像、改名字、文档块。
+// 拆他的回话：心里话、一条一条的话、表情包、换头像、改名字、文档块、画（见 draw.js）。
 // 不碰页面，测试在 Node 里跑。
 // 通知的小后端（supabase/push_function.ts 的 bubblesOf）照同一套规矩决定敲几条横幅、各写什么（一个气泡一条）：
 // 这里改了规矩，那边得跟着改。tests/mail.test.mjs 拿同一批回话两边各拆一遍，对不上就不过。
@@ -8,6 +8,7 @@ import { NAME_MARK, NAME_PLACEHOLDER, cleanMarkName } from "./names.js";
 import { splitDocBlocks, DOC_NAME_PLACEHOLDER } from "./docs.js";
 import { splitVoice } from "./voice.js";
 import { splitAskBlocks, askRaw } from "./ask.js";
+import { splitDraw } from "./draw.js";
 
 // 语音里不留 [VOICE] 这几个字：摘到没有为止（摘掉一个，两头拼起来可能又成了一个，像 [VOI[VOICE]CE]）。
 // 从头往后一个字一个字地收，收进来的末尾正好是一个，就把它扔掉：和一遍一遍摘到没有的结果一样，只走一趟（不来回试）。
@@ -117,9 +118,12 @@ export function parseReply(text) {
         items.push({ type: "ask", qs: chunk.qs });
         return;
       }
+      // 他画画（见 draw.js 的 splitDraw）：一条里 [DRAW] 那一行起是一张画，记号后面的都是“画什么”（不显示成字）；
+      // 记号前面的照常拆，画排在它们后面
+      const drawn = splitDraw(chunk);
       // 一条里 [VOICE] 那一行起是语音（见 voice.js 的 splitVoice）。语音里的字并成一条语音，
       // 里头夹着的表情包、换头像、改名字照认，排在这条语音后面
-      splitVoice(chunk).forEach((seg) => {
+      splitVoice(drawn ? drawn.before : chunk).forEach((seg) => {
         const words = [];
         const marks = [];
         splitMarks(seg.text).forEach((p) => {
@@ -135,6 +139,7 @@ export function parseReply(text) {
         if (said) items.push({ type: "voice", text: said });
         marks.forEach((x) => items.push(x)); // 一样一样塞（展开的写法碰上几十万样会撑爆）
       });
+      if (drawn && drawn.prompt) items.push({ type: "draw", prompt: drawn.prompt, ...(drawn.ratio ? { ratio: drawn.ratio } : {}) });
     });
     if (call) {
       // 打电话：记号后面的是她接起来他先说的话。[SPLIT] 当换行；[VOICE]、[CALL] 这几个字不要；
@@ -204,6 +209,8 @@ export function rawOf(items, rename) {
     // 打电话：记号和接起来说的头一行写在同一行（跟语音一个道理：头一行原来就跟在记号后面，
     // 单独另起一行的话，它要是长得像文档开头的记号，再拆就成了一份文档）
     if (it.type === "call") return `[CALL] ${it.text || ""}`;
+    // 画：记号和“画什么”的头一行写在同一行（跟语音一个道理）
+    if (it.type === "draw") return `[DRAW${it.ratio ? ":" + it.ratio : ""}] ${it.prompt || ""}`;
     // 选项卡：整块写回（她答没答、关没关是开封府这头的事，不写进去）
     if (it.type === "ask") return askRaw(it.qs);
     if (it.type === "doc") {

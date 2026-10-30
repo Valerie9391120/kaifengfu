@@ -3,7 +3,7 @@
 // =====================================================
 
 import { createClient } from "@supabase/supabase-js";
-import { SUPABASE_URL, SUPABASE_KEY, FUNCTION_URL, PUSH_URL, VOICE_URL } from "./config.js";
+import { SUPABASE_URL, SUPABASE_KEY, FUNCTION_URL, PUSH_URL, VOICE_URL, DRAW_URL } from "./config.js";
 import { explainError } from "./errors.js";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -326,5 +326,64 @@ export async function callVoice(body, { signal, wait = VOICE_WAIT } = {}) {
   } finally {
     clearTimeout(clock);
     if (signal) signal.removeEventListener("abort", cut);
+  }
+}
+
+// ---------- 画画（draw 函数，见 supabase/draw_function.ts） ----------
+// body：{ op: "status" } 连上 ElevenLabs 没有；{ op: "link" } 去登录的地址；{ op: "unlink" }；
+// { op: "start", prompt, ratio } 开画；{ op: "check", job } 画好没有。成了回小后端答的那一包。
+// 出了岔子抛带 code 的错（painter.js 照它办）：
+//   login        开封府自己的登录过期了
+//   unreachable  没连上（没网；或者根本没有 draw 这个函数：网关回 404 不带跨域的头，浏览器只会说没连上）
+//   slow         等太久，不等了
+//   nofn         没有 draw 这个函数，或者里面不是开封府的那份代码
+//   小后端给的那几种：setup（她在 Supabase 那头还差一步）、unlinked（还没连 ElevenLabs）、auth（要重新连 ElevenLabs）、
+//     quota、cap、busy、down、refused、bad（message 是它的原话）
+export const DRAW_WAIT = 70000;
+const DRAW_TYPES = new Set(["status", "link", "unlinked", "job", "pending", "image", "failed"]);
+export async function callDraw(body, { wait = DRAW_WAIT } = {}) {
+  let data = null;
+  try {
+    ({ data } = await within(supabase.auth.getSession(), TOKEN_WAIT));
+  } catch (e) {
+    throw coded("unreachable", "连不上开封府的后端，看看网络");
+  }
+  const token = data && data.session && data.session.access_token;
+  if (!token) throw coded("login", "登录过期了，重新登录一下");
+  const ctl = new AbortController();
+  let late = false;
+  const clock = setTimeout(() => {
+    late = true;
+    ctl.abort();
+  }, wait);
+  try {
+    let res;
+    try {
+      res = await fetch(DRAW_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, apikey: SUPABASE_KEY },
+        body: JSON.stringify(body),
+        signal: ctl.signal,
+      });
+    } catch (e) {
+      throw late ? coded("slow", "画画的小后端等太久没回话") : coded("unreachable", "连不上画画的小后端（draw 函数还没建，或者网不好）");
+    }
+    let d = null;
+    try {
+      d = await res.json();
+    } catch (e) {
+      if (late) throw coded("slow", "画画的小后端等太久没回话");
+    }
+    if (res.ok && d && DRAW_TYPES.has(d.type)) return d;
+    if (d && d.type === "error" && d.error) {
+      const code = d.error.code || (res.status === 401 || res.status === 403 ? "login" : "refused");
+      throw Object.assign(coded(code, d.error.message || `画画的小后端说不行（${res.status}）`), { status: res.status });
+    }
+    if (res.status === 401) throw coded("login", "登录过期了，重新登录一下");
+    if (res.status === 404) throw coded("nofn", "Supabase 里还没有 draw 这个函数");
+    if (res.ok) throw coded("nofn", "draw 函数里的代码不是开封府的那份");
+    throw Object.assign(coded("down", `画画的小后端出错了（${res.status}）`), { status: res.status });
+  } finally {
+    clearTimeout(clock);
   }
 }

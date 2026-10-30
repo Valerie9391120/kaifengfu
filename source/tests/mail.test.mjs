@@ -1186,6 +1186,7 @@ function resetWorld() {
       } else if (it.type === "meme") lines.push("[表情包]");
       else if (it.type === "voice") lines.push("[语音]");
       else if (it.type === "call") lines.push("[来电]");
+      else if (it.type === "draw") lines.push("[画]");
       else if (it.type === "doc") lines.push(`[文档] ${it.name}`);
       else if (it.type === "ask") lines.push(askjs.askBanner(it.qs));
       else if (it.type === "avatar") avatar = true;
@@ -1364,6 +1365,25 @@ function resetWorld() {
     "[WAKE:]\n空的也摘",
     "[MEME:a.jpg]\n[WAKE:+3h]",
     "[AVATAR:fox.jpg]\n[WAKE:+3h]",
+    // 他画画（见 src/draw.js）：一条里 [DRAW] 那一行起是一张画，横幅上写 [画]；“画什么”是空的不算
+    "给你画一张\n[DRAW]\n一只小狐狸在读书，水彩",
+    "[DRAW:竖] 同一行就开始写\n第二行",
+    "[DRAW：横]\n全角冒号",
+    "  [draw:方]  \n小写、前头有空格的也认",
+    "[DRAW]",
+    "[DRAW]\n   \n",
+    "句子中间的 [DRAW] 不算",
+    "[DRAW:大]\n不认的横竖不算记号",
+    "先说一句\n[SPLIT]\n[DRAW]\n画\n[SPLIT]\n再说一句",
+    "[DRAW]\n两张\n[DRAW]\n只认头一个",
+    "[DRAW]\n一\n[SPLIT]\n[DRAW]\n二",
+    "[VOICE]\n先发语音\n[DRAW]\n再画一张",
+    "[DRAW]\n画里写了\n[VOICE]\n也算画什么",
+    "[MEME:a.jpg]\n[DRAW]\n画",
+    "[DRAW]\n画什么里写了 [MEME:a.jpg] 不算表情包",
+    "[DOC:x.md]\n[DRAW]\n文档里的不算\n[/DOC]\n[DRAW]\n文档外的算",
+    "[DRAW]\r\nWindows 换行",
+    "[CALL]\n[DRAW]\n打电话里写的不算画",
   ];
   const diff = corpus.filter((t) => !same(t));
   ok(diff.length === 0, `横幅：${corpus.length} 条各式各样的回话，小后端拆出来的和网页拆出来的一模一样，一个气泡对一条${diff.length ? "（对不上的：" + JSON.stringify(diff.map((t) => [t, fn.bubblesOf(t), expect(t)])) + "）" : ""}`);
@@ -1385,6 +1405,7 @@ function resetWorld() {
     "# ", "## ", "\n# ", "\n### ", "#", " #", " ##\n", "**", "***", "**粗**", "*斜*", "```", "\n```\n", "   ", "    ",
     "[VOICE]", "\n[VOICE]\n", "[VOICE] ", "\n[voice]", " [VOICE]", "[whispers] ", "\n\t[VOICE]\t",
     "[CALL]", "\n[CALL]\n", "[CALL] ", "\n[call]", " [CALL]", "\n\t[CALL]\t",
+    "[DRAW]", "\n[DRAW]\n", "[DRAW:竖] ", "\n[draw：横]", " [DRAW]", "\n\t[DRAW:方]\t", "\n[DRAW:大]\n", "一只狐狸",
     "[WAKE:+3h]", "\n[WAKE:+3h]\n", "\n[wake：off]\n", "[WAKE: 07:30 ]\r\n", " [WAKE:+1h] ",
     "[ASK]", "\n[ASK]\n", "\n[ask]\r\n", " [ASK] ", "[/ASK]", "\n[/ASK]\n", "\n[/Ask]\n", "问：", "\n问（多选）：", "\nQ:", "\n- ", "\n1. ", "｜", "|", "（多选）", "\n· 选项", "晚饭吃什么？", "?", "？（多选）", "\n火锅"];
   const off = [];
@@ -1439,6 +1460,8 @@ function resetWorld() {
     const wakeLine = () => /^[ \t]*\[(?:WAKE|Wake|wake)[:：][^\[\]\n]{0,80}\][ \t]*\r?$/m;
     // 选项卡开头的记号也一样（见 src/ask.js）：原来跟 [SPLIT] 写在同一行（当字显示了），切开以后单独占了一行，写回去就成了真的选项卡开头
     const askLine = () => /^[ \t]*\[(?:ASK|Ask|ask)\][ \t]*\r?$/m;
+    // 画的记号也一样（见 src/draw.js）：原来紧贴在表情包后面写，没被认成画（当字显示了），单独写回去就成了真画
+    const drawLine = () => /^[ \t]*\[(?:DRAW|Draw|draw)(?:[:：][ \t]*(?:横|竖|方)[ \t]*)?\]/m;
     // 学不了的三种，都是他写岔了才有的样子（见 rawOf 上面那段）：
     //   一句话自己长得就像记号（改名的、文档开头的、语音的记号紧贴着别的东西写，原来当字显示了）；
     //   文档的正文里夹着一行结尾的记号（原来那一行后面跟着怪空白，没被认成结尾）；
@@ -1446,9 +1469,13 @@ function resetWorld() {
     // 打电话那一样后面紧跟着字、语音、表情包、又一个打电话（中间原来隔着一个空的文档块，空的不算一样）：
     // 写回去就都并进了接起来说的话里。只有换头像（本来就从接起来说的话里认出来的）、文档（隔得开）能跟在后面
     const oddCall = (items) => items.some((it, i) => it.type === "call" && i + 1 < items.length && items[i + 1].type !== "avatar" && items[i + 1].type !== "doc");
+    // 画后面“画什么”里夹着别的记号的那一行（打电话、几点醒、选项卡、文档开头、改名字）：原来那一行在画里头，当字算；
+    // 写回去以后先被当成那一样的记号认走了。他写岔了才有的样子，学不了
+    const oddDraw = (it) => it.type === "draw" && (nameLine().test(it.prompt) || callLine().test(it.prompt) || wakeLine().test(it.prompt) || askLine().test(it.prompt) || [...it.prompt.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER));
     const odd = (items, rename) =>
       oddCall(items) ||
-      items.some((it) => (it.type === "text" && (nameLine().test(it.text) || voiceLine().test(it.text) || callLine().test(it.text) || wakeLine().test(it.text) || askLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "voice" && (nameLine().test(it.text) || callLine().test(it.text) || wakeLine().test(it.text) || askLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "call" && (nameLine().test(it.text) || wakeLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "doc" && docClose().test(it.text))) ||
+      items.some(oddDraw) ||
+      items.some((it) => (it.type === "text" && (nameLine().test(it.text) || voiceLine().test(it.text) || callLine().test(it.text) || drawLine().test(it.text) || wakeLine().test(it.text) || askLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "voice" && (nameLine().test(it.text) || callLine().test(it.text) || wakeLine().test(it.text) || askLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "call" && (nameLine().test(it.text) || wakeLine().test(it.text) || [...it.text.matchAll(docOpen())].some((m) => m[1].trim() !== docsjs.DOC_NAME_PLACEHOLDER))) || (it.type === "doc" && docClose().test(it.text))) ||
       (!!rename && namesjs.cleanMarkName(rename) !== rename);
     const flat = (items) => JSON.stringify(items.map((it) => (it.type === "doc" ? { ...it, name: docsjs.cleanDocName(it.name) } : it)));
     let tried = 0, skipped = 0;

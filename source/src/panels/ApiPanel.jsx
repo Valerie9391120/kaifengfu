@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { modelLabel, money, usageKey } from "../models.js";
 import { RECALL, DEFAULT_RECALL } from "../recap.js";
 import { VOICE_STAB, DEFAULT_STAB } from "../voice.js";
@@ -16,6 +16,79 @@ function voiceLine(c) {
   if (c.state === "nofn") return `${c.say || "Supabase 里还没有 voice 这个函数"}。`;
   if (c.state === "auth") return "登录过期了，重新登录一下。";
   return c.say ? `${c.say}。` : "连不上念语音的小后端。";
+}
+
+// 画画（10 月 30 日添的，见开发说明“他画画”那节）：画画的小后端、ElevenLabs 出了岔子才写一句（红字），别的时候不写字
+function drawLine(c) {
+  if (!c || ["checking", "ok", "no"].includes(c.state)) return "";
+  if (c.state === "login") return "登录过期了，重新登录一下。";
+  return `${c.say || "连不上画画的小后端"}。`;
+}
+// link：{ state: checking | ok | no | 出岔子的 code, url（没连上的时候登录的地址）, say }；trying：试画那一回（{ busy, t0 } | { done, ok, text, img }）
+// onCheck：再问一回（她从登录页回来，开封府又看得见了）
+function DrawSet({ on, link, trying, onToggle, onCheck, onUnlink, onTest }) {
+  const [, tick] = useState(0);
+  const busy = !!(trying && trying.busy);
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
+  const check = useRef(onCheck);
+  check.current = onCheck;
+  useEffect(() => {
+    const back = () => document.visibilityState === "visible" && check.current && check.current();
+    document.addEventListener("visibilitychange", back);
+    window.addEventListener("focus", back);
+    return () => {
+      document.removeEventListener("visibilitychange", back);
+      window.removeEventListener("focus", back);
+    };
+  }, []);
+  const st = link ? link.state : "checking";
+  const bad = drawLine(link);
+  return (
+    <>
+      <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>画画</div>
+      <div className="kfs-draw-set" data-on={on ? "yes" : "no"} data-link={st} style={{ ...glass(0.45, 14), borderRadius: 18, padding: "12px 14px" }}>
+        <div className="flex items-center justify-between" style={{ gap: 12 }}>
+          <span style={{ fontSize: 14, color: T.ink }}>他能画画</span>
+          <Toggle on={on} onChange={onToggle} label="他能画画" />
+        </div>
+        {bad && (
+          <p className="kfs-draw-check" style={{ fontSize: 11.5, color: T.red, marginTop: 6, lineHeight: 1.6 }}>
+            {bad}
+          </p>
+        )}
+      </div>
+      <div className="flex items-center flex-wrap" style={{ gap: 10, marginTop: 10 }}>
+        {st === "ok" ? (
+          <>
+            <button onClick={onTest} disabled={busy} className="kfs-tap kfs-draw-test" style={{ ...chip, opacity: busy ? 0.5 : 1 }}>
+              {busy ? `正在画，${secs(Date.now() - trying.t0)}` : "试画一张"}
+            </button>
+            <button onClick={onUnlink} disabled={busy} className="kfs-tap kfs-draw-unlink" style={{ ...chip, opacity: busy ? 0.5 : 1 }}>
+              断开 ElevenLabs
+            </button>
+          </>
+        ) : link && link.url ? (
+          <a href={link.url} target="_blank" rel="noopener noreferrer" className="kfs-tap kfs-draw-link" style={{ ...chip, textDecoration: "none" }}>
+            连上 ElevenLabs
+          </a>
+        ) : (
+          <button disabled className="kfs-draw-link" style={{ ...chip, opacity: 0.5 }}>
+            连上 ElevenLabs
+          </button>
+        )}
+      </div>
+      {trying && trying.done && (
+        <div className="kfs-draw-test-note" data-ok={trying.ok ? "yes" : "no"} style={{ marginTop: 8 }}>
+          {trying.img && <img src={trying.img} alt="" style={{ display: "block", maxWidth: 150, maxHeight: 200, borderRadius: 14, marginBottom: 6 }} />}
+          <span style={{ fontSize: 12.5, color: trying.ok ? T.inkSoft : T.red, lineHeight: 1.5 }}>{trying.text}</span>
+        </div>
+      )}
+    </>
+  );
 }
 
 // 抄提要眼下怎么样（10 月 30 日添的，见开发说明“抄提要的流水账”那节）：
@@ -123,7 +196,8 @@ export function Pick({ options, value, onPick, label }) {
 // fit：“他记多长”那一档照眼下这个模型算出来的数（屋子小的模型会比那一档写的小，见 recap.js 的 tierOf）
 // voiceCheck、onVoiceTest、voiceTestNote、voiceTesting：语音条那一段（他能发语音、念得稳不稳、试听一句）
 // recapCheck：抄提要眼下怎么样那一块（见上面 RecapCheck），没给就不摆
-export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage, monthUsage, recapUsage, fit, recapCheck, voiceCheck, onVoiceTest, voiceTestNote, voiceTesting, onEchoProbe }) {
+// drawLink、drawTry、onDrawCheck、onDrawUnlink、onDrawTest：画画那一段（见上面 DrawSet）
+export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage, monthUsage, recapUsage, fit, recapCheck, voiceCheck, onVoiceTest, voiceTestNote, voiceTesting, onEchoProbe, drawLink, drawTry, onDrawCheck, onDrawUnlink, onDrawTest }) {
   const lengths = [
     { v: 1024, t: "短" },
     { v: 2048, t: "适中" },
@@ -217,6 +291,8 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
       <button onClick={onEchoProbe} className="kfs-tap kfs-echo-open" style={{ ...chip, marginTop: 10 }}>
         量一量回声
       </button>
+
+      <DrawSet on={!!settings.draw} link={drawLink} trying={drawTry} onToggle={(v) => onChange({ draw: v })} onCheck={onDrawCheck} onUnlink={onDrawUnlink} onTest={onDrawTest} />
 
       <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>用量</div>
       <div style={{ ...glass(0.45, 14), borderRadius: 18, padding: "10px 14px" }}>

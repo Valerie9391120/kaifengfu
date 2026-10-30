@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>开封府 · 连 ElevenLabs</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0e1a36; color: #ece6d8; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif; }
+  main { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 28px; box-sizing: border-box; text-align: center; }
+  h1 { font-family: "Songti SC", "STSong", "Noto Serif SC", serif; font-weight: 600; font-size: 22px; letter-spacing: 0.12em; margin: 0 0 14px; }
+  p { font-size: 15px; line-height: 1.7; color: rgba(236, 230, 216, 0.78); margin: 0; max-width: 22em; }
+  .bad h1 { color: #f2a08f; }
+  a { margin-top: 26px; padding: 10px 22px; border-radius: 999px; border: 1px solid rgba(236, 230, 216, 0.35); color: #ece6d8; text-decoration: none; font-size: 15px; }
+</style>
+</head>
+<body>
+<main id="box">
+  <h1 id="head">连好了</h1>
+  <p id="say">开封府连上 ElevenLabs 了。这一页可以关掉，回开封府吧。</p>
+  <!-- 这一页在开封府自己的窗口里打开的（iPhone 上从主屏幕打开的开封府，有时候登录页就开在它里头）：点这个回去 -->
+  <a href="../">回开封府</a>
+</main>
+<script>
+  // draw 函数换好凭证以后把浏览器送到这儿：?ok=1 是连好了，?why=… 是没连上（缘故是那个函数写的一句话）
+  (function () {
+    var q = new URLSearchParams(location.search);
+    if (q.get("ok") === "1") return;
+    document.getElementById("box").className = "bad";
+    document.getElementById("head").textContent = "没连上";
+    document.getElementById("say").textContent = (q.get("why") || "不知道为什么") + "。这一页可以关掉，回开封府再点一回“连上 ElevenLabs”。";
+  })();
+</script>
+</body>
+</html>

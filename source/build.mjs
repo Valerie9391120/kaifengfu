@@ -307,6 +307,28 @@ ${e.dir ? '<base href="../">\n' : ""}<meta name="viewport" content="${VIEWPORT}"
 // 它管得着的范围是它所在的目录，放在根上三个入口才都在里面
 fs.copyFileSync("src/sw.js", `${OUT}/sw.js`);
 
+// 他画画（见 supabase/draw_function.ts）：开封府在 ElevenLabs 那头的身份说明（OAuth 的 Client ID Metadata Document），
+// 和登录完了浏览器落脚的那一页。名字不带指纹：ElevenLabs 照着固定的网址来取，那份说明里写的 client_id 就是它自己的网址
+fs.mkdirSync(`${OUT}/oauth`, { recursive: true });
+const DRAW_CLIENT = "https://valerie9391120.github.io/kaifengfu/oauth/draw-client.json";
+fs.writeFileSync(
+  `${OUT}/oauth/draw-client.json`,
+  JSON.stringify(
+    {
+      client_id: DRAW_CLIENT,
+      client_name: "开封府",
+      client_uri: "https://valerie9391120.github.io/kaifengfu/",
+      redirect_uris: [`${SUPABASE_URL}/functions/v1/draw`],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    },
+    null,
+    2
+  ) + "\n"
+);
+fs.copyFileSync("static/oauth/done.html", `${OUT}/oauth/done.html`);
+
 fs.writeFileSync(`${OUT}/.nojekyll`, "");
 fs.writeFileSync(`${OUT}/robots.txt`, "User-agent: *\nDisallow: /\n");
 

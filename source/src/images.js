@@ -74,3 +74,22 @@ export function fileToPhoto(file, maxSide = 1280) {
     reader.readAsDataURL(file);
   });
 }
+
+// 他画好的那一张（draw 函数交回来的 png）：缩成跟照片一样大（长边 1280 的 jpeg），存进库房（见 painter.js）
+export function dataUrlToPhoto(dataUrl, maxSide = 1280) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL("image/jpeg", 0.86));
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}

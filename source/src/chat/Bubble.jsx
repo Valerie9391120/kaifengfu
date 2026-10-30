@@ -1,4 +1,4 @@
-import { useState, useRef, Fragment } from "react";
+import { useState, useRef, useEffect, Fragment } from "react";
 import { DOC_FMT } from "../docs.js";
 import { richBlocks } from "../rich.js";
 import { fmtChars } from "../util.js";
@@ -8,6 +8,7 @@ import { Icon } from "../ui/Icon.jsx";
 import { Avatar } from "../ui/Avatar.jsx";
 import { twoFingers } from "../ui/press.js";
 import { voiceKeyOf, heardOf, shownOf, voiceWidth, secondsOf } from "../voice.js";
+import { drawKeyOf, drawImgOf } from "../draw.js";
 
 // 气泡里的字：标题行加大加粗、**加粗**、*动作* 淡斜体（怎么拆见 rich.js）
 const RICH_H = [0, 20, 18, 16.5, 16.5, 16.5, 16.5]; // 一到六个井号的标题各多大（气泡里平常的字是 15.5；三级往下一样大，再小就和正文分不出来了）
@@ -190,6 +191,63 @@ function HisVoice({ text, st, heard, playing, onTap, onAgain }) {
   );
 }
 
+// ---------- 他画的画（见 draw.js、painter.js） ----------
+// 画好了跟照片一样摆，点开看大图。还没画好的时候摆一个跟那张画一样横竖的框：
+// 在画（画了几秒了）、没画成（缘故，点了重画；画到一半断了的点了接着画）、没画（她没开着“他能画画”的时候他画的，点了画出来）
+const DRAW_BOX = { 方: [184, 184], 竖: [168, 224], 横: [224, 168] };
+function Seconds({ t0 }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <span style={{ fontVariantNumeric: "tabular-nums" }}>{Math.max(0, Math.round((Date.now() - (t0 || Date.now())) / 1000))}″</span>;
+}
+function HisDraw({ ratio, st, data, onOpen, onAgain }) {
+  const s = st ? st.s : "load";
+  if (s === "ready" && data) return <PhotoImg data={data} onOpen={onOpen} />;
+  const [w, h] = DRAW_BOX[ratio] || DRAW_BOX["方"];
+  const box = { ...BUBBLE_GLASS, borderRadius: 18, width: w, height: h, color: T.inkSoft, fontSize: 13, gap: 8 };
+  if (s === "fail" || s === "none") {
+    const again = st && st.resume ? "接着画" : "重画";
+    const say = s === "none" ? "这张画还没画，点这里画出来" : st.link ? `没连上 ElevenLabs。在 API 面板连上以后，点这里${again}` : `没画成：${st.why || "不知道为什么"}。点这里${again}`;
+    return (
+      <button className="kfs-draw kfs-tap flex flex-col items-center justify-center text-center" data-state={s} onClick={onAgain} style={{ ...box, padding: "0 16px", lineHeight: 1.55 }}>
+        <Icon name="pen" size={20} />
+        <span className="kfs-draw-note" style={{ fontSize: 12.5 }}>
+          {say}
+        </span>
+      </button>
+    );
+  }
+  // 在画、等着画、正从存档里取；画好了图还没取出来
+  const drawing = s === "busy" || s === "wait";
+  return (
+    <div className="kfs-draw flex flex-col items-center justify-center" data-state={s} aria-label={drawing ? "他在画" : "画加载中"} style={box}>
+      {s === "ready" ? (
+        <span>{data === false ? "画没存下来" : "画加载中"}</span>
+      ) : (
+        <>
+          <Icon name="pen" size={20} />
+          <span className="flex items-center" style={{ gap: 6 }}>
+            {drawing ? "他在画" : ""}
+            <span className="flex items-center" style={{ gap: 4 }} aria-hidden="true">
+              <span className="kfs-dot" />
+              <span className="kfs-dot" style={{ animationDelay: ".15s" }} />
+              <span className="kfs-dot" style={{ animationDelay: ".3s" }} />
+            </span>
+          </span>
+          {s === "busy" && st.t0 ? (
+            <span className="kfs-draw-sec" style={{ fontSize: 11.5 }}>
+              <Seconds t0={st.t0} />
+            </span>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ---------- 文档 ----------
 // 对话里的一张文档卡片：她发的（全文另存在 kfs2:doc:<id>）和他写的（全文就在回复里）长得一样
 function docSub(it, text) {
@@ -226,7 +284,8 @@ function DocCard({ name, sub, onOpen }) {
 }
 
 // voices、heard、playing：他的语音条眼下的样子、转过文字的那几条、正在放的那一条（名字见 voice.js 的 voiceKeyOf）
-export function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, voices = {}, heard = null, playing = "", onVoice, onVoiceAgain, onOpenPhoto, onOpenDoc, onLongPress }) {
+// draws：他画的画眼下的样子（名字见 draw.js 的 drawKeyOf）
+export function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, voices = {}, heard = null, playing = "", draws = {}, onVoice, onVoiceAgain, onDrawAgain, onOpenPhoto, onOpenDoc, onLongPress }) {
   const press = useRef(null);
   const fired = useRef(false);
   const startPress = (e) => {
@@ -322,6 +381,14 @@ export function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, voices 
           />
         ) : it.type === "voice" ? (
           <VoiceBubble text={it.text} dur={it.dur} />
+        ) : it.type === "draw" ? (
+          <HisDraw
+            ratio={it.ratio || ""}
+            st={draws[drawKeyOf(row.msg.id, row.idx)]}
+            data={imgs[drawImgOf(drawKeyOf(row.msg.id, row.idx))]}
+            onOpen={onOpenPhoto}
+            onAgain={() => onDrawAgain && onDrawAgain(row)}
+          />
         ) : (
           <div
             className="whitespace-pre-wrap break-words"
