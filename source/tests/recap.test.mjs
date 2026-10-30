@@ -4,6 +4,7 @@
 import {
   RECALL, DEFAULT_RECALL, RECAP_KEY, RECAP_BAD_KEY, THICK, PIECE_MAX, PIECE_PHOTOS, PIECE_BYTES, PART_MOST, MERGE_MOST, PARTS_MAX, TEXT_MAX, DOC_HEAD, HIS_DOC_HEAD, ROW_HEAD, RETRY_WAITS,
   thick, askThick, clip, rowFloor, roomFor, tierOf, stamp, stampSpan, recapText, normRecaps, pickRecap, planWindow, staleImages, dueRecap, splitForMerge, nextRecap, cleanRecap, addRecap, mayRetry, afterFail, afterAway, loadBad,
+  RECAP_LOG_KEY, LOG_KEEP, retryWhen, loadLog, addLog, recapWhy, gauge,
 } from "../src/recap.js";
 import { buildMessages } from "../src/prompt/messages.js";
 import { buildSystem, withNowNote, TALK_CACHE } from "../src/prompt/system.js";
@@ -722,6 +723,47 @@ const loaded = loadBad(ledger, NOW);
 ok(Object.keys(loaded).sort().join() === "a,b" && loaded.a.times === 1 && loaded.a.at === NOW && loaded.b.away === 1 && loaded.b.times === 0 && RECAP_BAD_KEY === "kfs-recap-bad",
   "记在设备上的那本账读出来：没抄成的、切走过一回的都认；一天以前的、钟点比现在还晚的、不成样子的不要");
 ok(Object.keys(loadBad("乱的", NOW)).length === 0 && Object.keys(loadBad(null, NOW)).length === 0 && Object.keys(loadBad("[1,2]", NOW)).length === 0 && Object.keys(loadBad("{}", NOW)).length === 0, "账是空的、坏的：当没有，不出错");
+
+// 下回最早几点再试（API 面板里写）
+ok(retryWhen(undefined, NOW) === 0 && retryWhen(away1, NOW) === 0 && retryWhen({ at: NOW - 10 * MIN, times: 1 }, NOW) === 0, "没失过手、只切走过一回、已经隔够了：不用等，回 0");
+ok(retryWhen({ at: NOW - 3 * MIN, times: 1 }, NOW) === NOW + 7 * MIN && retryWhen({ at: NOW, times: 2 }, NOW) === NOW + 60 * MIN && retryWhen({ at: NOW, times: 9 }, NOW) === NOW + 360 * MIN, "还没隔够：回几点以后再试，和 mayRetry 一个数");
+ok(retryWhen({ at: NOW + 5 * MIN, times: 3 }, NOW) === 0, "手机的钟往回拨过：mayRetry 照试，这里也不叫她等");
+
+// 抄提要的流水账
+const E = (at, extra = {}) => ({ at, chat: "c1", ok: false, model: "claude-opus-5-5", ms: 76000, why: "后端这一趟到点被收掉了（546）", manual: false, cost: null, ...extra });
+let log = [];
+for (let i = 1; i <= LOG_KEEP + 3; i++) log = addLog(log, E(NOW + i * MIN));
+ok(RECAP_LOG_KEY === "kfs-recap-log" && log.length === LOG_KEEP && log[0].at === NOW + (LOG_KEEP + 3) * MIN && log.every((x, i) => !i || log[i - 1].at > x.at), "流水账：新的排最前头，只留最近几笔");
+const odd = loadLog(JSON.stringify([E(NOW, { ok: 1, ms: -5, why: "长".repeat(500), cost: "贵", extra: "原话不该在这儿" }), { at: "x", chat: "c" }, null, "乱的", { at: NOW, chat: 5 }]));
+ok(odd.length === 1 && odd[0].ok === true && odd[0].ms === 0 && odd[0].why.length === 300 && odd[0].cost === null && !("extra" in odd[0]), "流水账读出来：不成样子的不要；只留那几样，多出来的字段不留，缘故太长的截掉");
+ok(loadLog("乱的").length === 0 && loadLog(null).length === 0 && loadLog("{}").length === 0 && addLog(null, E(NOW)).length === 1 && addLog("乱的", E(NOW)).length === 1, "流水账是空的、坏的：当没有，不出错");
+ok(loadLog(JSON.stringify([E(NOW, { cost: 0.19, ok: true, why: "" })]))[0].cost === 0.19, "花了多少照记（API 面板“上一回抄提要”重开了也照它写）");
+
+// 没抄成的缘故写成一句人话
+const err = (msg, extra = {}) => Object.assign(new Error(msg), extra);
+ok(recapWhy(err("她切走了", { code: "away" })) === "你切走了，这一趟断了" && recapWhy(err("等太久", { code: "slow" })).includes("等太久"), "她切走了、这头等太久掐了：各是各的话");
+ok(recapWhy(err("没写完", { code: "cut", stop: "max_tokens", out: 8000, cap: 8000 })) === "写到上限被截断了：连想带写用了 8000 token，上限 8000", "写到上限被截断：写明用了多少、上限多少（会先想的模型想多了就是这样）");
+ok(recapWhy(err("没写完", { code: "cut", stop: "refusal" })).includes("refusal") && recapWhy(err("没写完", { code: "cut", stop: "pause_turn" })).includes("pause_turn") && recapWhy(err("没写完", { code: "cut" })).includes("不知道停在哪"), "别的停法：照实写停在哪");
+ok(recapWhy(err("后端没回话（504）", { status: 504 })).includes("504") && recapWhy(err("后端没回话（504）", { status: 504 })).includes("超时") && recapWhy(err("后端没回话（546）", { status: 546 })).includes("到点被收掉"), "Supabase 那头的 504、546：说清是后端等超时了、到点被收掉了");
+ok(recapWhy(err("连不上开封府的后端，看看网络", { code: "net" })).includes("断了线") && recapWhy(err("没写出字", { code: "thin" })).includes("太少"), "连不上、写出来的太少");
+ok(recapWhy(err("mcp_servers: something", { status: 400 })) === "mcp_servers: something（400）" && recapWhy(err("出错了（500）", { status: 500 })) === "出错了（500）" && recapWhy(err("Anthropic 那边这会儿太挤，过一会儿再试", { status: 529 })).endsWith("（529）"),
+  "那边回的别的错：照原话写，后面带上状态码（原话里已经有了就不重复）");
+ok(recapWhy(null) === "不知道为什么" && recapWhy(err("", { status: 502 })) === "出错了（502）" && recapWhy("一句字") === "一句字", "什么都没带的错：也有一句话");
+
+// 眼下这段对话抄到哪儿了（API 面板那一块）
+seq = 0;
+const g0 = gauge([], [], tierOf("short"));
+ok(g0.n === 0 && g0.recap === null && g0.body === 0 && !g0.due, "空对话：零条，没抄过，不该抄");
+const longTalk = talk(300, 40, 60);
+const gS = gauge(longTalk, [], tierOf("short"));
+ok(gS.n === 600 && gS.recap === null && gS.body === sum(longTalk.slice(0, rowFloor(600))) && gS.trigger === 20000 && gS.due === !!dueRecap(longTalk, [], tierOf("short")) && gS.due,
+  "聊得很长、还没抄过：最后二三十条以前攒了多厚、攒到多厚就抄、该抄了，和 dueRecap 一个说法");
+const firstDue = dueRecap(longTalk, [], tierOf("short"));
+const withOne = addRecap([], nextRecap(firstDue, "抄的一段" + fill(300), longTalk, { id: "g1", at: 1, model: "测试模型" }));
+const gR = gauge(longTalk, withOne, tierOf("short"));
+ok(gR.recap && gR.recap.id === "g1" && gR.body === sum(longTalk.slice(firstDue.to + 1, rowFloor(600))), "抄过一段：作数的那一份是它，攒了多厚从它之后数起");
+const gM = gauge(talk(30), [], tierOf("short"));
+ok(gM.n === 60 && gM.body < 20000 && !gM.due, "短对话：没攒够，不该抄");
 
 // =====================================================
 // 平时寄的那一整段

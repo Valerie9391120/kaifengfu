@@ -24,7 +24,7 @@ import { newId, fmtChars } from "./util.js";
 import { MEME_DATA, MEME_MAP, RAW_BASE, memeSrc, newMemesFrom, parseReadme } from "./memes.js";
 import { urlToThumb, fileToPhoto } from "./images.js";
 import { DEFAULT_MODEL, modelLabel, costOf, money, usageKey, windowOf, thinksFirst } from "./models.js";
-import { RECAP_KEY, RECAP_BAD_KEY, normRecaps, pickRecap, tierOf, roomFor, dueRecap, splitForMerge, nextRecap, cleanRecap, addRecap, mayRetry, afterFail, afterAway, loadBad } from "./recap.js";
+import { RECAP_KEY, RECAP_BAD_KEY, RECAP_LOG_KEY, normRecaps, pickRecap, tierOf, roomFor, dueRecap, splitForMerge, nextRecap, cleanRecap, addRecap, mayRetry, afterFail, afterAway, loadBad, loadLog, addLog, recapWhy, retryWhen, gauge } from "./recap.js";
 import { dayKeyOf, parseDayKey, moodOf, dayTranscript, parseDiary } from "./diary.js";
 import { WALL, SERIF, SANS, T, glass, fill, DOCK_GLASS, chip, chipPrimary, field, GLOBAL_CSS, HAIR, HAIRLINE, FLOAT_SHADOW } from "./ui/style.js";
 import { Icon } from "./ui/Icon.jsx";
@@ -329,6 +329,16 @@ export default function App({ account = {} }) {
   const [recapView, setRecapView] = useState(null);
   const [recapArmed, setRecapArmed] = useState(false); // “丢掉重抄”点了头一下
   const [recapUsage, setRecapUsage] = useState(null); // 上一回抄提要花了多少（API 面板里写）
+  // 抄提要的流水账（见 recap.js 的 RECAP_LOG_KEY）：每试一回记一笔，成没成、为什么没成、等了多久。记在这台设备上
+  const [recapLog, setRecapLog] = useState(() => {
+    try {
+      return loadLog(localStorage.getItem(RECAP_LOG_KEY));
+    } catch (e) {
+      return [];
+    }
+  });
+  // 她在 API 面板里点的“现在抄一趟”：{ chat, t0 } 正在抄；{ chat, done, ok, text } 有结果了
+  const [recapTry, setRecapTry] = useState(null);
   // 抄提要的活：want 是他回过话、该去看一眼要不要抄的那几段对话；busy 是正抄着的；
   // failed 记没抄成的（{ at, times, away }，见 recap.js 的 mayRetry）：这本账也记在这台设备上，重开了接着认
   const recapJob = useRef(null);
@@ -3724,17 +3734,23 @@ export default function App({ account = {} }) {
     };
     document.addEventListener("visibilitychange", onHide);
     let late = null;
-    const give = setTimeout(() => ctl.abort(), RECAP_PATIENCE);
+    let slow = false;
+    const give = setTimeout(() => {
+      slow = true;
+      ctl.abort();
+    }, RECAP_PATIENCE);
     try {
       // 两道：到点把线掐了；连换登录凭证都悬着、掐不着的时候，过三秒照样不等了
       return await Promise.race([
         callClaude(body, "", ctl.signal),
         new Promise((_, no) => {
-          late = setTimeout(() => no(new Error("等太久")), RECAP_PATIENCE + 3000);
+          late = setTimeout(() => no(Object.assign(new Error("等太久"), { code: "slow" })), RECAP_PATIENCE + 3000);
         }),
       ]);
     } catch (e) {
       if (left) throw Object.assign(new Error("她切走了"), { code: "away" });
+      // 到点是这头掐的线（callClaude 那时候报的是“连不上”）：照“等太久”记
+      if (slow) throw Object.assign(new Error("等太久"), { code: "slow" });
       throw e;
     } finally {
       clearTimeout(give);
@@ -3745,7 +3761,8 @@ export default function App({ account = {} }) {
 
   // 看一段对话该不该抄，该抄就抄一趟存好。回 "done" 抄了一趟（也许还有下一趟）；"none" 用不着抄；
   // "later" 这会儿不方便，回头再看；"gone" 那段对话没了。没抄成抛错
-  const writeRecap = async (id) => {
+  // manual：是她在 API 面板里点“现在抄一趟”点的（流水账里记一笔）
+  const writeRecap = async (id, manual = false) => {
     // 正在重新回答的那段对话：画面上旧回答先收起来了，这会儿看到的不是整段。等它完了（那一头回完也会叫一声）
     if (forkRef.current && forkRef.current.chat === id) return "later";
     const here = () => chatIdRef.current === id;
@@ -3792,12 +3809,23 @@ export default function App({ account = {} }) {
     // 工具照聊天时一样带着（排在名帖前头，带着才接得上聊天时写下的缓存：江湖棋局那四样、翻日记那三样），只是这一回不许调
     recapBody.tools = (game ? GAME_TOOLS : []).concat(DIARY_TOOLS, QX_TOOLS, ROOM_TOOLS);
     recapBody.tool_choice = { type: "none" };
-    const data = await askRecap(recapBody);
-    recordUsage(data, true);
-    // 没写完的不要（写到上限被截断、屋子满了、那边不肯写）：断掉的正是最后那几样（还没聊完的话头）
-    if (data.stop_reason && data.stop_reason !== "end_turn" && data.stop_reason !== "stop_sequence") throw new Error("没写完");
-    const text = cleanRecap((data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n"));
-    if (!text) throw new Error("没写出字");
+    // 从这儿起成没成都记一笔流水账（见 logRecap）
+    const t0 = Date.now();
+    let data = null;
+    let text = "";
+    try {
+      data = await askRecap(recapBody);
+      recordUsage(data, true);
+      // 没写完的不要（写到上限被截断、屋子满了、那边不肯写）：断掉的正是最后那几样（还没聊完的话头）
+      if (data.stop_reason && data.stop_reason !== "end_turn" && data.stop_reason !== "stop_sequence") {
+        throw Object.assign(new Error("没写完"), { code: "cut", stop: data.stop_reason, out: data.usage && data.usage.output_tokens, cap: recapBody.max_tokens });
+      }
+      text = cleanRecap((data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n"));
+      if (!text) throw Object.assign(new Error("没写出字"), { code: "thin" });
+    } catch (e) {
+      logRecap({ chat: id, ok: false, model: (data && data.model) || model, ms: Date.now() - t0, why: recapWhy(e), manual, cost: data && data.usage ? costOf(data.model, data.usage) : null });
+      throw e;
+    }
     // 抄的工夫里这段对话被删了：不存
     if (!alive()) return "gone";
     // 单子现取现存：这工夫里别的设备也可能抄了一份
@@ -3812,7 +3840,52 @@ export default function App({ account = {} }) {
     const ok = await store.set(RECAP_KEY + id, JSON.stringify(next));
     if (!ok) markStorageFail();
     if (here()) setRecaps(normRecaps(next));
+    logRecap({ chat: id, ok: true, model: data.model || model, ms: Date.now() - t0, why: "", manual, cost: data.usage ? costOf(data.model, data.usage) : null });
     return "done";
+  };
+
+  // 流水账添一笔（见 recap.js 的 RECAP_LOG_KEY）
+  const logRecap = (entry) => {
+    setRecapLog((prev) => {
+      const next = addLog(prev, { at: Date.now(), ...entry });
+      try {
+        localStorage.setItem(RECAP_LOG_KEY, JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  };
+
+  // 她在 API 面板里点“现在抄一趟”：眼前这段对话，不等他回完话、不管上回没成以后该隔多久，当场抄一趟。
+  // 只抄一趟（一段），抄完了照常（没抄到头的，他回完话接着抄）。没成照样记进那本账（下回自动的照样隔一阵再试）
+  const recapNow = async () => {
+    const id = chatIdRef.current;
+    const job = recapJob.current;
+    if (!id || (recapTry && !recapTry.done)) return;
+    if (job.busy.has(id)) {
+      setRecapTry({ chat: id, done: true, ok: false, text: "后台正在抄着这段，等它回来再看" });
+      return;
+    }
+    job.busy.add(id);
+    setRecapTry({ chat: id, t0: Date.now() });
+    let note = null;
+    try {
+      const out = await writeRecap(id, true);
+      if (out === "done") {
+        if (job.failed[id]) {
+          delete job.failed[id];
+          saveBad();
+        }
+        note = { ok: true, text: "抄成了一趟。聊天里往上翻能看到那行小字" };
+      } else if (out === "none") note = { ok: true, text: "这段对话这会儿用不着抄（还没攒够，或者已经抄到头了）" };
+      else if (out === "later") note = { ok: false, text: "这段对话正在重新回答，等它回完再点" };
+      else note = { ok: false, text: "这段对话没了" };
+    } catch (e) {
+      job.failed[id] = e && e.code === "away" ? afterAway(job.failed[id], Date.now()) : afterFail(job.failed[id], Date.now());
+      saveBad();
+      note = { ok: false, text: `没抄成：${recapWhy(e)}` };
+    }
+    job.busy.delete(id);
+    setRecapTry({ chat: id, done: true, ...note });
   };
 
   // 她点开一份提要、觉得抄得不对：把最近抄的这一份丢掉。单子里更早的那份（没有这一趟的）接着作数；
@@ -5220,8 +5293,10 @@ export default function App({ account = {} }) {
       );
     }
     if (sheet === "api") {
+      // “他记多长”照眼下这个模型算出来的数；眼前这段对话抄到哪儿了（见 recap.js 的 gauge）
+      const fit = recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false, qx: qxSection(qxPool), room: roomSection(wakeOn(settings)) }).staticText);
       return (
-        <Sheet title="API" onClose={() => { setSheet(null); setTestNote(""); setVoiceTestNote(""); }}>
+        <Sheet title="API" onClose={() => { setSheet(null); setTestNote(""); setVoiceTestNote(""); if (recapTry && recapTry.done) setRecapTry(null); }}>
           <ApiPanel
             settings={settings}
             onChange={(patch) => {
@@ -5239,7 +5314,15 @@ export default function App({ account = {} }) {
             usage={usage}
             monthUsage={monthUsage}
             recapUsage={recapUsage}
-            fit={recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false, qx: qxSection(qxPool), room: roomSection(wakeOn(settings)) }).staticText)}
+            fit={fit}
+            recapCheck={{
+              chat: chatId,
+              gauge: gauge(messages, recaps, fit),
+              retry: retryWhen(recapJob.current.failed[chatId], Date.now()),
+              log: recapLog,
+              trying: recapTry && recapTry.chat === chatId ? recapTry : null,
+              onNow: recapNow,
+            }}
           />
         </Sheet>
       );

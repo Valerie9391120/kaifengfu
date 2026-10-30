@@ -603,6 +603,88 @@ export function loadBad(text, now) {
   return out;
 }
 
+// 下回最早几点再试（还没到点的才回钟点；用不着等的回 0）。API 面板里照它写“上回没抄成，几点以后再试”
+export function retryWhen(bad, now) {
+  if (!bad || !(bad.times > 0) || mayRetry(bad, now)) return 0;
+  return bad.at + RETRY_WAITS[Math.min(bad.times, RETRY_WAITS.length) - 1];
+}
+
+// ---------- 抄提要的流水账（10 月 30 日添的） ----------
+// 她 10 月 30 日早上发现：一段聊得很长的对话里一回提要都没抄成过，API 面板里也看不出来。
+// 原来没抄成就默默照旧寄原话、隔一阵再试，为什么没成哪儿都不记。现在每试一回记一笔，API 面板里写出来。
+// 记在这台设备上（localStorage 的 RECAP_LOG_KEY，不跟云端走），只留最近几笔。
+// 一笔：{ at, chat, ok, model, ms, why, manual, cost }
+//   at 几点试的；chat 哪段对话；ok 成没成；model 哪个模型；ms 等了多久（毫秒）；
+//   why 没成的缘故（一句人话，recapWhy 写的）；manual 是她点“现在抄一趟”点的；cost 这一回花了多少（美元，没回话的没有）
+// 账里只有这些，不记一个字的原话
+export const RECAP_LOG_KEY = "kfs-recap-log";
+export const LOG_KEEP = 6;
+export function loadLog(text) {
+  let raw = null;
+  try {
+    raw = JSON.parse(text || "null");
+  } catch (e) {}
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((x) => x && typeof x === "object" && Number(x.at) > 0 && typeof x.chat === "string")
+    .map((x) => ({
+      at: Number(x.at),
+      chat: x.chat,
+      ok: !!x.ok,
+      model: typeof x.model === "string" ? x.model : "",
+      ms: Math.max(0, Number(x.ms) || 0),
+      why: typeof x.why === "string" ? x.why.slice(0, 300) : "",
+      manual: !!x.manual,
+      cost: Number.isFinite(x.cost) ? x.cost : null,
+    }))
+    .sort((a, b) => b.at - a.at)
+    .slice(0, LOG_KEEP);
+}
+// 添一笔：新的排最前头，只留最近 LOG_KEEP 笔
+export function addLog(list, entry) {
+  return loadLog(JSON.stringify([entry].concat(Array.isArray(list) ? list : [])));
+}
+
+// 没抄成的缘故写成一句人话。e 是抛出来的错：
+//   code：away 她切走了；slow 等太久、这头掐了；net 连不上后端；cut 没写完（带着 stop、out、cap）；thin 写出来的字太少
+//   status：后端或者 Anthropic 回的状态码（cloud.js 的 callClaude 带上的）
+// 504、546 是 Supabase 那头的：网关不等了、那一趟的工人到点被收掉了（见开发说明“通知”那节“运行环境的几条规矩”）
+export function recapWhy(e) {
+  const code = (e && e.code) || "";
+  const status = Number(e && e.status) || 0;
+  const msg = String((e && typeof e === "object" ? e.message : e) || "").trim();
+  if (code === "away") return "你切走了，这一趟断了";
+  if (code === "slow") return "等太久没回来，这头掐掉了";
+  if (code === "thin") return "抄回来的字太少，不算";
+  if (code === "cut") {
+    const stop = String((e && e.stop) || "");
+    if (stop === "max_tokens") return `写到上限被截断了：连想带写用了 ${Number(e.out) || "?"} token，上限 ${Number(e.cap) || "?"}`;
+    if (stop === "refusal") return "那边不肯抄（refusal）";
+    return `没写完（${stop || "不知道停在哪"}）`;
+  }
+  if (status === 504) return "后端等 Anthropic 等超时了，网关不等了（504）";
+  if (status === 546) return "后端这一趟到点被收掉了（546）";
+  if (code === "net") return "连不上后端，或者半路断了线（网断了，或者后端到点被收掉了）";
+  if (!msg) return status ? `出错了（${status}）` : "不知道为什么";
+  return status && !msg.includes(String(status)) ? `${msg}（${status}）` : msg;
+}
+
+// 眼下这段对话抄到哪儿了、攒了多厚（API 面板里那一块照它写）。tier 是 tierOf 算的那一档
+//   n          一共多少条
+//   recap      作数的那一份提要（没有就是 null）
+//   body       能抄的那一段（上一份之后、最后二三十条以前）攒了多厚
+//   trigger    攒到多厚就抄
+//   due        照规矩这会儿该不该抄（dueRecap 回不回东西；照片多大不知道的，按 0 算）
+export function gauge(msgs, recaps, tier) {
+  const list = Array.isArray(msgs) ? msgs : [];
+  const n = list.length;
+  const { recap, at } = pickRecap(list, recaps);
+  const floor = rowFloor(n);
+  let body = 0;
+  for (let i = at + 1; i < floor; i++) body += thick(list[i]);
+  return { n, recap, body, trigger: tier.trigger, due: !!dueRecap(list, recaps, tier) };
+}
+
 // 新抄的一份放进单子：抄到同一条的旧的那份换掉；单子太长，最早抄的先不要。
 // 新的这一份无论如何留着（另一台设备的钟要是快，它的那几份排在后头，也不能把刚抄的挤掉）。
 // 存进去的不带 text（那是读的时候现连的）
