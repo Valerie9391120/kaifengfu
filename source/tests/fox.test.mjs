@@ -1,7 +1,7 @@
 // 狐宇宙（他自己醒，见 src/fox.js、alarm/）：几点醒的规矩、[WAKE:…] 怎么拆怎么认、南衙那一行写什么、【醒来】那一段写什么。
 // esbuild 打成一个文件在 Node 里跑（见 package.json 的 test:unit）
 import { parseReply } from "../src/reply.js";
-import { FOX_CHAT, isWakeMark, wakeText, wakeNote, wakeRecap, foxSub, alarmLine, whenText, gapOf, maxOf, wakeOn, ASLEEP_MS, taskNote, TASK_MIN_MS, TASK_MAX_ROUNDS } from "../src/fox.js";
+import { FOX_CHAT, isWakeMark, wakeText, wakeNote, wakeRecap, foxSub, alarmLine, alarmTrouble, whenText, gapOf, maxOf, wakeOn, ASLEEP_MS, taskNote, TASK_MIN_MS, TASK_MAX_ROUNDS } from "../src/fox.js";
 import { needsReply } from "../src/thread.js";
 import { buildMessages } from "../src/prompt/messages.js";
 import { buildRows } from "../src/chat/rows.js";
@@ -160,6 +160,8 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   ok(foxSub({ on: true, state: { at: now, next: at(17, 20) }, unseen: 3, now }) === "睡着，约 17:20 醒", "南衙那一行：屋里的动静不提（她 22:04 定的：不亮红点、不说“他留了话没看”）");
   ok(alarmLine(null, now) === "家里的闹钟还没装" && alarmLine({ at: now, last: at(13, 2), next: at(16, 40) }, now) === "闹钟在跑：上回 13:02 醒，下回约 16:40" && alarmLine({ at: now }, now) === "闹钟在跑：还没醒过" && alarmLine({ at: now - ASLEEP_MS - 1 }, now).startsWith("笔记本睡着了"),
     "账户面板那一句：没装、在跑（上回、下回）、还没醒过、笔记本睡着");
+  ok(alarmTrouble(null, now) === "家里的闹钟还没装" && alarmTrouble({ at: now - ASLEEP_MS - 1 }, now).startsWith("笔记本睡着了") && alarmTrouble({ at: now, last: at(13, 2), next: at(16, 40) }, now) === "" && alarmTrouble({ at: now, awake: true }, now) === "",
+    "账户面板里只在出了岔子的时候写（10 月 30 日起）：没装、笔记本睡着了；好好在跑的不写");
   ok(whenText(at(9, 5, 19), now) === "昨天 09:05" && whenText(at(9, 5, 25), now) === "10月25日 09:05", "几点：昨天、再远的写几月几日");
   ok(gapOf({}) === 30 && gapOf({ wakeGap: 120 }) === 120 && gapOf({ wakeGap: 7 }) === 30 && maxOf({}) === 12 && maxOf({ wakeMax: 6 }) === 6 && maxOf({ wakeMax: "24" }) === 24 && !wakeOn({}) && wakeOn({ wake: true }) && !wakeOn({ wake: "yes" }),
     "两道闸：没挑过是半个钟头、十二回；挑的不是那几档的不认；“他自己醒”只认 true");

@@ -181,10 +181,13 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
           <span style={{ fontSize: 14, color: T.ink }}>他能发语音</span>
           <Toggle on={!!settings.voice} onChange={(v) => onChange({ voice: v })} label="他能发语音" />
         </div>
-        <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>
-          开着的时候，他想说的话可以发成一条语音，用 ElevenLabs 里他的声音念。念一条扣一回 ElevenLabs 的额度；你不在开封府的时候不念，回来点开才念。
-        </p>
-        <p className="kfs-voice-check" data-state={voiceCheck ? voiceCheck.state : "checking"} style={{ fontSize: 11.5, color: voiceCheck && voiceCheck.state !== "ok" ? T.red : T.inkSoft, marginTop: 6, lineHeight: 1.6 }}>
+        {/* 说明字（开着是什么样、念一条扣额度、你不在不念）她 10 月 30 日说看着晕，拿掉了。
+            念语音的小后端接上没有：接上了、还在看的时候不写；出了岔子才写（红字） */}
+        <p
+          className="kfs-voice-check"
+          data-state={voiceCheck ? voiceCheck.state : "checking"}
+          style={{ fontSize: 11.5, color: T.red, marginTop: 6, lineHeight: 1.6, display: !voiceCheck || voiceCheck.state === "ok" ? "none" : "block" }}
+        >
           {voiceLine(voiceCheck)}
         </p>
       </div>
@@ -198,28 +201,20 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
         {voiceTestNote && <span className="kfs-voice-test-note" style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.5 }}>{voiceTestNote}</span>}
       </div>
 
-      {/* 他能打电话（她 10 月 14 日 17:35 定的，默认开着，见 call/incoming.js）：开着才教他打电话的记号 */}
+      {/* 他能打电话（她 10 月 14 日 17:35 定的，默认开着，见 call/incoming.js）：开着才教他打电话的记号。底下的说明字 10 月 30 日拿掉了 */}
       <div className="flex items-center justify-between" style={{ gap: 12, marginTop: 22 }}>
         <span style={{ fontSize: 14, color: T.ink }}>他能打电话</span>
         <Toggle on={settings.callable !== false} onChange={(v) => onChange({ callable: v })} label="他能打电话" />
       </div>
-      <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>
-        开着的时候，他想给你打电话就打：你在开封府里，弹出他的来电；不在，手机上来一条来电通知。一分钟没接算没接，他会知道。他说的话用他的声音念，扣 ElevenLabs 的额度。
-      </p>
 
       {/* 打电话（见 call/ 和开发说明“通话”那一节）：她停多久算说完。卿卿说“老公你决定就好”，默认 1.6 秒，能调 */}
       <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>打电话：停多久算你说完</div>
       <div className="kfs-call-pause">
         <Pick options={PAUSES.map((v) => ({ v, t: `${v / 1000} 秒` }))} value={pauseOf(settings.callPause)} onPick={(v) => onChange({ callPause: v })} label="停多久算你说完" />
       </div>
-      <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>
-        打电话的时候，你停这么久就当你说完了，自动发出去。老被半路截断就调长，嫌等得久就调短。他说的每一句都用他的声音念，扣 ElevenLabs 的额度，跟语音条一样。
-      </p>
-      {/* 量一量回声（打断他用，她 10 月 14 日 17:26 定的“得先量回声”，见 call/echo.js） */}
-      <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 10, lineHeight: 1.6 }}>
-        打电话的时候打断他用：量一量他说话的声音有多少漏进麦克风。照着屏幕上说的做，量完截个图给我。头一回量要念一句话，扣一点 ElevenLabs 的额度。
-      </p>
-      <button onClick={onEchoProbe} className="kfs-tap kfs-echo-open" style={{ ...chip, marginTop: 8 }}>
+      {/* 量一量回声（打断他用，她 10 月 14 日 17:26 定的“得先量回声”，见 call/echo.js）。
+          这一块和上面“停多久算你说完”底下原来各有一段说明，她 10 月 30 日说全删，只留钮 */}
+      <button onClick={onEchoProbe} className="kfs-tap kfs-echo-open" style={{ ...chip, marginTop: 10 }}>
         量一量回声
       </button>
 

@@ -5143,16 +5143,12 @@ export default function App({ account = {} }) {
           {/* 他写不写心里话：卿卿 10 月 14 日凌晨要的开关，放在他的头像卡片底下；一个开关管所有模型，默认开着。
               关了，寄过去的【回复格式】里就没有心里话那一条（见 prompt/system.js 的 THOUGHT_RULE）。存在设置里，跟着云端走。
               打电话的时候自动照关着寄（10 月 15 日，见 thoughtsFor），这里的开关不跟着动 */}
+          {/* 只有名字和开关：底下原来两行说明（开着关着各是什么样、所有模型一起管、打电话自动关着、拨了以后那一句贵一些），
+              她 10 月 30 日说看着晕，拿掉了（见开发说明“面板上的说明字拿掉一批”那节） */}
           <div className="kfs-thoughts flex items-center justify-between" style={{ ...glass(0.5, 16), borderRadius: 16, padding: "10px 14px", marginTop: 10, gap: 12 }}>
-            <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.5 }}>
-              他写心里话
-              <div style={{ fontSize: 11.5, color: T.inkSoft }}>
-                {settings.thoughts !== false ? "开着：先写几句心里话，点“思考过程”能看" : "关着：不写心里话，直接回你"}
-              </div>
-            </div>
+            <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.5 }}>他写心里话</div>
             <Toggle on={settings.thoughts !== false} onChange={(v) => updateSettings({ thoughts: v })} label="他写心里话" />
           </div>
-          <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>所有模型一起管，打电话的时候自动关着。拨了以后，下一句话那段对话的缓存得重新攒一回，那一句贵一些，之后照常。</p>
           {/* 他自己醒（狐宇宙，卿卿 10 月 20 日要的，见 fox.js、panels/FoxSection.jsx）：跟“他写心里话”放在一处，都是他的事 */}
           <FoxSection settings={settings} onChange={updateSettings} state={foxState} canKnock={knockList().length > 0} now={now.getTime()} />
           <div style={{ height: 1, background: HAIR, margin: "22px 0 18px" }} />

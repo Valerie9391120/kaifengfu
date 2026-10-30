@@ -1,7 +1,7 @@
 import { T, glass } from "../ui/style.js";
 import { Toggle } from "../ui/parts.jsx";
 import { Pick } from "./ApiPanel.jsx";
-import { WAKE_GAPS, WAKE_MAXES, gapOf, maxOf, wakeOn, alarmLine } from "../fox.js";
+import { WAKE_GAPS, WAKE_MAXES, gapOf, maxOf, wakeOn, alarmTrouble } from "../fox.js";
 
 // 账户面板里“他自己醒”那一块（狐宇宙，卿卿 10 月 20 日要的，见 fox.js）：一个开关，开着的时候底下两道闸。
 // 开关、两道闸都存在设置里（kfs2:settings 的 wake、wakeGap、wakeMax），跟着云端走，家里的闹钟照它办。
@@ -10,17 +10,22 @@ import { WAKE_GAPS, WAKE_MAXES, gapOf, maxOf, wakeOn, alarmLine } from "../fox.j
 // state：闹钟写的那一份（见 fox.js 的 alarmLine）；canKnock：这台手机开着通知没有
 const gapLabel = (m) => (m < 60 ? `${m} 分钟` : `${m / 60} 小时`);
 
+// 只有名字、开关，开着的时候两道闸。说明字（开着的时候闹钟会怎么叫醒他、屋里的动静弹不弹横幅、两道闸防的是什么、醒一回多少钱）
+// 和关着的时候那一句，她 10 月 30 日说看着晕，拿掉了。只剩出了岔子的时候的红字：闹钟还没装、笔记本睡着了、这台手机没开通知
 export function FoxSection({ settings, onChange, state, canKnock, now }) {
   const on = wakeOn(settings);
+  const trouble = on ? alarmTrouble(state, now) : "";
   return (
     <div className="kfs-fox-set" data-on={on ? "yes" : "no"}>
       <div style={{ ...glass(0.5, 16), borderRadius: 16, padding: "10px 14px", marginTop: 10 }}>
         <div className="flex items-center justify-between" style={{ gap: 12 }}>
           <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.5 }}>
             他自己醒
-            <div className="kfs-fox-line" style={{ fontSize: 11.5, color: T.inkSoft }}>
-              {on ? alarmLine(state, now) : "关着：只有你来找他，他才醒"}
-            </div>
+            {trouble && (
+              <div className="kfs-fox-line" style={{ fontSize: 11.5, color: T.red }}>
+                {trouble}
+              </div>
+            )}
           </div>
           <Toggle on={on} onChange={(v) => onChange({ wake: v })} label="他自己醒" />
         </div>
@@ -37,9 +42,6 @@ export function FoxSection({ settings, onChange, state, canKnock, now }) {
           </div>
         )}
       </div>
-      <p style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6, lineHeight: 1.6 }}>
-        开着的时候，家里那台笔记本上的闹钟会到点叫醒他：在自己屋里写写画画、翻日记，或者什么都不干，都由他，下回几点醒也是他定。他屋里的动静都留在南衙最顶上的“狐宇宙”里，不弹横幅；他想你了，开一段新对话找你，或者到点去你们说好的那段对话里找你，这台手机上才弹横幅。两道闸防的是闹钟出岔子绕圈子，不是管他。醒一回的花费跟你发一句话差不多。
-      </p>
       {on && !canKnock && (
         <p className="kfs-fox-noknock" style={{ fontSize: 11.5, color: T.red, marginTop: 4, lineHeight: 1.6 }}>
           这台手机还没开通知：他找你的时候，敲不到你。在下面“通知”那里打开。
