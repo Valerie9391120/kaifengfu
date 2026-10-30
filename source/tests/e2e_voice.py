@@ -102,8 +102,8 @@ with sync_playwright() as p:
 
     # ================= API 面板：语音条那一段 =================
     open_api(pa)
-    ok("念语音的小后端接上了" in check_line(pa) and "eleven_v4" in check_line(pa) and pa.get_by_role("switch", name="他能发语音").get_attribute("aria-checked") == "false",
-       f"API 面板：念语音的小后端接上没有写着（{check_line(pa)}）；“他能发语音”没开过就是关着的")
+    ok(pa.locator(".kfs-voice-check").get_attribute("data-state") == "ok" and not pa.locator(".kfs-voice-check").is_visible() and pa.get_by_role("switch", name="他能发语音").get_attribute("aria-checked") == "false",
+       "API 面板：念语音的小后端接上了就不写（10 月 30 日起只有出了岔子才写）；“他能发语音”没开过就是关着的")
     ok(len(eleven()) == 0, "打开面板看一眼接没接上：不去敲 ElevenLabs 的门（不花钱）")
     pa.get_by_role("switch", name="他能发语音").click(); pa.wait_for_timeout(500)
     ok(settings(pa).get("voice") is True and pa.get_by_role("switch", name="他能发语音").get_attribute("aria-checked") == "true", "开“他能发语音”：存进设置（跟着云端走）")

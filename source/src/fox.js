@@ -120,6 +120,13 @@ export function alarmLine(state, now = Date.now()) {
   return "闹钟在跑：" + parts.join("，");
 }
 
+// 账户面板里“他自己醒”开着的时候，底下那一句只在出了岔子的时候写（红字）：闹钟还没装、笔记本睡着了。
+// 闹钟好好在跑的那几样（上回几点醒、下回约几点）不写了（她 10 月 30 日说面板上的字太多），南衙狐宇宙那一行照旧写着
+export function alarmTrouble(state, now = Date.now()) {
+  if (!state || !state.at || now - state.at > ASLEEP_MS) return alarmLine(state, now);
+  return "";
+}
+
 // 南衙那一行的小字（也是账户面板里那一句的头半截）。on：“他自己醒”开着没有；state：闹钟写的
 // （他留了话没看不再说：她 22:04 定的，屋里的动静不亮红点；任务几点到也不露：她看不见）
 export function foxSub({ on, state, now = Date.now() }) {

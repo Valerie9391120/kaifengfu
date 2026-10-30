@@ -116,12 +116,12 @@ def run(browser):
     pg.get_by_role("button", name="头像与设置").click(); time.sleep(0.6)
     sec = pg.locator(".kfs-fox-set")
     sec.scroll_into_view_if_needed()
-    ok(sec.get_attribute("data-on") == "no" and "关着：只有你来找他，他才醒" in sec.inner_text() and pg.locator(".kfs-fox-gap").count() == 0, "账户面板：“他自己醒”默认关着，关着的时候没有两道闸")
+    ok(sec.get_attribute("data-on") == "no" and sec.inner_text().strip() == "他自己醒" and pg.locator(".kfs-fox-gap").count() == 0, "账户面板：“他自己醒”默认关着，只有名字和开关（说明字 10 月 30 日拿掉了），关着的时候没有两道闸")
     pg.get_by_role("switch", name="他自己醒").click() if pg.get_by_role("switch", name="他自己醒").count() else pg.get_by_role("button", name="他自己醒").click()
     time.sleep(0.5)
     st = settings_of(pg)
-    ok(st.get("wake") is True and sec.get_attribute("data-on") == "yes" and "家里的闹钟还没装" in sec.inner_text() and pg.locator(".kfs-fox-noknock").count() == 1 and "他找你的时候，敲不到你" in sec.inner_text() and "不弹横幅" in sec.inner_text(),
-       "打开：存进设置；底下一句“家里的闹钟还没装”；说明里写着屋里的动静不弹横幅；这台手机还没开通知，照实说他找你的时候敲不到")
+    ok(st.get("wake") is True and sec.get_attribute("data-on") == "yes" and "家里的闹钟还没装" in sec.inner_text() and pg.locator(".kfs-fox-noknock").count() == 1 and "他找你的时候，敲不到你" in sec.inner_text() and "不弹横幅" not in sec.inner_text(),
+       "打开：存进设置；出了岔子的才写（红字）：家里的闹钟还没装、这台手机还没开通知敲不到你；说明字没了")
     gap_on = pg.locator(".kfs-fox-gap button[aria-pressed=true]").inner_text()
     max_on = pg.locator(".kfs-fox-max button[aria-pressed=true]").inner_text()
     pg.locator(".kfs-fox-gap button", has_text="1 小时").click(); time.sleep(0.4)

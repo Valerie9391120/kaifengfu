@@ -97,7 +97,8 @@ def flip_thoughts(page):
     sw = page.get_by_role("switch", name="他写心里话")
     was = sw.get_attribute("aria-checked")
     sw.click(); time.sleep(0.4)
-    cap = page.locator(".kfs-thoughts + p").inner_text()
+    # 开关底下原来那行小字（“所有模型一起管，打电话的时候自动关着……”）10 月 30 日拿掉了：这里报它还在不在
+    cap = page.locator(".kfs-thoughts + p").count()
     page.get_by_role("button", name="关闭").click(); time.sleep(0.4)
     page.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.6)
     return was, cap
@@ -363,7 +364,7 @@ with sync_playwright() as p:
         kept = json.loads(pa.evaluate(KV, "kfs2:settings") or "{}").get("thoughts")
         ok(flipped == "true" and kept is False and "<thinking>" not in text_off and call_off == text_off and call_off == call_sys,
            "心里话关着：打字、打电话寄的名帖一个字不差（进出电话不用重新攒缓存），和开着时电话里寄的也一样")
-        ok("打电话的时候自动关着" in cap, f"开关底下那行小字写着“打电话的时候自动关着”（{cap}）")
+        ok(cap == 0, "开关底下不再写说明字（10 月 30 日她要的，只剩名字和开关）")
         flip_thoughts(pa)   # 拨回开着，后面照原样
 
         # ================= 一句没说就挂了：那两行都不留 =================

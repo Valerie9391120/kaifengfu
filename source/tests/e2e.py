@@ -721,7 +721,9 @@ with sync_playwright() as p:
         sw = page.get_by_role("switch", name="他写心里话")
         before = sw.get_attribute("aria-checked")
         sw.click(); time.sleep(0.4)
-        note = page.locator(".kfs-thoughts").inner_text()
+        # 开关底下原来写着“开着：……”“关着：……”，10 月 30 日拿掉了（只剩名字和开关）：照开关自己报的
+        note = "开着" if sw.get_attribute("aria-checked") == "true" else "关着"
+        ok(page.locator(".kfs-thoughts").inner_text().strip() == "他写心里话", "“他写心里话”那一块只有名字和开关（说明字拿掉了）")
         page.get_by_role("button", name="关闭").click(); time.sleep(0.4)
         page.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.6)
         return before, note
