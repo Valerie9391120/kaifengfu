@@ -117,8 +117,10 @@ export function thick(m) {
   // 他的：寄回去的是 raw（心里话不寄）。他换了头像的，后面跟一行提示带着图。
   // 江湖棋局里下过棋的那一步（见 game/jianghu.js）：他调的那几样、引擎回的字也跟着寄（tool_use、tool_result）
   const changed = (m.items || []).some((it) => it && it.type === "avatar");
+  // 他画的画（见 draw.js）：最近的那几十条里，画好的那一张跟着下一句寄给他看（见 prompt/messages.js），跟一张照片一样厚
+  const drawn = (m.items || []).filter((it) => it && it.type === "draw").length * THICK.photo;
   const calls = (m.calls || []).reduce((a, c) => a + 60 + len(JSON.stringify(c.input || {})) + len(c.out), 0);
-  return THICK.row + len(m.raw) + (changed ? 60 + THICK.meme : 0) + calls;
+  return THICK.row + len(m.raw) + (changed ? 60 + THICK.meme : 0) + calls + drawn;
 }
 
 // 叫他抄提要的时候，这一条有多厚：太长的东西只带开头，表情包只写名字（见 prompt/recap.js）
@@ -139,7 +141,9 @@ export function askThick(m) {
   if (!items) return THICK.row + Math.min(ROW_HEAD, len(m.raw)) + cards;
   // 选项卡写成一行（题目、选项，见 ask.js 的 askSummary），跟字一样只带开头
   const thick = (it) =>
-    it && it.type === "doc"
+    it && it.type === "draw"
+      ? 30 + Math.min(ROW_HEAD, len(it.prompt))
+      : it && it.type === "doc"
       ? 60 + Math.min(HIS_DOC_HEAD, len(it.text))
       : it && it.type === "text"
       ? Math.min(ROW_HEAD, len(it.text)) + 4

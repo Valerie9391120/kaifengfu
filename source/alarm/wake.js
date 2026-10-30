@@ -38,6 +38,7 @@ import { pindouOf, pindouBrief, pindouToy } from "./pindou.js";
 import { completedToday } from "../vendor/dressing/dressing-engine.ts";
 import { wakeSection, taskSection, wakeNowNote, tailTranscript, LAST_STEP_NOTE, THOUGHT_DONE_NOTE } from "./note.js";
 import { askSummary } from "../src/ask.js";
+import { DRAW_JOB_KEY, drawsIn, drawImgOf, readJob } from "../src/draw.js";
 
 // 他的默认头像（同 src/ui/Avatar.jsx 的 HIS_DEFAULT；那个文件带着界面，这里不引）
 const HIS_DEFAULT = { type: "meme", file: "fox_reading_book.jpg" };
@@ -142,11 +143,25 @@ export async function gather(store, extras = []) {
 async function attachmentsOf(store, msgs) {
   const imgs = {};
   const docs = {};
+  const jobs = {};
   for (const m of msgs) {
     if (m && m.role === "her" && m.kind === "photo" && m.imgId && !(m.imgId in imgs)) imgs[m.imgId] = await store.get("kfs2:img:" + m.imgId);
     if (m && m.role === "her" && m.kind === "doc" && m.docId && !(m.docId in docs)) docs[m.docId] = await store.get(DOC_KEY + m.docId);
+    // 他画的画（见 src/draw.js）：画好的图跟照片一样存着；没画成的缘故、画到一半的那一笔在 kfs2:drawjob: 里
+    for (const d of drawsIn(m)) {
+      const id = drawImgOf(d.key);
+      if (!(id in imgs)) imgs[id] = await store.get("kfs2:img:" + id);
+      if (!(d.key in jobs)) jobs[d.key] = readJob(await store.get(DRAW_JOB_KEY + d.key));
+    }
   }
-  return { imgLookup: (id) => imgs[id] || null, docLookup: (id) => docs[id] || null };
+  // 寄给他的那一句（同手机那头，见 src/prompt/messages.js）：画好了带图；没画成说缘故；什么都没有的是没画（闹钟不画画，
+  // 他醒着画的那一张，手机上是“这张画还没画，点这里画出来”）；画到一半的说还在画
+  const drawLookup = (key) => {
+    const img = imgs[drawImgOf(key)] || null;
+    const job = jobs[key] || null;
+    return { img, why: job && job.state === "failed" ? job.why : "", none: !img && !job };
+  };
+  return { imgLookup: (id) => imgs[id] || null, docLookup: (id) => docs[id] || null, drawLookup };
 }
 
 const mcpsOf = (st) => (st.mcps || []).filter((m) => m && m.enabled && m.url);
@@ -240,12 +255,13 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     game,
     qx: qxSection(qxPool),
     room: roomSection(wakeOn(st)), // 【你的屋子】：同手机那头（“他自己醒”开着才有；闹钟叫他的时候总是开着的）
+    draw: !!st.draw, // 他能画画：同手机那头（名帖一样才接得上缓存）。闹钟自己不画，他醒着画的手机上点了才画
   });
   const roomOf = (sure) => roomFor(windowOf(model), staticText.length, maxTokens, sure);
   const tier = tierOf(st.recall, roomOf(false), roomOf(true));
   const woke = wakeNowNote(nowNote) + "\n\n" + section;
 
-  const { imgLookup, docLookup } = await attachmentsOf(store, msgs);
+  const { imgLookup, docLookup, drawLookup } = await attachmentsOf(store, msgs);
   const slugs = {};
   mcps.forEach((m, i) => {
     slugs[mcpSlug(m.name, i)] = m.name;
@@ -253,7 +269,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   // final：这是最后一步，【醒来】后面附上提醒（附在缓存记号后面，前面那些照样读缓存）
   // thought：这一回醒着前面几步里已经写过心里话（thoughtNote，醒在屋里那一回才有；同样附在缓存记号后面）
   const bodyFor = (list, at, final = false, thought = false) => {
-    const { messages, tail } = buildMessages(list, ctx.avatars, memeLookup, imgLookup, thumbLookup, docLookup, { recaps, tier });
+    const { messages, tail } = buildMessages(list, ctx.avatars, memeLookup, imgLookup, thumbLookup, docLookup, { recaps, tier, drawLookup });
     const body = {
       model,
       max_tokens: maxTokens,

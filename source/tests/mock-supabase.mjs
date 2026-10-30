@@ -3,8 +3,11 @@
 // node tests/mock-supabase.mjs  （端口 8787）
 // push 函数跑的是真的那一份（supabase/push_function.ts，一个字不改）；它要去敲的推送服务、要去问的 Anthropic 是假的，见 push-harness.mjs
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import { loadPushFunction, pushEnv, createFakePush, createLedgerTable, createMailTable, makeVapidKeys } from "./push-harness.mjs";
 import { loadVoiceFunction, voiceEnv, createFakeEleven } from "./voice-harness.mjs";
+import { loadDrawFunction, drawEnv, createFakeEleven as createFakeCanvas, createDrawTable } from "./draw-harness.mjs";
 import { createFakeStt } from "./stt-harness.mjs";
 
 const PORT = Number(process.env.MOCK_PORT || 8787);
@@ -457,19 +460,42 @@ const pushFn = await loadPushFunction();
 const fakeEleven = createFakeEleven();
 // 打电话的实时听写：网页拿着 voice 函数给的通行证连过来（地址换成这里的 /__stt，见下面 voice 函数那一段）
 const fakeStt = createFakeStt();
+// 他画画（draw 函数）去敲的 ElevenLabs：登录的几道门、MCP、放图的地方是另一个假的（见 draw-harness.mjs）；
+// 它读写的 draw_link 那张表也是假的（只认 service_role 的钥匙）
+const fakeCanvas = createFakeCanvas();
+const DRAW_SERVICE = "service-role-key-for-mock";
+const drawTable = createDrawTable(DRAW_SERVICE);
 {
   const prev = globalThis.fetch;
   globalThis.fetch = (input, init) => {
     const url = typeof input === "string" ? input : input.url;
-    let host = "";
+    let u = null;
     try {
-      host = new URL(url).hostname;
+      u = new URL(url);
     } catch (e) {}
+    const host = u ? u.hostname : "";
+    if (host === "api.elevenlabs.io" && /^\/(v1\/mcp|\.well-known\/|oauth\/)/.test(u.pathname)) return fakeCanvas.receive(url, init);
+    if (host === "storage.googleapis.com") return fakeCanvas.receive(url, init);
     if (host === "api.elevenlabs.io") return fakeEleven.receive(url, init);
+    if (u && u.host === `127.0.0.1:${PORT}` && u.pathname === "/rest/v1/draw_link") return drawTable.receive(url, init);
     return prev(input, init);
   };
 }
 const voiceFn = await loadVoiceFunction();
+const drawFn = await loadDrawFunction();
+let drawFnState = "ok"; // ok 部署了；missing 还没建这个函数（网关回 404，不带跨域的头）
+let drawHold = 0; // 往后每一回问 draw 函数都压这么多毫秒再回（截“他在画”那一下的图用）
+function drawReset() {
+  for (const k of Object.keys(drawEnv)) delete drawEnv[k];
+  Object.assign(drawEnv, { SUPABASE_URL: `http://127.0.0.1:${PORT}`, SUPABASE_ANON_KEY: "sb_publishable_test", SUPABASE_SERVICE_ROLE_KEY: DRAW_SERVICE, ALLOWED_EMAIL: "qing@example.com" });
+  Object.assign(fakeCanvas.state, { cimd: true, sse: false, life: 3600, polls: 1, fail: null, always: false, art: null });
+  fakeCanvas.log.length = 0;
+  drawTable.rows.clear();
+  drawTable.state.missing = false;
+  drawFnState = "ok";
+  drawHold = 0;
+}
+drawReset();
 const ELEVEN_KEY = "sk_test_eleven_key_1234567890";
 const ELEVEN_VOICE = "TestVoiceAbcdefghij1"; // 编的（真的声音编号不进仓库）
 let voiceFnState = "ok"; // ok 部署了；missing 还没建这个函数（网关回 404，不带跨域的头）；template 里面还是 Supabase 的样板
@@ -589,6 +615,11 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(404, { ...(pushFnState === "missing-cors" ? cors : {}), "Content-Type": "application/json" });
       return res.end(JSON.stringify({ code: "NOT_FOUND", message: "Requested function was not found" }));
     }
+    // draw 函数还没建：一样回 404，不带跨域的头
+    if (url.pathname === "/functions/v1/draw" && drawFnState === "missing") {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ code: "NOT_FOUND", message: "Requested function was not found" }));
+    }
     // voice 函数还没建：一样回 404，不带跨域的头
     if (url.pathname === "/functions/v1/voice" && voiceFnState === "missing") {
       res.writeHead(404, { "Content-Type": "application/json" });
@@ -678,6 +709,52 @@ const server = http.createServer(async (req, res) => {
       }
       return send(res, 200, { ok: true });
     }
+    // ---- 他画画的调试口 ----
+    // 看：敲过 ElevenLabs 哪几道门、调过 MCP 的哪几样（画什么、横竖）、draw_link 里记着什么
+    if (url.pathname === "/__debug/draw") {
+      const link = drawTable.rows.get(USERS["qing@example.com"].id) || null;
+      return send(res, 200, { log: fakeCanvas.log, link, linked: !!(link && link.tokens), state: { ...fakeCanvas.state, fn: drawFnState } });
+    }
+    // fail=quota|genfail|busy|down|badrefresh|deny|noimage|notpng|noflow（always=1 一直这样）；polls=N 画一张要被问几回才画好；
+    // fn=missing|ok 函数建没建；table=missing|ok 表建没建；hold=毫秒（往后每一回问 draw 函数都压这么久再回）；
+    // unlink=1 装成凭证丢了；expire=1 发出去的凭证都过期（续得上）；daily=N 一天最多画几张
+    if (url.pathname === "/__debug/draw-setup") {
+      const q = url.searchParams;
+      if (q.has("fail")) Object.assign(fakeCanvas.state, { fail: q.get("fail") || null, always: q.get("always") === "1" });
+      if (q.has("polls")) fakeCanvas.state.polls = Number(q.get("polls") || 0);
+      if (q.has("fn")) drawFnState = q.get("fn") || "ok";
+      if (q.has("table")) drawTable.state.missing = q.get("table") === "missing";
+      if (q.has("hold")) drawHold = Number(q.get("hold") || 0);
+      if (q.has("daily")) {
+        if (q.get("daily")) drawEnv.DRAW_DAILY_MAX = q.get("daily");
+        else delete drawEnv.DRAW_DAILY_MAX;
+      }
+      if (q.get("unlink") === "1") {
+        const row = drawTable.rows.get(USERS["qing@example.com"].id);
+        if (row) delete row.tokens;
+      }
+      if (q.get("expire") === "1") fakeCanvas.expireAll();
+      // art=目录：截图用，画出来的是那个目录里的 1x1.png、3x4.png、4x3.png（照横竖挑），不是那张 48×64 的小图
+      if (q.has("art")) {
+        const dir = q.get("art");
+        const pick = (f) => {
+          try {
+            return fs.readFileSync(path.join(dir, f));
+          } catch (e) {
+            return null;
+          }
+        };
+        fakeCanvas.state.art = dir ? { "1:1": pick("1x1.png"), "3:4": pick("3x4.png"), "4:3": pick("4x3.png") } : null;
+      }
+      return send(res, 200, { ok: true });
+    }
+    // 她在 ElevenLabs 的登录页上点了授权：浏览器打开的那个地址交给假的 ElevenLabs，它把浏览器送回 draw 函数（302）
+    if (url.pathname === "/__eleven/authorize") {
+      const out = await fakeCanvas.receive(`https://api.elevenlabs.io/oauth/authorize${url.search}`, { method: "GET" });
+      res.writeHead(out.status, { ...Object.fromEntries(out.headers), ...cors });
+      return res.end(await out.text());
+    }
+
     // ---- 信箱的调试口 ----
     // 看：信箱里现在有什么、每一回读写
     if (url.pathname === "/__debug/mail") return send(res, 200, { rows: mail.all(), log: mail.log, ops: pushOps, notFound: pushNotFound });
@@ -710,6 +787,7 @@ const server = http.createServer(async (req, res) => {
       toolQueue.length = 0;
       pushReset();
       voiceReset();
+      drawReset();
       return send(res, 200, { ok: true });
     }
     // ---- 通知的调试口 ----
@@ -910,6 +988,18 @@ const server = http.createServer(async (req, res) => {
         text = JSON.stringify(d);
       }
       return res.end(text);
+    }
+
+    // ---- draw 函数：把这次敲门原样交给真的那份代码（ElevenLabs 把她送回来的那一下是 GET） ----
+    if (url.pathname === "/functions/v1/draw") {
+      const headers = {};
+      for (const k of ["authorization", "apikey", "content-type", "origin"]) if (req.headers[k]) headers[k] = req.headers[k];
+      const body = req.method === "POST" ? await readBody(req) : undefined;
+      if (drawHold && req.method === "POST") await new Promise((done) => setTimeout(done, drawHold));
+      const out = await drawFn.handler(new Request(`http://127.0.0.1:${PORT}${req.url}`, { method: req.method, headers, body }));
+      if (res.destroyed) return;
+      res.writeHead(out.status, Object.fromEntries(out.headers));
+      return res.end(Buffer.from(await out.arrayBuffer()));
     }
 
     // ---- claude 函数 ----

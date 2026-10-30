@@ -1,8 +1,10 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { store } from "./store.js";
-import { callClaude, callReply, callVoice, mailbox, freshToken } from "./cloud.js";
+import { callClaude, callReply, callVoice, callDraw, mailbox, freshToken } from "./cloud.js";
 import { VOICE_KEY, HOLD_MS, WANT_KEY, HEARD_KEY, HEARD_MAX, VOICE_SAMPLE, voiceKeyOf, voicesIn, heardOf, shownOf, stabOf, secondsOf, readHeard, readVoice, packVoice, collectHisIds, voiceWhere, silentMp3 } from "./voice.js";
 import { createSpeaker } from "./speaker.js";
+import { DRAW_JOB_KEY, WANT_KEY as DRAW_WANT_KEY, DRAW_SAMPLE, drawsIn, drawKeyOf, drawImgOf, collectDrawKeys, drawWhere } from "./draw.js";
+import { createPainter } from "./painter.js";
 import { MOTTO_KEY, MOTTO_LAST, DEFAULT_MOTTO, parseMotto, pickMotto, poolAt, fillMotto, mottoLines, readMotto, packMotto, describeMotto } from "./motto.js";
 import { MottoPanel } from "./panels/MottoPanel.jsx";
 import { openProbe } from "./probe.js";
@@ -22,7 +24,7 @@ import { disablePush, resyncPush, watchNotices, probeReply, knockList, clearRepl
 import { WEEK, sepLabel, timeAgo } from "./days.js";
 import { newId, fmtChars } from "./util.js";
 import { MEME_DATA, MEME_MAP, RAW_BASE, memeSrc, newMemesFrom, parseReadme } from "./memes.js";
-import { urlToThumb, fileToPhoto } from "./images.js";
+import { urlToThumb, fileToPhoto, dataUrlToPhoto } from "./images.js";
 import { DEFAULT_MODEL, modelLabel, costOf, money, usageKey, windowOf, thinksFirst } from "./models.js";
 import { RECAP_KEY, RECAP_BAD_KEY, RECAP_LOG_KEY, normRecaps, pickRecap, tierOf, roomFor, dueRecap, splitForMerge, nextRecap, cleanRecap, addRecap, mayRetry, afterFail, afterAway, loadBad, loadLog, addLog, recapWhy, retryWhen, gauge } from "./recap.js";
 import { dayKeyOf, parseDayKey, moodOf, dayTranscript, parseDiary } from "./diary.js";
@@ -383,6 +385,12 @@ export default function App({ account = {} }) {
   const [voices, setVoices] = useState({});
   const voicesRef = useRef({});
   const speakerRef = useRef(null);
+  // 他画的画（见 draw.js、painter.js）：每一张眼下的样子；画画的活；连没连上 ElevenLabs（API 面板里写）；“试画一张”
+  const [draws, setDraws] = useState({});
+  const drawsRef = useRef({});
+  const painterRef = useRef(null);
+  const [drawLink, setDrawLink] = useState(null); // { state: "checking" | "ok" | "no" | 出岔子的 code, say, at }
+  const [drawTry, setDrawTry] = useState(null); // { busy, t0 } | { done, ok, text }
   const rowListRef = useRef([]); // 眼下摆着的那几行（放完一条语音，看下一条是不是也是他的语音）
   const [playing, setPlaying] = useState("");
   const playingRef = useRef("");
@@ -736,6 +744,8 @@ export default function App({ account = {} }) {
       if (keys.includes(PD_STATE)) setPdIncoming(readState(store.peek(PD_STATE)));
       // 别的设备念好的语音同步下来了（这台设备上要念的那一条就不用再念了）
       if (has(VOICE_KEY) && speakerRef.current) speakerRef.current.synced(keys.filter((k) => k.startsWith(VOICE_KEY)));
+      // 别的设备画好的画、没画成的、开了画的同步下来了
+      if ((has(DRAW_JOB_KEY) || has("kfs2:img:draw.")) && painterRef.current) painterRef.current.synced(keys.filter((k) => k.startsWith(DRAW_JOB_KEY) || k.startsWith("kfs2:img:draw.")));
       if (has("kfs2:memindex") || has("kfs2:mem:")) {
         const mi = safeParse(await store.get("kfs2:memindex"), []) || [];
         const texts = {};
@@ -892,7 +902,9 @@ export default function App({ account = {} }) {
     loadDocsFor(msgs);
     const ids = msgs
       .filter((m) => m.role === "her" && m.kind === "photo" && m.imgId && imgsRef.current[m.imgId] === undefined)
-      .map((m) => m.imgId);
+      .map((m) => m.imgId)
+      // 他画好的画（见 draw.js）：也是照片
+      .concat(msgs.flatMap((m) => drawsIn(m).map((d) => drawImgOf(d.key))).filter((id) => imgsRef.current[id] === undefined));
     if (!ids.length) return;
     const add = {};
     for (const id of ids) {
@@ -951,6 +963,10 @@ export default function App({ account = {} }) {
     const said = collectHisIds(old).flatMap((hid) => store.keys(VOICE_KEY + hid + ".")).map((k) => k.slice(VOICE_KEY.length));
     if (said.length) getSpeaker().drop(said);
     getSpeaker().dropChat(id);
+    // 他在这段对话里画的画：画好的图上面跟着照片一起删了；画到一半的那一笔、还没画的也收掉
+    const pics = collectDrawKeys(old);
+    if (pics.length) getPainter().drop(pics);
+    getPainter().dropChat(id);
     // 江湖棋局：每一步另存着的棋盘（连同翻过去的那些版本里的），一起删；摆着棋盘的平常对话，单子里也拿掉
     collectStepIds(old).forEach((sid) => store.del(SNAP_KEY + sid));
     if (onSetRef.current.has(id)) setBoardOn(id, false);
@@ -1178,6 +1194,125 @@ export default function App({ account = {} }) {
     }
     return speakerRef.current;
   };
+  // ---- 他画的画：画画的活（见 painter.js）。用到的浏览器和云端的东西在这里递进去 ----
+  const getPainter = () => {
+    if (!painterRef.current) {
+      painterRef.current = createPainter({
+        call: (op, body) => callDraw({ op, ...body }),
+        store: { get: (k) => store.get(k), set: (k, v) => store.set(k, v), del: (k) => store.del(k) },
+        visible: () => document.visibilityState === "visible",
+        wants: {
+          get: () => {
+            try {
+              return localStorage.getItem(DRAW_WANT_KEY) || "";
+            } catch (e) {
+              return "";
+            }
+          },
+          set: (text) => {
+            try {
+              if (text) localStorage.setItem(DRAW_WANT_KEY, text);
+              else localStorage.removeItem(DRAW_WANT_KEY);
+            } catch (e) {}
+          },
+        },
+        // 那一张画在哪儿（"shown" 在眼前、"kept" 在翻过去的版本里、"" 没了，见 draw.js 的 drawWhere）：
+        // 眼前这段对话看画面上的那一份，别的看存档；正在重新回答的那段，旧回答在点“重新回答”那一刻的整段里（forkRef）
+        alive: async (w) => {
+          const msgs = chatIdRef.current === w.c ? messagesRef.current : safeParse(await store.get("kfs2:chat:" + w.c), null);
+          const here = drawWhere(msgs, w.k);
+          if (here) return here;
+          const fk = forkRef.current;
+          return fk && fk.chat === w.c && drawWhere(fk.full, w.k) ? "kept" : "";
+        },
+        now: () => Date.now(),
+        sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+        shrink: (got) => dataUrlToPhoto(`data:${got.mime || "image/png"};base64,${got.data}`),
+        device: DEVICE_ID,
+        onChange: (key, st) => {
+          const next = { ...drawsRef.current };
+          if (st) next[key] = st;
+          else delete next[key];
+          drawsRef.current = next;
+          setDraws(next);
+        },
+        onImage: (imgId, data) => {
+          imgsRef.current = { ...imgsRef.current, [imgId]: data };
+          setImgs(imgsRef.current);
+        },
+      });
+    }
+    return painterRef.current;
+  };
+  // API 面板：连没连上 ElevenLabs（不花钱）。没连上的：顺手把登录的地址要来，“连上 ElevenLabs”就是一个直接打开它的链接
+  // （iPhone 上只有手指点下去的那一下开得了新页，点了再去要地址就开不出来了）。
+  // 一回只问一趟：面板打开、她从登录页回来（又看得见开封府了）都会问，赶在一起的那几下并成一趟
+  const drawAsk = useRef(null);
+  const checkDraw = () => {
+    if (drawAsk.current) return drawAsk.current;
+    const run = (async () => {
+      setDrawLink((d) => ({ ...(d || {}), state: "checking" }));
+      try {
+        const d = await callDraw({ op: "status" }, { wait: 15000 });
+        if (d.linked) {
+          setDrawLink({ state: "ok", at: d.at || 0, model: d.model || "" });
+          return;
+        }
+        setDrawLink((x) => ({ state: "no", url: (x && x.url) || "" }));
+        const l = await callDraw({ op: "link" }, { wait: 30000 });
+        setDrawLink((x) => (x && x.state === "no" ? { ...x, url: l.url } : x));
+      } catch (e) {
+        setDrawLink({ state: e.code || "refused", say: String((e && e.message) || "") });
+      }
+    })();
+    drawAsk.current = run;
+    run.finally(() => {
+      if (drawAsk.current === run) drawAsk.current = null;
+    });
+    return run;
+  };
+  const unlinkDraw = async () => {
+    try {
+      await callDraw({ op: "unlink" }, { wait: 15000 });
+      setDrawLink({ state: "no" });
+      checkDraw(); // 再要一个登录的地址，“连上 ElevenLabs”点得了
+    } catch (e) {
+      setDrawLink({ state: e.code || "refused", say: String((e && e.message) || "") });
+    }
+  };
+  // 试画一张：画好了摆在面板里（不进聊天、不存）
+  const testDraw = async () => {
+    if (drawTry && drawTry.busy) return;
+    const t0 = Date.now();
+    setDrawTry({ busy: true, t0 });
+    try {
+      const s = await callDraw({ op: "start", prompt: DRAW_SAMPLE, ratio: "竖" });
+      let misses = 0;
+      for (;;) {
+        if (Date.now() - t0 > 5 * 60 * 1000) throw new Error("画了太久没画好");
+        let r = null;
+        try {
+          r = await callDraw({ op: "check", job: s.job });
+        } catch (e) {
+          // 问“画好没有”不花钱：一时没连上、太挤的，歇一会儿接着问
+          if (!["down", "busy", "unreachable", "slow"].includes(e && e.code) || ++misses > 6) throw e;
+          await new Promise((done) => setTimeout(done, 5000));
+          continue;
+        }
+        if (r.type === "pending") {
+          await new Promise((done) => setTimeout(done, Math.max(3000, Math.min(15000, (Number(r.after) || 4) * 1000))));
+          continue;
+        }
+        if (r.type === "failed") throw new Error(r.why || "没画成");
+        setDrawTry({ done: true, ok: true, img: `data:${r.mime};base64,${r.data}`, text: `画好了，${Math.max(1, Math.round((Date.now() - t0) / 1000))} 秒${s.credits ? `，花了 ${s.credits} 点额度` : ""}` });
+        setDrawLink((d) => ({ ...(d || {}), state: "ok" }));
+        return;
+      }
+    } catch (e) {
+      setDrawTry({ done: true, ok: false, text: `没画成：${String((e && e.message) || e).slice(0, 160)}` });
+    }
+  };
+
   // ---- 放他的语音 ----
   // 只用一个放声音的东西：iPhone 上它放过一回（她点的那一下），放完接着放下一条才不用她再点
   const player = () => {
@@ -1561,6 +1696,9 @@ export default function App({ account = {} }) {
 
   // 回话放进了 id 那段对话：里头的语音条记下来要念（她开了“他能发语音”才念；没开的时候他发的，气泡上有“点这里念出来”）
   const wantVoices = (id, him) => {
+    // 里头的画：记下来要画（她开了“他能画画”才画；没开的时候他画的，气泡上有“点这里画出来”）。打电话的时候也照画（画是摆在聊天里的）
+    const pics = settingsRef.current.draw && him ? drawsIn(him) : [];
+    if (pics.length) getPainter().want(id, pics);
     if (!settingsRef.current.voice || !him) return;
     if (callRef.current && callRef.current.chat === id) return; // 正在打电话：通话那头一句一句念，这里不再念一遍
     const list = voicesIn(him);
@@ -1769,13 +1907,19 @@ export default function App({ account = {} }) {
       game,
       qx: qxSection(qxPoolRef.current), // 秘戏钱匣：签库里有签才有这一段，只写维度名（见 qx/pool.js）
       room: roomSection(wakeOn(st)), // 他的屋子：“他自己醒”开着才有这一段（见 room.js）
+      draw: !!st.draw, // 他能画画（API 面板里的开关，默认关着；见 draw.js）
     });
     // 任务标记（见 fox.js）：“他自己醒”开着的时候，平常的对话里【此刻】后面附一段，他知道能定个闹钟到点来找她。在记号后面，名帖一个字不动
     const tasks = wakeOn(st) && !isFoxChat(opts.chat) && !isGameChat(opts.chat);
     const nowNote = tasks ? baseNote + "\n\n" + taskNote(namesRef.current.her || HER_NAME) : baseNote;
     // 这段对话抄过提要的：前面的不寄原话，换成提要（见 recap.js）
     const recapList = opts.chat ? await readRecaps(opts.chat) : [];
-    const { messages: apiMessages, tail } = buildMessages(msgs, avatarsRef.current, memeLookup, imgLookup, thumbLookup, docLookup, { recaps: recapList, tier: recallTier(staticText) });
+    // 他画的画：画好的那张（离现在不远的才带图）、没画成的缘故（见 draw.js 的 drawNote）
+    const drawLookup = (key) => {
+      const ds = drawsRef.current[key];
+      return { img: imgsRef.current[drawImgOf(key)] || null, why: ds && ds.s === "fail" ? ds.why || "没画成" : "", none: !!(ds && ds.s === "none") };
+    };
+    const { messages: apiMessages, tail } = buildMessages(msgs, avatarsRef.current, memeLookup, imgLookup, thumbLookup, docLookup, { recaps: recapList, tier: recallTier(staticText), drawLookup });
 
     // 依次尝试：带缓存 → 不带缓存 → 不带MCP，哪种通了用哪种
     const withMcp = mcps.length > 0;
@@ -2324,6 +2468,9 @@ export default function App({ account = {} }) {
     const kept = Math.max(1, count || 0);
     const gone = out.dropped.map((it, i) => (it.type === "voice" ? voiceKeyOf(msgId, kept + i) : "")).filter(Boolean);
     if (gone.length) getSpeaker().drop(gone);
+    // 没蹦到的那几样里的画：不画了（画到一半的那一笔、画好的都收掉）
+    const unpainted = out.dropped.map((it, i) => (it.type === "draw" ? drawKeyOf(msgId, kept + i) : "")).filter(Boolean);
+    if (unpainted.length) getPainter().drop(unpainted);
     const av = out.dropped.find((it) => it.type === "avatar");
     if (av && sameAv(avatarsRef.current.him || null, { type: "meme", file: av.file })) changeHisAvatar(av.prev || null);
   };
@@ -3777,7 +3924,7 @@ export default function App({ account = {} }) {
     // 名帖那一大段和聊天时寄的一个字不差（缓存接得上；正在打电话的这段对话，心里话那一条照关着算，见 thoughtsFor；
     // 江湖棋局那一段带着【江湖棋局】那一段，见 game/jianghu.js）；【此刻】这回用不着
     const game = isOn(id) ? { board: null, mixed: !isGameChat(id) } : hasSteps(msgs) ? { off: true } : null;
-    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game, qx: qxSection(qxPoolRef.current), room: roomSection(wakeOn(st)) });
+    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game, qx: qxSection(qxPoolRef.current), room: roomSection(wakeOn(st)), draw: !!st.draw });
     // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
     const photos = {};
     for (const m of msgs) {
@@ -3991,6 +4138,8 @@ export default function App({ account = {} }) {
       const sp = getSpeaker();
       if (settingsRef.current.voice) sp.resume();
       else if (sp.wanting().length) sp.halt();
+      // 画到一半、还没开画的画：接着来（问“画好没有”不花钱；开画的那几张是开关开着的时候记下的）
+      getPainter().resume();
     };
     let voiceTimer = setTimeout(resumeVoices, 1200);
     const onVisible = () => {
@@ -4503,6 +4652,7 @@ export default function App({ account = {} }) {
       thoughts: st.thoughts !== false, // 他写不写心里话（“头像与设置”里的开关，默认开着）
       callable: st.callable !== false, // 他能打电话（API 面板里的开关，默认开着；见 call/incoming.js）
       diary: false, // 名帖不带【日记本】那一段：这一回不带工具，他翻不了（日记共读，见 diaryTools.js）
+      draw: !!st.draw, // 他能画画：跟聊天那一回一样写上（名帖一样才接得上缓存）
     });
     const msgs = dayMsgsRef.current[key] || [];
     const transcript = msgs.length ? dayTranscript(msgs, memeLookup) : "（这天你们没在开封府说话）";
@@ -4679,6 +4829,7 @@ export default function App({ account = {} }) {
         thoughts: st.thoughts !== false,
         callable: st.callable !== false,
         diary: false,
+        draw: !!st.draw,
       });
       const diary = ((await loadMonth(day.slice(0, 7))) || {})[day] || {};
       const P = pageRecOf(store, day) || {};
@@ -5061,7 +5212,10 @@ export default function App({ account = {} }) {
   rowListRef.current = rows;
   // 打开 API 面板：看一眼念语音的小后端接上没有
   useEffect(() => {
-    if (sheet === "api") checkVoice();
+    if (sheet === "api") {
+      checkVoice();
+      checkDraw();
+    }
   }, [sheet]);
   // 冒出来的语音条：还不知道它什么样子的（存档里有没有念好的），看一眼
   useEffect(() => {
@@ -5069,6 +5223,12 @@ export default function App({ account = {} }) {
       if (r.type !== "bubble" || r.role !== "him" || r.item.type !== "voice") continue;
       const k = voiceKeyOf(r.msg.id, r.idx);
       if (!voicesRef.current[k]) getSpeaker().look(k);
+    }
+    // 冒出来的画：还不知道它什么样子的（存档里画好了没有、画到一半没有），看一眼
+    for (const r of rows) {
+      if (r.type !== "bubble" || r.role !== "him" || r.item.type !== "draw") continue;
+      const k = drawKeyOf(r.msg.id, r.idx);
+      if (!drawsRef.current[k]) getPainter().look(k, chatIdRef.current, r.item.prompt, r.item.ratio || "");
     }
   }, [rows]);
   // 空着的那一页一冒出来（开机、新开一段、删了眼前这段）就抽一句；她看着的时候不换。素材库改了、同步过来了，也重抽一句。
@@ -5081,6 +5241,10 @@ export default function App({ account = {} }) {
   useEffect(() => {
     if (!settings.voice && speakerRef.current) speakerRef.current.halt();
   }, [settings.voice]);
+  // 她关了“他能画画”：还没开画的不画了（已经开了画的接着问完，钱已经花了）
+  useEffect(() => {
+    if (!settings.draw && painterRef.current) painterRef.current.halt();
+  }, [settings.draw]);
   // 面板里那一份丢掉以后，还有没有更早的一份接着作数（没有的话，丢的就是整份：面板里的字照实写）
   const recapFallback = useMemo(() => !!recapView && !!pickRecap(messages, recaps.filter((r) => r.id !== recapView.id)).recap, [messages, recaps, recapView]);
   // 提要的面板开着的工夫里又抄了一趟（或者另一台设备抄的同步过来了）：面板跟着换成眼下作数的那一份。
@@ -5305,7 +5469,7 @@ export default function App({ account = {} }) {
     }
     if (sheet === "api") {
       // “他记多长”照眼下这个模型算出来的数；眼前这段对话抄到哪儿了（见 recap.js 的 gauge）
-      const fit = recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false, qx: qxSection(qxPool), room: roomSection(wakeOn(settings)) }).staticText);
+      const fit = recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false, qx: qxSection(qxPool), room: roomSection(wakeOn(settings)), draw: !!settings.draw }).staticText);
       return (
         <Sheet title="API" onClose={() => { setSheet(null); setTestNote(""); setVoiceTestNote(""); if (recapTry && recapTry.done) setRecapTry(null); }}>
           <ApiPanel
@@ -5319,6 +5483,11 @@ export default function App({ account = {} }) {
             voiceTestNote={voiceTestNote}
             voiceTesting={voiceTesting}
             onEchoProbe={startEcho}
+            drawLink={drawLink}
+            drawTry={drawTry}
+            onDrawCheck={checkDraw}
+            onDrawUnlink={unlinkDraw}
+            onDrawTest={testDraw}
             onTest={testApi}
             testNote={testNote}
             testing={testing}
@@ -5772,6 +5941,8 @@ export default function App({ account = {} }) {
                 playing={playing}
                 onVoice={playVoice}
                 onVoiceAgain={(r) => getSpeaker().again(chatIdRef.current, voiceKeyOf(r.msg.id, r.idx), r.item.text)}
+                draws={draws}
+                onDrawAgain={(r) => getPainter().again(chatIdRef.current, drawKeyOf(r.msg.id, r.idx), r.item.prompt, r.item.ratio || "")}
                 onOpenPhoto={setViewer}
                 onOpenDoc={setDocView}
                 onLongPress={(r, rect) => setMenu({ row: r, rect })}
@@ -6329,7 +6500,8 @@ export default function App({ account = {} }) {
         </Sheet>
       )}
 
-      {/* 点开的照片：点一下关掉。整页不许捏以后这里也放大不了：卿卿说不用（点开的只有她自己发的照片，原图在她相册里） */}
+      {/* 点开的照片：点一下关掉。整页不许捏以后这里也放大不了：卿卿说不用（那时候点开的只有她自己发的照片，原图在她相册里）。
+          10 月 30 日起他画的画也在这里看大图 */}
       {viewer && (
         <div
           onClick={() => setViewer(null)}

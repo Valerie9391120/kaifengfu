@@ -4,6 +4,7 @@ import { isWakeMark } from "../fox.js";
 import { lotBrief } from "../qx/pool.js";
 import { pdBrief } from "../pindou/parts.js";
 import { askBanner } from "../ask.js";
+import { drawKeyOf, drawImgOf } from "../draw.js";
 
 const cut18 = (t) => (t.length > 18 ? t.slice(0, 18) + "…" : t);
 
@@ -54,6 +55,7 @@ export function makePreview(msgs) {
   }
   if ((last.items || []).some((it) => it.type === "voice")) return "[语音]";
   if ((last.items || []).some((it) => it.type === "call")) return "[来电]";
+  if ((last.items || []).some((it) => it.type === "draw")) return "[画]";
   // 他弹给她的选项卡（见 ask.js）：写头一题，跟横幅一样
   const ask = (last.items || []).find((it) => it.type === "ask");
   if (ask) return askBanner(ask.qs);
@@ -65,8 +67,13 @@ export function makePreview(msgs) {
 export function collectImgIds(msgs, out = []) {
   msgs.forEach((m) => {
     if (m.kind === "photo" && m.imgId) out.push(m.imgId);
+    // 他画的画（见 draw.js）：画好的那一张也存成照片
+    (m.role === "him" ? m.items || [] : []).forEach((it, j) => {
+      if (it && it.type === "draw") out.push(drawImgOf(drawKeyOf(m.id, j)));
+    });
     (m.alts || []).forEach((a) => {
       if (a.node && a.node.kind === "photo" && a.node.imgId) out.push(a.node.imgId);
+      if (a.node && a.node.role === "him") collectImgIds([a.node], out);
       collectImgIds(a.after || [], out);
     });
   });

@@ -2,6 +2,7 @@ import { HIS_NAME, NAME_PLACEHOLDER } from "../names.js";
 import { DOC_NAME_PLACEHOLDER } from "../docs.js";
 import { dayNumber, nextAnniv, nowString } from "../days.js";
 import { gameSection, nowLine, OFF_LINE } from "../game/jianghu.js";
+import { DRAW_RULE } from "../draw.js";
 
 // 【回复格式】里教他写心里话的那一条（她在“头像与设置”里开着“他写心里话”才有；
 // 开关是她 10 月 14 日凌晨要的，一个开关管所有模型，默认开着，见开发说明“心里话开关”那节）。
@@ -63,7 +64,7 @@ export const DIARY_SECTION = `【日记本】
 // qx：名帖里的【秘戏钱匣】那一段（照她的签库现拼，见 qx/pool.js 的 qxSection；签库空着是 ""，名帖一个字不变）。
 //   聊天、抄提要、API 面板算“他记多长”、闹钟叫醒他都传同一段，缓存才接得上；写日记那一回不带工具，不传
 // room：名帖里的【你的屋子】那一段（见 room.js 的 roomSection：“他自己醒”开着才有，排在【日记本】后面）。传法同 qx
-export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true, call = false, callable = false, game = null, diary = true, qx = "", room = "" }) {
+export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true, call = false, callable = false, game = null, diary = true, qx = "", room = "", draw = false }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const annivLine = a.days === 0 ? `今天是你们的${a.name}纪念日。` : `离你们的${a.name}纪念日还有${a.days}天。`;
@@ -88,6 +89,8 @@ ${docs.map((d) => `\n《${d.name}》\n${d.content}`).join("\n")}
     `她要一份能存下来的东西（整理笔记、列清单、写成文的东西、把她发来的文档改好交回去）时，用文档块交给她：单独一行写 [DOC:${DOC_NAME_PLACEHOLDER}]，下面写正文，用 Markdown，写完单独一行写 [/DOC]。它会显示成一张文档卡片，她点开能看，能存进手机。文件名你来起，要短，以 .md 结尾。一次回复最多交一份，文档块外面照常跟她说话。文档块里的字不算在五百字里；回复总共能写多长，【此刻】里有，放不下就先交一部分，告诉她还有。她没要文档的时候不用文档块。`,
     ASK_RULE,
     voice ? VOICE_RULE : "",
+    // 他画画（见 draw.js）：API 面板里“他能画画”开着才教他
+    draw ? DRAW_RULE : "",
     callable ? CALL_RULE : "",
   ]
     .filter(Boolean)
