@@ -108,7 +108,7 @@ function rig(opts = {}) {
     shrink: async (got) => (opts.badShrink ? Promise.reject(new Error("画布坏了")) : `data:image/jpeg;base64,small-${got.data}`),
     device: opts.device || "devA",
     onChange: (key, st) => changes.push([key, st && st.s]),
-    onImage: (imgId, data) => images.push([imgId, data]),
+    onImage: (imgId, data, info) => images.push(info ? [imgId, data, info] : [imgId, data]),
   });
   const settle = async () => {
     for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
@@ -123,7 +123,7 @@ const coded = (code, msg) => Object.assign(new Error(msg), { code });
   r.p.want("c1", [{ key: "m1.1", prompt: "狐狸", ratio: "竖" }]);
   await r.settle();
   ok(J(r.calls.map((c) => c.op)) === J(["start", "check", "check", "check"]) && r.calls[0].body.prompt === "狐狸" && r.calls[0].body.ratio === "竖", "画一张：开画一回，问到画好为止（中间两回还在画）");
-  ok(r.kv.get("kfs2:img:draw.m1.1") === "data:image/jpeg;base64,small-iVBORw0K" && !r.kv.has("kfs2:drawjob:m1.1") && J(r.images) === J([["draw.m1.1", "data:image/jpeg;base64,small-iVBORw0K"]]), "画好了：缩过的图存成照片，画到一半的那一笔删掉，画面上换成图");
+  ok(r.kv.get("kfs2:img:draw.m1.1") === "data:image/jpeg;base64,small-iVBORw0K" && !r.kv.has("kfs2:drawjob:m1.1") && J(r.images) === J([["draw.m1.1", "data:image/jpeg;base64,small-iVBORw0K", { key: "m1.1", chat: "c1" }]]), `画好了：缩过的图存成照片，画到一半的那一笔删掉，画面上换成图；说一声是哪段对话的哪一张（收进图画院用）（${J(r.images)}）`);
   ok(r.p.stateOf("m1.1").s === "ready" && r.p.wanting().length === 0 && r.env.wantsText === "", "画好了：样子是画好了，这台设备上记的那一串清空");
   ok(r.changes.some(([, s]) => s === "busy"), "画的时候：样子是正在画");
 }

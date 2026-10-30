@@ -38,7 +38,7 @@ const LATER_CODES = new Set(["down", "busy", "unreachable", "slow"]);
 // store：{ get, set, del }（存档）；visible()：她在不在眼前；wants：{ get, set }（这台设备上记的那一串）；
 // alive(w)：那一张画在哪儿——"shown" 在眼前，"kept" 在翻过去的版本里，"" 没了（见 draw.js 的 drawWhere）；
 // shrink(got)：画好的那一张（{ data, mime }）缩成存的样子（data URL）；device：这台设备的编号；
-// onChange(key, state)：哪一张变了样子（state 是 null：不认这一张了）；onImage(imgId, data)：画好的图存下了
+// onChange(key, state)：哪一张变了样子（state 是 null：不认这一张了）；onImage(imgId, data, { key, chat })：画好的图存下了（哪一张、哪段对话的）
 export function createPainter({ call, store, visible, wants, alive, now, sleep, shrink, device = "", onChange, onImage = () => {} }) {
   const states = new Map();
   let list = readWants(wants.get(), now());
@@ -248,7 +248,7 @@ export function createPainter({ call, store, visible, wants, alive, now, sleep, 
         try {
           await store.del(DRAW_JOB_KEY + w.k);
         } catch (e) {}
-        onImage(imgId, data);
+        onImage(imgId, data, { key: w.k, chat: w.c });
         forget(w.k);
         set(w.k, { s: "ready" });
         return true;
