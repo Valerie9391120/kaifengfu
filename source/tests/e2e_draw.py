@@ -7,7 +7,7 @@ from mailkit import *
 errors = []
 SHOTS = sys.argv[1] if len(sys.argv) > 1 else ""
 ART = os.path.abspath(os.path.join(HERE, "..", ".cache", "draw-art"))
-DONE = os.path.abspath(os.path.join(HERE, "..", "dist-test", "oauth", "done.html"))
+DONE = os.path.abspath(os.path.join(HERE, "..", "static", "oauth", "done.html"))
 QUIET = "!document.querySelector('.kfs-typing')"
 MENU = "() => [...document.querySelectorAll('.z-50 button')].map((b) => b.textContent.trim())"
 # 他那几个气泡里的东西，照先后：D:画还没好（它的样子） P:画好了的图 T:字

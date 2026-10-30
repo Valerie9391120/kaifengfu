@@ -133,13 +133,13 @@ def run(browser):
     ok(pg.locator(".kfs-cangyin").count() == 0 and pg.locator(".kfs-nanya").count() == 0 and pg.evaluate(TILE_ON_TOP), "藏音匣左上角返回：回到侧栏，不回菜单")
     open_menu(pg)
     # ---- 还没盖的网易云：点了只冒一句话 ----
-    pg.locator(".kfs-nanya-row").nth(6).click()
+    pg.locator(".kfs-nanya-row", has_text="网易云").click()   # 照名字找（10 月 30 日前面多了一行图画院，照第几行找会点错）
     said = wait_has(pg, "网易云还在营造")
     still = pg.locator(".kfs-nanya").count() == 1 and pg.locator(".kfs-page").count() == 0
     gone2 = wait_has(pg, "网易云还在营造", want=False)
     ok(said and still and gone2 and len(calls()) == c0,
        "点网易云：冒一句“网易云还在营造”，菜单还开着，那句话一会儿自己消失；前后也没往那边发什么")
-    pg.locator(".kfs-nanya-row").nth(7).click()
+    pg.locator(".kfs-nanya-row", has_text="邸报").click()
     said = wait_has(pg, "邸报还在营造")
     still = pg.locator(".kfs-nanya").count() == 1 and pg.locator(".kfs-page").count() == 0
     gone2 = wait_has(pg, "邸报还在营造", want=False)
