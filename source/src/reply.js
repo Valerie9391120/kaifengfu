@@ -139,7 +139,7 @@ export function parseReply(text) {
         if (said) items.push({ type: "voice", text: said });
         marks.forEach((x) => items.push(x)); // 一样一样塞（展开的写法碰上几十万样会撑爆）
       });
-      if (drawn && drawn.prompt) items.push({ type: "draw", prompt: drawn.prompt, ...(drawn.ratio ? { ratio: drawn.ratio } : {}) });
+      if (drawn && drawn.prompt) items.push({ type: "draw", prompt: drawn.prompt, ...(drawn.ratio ? { ratio: drawn.ratio } : {}), ...(drawn.title ? { title: drawn.title } : {}) });
     });
     if (call) {
       // 打电话：记号后面的是她接起来他先说的话。[SPLIT] 当换行；[VOICE]、[CALL] 这几个字不要；
@@ -210,7 +210,8 @@ export function rawOf(items, rename) {
     // 单独另起一行的话，它要是长得像文档开头的记号，再拆就成了一份文档）
     if (it.type === "call") return `[CALL] ${it.text || ""}`;
     // 画：记号和“画什么”的头一行写在同一行（跟语音一个道理）
-    if (it.type === "draw") return `[DRAW${it.ratio ? ":" + it.ratio : ""}] ${it.prompt || ""}`;
+    // 有名字的：名字在记号同一行，画什么另起一行（照他写的样子，再拆一遍还是这几样）
+    if (it.type === "draw") return `[DRAW${it.ratio ? ":" + it.ratio : ""}]${it.title ? `《${it.title}》\n` : " "}${it.prompt || ""}`;
     // 选项卡：整块写回（她答没答、关没关是开封府这头的事，不写进去）
     if (it.type === "ask") return askRaw(it.qs);
     if (it.type === "doc") {

@@ -9,6 +9,7 @@ import { nowString } from "../days.js";
 import { PIECE_PHOTOS, PIECE_BYTES, PART_MOST, MERGE_MOST, DOC_HEAD, HIS_DOC_HEAD, ROW_HEAD, clip, recapText } from "../recap.js";
 import { memeLabel, dataUrlBlock } from "./messages.js";
 import { heardOf } from "../voice.js";
+import { drawOf } from "../draw.js";
 import { isCallMark, markRecap } from "../call/marks.js";
 import { isWakeMark, wakeRecap } from "../fox.js";
 import { stepLines } from "../game/jianghu.js";
@@ -54,7 +55,10 @@ function hisLines(m, memeLookup) {
     // 他打电话：接没接、接起来说了什么，看后面那一行（“通话开始”“未接来电”，见 call/marks.js 的 markRecap）
     else if (it.type === "call") out.push(`[${HIS_NAME}给${HER_NAME}打电话]`);
     // 他画的画（见 draw.js）：记他写的画什么，画出来的图这一回不带
-    else if (it.type === "draw") out.push(say(HIS_NAME, `[给${HER_NAME}画了一张画${it.ratio ? `（${it.ratio}的）` : ""}，画的是：${head(it.prompt || "", ROW_HEAD)}]`));
+    else if (it.type === "draw") {
+      const d = drawOf(it);
+      out.push(say(HIS_NAME, `[给${HER_NAME}画了一张画${d.title ? `《${d.title}》` : ""}${it.ratio ? `（${it.ratio}的）` : ""}，画的是：${head(d.prompt, ROW_HEAD)}]`));
+    }
     // 他弹给她的选项卡（见 ask.js）：题目、选项一行；她答了什么看她下一句（“Q: … A: …”）
     else if (it.type === "ask") out.push(say(HIS_NAME, head(askSummary(it.qs), ROW_HEAD)));
     else out.push(say(HIS_NAME, head(it.text || "……", ROW_HEAD)));

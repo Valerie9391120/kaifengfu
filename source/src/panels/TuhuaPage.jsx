@@ -1,15 +1,25 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SERIF, T, glass, fill, HAIRLINE } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { useLongPress } from "../ui/press.js";
 import { Glows, IconBtn } from "../ui/parts.jsx";
 import { useSlideIn } from "../ui/enter.js";
-import { byMonth, dateOf } from "../tuhua.js";
+import { byMonth, dateOf, cleanTitle, TITLE_MAX } from "../tuhua.js";
 
 // 图画院（见 tuhua.js、开发说明“图画院”那节）：他画的画，一行两格，按月断开，新的在上面。
-// 每一格底下写哪天画的、他画的时候说的那句话（卿卿 10 月 30 日定的）。点一格看大图；长按一格“删掉这张”，再点一次才删。
-// entries 见 tuhua.js 的 listEntries；imgOf(id) 那一张的大图（data URL，没取到是空的）；onRemove(id) 删掉这一张
+// 每一格底下写这张画的名字、哪天画的（卿卿 10 月 31 日定的；原来是他画的时候说的那句话，她说挂着一句话好奇怪）。
+// 点一格看大图；长按一格“改名字”（没名字的写“起名字”）、“删掉这张”（再点一次才删）。
+// entries 见 tuhua.js 的 listEntries；imgOf(id) 那一张的大图（data URL，没取到是空的）；onRemove(id) 删掉这一张；onRename(id, 名字) 改名字
 const TALL = { 竖: 4 / 3, 横: 3 / 4, 方: 1 };
+const MENU_H = 104; // 长按那个菜单大约多高（两项）
+const MENU_DEAF = 450; // 菜单刚冒出来这么久以内不认点
+// 菜单摆在哪儿：那一格上面放得下就摆上面，放不下摆下面，都放不下贴着屏幕底
+function menuTop(rect) {
+  const vh = typeof window !== "undefined" ? window.innerHeight : 844;
+  if (rect.top - MENU_H - 8 >= 60) return rect.top - MENU_H - 8;
+  if (rect.bottom + 8 + MENU_H <= vh - 12) return rect.bottom + 8;
+  return Math.max(12, vh - MENU_H - 12);
+}
 
 function Card({ e, nowYear, onOpen, onLong }) {
   const lp = useLongPress((rect) => onLong(e, rect));
@@ -23,17 +33,17 @@ function Card({ e, nowYear, onOpen, onLong }) {
     >
       <img src={e.thumb} alt="" draggable={false} style={{ display: "block", width: "100%", borderRadius: 13, WebkitTouchCallout: "none" }} />
       <span className="block" style={{ padding: "7px 5px 3px" }}>
-        <span className="kfs-tuhua-date block" style={{ fontSize: 11, color: T.inkSoft, letterSpacing: "0.04em" }}>
-          {dateOf(e.at, nowYear)}
-        </span>
-        {e.say ? (
+        {e.title ? (
           <span
-            className="kfs-tuhua-say block"
-            style={{ fontSize: 12.5, color: T.ink, lineHeight: 1.5, marginTop: 2, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
+            className="kfs-tuhua-title block"
+            style={{ fontFamily: SERIF, fontSize: 14, color: T.ink, lineHeight: 1.45, letterSpacing: "0.04em", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
           >
-            {e.say}
+            {e.title}
           </span>
         ) : null}
+        <span className="kfs-tuhua-date block" style={{ fontSize: 11, color: T.inkSoft, letterSpacing: "0.04em", marginTop: e.title ? 2 : 0 }}>
+          {dateOf(e.at, nowYear)}
+        </span>
       </span>
     </button>
   );
@@ -51,11 +61,56 @@ function twoCols(items) {
   return cols;
 }
 
-export function TuhuaPage({ entries, imgOf, now, onBack, onRemove }) {
+// 改名字：一个框，写好了点“好了”（回车也行），“算了”不改。写空了就是没名字
+function Rename({ e, onDone, onCancel }) {
+  const [text, setText] = useState(e.title || "");
+  const box = useRef(null);
+  useEffect(() => {
+    const t = setTimeout(() => box.current && box.current.focus(), 60);
+    return () => clearTimeout(t);
+  }, []);
+  const save = () => onDone(cleanTitle(text));
+  return (
+    <div className="kfs-tuhua-rename absolute inset-0 z-50" onClick={onCancel} style={{ background: "rgba(var(--k-dim),0.22)" }}>
+      <div
+        className="kfs-in"
+        onClick={(ev) => ev.stopPropagation()}
+        style={{ position: "absolute", left: 16, right: 16, top: "calc(84px + env(safe-area-inset-top))", ...glass(0.9, 30), borderRadius: 22, padding: 14, border: HAIRLINE }}
+      >
+        <div className="flex items-center" style={{ gap: 12 }}>
+          <img src={e.thumb} alt="" style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 12, flexShrink: 0 }} />
+          <input
+            ref={box}
+            value={text}
+            maxLength={TITLE_MAX + 4}
+            placeholder="这张画叫什么"
+            onChange={(ev) => setText(ev.target.value)}
+            onKeyDown={(ev) => {
+              if (ev.key === "Enter" && !ev.nativeEvent.isComposing) save();
+            }}
+            className="kfs-tuhua-input flex-1 min-w-0"
+            style={{ fontFamily: SERIF, fontSize: 16, color: T.ink, background: fill(0.7), border: HAIRLINE, borderRadius: 14, padding: "10px 12px", outline: "none" }}
+          />
+        </div>
+        <div className="flex justify-end" style={{ gap: 10, marginTop: 12 }}>
+          <button onClick={onCancel} className="kfs-tap kfs-tuhua-cancel" style={{ padding: "8px 16px", fontSize: 14.5, color: T.inkSoft, borderRadius: 999 }}>
+            算了
+          </button>
+          <button onClick={save} className="kfs-tap kfs-tuhua-save" style={{ padding: "8px 18px", fontSize: 14.5, color: T.onDai, background: T.daiGrad, borderRadius: 999 }}>
+            好了
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
   const pageRef = useRef(null);
   useSlideIn(pageRef);
   const [big, setBig] = useState(null); // 点开的那一张
   const [act, setAct] = useState(null); // 长按的那一张：{ e, rect, armed }
+  const [naming, setNaming] = useState(null); // 正在改名字的那一张
   const nowYear = (now || new Date()).getFullYear();
   const months = byMonth(entries || [], nowYear);
   const bigSrc = big ? imgOf(big.id) || big.thumb : "";
@@ -84,7 +139,7 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove }) {
               {twoCols(mo.items).map((col, i) => (
                 <div key={i} className="flex flex-col" style={{ flex: 1, minWidth: 0, gap: 10 }}>
                   {col.map((e) => (
-                    <Card key={e.id} e={e} nowYear={nowYear} onOpen={setBig} onLong={(x, rect) => setAct({ e: x, rect, armed: false })} />
+                    <Card key={e.id} e={e} nowYear={nowYear} onOpen={setBig} onLong={(x, rect) => setAct({ e: x, rect, armed: false, at: Date.now() })} />
                   ))}
                 </div>
               ))}
@@ -102,21 +157,29 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove }) {
         >
           <img src={bigSrc} alt="" style={{ maxWidth: "100%", maxHeight: "70%", borderRadius: 18, objectFit: "contain", boxShadow: "0 20px 60px rgba(0,0,0,0.35)" }} />
           <div style={{ marginTop: 14, maxWidth: 340, textAlign: "center" }}>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.72)", letterSpacing: "0.06em" }}>{dateOf(big.at, nowYear)}</div>
-            {big.say ? <div style={{ fontSize: 14.5, color: "rgba(255,255,255,0.94)", lineHeight: 1.6, marginTop: 6, whiteSpace: "pre-wrap" }}>{big.say}</div> : null}
+            {big.title ? <div style={{ fontFamily: SERIF, fontSize: 17, color: "rgba(255,255,255,0.95)", lineHeight: 1.5, letterSpacing: "0.08em" }}>{big.title}</div> : null}
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.72)", letterSpacing: "0.06em", marginTop: big.title ? 6 : 0 }}>{dateOf(big.at, nowYear)}</div>
           </div>
         </div>
       )}
 
-      {/* 长按一格：删掉这张（点一下变“再点一次，删掉这张”，再点才删；点别处算了） */}
+      {/* 长按一格：改名字（没名字的写“起名字”）；删掉这张（点一下变“再点一次，删掉这张”，再点才删；点别处算了）。
+          菜单摆在那一格上面（上面放不下摆下面），不摆在手指底下；刚冒出来的那一小会儿不认点：手指松开的那一下浏览器会补一下点击，
+          落在菜单上就成了点了菜单（测试里截到的：长按完“删掉这张”自己变成了“再点一次”） */}
       {act && (
-        <div className="absolute inset-0 z-50" onClick={() => setAct(null)} style={{ background: "rgba(var(--k-dim),0.14)" }}>
+        <div className="absolute inset-0 z-50" onClick={() => Date.now() - act.at > MENU_DEAF && setAct(null)} style={{ background: "rgba(var(--k-dim),0.14)" }}>
           <div
             className="kfs-in"
             onClick={(ev) => ev.stopPropagation()}
+            onClickCapture={(ev) => {
+              if (Date.now() - act.at <= MENU_DEAF) {
+                ev.stopPropagation();
+                ev.preventDefault();
+              }
+            }}
             style={{
               position: "fixed",
-              top: Math.max(12, Math.min(act.rect.top + 12, (typeof window !== "undefined" ? window.innerHeight : 844) - 80)),
+              top: menuTop(act.rect),
               left: Math.max(12, Math.min(act.rect.left, (typeof window !== "undefined" ? window.innerWidth : 390) - 220)),
               width: 208,
               ...glass(0.86, 30),
@@ -125,6 +188,17 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove }) {
               border: HAIRLINE,
             }}
           >
+            <button
+              className="kfs-tuhua-name w-full flex items-center text-left"
+              onClick={() => {
+                setNaming(act.e);
+                setAct(null);
+              }}
+              style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: T.ink }}
+            >
+              <Icon name="pen" size={19} />
+              {act.e.title ? "改名字" : "起名字"}
+            </button>
             <button
               className="kfs-tuhua-drop w-full flex items-center text-left"
               onClick={() => {
@@ -139,6 +213,17 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove }) {
             </button>
           </div>
         </div>
+      )}
+
+      {naming && (
+        <Rename
+          e={naming}
+          onCancel={() => setNaming(null)}
+          onDone={(title) => {
+            if (title !== (naming.title || "")) onRename(naming.id, title);
+            setNaming(null);
+          }}
+        />
       )}
     </div>
   );
