@@ -3,7 +3,7 @@ import { store } from "./store.js";
 import { callClaude, callReply, callVoice, callDraw, mailbox, freshToken } from "./cloud.js";
 import { VOICE_KEY, HOLD_MS, WANT_KEY, HEARD_KEY, HEARD_MAX, VOICE_SAMPLE, voiceKeyOf, voicesIn, heardOf, shownOf, stabOf, secondsOf, readHeard, readVoice, packVoice, collectHisIds, voiceWhere, silentMp3 } from "./voice.js";
 import { createSpeaker } from "./speaker.js";
-import { DRAW_JOB_KEY, WANT_KEY as DRAW_WANT_KEY, DRAW_SAMPLE, drawsIn, drawKeyOf, drawImgOf, collectDrawKeys, drawWhere } from "./draw.js";
+import { DRAW_JOB_KEY, WANT_KEY as DRAW_WANT_KEY, DRAW_SAMPLE, drawsIn, drawOf, drawKeyOf, drawImgOf, collectDrawKeys, drawWhere } from "./draw.js";
 import { createPainter } from "./painter.js";
 import { MOTTO_KEY, MOTTO_LAST, DEFAULT_MOTTO, parseMotto, pickMotto, poolAt, fillMotto, mottoLines, readMotto, packMotto, describeMotto } from "./motto.js";
 import { MottoPanel } from "./panels/MottoPanel.jsx";
@@ -69,7 +69,7 @@ import { ModelPanel } from "./panels/ModelPanel.jsx";
 import { NanyaPanel, soonToast } from "./panels/NanyaPanel.jsx";
 import { BOX_KEY, BOX_AUDIO, packEntry, keptText, listEntries, sameVoiceIds, findBySrc, boxSub } from "./cangyin/parts.js";
 import { CangyinPage, TRAD_KEY } from "./cangyin/CangyinPage.jsx";
-import { TH_KEY, TH_IMG, THUMB_SIDE, packEntry as packTh, packGone, readEntry as readTh, listEntries as listTh, sayOf, drawsOf, toCollect, thSub } from "./tuhua.js";
+import { TH_KEY, TH_IMG, THUMB_SIDE, packEntry as packTh, packGone, readEntry as readTh, listEntries as listTh, drawsOf, toCollect, thSub } from "./tuhua.js";
 import { TuhuaPage } from "./panels/TuhuaPage.jsx";
 import { CallPage } from "./call/CallPage.jsx";
 import { FOX_CHAT, FOX_TITLE, FOX_STATE, FOX_DOORS, FOX_TASK, isFoxChat, wakeOn, readFoxState, foxSub, taskNote } from "./fox.js";
@@ -1619,7 +1619,7 @@ export default function App({ account = {} }) {
         thumb = data;
       }
       if (store.peek(TH_KEY + x.key) != null) continue; // 缩小图的工夫里别处收了、删了
-      await store.set(TH_KEY + x.key, packTh({ chat, at: x.m.ts || Date.now(), say: sayOf(x.m, x.j), ratio: (x.m.items[x.j] || {}).ratio || "", thumb, saved: Date.now() }));
+      await store.set(TH_KEY + x.key, packTh({ chat, at: x.m.ts || Date.now(), title: x.title, ratio: x.ratio, thumb, saved: Date.now() }));
     }
     refreshTh();
   };
@@ -1641,6 +1641,13 @@ export default function App({ account = {} }) {
       const msgs = c.id === chatIdRef.current ? messagesRef.current : safeParse(store.peek("kfs2:chat:" + c.id), []) || [];
       await collectDraws(msgs, c.id);
     }
+  };
+  // 图画院里长按“改名字”（以前没名字的那几张她自己起；他起的她也能改，卿卿 10 月 31 日要的）。改成空的就是没名字
+  const renameTh = async (id, title) => {
+    const e = readTh(id, store.peek(TH_KEY + id));
+    if (!e || e.gone) return;
+    await store.set(TH_KEY + id, packTh({ ...e, title }));
+    refreshTh();
   };
   // 图画院里长按“删掉这张”：这一条留个记号（别的设备、往后翻的时候认得出是她删的，不再收回来），拷过来的大图删掉。
   // 聊天里那一张不动（对话还在的话，聊天里照旧摆着）
@@ -5303,7 +5310,7 @@ export default function App({ account = {} }) {
     for (const r of rows) {
       if (r.type !== "bubble" || r.role !== "him" || r.item.type !== "draw") continue;
       const k = drawKeyOf(r.msg.id, r.idx);
-      if (!drawsRef.current[k]) getPainter().look(k, chatIdRef.current, r.item.prompt, r.item.ratio || "");
+      if (!drawsRef.current[k]) getPainter().look(k, chatIdRef.current, drawOf(r.item).prompt, r.item.ratio || "");
     }
   }, [rows]);
   // 空着的那一页一冒出来（开机、新开一段、删了眼前这段）就抽一句；她看着的时候不换。素材库改了、同步过来了，也重抽一句。
@@ -6023,7 +6030,7 @@ export default function App({ account = {} }) {
                 onVoice={playVoice}
                 onVoiceAgain={(r) => getSpeaker().again(chatIdRef.current, voiceKeyOf(r.msg.id, r.idx), r.item.text)}
                 draws={draws}
-                onDrawAgain={(r) => getPainter().again(chatIdRef.current, drawKeyOf(r.msg.id, r.idx), r.item.prompt, r.item.ratio || "")}
+                onDrawAgain={(r) => getPainter().again(chatIdRef.current, drawKeyOf(r.msg.id, r.idx), drawOf(r.item).prompt, r.item.ratio || "")}
                 onOpenPhoto={setViewer}
                 onOpenDoc={setDocView}
                 onLongPress={(r, rect) => setMenu({ row: r, rect })}
@@ -6348,7 +6355,7 @@ export default function App({ account = {} }) {
         />
       )}
 
-      {thOpen && <TuhuaPage entries={thList} imgOf={thImgOf} now={now} onBack={() => setThOpen(false)} onRemove={dropTh} />}
+      {thOpen && <TuhuaPage entries={thList} imgOf={thImgOf} now={now} onBack={() => setThOpen(false)} onRemove={dropTh} onRename={renameTh} />}
 
       {historyOpen && (
         <HistoryPage

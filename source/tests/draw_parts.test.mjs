@@ -22,10 +22,19 @@ const { createPainter, RETRY_MAX } = await loadBundle("src/painter.js");
 
 // ================= 零件 =================
 {
-  const { splitDraw, drawKeyOf, drawImgOf, drawsIn, collectDrawKeys, drawWhere, readWants, addWants, dropWants, readJob, packJob, drawNote, DRAW_RULE, WANT_MAX } = draw;
+  const { splitDraw, drawOf, titleSplit, drawKeyOf, drawImgOf, drawsIn, collectDrawKeys, drawWhere, readWants, addWants, dropWants, readJob, packJob, drawNote, DRAW_RULE, WANT_MAX, TITLE_MAX } = draw;
   ok(splitDraw("在呢") === null && splitDraw("句子中间的 [DRAW] 不算") === null && splitDraw("[DRAW:大]\n不认的横竖") === null, "认画：没有记号、记号不在一行开头、横竖写的不认得：都不是画");
-  ok(J(splitDraw("[DRAW]\n一只狐狸")) === J({ before: "", prompt: "一只狐狸", ratio: "" }), "认画：单独一行 [DRAW]，下面是画什么");
-  ok(J(splitDraw("先说\n[DRAW:竖] 同一行\n第二行")) === J({ before: "先说\n", prompt: "同一行\n第二行", ratio: "竖" }), "认画：记号前面的字留着照常拆；同一行跟着的算画什么的头一行；竖的");
+  ok(J(splitDraw("[DRAW]\n一只狐狸")) === J({ before: "", prompt: "一只狐狸", ratio: "", title: "" }), "认画：单独一行 [DRAW]，下面是画什么");
+  ok(J(splitDraw("先说\n[DRAW:竖] 同一行\n第二行")) === J({ before: "先说\n", prompt: "同一行\n第二行", ratio: "竖", title: "" }), "认画：记号前面的字留着照常拆；同一行跟着的算画什么的头一行；竖的");
+  // 名字（卿卿 10 月 31 日要的）：记号同一行后面只有一个《……》
+  ok(J(splitDraw("[DRAW:竖]《月下读书》\n一扇木窗\n一盏灯")) === J({ before: "", prompt: "一扇木窗\n一盏灯", ratio: "竖", title: "月下读书" }), "名字：记号同一行后面的《……》是名字，下面几行是画什么");
+  ok(splitDraw("[DRAW]  《雪夜》 \r\n雪").title === "雪夜" && splitDraw("[DRAW]《 雪夜 》\n雪").title === "雪夜", "名字：两头的空白、Windows 的换行都认，名字两头的空格去掉");
+  ok(J(splitDraw("[DRAW] 《清明上河图》那样的长卷")) === J({ before: "", prompt: "《清明上河图》那样的长卷", ratio: "", title: "" }), "《清明上河图》那样后面还跟着字的：不是名字，是画什么里的字");
+  ok(splitDraw("[DRAW]\n《雪夜》\n雪").title === "", "名字要写在记号同一行：另起一行写的《……》算画什么");
+  ok(splitDraw("[DRAW]《" + "长".repeat(TITLE_MAX + 1) + "》\n画").title === "" && splitDraw("[DRAW]《》\n画").title === "", "名字太长、空的书名号：不算名字");
+  ok(splitDraw("[DRAW]《只有名字》").prompt === "", "只写了名字、没写画什么：画什么是空的（不画）");
+  ok(J(drawOf({ type: "draw", prompt: "《旧的》\n画什么" })) === J({ title: "旧的", prompt: "画什么" }) && J(drawOf({ type: "draw", prompt: "一扇窗", title: "窗" })) === J({ prompt: "一扇窗", title: "窗" }) && drawOf({ type: "draw", prompt: "《清明上河图》那样" }).title === "",
+     "有名字以前拆的（旧闹钟拆的）：名字那一行还在画什么里，摘出来；拆好的照用");
   ok(splitDraw("  [draw：横]\t横的").ratio === "横" && splitDraw("[Draw: 方 ]\n方").ratio === "方", "认画：前头的空格、小写、全角冒号、横竖两边的空格都认");
   ok(splitDraw("[DRAW]\n一\n[DRAW]\n二").prompt === "一\n[DRAW]\n二", "认画：一条里只认头一个，后面的 [DRAW] 算画什么里的字");
   ok(splitDraw("[DRAW]\n   ").prompt === "", "认画：画什么是空的：交回空的（拆的时候不算一张画）");
@@ -35,7 +44,8 @@ const { createPainter, RETRY_MAX } = await loadBundle("src/painter.js");
     { id: "m1", role: "him", items: [{ type: "text", text: "好" }, { type: "draw", prompt: "狐狸", ratio: "竖" }], alts: [{ node: { id: "m0", role: "him", items: [{ type: "draw", prompt: "旧的" }] }, after: [] }] },
     { id: "m2", role: "him", items: [{ type: "draw", prompt: "" }] },
   ];
-  ok(J(drawsIn(msgs[1])) === J([{ key: "m1.1", prompt: "狐狸", ratio: "竖" }]) && drawsIn(msgs[0]).length === 0 && drawsIn(msgs[2]).length === 0, "一条回话里的画：他的才算，画什么空的不算");
+  ok(J(drawsIn(msgs[1])) === J([{ key: "m1.1", prompt: "狐狸", ratio: "竖", title: "" }]) && drawsIn(msgs[0]).length === 0 && drawsIn(msgs[2]).length === 0, "一条回话里的画：他的才算，画什么空的不算");
+  ok(J(drawsIn({ id: "m9", role: "him", items: [{ type: "draw", prompt: "《旧的》\n狐狸" }] })) === J([{ key: "m9.0", prompt: "狐狸", ratio: "", title: "旧的" }]), "一条回话里的画：名字还夹在画什么里的，摘出来（交出去画的不带名字）");
   ok(J(collectDrawKeys(msgs)) === J(["m1.1", "m0.0"]), "所有分支里的画（删对话的时候一起清）");
   ok(drawWhere(msgs, "m1.1") === "shown" && drawWhere(msgs, "m0.0") === "kept" && drawWhere(msgs, "zz.0") === "", "一张画在哪儿：在眼前、在翻过去的版本里、没了");
   const now = 1e12;
@@ -47,7 +57,7 @@ const { createPainter, RETRY_MAX } = await loadBundle("src/painter.js");
   ok(readJob(packJob({ state: "running", flow: "f", node: "n", sessions: ["s"], at: 5, by: "d" })).flow === "f" && readJob(packJob({ state: "failed", why: "额度不够" })).why === "额度不够" && readJob(packJob({ state: "starting", at: 3 })).state === "starting" && readJob("乱的") === null && readJob(packJob({ flow: "f", sessions: [] })) === null,
     "画到一半的那一笔：正在画、没画成、正在开画都认；不成样子的不认");
   ok(drawNote({ img: "x" }).includes("画好了，长这样") && drawNote({ old: true }).includes("没带上") && drawNote({ why: "额度不够" }).includes("额度不够") && drawNote({ none: true }).includes("没画出来") && drawNote(null).includes("还在画"), "寄给他的那一句：画好了带图、太老了不带图、没画成、没画、还在画");
-  ok(DRAW_RULE.includes("[DRAW]") && DRAW_RULE.includes("[DRAW:竖]") && DRAW_RULE.includes("她看不见"), "名帖里教他的那一段：怎么写、横竖、写的那一段她看不见");
+  ok(DRAW_RULE.includes("[DRAW]") && DRAW_RULE.includes("[DRAW:竖]") && DRAW_RULE.includes("她看不见") && DRAW_RULE.includes("[DRAW]《月下读书》") && DRAW_RULE.includes("图画院"), "名帖里教他的那一段：怎么写、横竖、起名字（写在记号同一行、摆在图画院里）、画什么那几行她看不见");
 }
 
 // ================= 拆回话、写回去 =================
@@ -64,6 +74,9 @@ const { createPainter, RETRY_MAX } = await loadBundle("src/painter.js");
   const back = (its) => parseReply("<thinking>x</thinking>\n" + rawOf(its, "")).items;
   const its = [{ type: "text", text: "给你" }, { type: "draw", prompt: "狐狸\n第二行", ratio: "竖" }, { type: "draw", prompt: "方的" }];
   ok(J(back(its)) === J(its) && rawOf([{ type: "draw", prompt: "狐狸", ratio: "竖" }]) === "[DRAW:竖] 狐狸", "写回去：[DRAW:竖] 和画什么写在同一行；再拆还是那几样");
+  ok(J(items("给你\n[DRAW:横]《雪夜》\n雪地里一盏灯")) === J([{ type: "text", text: "给你" }, { type: "draw", prompt: "雪地里一盏灯", ratio: "横", title: "雪夜" }]), "拆回话：有名字的画记下名字，画什么里不带名字");
+  const named = [{ type: "draw", prompt: "雪地里一盏灯\n第二行", ratio: "横", title: "雪夜" }, { type: "draw", prompt: "《清明上河图》那样", title: "长卷" }];
+  ok(J(back(named)) === J(named) && rawOf([named[0]]) === "[DRAW:横]《雪夜》\n雪地里一盏灯\n第二行", `写回去：名字在记号同一行，画什么另起一行；再拆还是那几样（${rawOf([named[0]])}）`);
 }
 
 // ================= 画画的活 =================

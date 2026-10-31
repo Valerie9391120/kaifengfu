@@ -17,7 +17,7 @@ HIS = """() => [...document.querySelectorAll('.kfs-chat-rows [data-kfs-bubble="h
 ROWS = """() => [...document.querySelectorAll('.kfs-nanya .kfs-nanya-row')].map((b) => { const t = b.children[1].children;
   return { name: t[0].textContent, sub: t[1].textContent, shapes: [...b.children[0].querySelectorAll('svg > *')].map((e) => e.tagName) }; })"""
 CARDS = """() => [...document.querySelectorAll('.kfs-tuhua .kfs-tuhua-card')].map((c) => ({ id: c.dataset.id,
-  date: (c.querySelector('.kfs-tuhua-date') || {}).textContent || '', say: (c.querySelector('.kfs-tuhua-say') || {}).textContent || '',
+  date: (c.querySelector('.kfs-tuhua-date') || {}).textContent || '', title: (c.querySelector('.kfs-tuhua-title') || {}).textContent || '',
   thumb: (c.querySelector('img') || {}).src || '', w: Math.round(c.getBoundingClientRect().width) }))"""
 MONTHS = "() => [...document.querySelectorAll('.kfs-tuhua .kfs-tuhua-month')].map((m) => m.firstElementChild.textContent)"
 
@@ -62,6 +62,14 @@ def back(page):
     page.locator(".kfs-tuhua").get_by_role("button", name="返回").click(); page.wait_for_timeout(600)
     shut_side(page)
 def cards(page): return page.evaluate(CARDS)
+def titles(page): return {c["id"]: c["title"] for c in cards(page)}
+def menu_of(page, key):
+    target = page.locator(f".kfs-tuhua-card[data-id='{key}']")
+    long_press(page, target)
+    if not page.locator(".kfs-tuhua-drop").count():
+        target.click(button="right"); page.wait_for_timeout(500)
+    return [page.locator(".kfs-tuhua-name").inner_text(), page.locator(".kfs-tuhua-drop").inner_text()]
+def prompts(): return [x["args"]["prompt"] for x in mock("/__debug/draw")["log"] if x.get("tool") == "creative_add_flow_node"]
 def shot(page, name):
     if SHOTS:
         os.makedirs(SHOTS, exist_ok=True)
@@ -116,7 +124,7 @@ with sync_playwright() as p:
 
         # ================= 他画好一张就收进来 =================
         link_up(ctx, pa)
-        reply(pa, "给你画了一张，等一下\n[DRAW:竖] 一扇木窗，窗外夜里一轮大月亮，一枝花伸进来，水彩")
+        reply(pa, "给你画了一张，等一下\n[DRAW:竖]《月下读书》\n一扇木窗，窗外夜里一轮大月亮，一枝花伸进来，水彩")
         got = wait_his(pa, "P")
         cid, msgs = chat_of(pa)
         m1 = [m for m in msgs if m.get("role") == "him"][-1]
@@ -125,10 +133,11 @@ with sync_playwright() as p:
            "画好了：自动收进图画院（kfs2:thy:… 一条）；对话还在，大图不另存（看聊天里那一张）")
         rec = json.loads(pa.evaluate(KV, "kfs2:thy:" + k1))
         big1 = pa.evaluate(KV, "kfs2:img:draw." + k1)
-        ok(rec["say"] == "给你画了一张，等一下" and rec["ratio"] == "竖" and rec["chat"] == cid and rec["at"] == m1["ts"] and rec["thumb"].startswith("data:image/jpeg") and len(rec["thumb"]) < len(big1),
-           f"那一条记着：他画的时候说的那句话、竖的、哪段对话、他画的时候；另做了一张小图（小图 {len(rec['thumb'])} 字，大图 {len(big1)} 字）")
+        ok(rec["title"] == "月下读书" and "say" not in rec and rec["ratio"] == "竖" and rec["chat"] == cid and rec["at"] == m1["ts"] and rec["thumb"].startswith("data:image/jpeg") and len(rec["thumb"]) < len(big1),
+           f"那一条记着：他起的名字、竖的、哪段对话、他画的时候；另做了一张小图（小图 {len(rec['thumb'])} 字，大图 {len(big1)} 字）")
+        ok(prompts()[-1].startswith("一扇木窗") and "月下读书" not in prompts()[-1], f"交给 ElevenLabs 画的不带名字（带了它会把字画进图里）（{prompts()[-1][:20]}）")
 
-        reply(pa, "再画两张\n[DRAW:横] 一扇窗，窗外月亮和花枝，水彩\n[SPLIT]\n[DRAW] 一盏灯，暖色，水彩\n[SPLIT]\n画好啦，喜欢哪张")
+        reply(pa, "再画两张\n[DRAW:横]《窗外》\n一扇窗，窗外月亮和花枝，水彩\n[SPLIT]\n[DRAW] 一盏灯，暖色，水彩\n[SPLIT]\n画好啦，喜欢哪张")
         time.sleep(1)
         got = wait_his(pa, "T:画好啦，喜欢哪张")
         wait_js(pa, "document.querySelectorAll('.kfs-chat-rows img.kfs-photo').length >= 3", 40000)
@@ -144,15 +153,15 @@ with sync_playwright() as p:
         ids = [c["id"] for c in cs]
         ok(len(cs) == 3 and set(ids) == {k1, k2, k3} and all(re.fullmatch(r"\d+月\d+日", c["date"]) for c in cs) and all(c["thumb"].startswith("data:image/jpeg") for c in cs),
            f"三张都在，每张底下写着哪天画的（{[c['date'] for c in cs]}）")
-        says = {c["id"]: c["say"] for c in cs}
-        ok(says[k1] == "给你画了一张，等一下" and says[k2] == "再画两张" and says[k3] == "画好啦，喜欢哪张",
-           f"底下那句话：他画的时候说的（一条里两张：前面那一张跟着前面那一句，后面那一张前头挨着画，跟着后面那一句）（{says}）")
+        ts = titles(pa)
+        ok(ts[k1] == "月下读书" and ts[k2] == "窗外" and ts[k3] == "" and not pa.locator(".kfs-tuhua-say").count() and "画好啦" not in pa.locator(".kfs-tuhua").inner_text(),
+           f"每张底下写名字和日期，他那句话不摆了；没起名字的只写日期（{ts}）")
         ok(pa.evaluate(MONTHS) and re.fullmatch(r"[一二三四五六七八九十]+月", pa.evaluate(MONTHS)[0]) and all(150 < c["w"] < 200 for c in cs), f"按月断开（{pa.evaluate(MONTHS)}）；一行两格（{[c['w'] for c in cs]}）")
         shot(pa, "tuhua-grid.png")
         pa.locator(f".kfs-tuhua-card[data-id='{k1}']").click(); pa.wait_for_timeout(700)
         big = pa.evaluate("(() => { const b = document.querySelector('.kfs-tuhua-big'); if (!b) return null; const i = b.querySelector('img'); return { src: i.src.slice(0, 30), w: Math.round(i.getBoundingClientRect().width), text: b.innerText }; })()")
-        ok(big and big["src"].startswith("data:image/jpeg") and big["w"] > 250 and "给你画了一张，等一下" in big["text"] and re.search(r"\d+月\d+日", big["text"]),
-           f"点一张：看大图，底下哪天画的、他那句话（{big}）")
+        ok(big and big["src"].startswith("data:image/jpeg") and big["w"] > 250 and big["text"].startswith("月下读书") and re.search(r"\d+月\d+日", big["text"]) and "给你画了一张" not in big["text"],
+           f"点一张：看大图，底下名字、哪天画的（{big}）")
         shot(pa, "tuhua-big.png")
         pa.locator(".kfs-tuhua-big").click(); pa.wait_for_timeout(500)
         ok(pa.locator(".kfs-tuhua-big").count() == 0, "点一下关掉大图")
@@ -171,6 +180,30 @@ with sync_playwright() as p:
         shut_side(pa)
         open_tuhua(pa)
         ok(len(cards(pa)) == 3, "图画院里照旧三张")
+
+        # ================= 长按起名字、改名字 =================
+        mm = menu_of(pa, k3)
+        ok(mm == ["起名字", "删掉这张"], f"长按没名字的那一张：“起名字”“删掉这张”（{mm}）")
+        pa.locator(".kfs-tuhua-name").click(); pa.wait_for_timeout(500)
+        box = pa.locator(".kfs-tuhua-input")
+        ok(box.count() == 1 and box.input_value() == "" and pa.evaluate("document.activeElement && document.activeElement.classList.contains('kfs-tuhua-input')"), "点“起名字”：冒出一个框，空着，光标已经在里面")
+        box.fill("一盏灯")
+        shot(pa, "tuhua-rename.png")
+        pa.locator(".kfs-tuhua-save").click(); pa.wait_for_timeout(600)
+        rec3 = json.loads(pa.evaluate(KV, "kfs2:thy:" + k3))
+        ok(titles(pa)[k3] == "一盏灯" and rec3["title"] == "一盏灯" and rec3["thumb"].startswith("data:image/jpeg"), "点“好了”：那一张底下有了名字，存进那一条（小图那些照旧）")
+        mm = menu_of(pa, k1)
+        ok(mm == ["改名字", "删掉这张"], f"长按有名字的那一张：“改名字”（{mm}）")
+        pa.locator(".kfs-tuhua-name").click(); pa.wait_for_timeout(500)
+        ok(pa.locator(".kfs-tuhua-input").input_value() == "月下读书", "点“改名字”：框里是原来的名字")
+        pa.locator(".kfs-tuhua-input").fill("《月下》 ")
+        pa.locator(".kfs-tuhua-input").press("Enter"); pa.wait_for_timeout(600)
+        ok(titles(pa)[k1] == "月下" and json.loads(pa.evaluate(KV, "kfs2:thy:" + k1))["title"] == "月下", "改了按回车：也存上；书名号、两头的空格去掉")
+        menu_of(pa, k1)
+        pa.locator(".kfs-tuhua-name").click(); pa.wait_for_timeout(500)
+        pa.locator(".kfs-tuhua-input").fill("不要这个")
+        pa.locator(".kfs-tuhua-cancel").click(); pa.wait_for_timeout(500)
+        ok(titles(pa)[k1] == "月下" and pa.locator(".kfs-tuhua-rename").count() == 0, "点“算了”：不改")
 
         # ================= 长按删掉一张 =================
         target = pa.locator(f".kfs-tuhua-card[data-id='{k2}']")
@@ -203,7 +236,9 @@ with sync_playwright() as p:
         pb.locator(".kfs-nanya-row", has_text="图画院").click()
         pb.locator(".kfs-tuhua").wait_for(timeout=5000); pb.wait_for_timeout(1200)
         ids_b = sorted(c["id"] for c in cards(pb))
-        ok(next((r for r in rows_b if r["name"] == "图画院"), {}).get("sub") == "收了 2 张" and ids_b == sorted([k1, k3]), f"另一台设备：也是那两张，删了的那张不冒出来（{ids_b}）")
+        tb = titles(pb)
+        ok(next((r for r in rows_b if r["name"] == "图画院"), {}).get("sub") == "收了 2 张" and ids_b == sorted([k1, k3]) and tb.get(k1) == "月下" and tb.get(k3) == "一盏灯",
+           f"另一台设备：也是那两张、改过的名字，删了的那张不冒出来（{ids_b}，{tb}）")
         pb_ctx.close()
     finally:
         print("\n页面报错：" + ("\n".join(errors[:10]) if errors else "无"))
