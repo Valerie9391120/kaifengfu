@@ -320,6 +320,54 @@ function fakeLuofu(body) {
   return null;
 }
 
+// 平常聊天里翻梦廊的假的那边的我（罗浮梦，带着 luofu_gallery 的时候，见 src/luofu/parts.js；tests/e2e_luofu.py 用）。照她最后说的那句话：
+//   “翻翻梦廊”：先说“我翻翻梦廊。”，再调 luofu_gallery（action: list）
+//   “读梦廊 某某”：先说“翻出来看看。”，再调 luofu_gallery（action: read，which 写某某）
+//   “梦廊读一半”：说“翻着翻着”、调了 luofu_gallery，可回话停在 max_tokens 上（写到长度上限截断）：开封府不该替他翻
+//   结果递回来：说“（测试梦廊）”加结果的头一行（排好了话的照排好的说）
+//   打电话的时候（tool_choice 是 none）、别的话、递回来的不是这一样的结果：回 null（交给别人）
+function fakeLuofuLook(body) {
+  if (body.tool_choice && body.tool_choice.type === "none") return null;
+  const msgs = body.messages || [];
+  const blocksOf = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || []);
+  const lastUser = msgs[msgs.length - 1];
+  const results = lastUser && lastUser.role === "user" ? blocksOf(lastUser).filter((b) => b.type === "tool_result") : [];
+  let herAt = -1;
+  let herSay = "";
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role !== "user") continue;
+    const t = blocksOf(msgs[i])
+      .filter((b) => b.type === "text" && !b.text.startsWith("【") && !b.text.startsWith("[开封府提示"))
+      .map((b) => b.text)
+      .join(" / ");
+    if (t.trim()) {
+      herAt = i;
+      herSay = t;
+      break;
+    }
+  }
+  const used = msgs.slice(herAt + 1).filter((m) => m.role === "assistant").flatMap((m) => blocksOf(m).filter((b) => b.type === "tool_use" && b.name === "luofu_gallery"));
+  const usage = { input_tokens: 60, cache_creation_input_tokens: 0, cache_read_input_tokens: 9000, output_tokens: 50 };
+  const use = (input) => ({ type: "tool_use", id: "toolu_lfg_" + ++toolSeq, name: "luofu_gallery", input });
+  const step = (text, call) => ({ status: 200, json: { model: body.model, stop_reason: "tool_use", content: (text ? [{ type: "text", text }] : []).concat([call]), usage } });
+  const say = (text) => ({ status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text }], usage } });
+  const text = (r) => String((r && (typeof r.content === "string" ? r.content : JSON.stringify(r.content))) || "");
+  if (results.length) {
+    const ids = new Set(used.map((u) => u.id));
+    if (results.some((r) => ids.has(r.tool_use_id))) {
+      if (replyQueue.length) return say(replyQueue.shift());
+      return say(`（测试梦廊）${results[0].is_error ? "没成：" : ""}${text(results[0]).split("\n")[0].slice(0, 40)}`);
+    }
+    // 递回来的不是这一样的结果：交给别人。上一步截断了、没替他翻的那一样的结果跟她的新话挤在同一句里（她又说了话）：照她的新话来
+    if (herAt !== msgs.length - 1) return null;
+  }
+  if (/梦廊读一半/.test(herSay)) return { status: 200, json: { model: body.model, stop_reason: "max_tokens", content: [{ type: "text", text: "翻着翻着" }, use({ action: "list" })], usage } };
+  if (/翻翻梦廊/.test(herSay)) return step("我翻翻梦廊。", use({ action: "list" }));
+  const one = /读梦廊\s+(\S.*)$/.exec(herSay);
+  if (one) return step("翻出来看看。", use({ action: "read", which: one[1].trim() }));
+  return null;
+}
+
 // 闲笔集里的手帐（同页那一本）：她在「交给光义」那一屏点了发送（tests/e2e_tongye.py 用，见 src/tongye/host.js 的 tyArrangeAsk）。
 // 跟在名帖后面的那段规矩是【排手帐】开头的。照寄来的编号排：原话挑头两句（再编一个不存在的，开封府该认不出），
 // 头一张照片当主照片、第二三张当双联照（有的话），再编一张不存在的当截图；留一条批注贴在主照片旁边。她说的“想要”抄进正文（看得出带过来了）。
@@ -397,6 +445,11 @@ function fakeAnthropic(body, beta, via) {
   // 他屋里的床（带着 luofu_nap，见 alarm/luofu.js）：照她最后在便签纸上留的那一句睡一觉、翻梦廊、读一场
   if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "luofu_nap")) {
     const l = fakeLuofu(body);
+    if (l) return l;
+  }
+  // 平常聊天里翻梦廊（带着 luofu_gallery，见 src/luofu/parts.js）：照她最后说的那句翻梦廊、读一场
+  if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "luofu_gallery")) {
+    const l = fakeLuofuLook(body);
     if (l) return l;
   }
   // 他屋里的园子、妆台（带着 play_garden、play_dressing_room，见 alarm/garden.js、alarm/dressing.js）：排好了要他调的，照排好的调

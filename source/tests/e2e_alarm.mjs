@@ -6,6 +6,7 @@
 //   醒在屋里：去园子里浇水、去妆台前换一身完成今天的搭配，闹钟替他办，屋里只留一行小字，不敲她；今天完成过了，再醒不给“完成搭配”；
 //   醒在屋里上床睡一觉（罗浮梦，alarm/luofu.js）：梦库空着睡不了；睡两觉进梦廊（照他调的那一样的编号睡，存回去的进度跟照编号算的一个字不差）；
 //     醒来就散的那一类梦小字不露内容；翻梦廊、读一场；写到一半截断的不替他睡；这台电脑上记着的、日志里没有梦里的字；
+//     屋里不带聊天里翻梦廊那一样（luofu_gallery），任务到点那一回（醒在平常那段对话里）带着、排在回屋那两样后面；
 //   后台跑（run）：心跳写上了，下回几点醒照他定的；手机那头没看见就把狐宇宙盖掉了，放回去；
 //     她在手机上删了他的一句、改了自己的话（后面的收进翻过去的那一支），不放回去；
 //     后台在跑的时候手敲 wake：交给后台叫；问到了却一时放不进存档，封好记着，过一会儿只再放、不再问他一遍、横幅不重敲；
@@ -293,6 +294,7 @@ const lf3 = await lfWake();
 const older = lfState2.gallery[0];
 ok(lf3.calls.length === 2 && lf3.calls[0].note === "翻了翻梦廊" && lf3.calls[0].out.startsWith("1. " + lfState2.gallery[1].title) && lf3.calls[1].note === `翻出梦廊里的一场：〈${older.title}〉` && lf3.calls[1].out.includes(older.text),
   "翻梦廊（最新的在最上面）、读一场（写的序号 2 是早的那一场，递给他全文）：屋里各一行小字");
+ok(lf3.asks.length && lf3.asks.every((b) => (b.tools || []).some((t) => t.name === "luofu_nap") && !(b.tools || []).some((t) => t.name === "luofu_gallery")), "醒在屋里：带的是那张床（luofu_nap），不带聊天里翻梦廊那一样（luofu_gallery）");
 // 写到一半截断的：不替他睡
 await get(lfNap({ action: "nap" }) + "&stop=max_tokens&text=" + encodeURIComponent("困着困着"));
 const lf4 = await lfWake();
@@ -453,7 +455,7 @@ const lastT = askT.messages[askT.messages.length - 1].content.map((b) => b.text 
 ok(lastT.includes("你记着的是“去找卿卿”") && JSON.stringify(askT.messages).includes("困了，先睡") && !JSON.stringify(askT.messages).includes("翻日记"), "任务到点：寄过去的是那段对话（看得见那段前面的话，不是狐宇宙），后面附着他定闹钟时记着的那句");
 ok((askT.tools || []).some((t) => t.name === "diary_read") && !(askT.tools || []).some((t) => t.name === "play_garden" || t.name === "play_dressing_room" || t.name === "luofu_nap") && !lastT.includes("妆台") && !lastT.includes("院子") && !lastT.includes("luofu_nap"), "任务到点：不带园子、妆台那两样、那张床（只在他屋里醒着的时候），【醒来】里也不提");
 const sysT = Array.isArray(askT.system) ? askT.system.map((b) => b.text).join("") : askT.system;
-ok((askT.tools || []).map((t) => t.name).slice(-3).join() === "qx_draw,room_look,room_memo" && sysT.includes("【你的屋子】"), "任务到点：同手机那头带着回屋看一眼、留便签那两样（排在抽签后面），名帖里有【你的屋子】");
+ok((askT.tools || []).map((t) => t.name).slice(-4).join() === "qx_draw,room_look,room_memo,luofu_gallery" && sysT.includes("【你的屋子】"), "任务到点：同手机那头带着回屋看一眼、留便签那两样（排在抽签后面）、翻梦廊那一样（再后面），名帖里有【你的屋子】");
 const stT = JSON.parse(await read("kfs2:fox:state"));
 ok(stT.next === 0, "追着她的时候：平常那种自己醒先停着（南衙那一行不露任务几点）");
 // 装作过了五分钟：接着追第二回

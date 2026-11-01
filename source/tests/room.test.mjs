@@ -19,6 +19,7 @@ import { dayTranscript } from "../src/diary.js";
 import { makePreview } from "../src/chat/overview.js";
 import { wakeSection } from "../alarm/note.js";
 import { askRoom, askTask } from "../alarm/wake.js";
+import { LUOFU_LOOK_TOOLS } from "../src/luofu/parts.js";
 
 let pass = 0, failN = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); } };
@@ -304,8 +305,8 @@ ok(both.staticText.indexOf("【日记本】") < both.staticText.indexOf("【你�
   await grow(s, 20, 2);
   let cloud = cloudOf([{ stop_reason: "tool_use", content: [use("tk1", "room_look", { what: "garden" }), use("tk2", "room_memo", { text: "答应了卿卿下次穿旗袍" })] }, said("人呢")]);
   let b = await askTask({ store: s, cloud, ctx: ctxOf(), task: { key: "kfs2:fox:task:x", raw: "+5m", set: Date.now() }, chat });
-  const want = [...DIARY_TOOLS, ...QX_TOOLS, ...ROOM_TOOLS].map((t) => t.name).join();
-  ok(names(cloud.bodies[0]).join() === want && sys(cloud.bodies[0]).includes("【你的屋子】"), `任务到点：工具同手机那头（翻日记、抽签、回屋这两样，次序一样），名帖里有【你的屋子】（${names(cloud.bodies[0]).join()}）`);
+  const want = [...DIARY_TOOLS, ...QX_TOOLS, ...ROOM_TOOLS, ...LUOFU_LOOK_TOOLS].map((t) => t.name).join();
+  ok(names(cloud.bodies[0]).join() === want && sys(cloud.bodies[0]).includes("【你的屋子】"), `任务到点：工具同手机那头（翻日记、抽签、回屋这两样、翻梦廊，次序一样），名帖里有【你的屋子】（${names(cloud.bodies[0]).join()}）`);
   const rs = results(cloud.bodies[1]);
   const memo = JSON.parse(s.m.get(MEMO_KEY + "tk2") || "null");
   const rowNotes = b.puts[0].rows.flatMap((r) => (r.calls || []).map((c) => c.note)).filter(Boolean);

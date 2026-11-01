@@ -49,7 +49,7 @@ import { pngFor } from "./pindou/draw.js";
 import { LuofuPanel } from "./luofu/LuofuPanel.jsx";
 import { LuofuPoolSheet } from "./luofu/LuofuPoolSheet.jsx";
 import { LuofuGallery } from "./luofu/LuofuGallery.jsx";
-import { LUOFU_POOL, LUOFU_STATE, emptyLuofuPool, readLuofuPool, packLuofuPool, readLuofuState, luofuSub, luofuSection } from "./luofu/parts.js";
+import { LUOFU_POOL, LUOFU_STATE, emptyLuofuPool, readLuofuPool, packLuofuPool, readLuofuState, luofuSub, luofuSection, LUOFU_LOOK_TOOLS, LUOFU_LOOK_NAMES, isLuofuLookCall, runLookCalls, cutLuofuLook } from "./luofu/parts.js";
 import { buildRows } from "./chat/rows.js";
 import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/overview.js";
 import { BubbleRow } from "./chat/Bubble.jsx";
@@ -161,8 +161,8 @@ const STEP_GRACE = 2 * 60 * 1000; // 别的设备发的那一回、回来的是�
 // 他调了引擎、回话却没停在 tool_use 上（写到长度上限被截断了）：调的那几样多半没写完整，一样不调，递回去的是这一句
 const CUT_CALL = "没执行：这一回的回话没写完整（多半是写到长度上限被截断了），这一步没下。要下的话重新调一次。";
 const CUT_DIARY = "没翻：这一回的回话没写完整（多半是写到长度上限被截断了），日记没替你翻。要翻的话重新调一次。";
-// 他回话里认哪几样工具是要开封府在手机上替他办的：江湖棋局那四样、翻日记那几样、秘戏钱匣里抽签那一样（MCP 的那头自己办，不归这里）
-const CALL_NAMES = new Set([...GAME_NAMES, ...DIARY_NAMES, ...QX_NAMES, ...ROOM_NAMES]);
+// 他回话里认哪几样工具是要开封府在手机上替他办的：江湖棋局那四样、翻日记那几样、秘戏钱匣里抽签那一样、回屋那两样、翻梦廊那一样（MCP 的那头自己办，不归这里）
+const CALL_NAMES = new Set([...GAME_NAMES, ...DIARY_NAMES, ...QX_NAMES, ...ROOM_NAMES, ...LUOFU_LOOK_NAMES]);
 // 这一回是不是这台设备发的（江湖棋局那段原来只写 dev；10 月 18 日起每一回都写 from）
 const ownJob = (info) => !!(info && info.extra && (info.extra.dev === DEVICE_ID || info.extra.from === DEVICE_ID));
 
@@ -1869,6 +1869,8 @@ export default function App({ account = {} }) {
             ? { ...c, out: CUT_QX, err: true, note: QX_FAIL_NOTE, card: [] }
             : isRoomCall(c)
             ? cutRoom(c)
+            : isLuofuLookCall(c)
+            ? cutLuofuLook(c)
             : { ...c, out: CUT_CALL, err: true, card: [] }
         );
     }
@@ -1914,6 +1916,8 @@ export default function App({ account = {} }) {
       };
       him.calls = await runRoomCalls(him.calls, { get: (k) => store.get(k), set, today: localDay(), at: him.ts || Date.now(), chat, title, on: wakeOn(settingsRef.current) });
     }
+    // 平常聊天里翻梦廊（罗浮梦，见 luofu/parts.js）：照这台设备上同步下来的进度（家里的闹钟替他睡的时候写的），只读，一个字不写
+    if (him.calls.some((c) => isLuofuLookCall(c) && typeof c.out !== "string")) him.calls = await runLookCalls(him.calls, () => store.get(LUOFU_STATE));
     if (!needsRun(him)) return true;
     // 剩下的是江湖棋局那几样
     if (chat && !isOn(chat)) {
@@ -2043,9 +2047,9 @@ export default function App({ account = {} }) {
         messages: withNowNote(apiMessages, nowNote, at.cache, tail),
       };
       // 江湖棋局的四样工具排在最前头，翻日记的几样跟着（日记共读，见 diaryTools.js：随时带着），秘戏钱匣里抽签那一样再跟着（也随时带着，见 qx/pool.js），
-      // 回屋看一眼、留换装便签那两样再跟着（也随时带着，见 room.js），MCP 的排最后。
+      // 回屋看一眼、留换装便签那两样再跟着（也随时带着，见 room.js），翻梦廊那一样再跟着（也随时带着，只能看，见 luofu/parts.js），MCP 的排最后。
       // 三种写法都带：摘掉 MCP 的那一种也带着，对话里有他调过的，不带那边不认
-      const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, QX_TOOLS, ROOM_TOOLS);
+      const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, QX_TOOLS, ROOM_TOOLS, LUOFU_LOOK_TOOLS);
       if (at.mcp) {
         body.mcp_servers = mcps.map((m, i) => {
           const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
@@ -4067,7 +4071,7 @@ export default function App({ account = {} }) {
       messages: [{ role: "user", content: ask.content }],
     };
     // 工具照聊天时一样带着（排在名帖前头，带着才接得上聊天时写下的缓存：江湖棋局那四样、翻日记那三样），只是这一回不许调
-    recapBody.tools = (game ? GAME_TOOLS : []).concat(DIARY_TOOLS, QX_TOOLS, ROOM_TOOLS);
+    recapBody.tools = (game ? GAME_TOOLS : []).concat(DIARY_TOOLS, QX_TOOLS, ROOM_TOOLS, LUOFU_LOOK_TOOLS);
     recapBody.tool_choice = { type: "none" };
     // 从这儿起成没成都记一笔流水账（见 logRecap）
     const t0 = Date.now();

@@ -8,10 +8,13 @@
 #     进度和梦廊同步到手机上；梦廊里两场（最新的在最上面，标题、来源、哪天；不写一共多少），点开看全文；
 #   换成只有醒来就散的那一类：他睡一觉，小字“睡了一觉 · 做了个梦”，梦里的字她的页面上一个都没有；
 #   读一场：一行“翻出梦廊里的一场：〈…〉”；梦库里删了那一场，梦廊里照旧；写到一半截断的：一行“想睡一会儿，没睡成”。
+#   平常聊天里翻梦廊（她 11 月 1 日 21:31 定的：只能看，不能睡）：工具里一直带着 luofu_gallery（梦库空着也带），没有 luofu_nap、没有“睡一觉”；
+#     梦廊空着翻：照引擎那一句回；睡过两觉以后翻：照手机上同步下来的进度（哪天照她的时区），一行“翻了翻梦廊”；读一场：一行“翻出梦廊里的一场：〈…〉”；
+#     名帖那一段第二行换成“聊天的时候睡不了，梦廊能翻”；手机这头一个字不写进度；写到一半截断的：一行“想翻梦廊，没翻成”。
 # 真的浏览器、假 Supabase、假的 Anthropic。账号、梦都是编的（天气、点心、去处）。
 # 先在 source/ 里 npm run build:test、KFS_TEST_URL=http://127.0.0.1:8787 node alarm/build.mjs，起好两个服务（见开发说明），再：python3 tests/e2e_luofu.py
 # 要截图给人看：KFS_SHOTS=某个文件夹 python3 tests/e2e_luofu.py
-import json, os, subprocess, tempfile, time
+import json, os, re, subprocess, tempfile, time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from playwright.sync_api import sync_playwright
@@ -31,6 +34,11 @@ SHEET = "() => { const b = document.querySelector('.kfs-sheet-box'); return b ? 
 FIX = json.load(open(POOL, encoding="utf-8"))
 EVENT_TEXTS = [d["text"] for k in FIX["kinds"] if k["type"] == "event" for d in k["dreams"]]
 CARDS = [d for k in FIX["kinds"] if k["type"] == "card" for d in k["dreams"]]
+
+
+def head(t):
+    # 一个梦认得出来的那几个字：头一句的头四个字（引擎记得清楚、片段、模糊三种写法里都带着头一句）
+    return re.split(r"[，。！？；、]", t)[0][:4]
 
 
 def shot(pg, name):
@@ -150,6 +158,24 @@ def names_of(body):
     return [t.get("name") for t in body.get("tools", [])]
 
 
+def new_chat(pg):
+    side(pg)
+    pg.locator(".kfs-dock-fade button", has_text="新对话").click(); time.sleep(0.6)
+
+
+LF_SAID = "() => [...document.querySelectorAll('.kfs-chat-rows *')].filter((e) => e.children.length === 0 && e.textContent.includes('（测试梦廊）')).length"
+
+
+def ask_lf(pg, text):
+    # 平常聊天里说一句，等他翻完梦廊回话（假的那边的我先调 luofu_gallery，结果递回去再说“（测试梦廊）……”）；回这一回寄过去的几样
+    n = pg.evaluate(LF_SAID)
+    c = len(calls())
+    say(pg, text)
+    poll(lambda: pg.evaluate(LF_SAID) > n, 20)
+    time.sleep(1.2)
+    return [x["body"] for x in calls()[c:]]
+
+
 def system_of(body):
     s = body.get("system", "")
     return "".join(x.get("text", "") for x in s) if isinstance(s, list) else s
@@ -210,6 +236,12 @@ def run(browser):
     chat(pg, "今晚早点睡")
     body0 = calls()[-1]["body"]
     ok("luofu_nap" not in names_of(body0) and "【罗浮梦】" not in system_of(body0), "平常聊天：工具里没有 luofu_nap（他只在屋里睡），名帖里没有【罗浮梦】")
+    ok(names_of(body0)[-1:] == ["luofu_gallery"] and "睡一觉" not in json.dumps(body0.get("tools", []), ensure_ascii=False),
+       f"平常聊天：工具里一直带着翻梦廊那一样（luofu_gallery，排在最后；梦库空着、“他自己醒”关着也带），哪一样的说明里都没有“睡一觉”（{names_of(body0)[-3:]}）")
+    asked = ask_lf(pg, "翻翻梦廊")
+    res = results_of(asked[-1]) if asked else []
+    ok(len(asked) == 2 and res[-1:] == ["梦廊里还没有留下梦。"] and pg.evaluate(NOTES)[-1:] == ["翻了翻梦廊"] and lf_state(pg) is None,
+       f"梦廊空着的时候在聊天里翻：照引擎那一句回（“梦廊里还没有留下梦。”），一行小字“翻了翻梦廊”；进度一个字不写（{res[-1:]}，{pg.evaluate(NOTES)[-1:]}）")
 
     # ---- 南衙 ----
     open_nanya(pg)
@@ -363,6 +395,32 @@ def run(browser):
         ok(False, "点开一场（梦廊里一场都没有，没点成）")
     close_all(pg)
 
+    # ---- 平常聊天里翻梦廊（她 11 月 1 日 21:31 定的：只能看，不能睡） ----
+    new_chat(pg)
+    st_before = pg.evaluate(KV, "kfs2:luofu:state")
+    asked = ask_lf(pg, "翻翻梦廊")
+    sy = system_of(asked[0]) if asked else ""
+    sec = sy[sy.find("【罗浮梦】"):].split("\n\n【")[0] if "【罗浮梦】" in sy else ""
+    res = results_of(asked[-1]) if asked else []
+    dday = today.strftime("%Y-%m-%d")
+    ok(asked and "luofu_gallery" in names_of(asked[0]) and "luofu_nap" not in names_of(asked[0]) and sec.endswith("\n睡觉只在你自己在屋里醒着的时候；跟她聊天的时候睡不了，梦廊能翻（luofu_gallery，只能看）。") and "翻不到" not in sec and "记不清" not in sec,
+       f"平常聊天：名帖里【罗浮梦】那一段第二行换了（聊天的时候睡不了，梦廊能翻；原来的“翻不到”“记不清”那两句没了）；工具里有翻梦廊那一样，没有那张床（{sec[-40:]!r}）")
+    ok(res and res[-1].startswith("1. " + titles[-1]) and titles[0] in res[-1] and dday in res[-1] and pg.evaluate(NOTES)[-1:] == ["翻了翻梦廊"],
+       f"他在聊天里翻了梦廊：照这台手机上同步下来的进度（最新的在最上面，哪天照她的时区），聊天里一行“翻了翻梦廊”（{pg.evaluate(NOTES)[-1:]}）")
+    older_card = next((c for c in CARDS if titles and c["title"] == titles[0]), {"title": "（没有）", "text": "（没有）"})
+    asked = ask_lf(pg, "读梦廊 " + older_card["title"])
+    res = results_of(asked[-1]) if asked else []
+    ok(res and older_card["text"] in res[-1] and f"入梦：{dday}" in res[-1] and pg.evaluate(NOTES)[-2:] == ["翻了翻梦廊", f"翻出梦廊里的一场：〈{older_card['title']}〉"],
+       f"读一场：全文递给他，聊天里一行“翻出梦廊里的一场：〈标题〉”（{pg.evaluate(NOTES)[-2:]}）")
+    ok(older_card["text"] not in pg.evaluate(PAGE) and pg.evaluate(KV, "kfs2:luofu:state") == st_before, "梦廊里的字只在递给他的结果里，她的页面上没有；手机这头一个字没写进度（只读）")
+    shot(pg, "lf_9b_chat")
+    c0 = len(calls())
+    say(pg, "梦廊读一半")
+    pg.get_by_text("翻着翻着").last.wait_for(timeout=20000)
+    time.sleep(2.0)
+    ok(pg.evaluate(NOTES)[-1:] == ["想翻梦廊，没翻成"] and len(calls()) == c0 + 1, f"写到长度上限截断的：不替他翻（只问了一回），一行“想翻梦廊，没翻成”（{pg.evaluate(NOTES)[-1:]}）")
+    close_all(pg)
+
     # ---- 醒来就散的那一类：小字不露梦里的事 ----
     event_only = variant(tmp, "event", dreamChance=1, kinds=[k for k in FIX["kinds"] if k["type"] == "event"])
     ok(replace_pool(pg, event_only) == "导进来了：2 种，8 个梦。", "换成只有醒来就散的那两种（一定做梦）")
@@ -370,10 +428,10 @@ def run(browser):
     code, out, asked, got = wake(pg, home, 3)
     notes = pg.evaluate(NOTES)
     res = results_of(asked[-1]) if asked else []
-    told = [t for t in EVENT_TEXTS if res and t[:5] in res[-1]]
+    told = [t for t in EVENT_TEXTS if res and head(t) in res[-1]]
     ok(got and notes[-1] == "睡了一觉 · 做了个梦" and told, f"他睡了一觉、做了个醒来就散的梦：小字“睡了一觉 · 做了个梦”，梦里的事只在递给他的结果里（{notes[-1:]}）")
     page = pg.evaluate(PAGE)
-    ok(not any(t[:5] in page for t in EVENT_TEXTS), "她的页面上一个梦里的字都没有")
+    ok(not any(head(t) in page for t in EVENT_TEXTS), "她的页面上一个梦里的字都没有")
     ok(until(pg, lambda: (lf_state(pg) or {}).get("totalNaps") == 3) and len((lf_state(pg) or {}).get("gallery", [])) == 2, "梦廊不添（醒来就散的不进梦廊）")
 
     # ---- 读一场；梦库里删了，梦廊照旧 ----

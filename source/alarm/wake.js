@@ -36,7 +36,7 @@ import { gardenOf, gardenBrief, gardenToy } from "./garden.js";
 import { dressingOf, dressingBrief, dressingToy } from "./dressing.js";
 import { pindouOf, pindouBrief, pindouToy } from "./pindou.js";
 import { luofuOf, luofuToy } from "./luofu.js";
-import { LUOFU_POOL, readLuofuPool, luofuSection } from "../src/luofu/parts.js";
+import { LUOFU_POOL, LUOFU_STATE, readLuofuPool, luofuSection, LUOFU_LOOK_TOOLS, LUOFU_LOOK_NAMES, isLuofuLookCall, runLookCalls, cutLuofuLook } from "../src/luofu/parts.js";
 import { completedToday } from "../vendor/dressing/dressing-engine.ts";
 import { wakeSection, taskSection, wakeNowNote, tailTranscript, LAST_STEP_NOTE, THOUGHT_DONE_NOTE } from "./note.js";
 import { askSummary } from "../src/ask.js";
@@ -223,7 +223,7 @@ function withoutNewChat(step) {
 //   只有醒在屋里的时候给，她 10 月 21 日定的，拼豆板 10 月 25 日添的，床 11 月 1 日添的）：
 //   一样带一样工具，他调了就替他办、递回去接着要。一样是 { tool, names, is(call), cut(call), run(calls, { at }) }（at 是他这一步的时间：床记梦廊里哪天做的梦用，别的几样不看）
 // most：最多几步（调一回工具、拿到结果接着往下说算一步）；lastNote：到了最后一步（前面一步调了工具，接着要的那一回）附在【醒来】后面的提醒，没给就不提醒
-// room：醒在平常的对话里（任务到点那一回）是 { chat, title }：同手机那头，带着回屋看一眼、留换装便签那两样（src/room.js），他调了就替他办；
+// room：醒在平常的对话里（任务到点那一回）是 { chat, title }：同手机那头，带着回屋看一眼、留换装便签那两样（src/room.js）、翻梦廊那一样（src/luofu/parts.js，只读），他调了就替他办；
 //   醒在屋里那一回不给（他就在屋里，园子、妆台自己带着）
 // 回 { steps: [{ him, text, quiet }], cost, newAvatar, newName, title, part }：part(text, step) 把某一步的一截字整理成那边的一条（拆新对话用，不再记钱）
 async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = null, toys = [], most = MOST_STEPS, lastNote = "", thoughtNote = "", room = null }) {
@@ -280,7 +280,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
       system: at.cache ? [{ type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } }] : staticText,
       messages: withNowNote(messages, woke + (thought && thoughtNote ? "\n\n" + thoughtNote : "") + (final && lastNote ? "\n\n" + lastNote : ""), at.cache, tail),
     };
-    const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, QX_TOOLS, room ? ROOM_TOOLS : [], toys.map((t) => t.tool));
+    const tools = (game ? GAME_TOOLS.slice() : []).concat(DIARY_TOOLS, QX_TOOLS, room ? ROOM_TOOLS.concat(LUOFU_LOOK_TOOLS) : [], toys.map((t) => t.tool));
     if (at.mcp) {
       body.mcp_servers = mcps.map((m, i) => {
         const s = { type: "url", url: m.url, name: mcpSlug(m.name, i) };
@@ -310,7 +310,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   };
 
   // 他调的那几样里认哪些（翻日记的，再加屋里那几样的）；哪一样归哪个玩的
-  const callNames = new Set([...DIARY_NAMES, ...QX_NAMES, ...(room ? [...ROOM_NAMES] : []), ...toys.flatMap((t) => [...t.names])]);
+  const callNames = new Set([...DIARY_NAMES, ...QX_NAMES, ...(room ? [...ROOM_NAMES, ...LUOFU_LOOK_NAMES] : []), ...toys.flatMap((t) => [...t.names])]);
   const toyOf = (c) => toys.find((t) => t.is(c)) || null;
 
   // 他这一步回来的整理成对话里的一条（同 App.jsx 的 digestReply）。text 给了就只整理这一截（拆新对话用，钱不再记一遍）
@@ -366,6 +366,8 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
             ? { ...c, out: CUT_QX, err: true, note: QX_FAIL_NOTE, card: [] }
             : isRoomCall(c)
             ? cutRoom(c)
+            : isLuofuLookCall(c)
+            ? cutLuofuLook(c)
             : { ...c, out: CUT_DIARY, err: true, note: "想翻日记，没翻成", card: [] };
           if (!x.note) return x;
           if (seen.has(x.note)) return { ...x, note: "" };
@@ -405,10 +407,11 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     const step = digest(data, used);
     steps.push(step);
     log(`第 ${i + 1} 步：${data.stop_reason || "?"}，${step.quiet ? "没留话" : "留了话"}`);
-    if (step.him.stop === "tool_use" && step.him.calls && step.him.calls.some((c) => (isDiaryCall(c) || isQxCall(c) || (room && isRoomCall(c)) || toyOf(c)) && typeof c.out !== "string")) {
+    if (step.him.stop === "tool_use" && step.him.calls && step.him.calls.some((c) => (isDiaryCall(c) || isQxCall(c) || (room && (isRoomCall(c) || isLuofuLookCall(c))) || toyOf(c)) && typeof c.out !== "string")) {
       let calls = await runDiaryCalls(step.him.calls, reader, new Date());
       calls = runQxCalls(calls, qxPool);
       if (room) calls = await runRoomCalls(calls, { get: (k) => store.get(k), set: (k, v) => store.set(k, v), today: localDay(), at: step.him.ts, chat: room.chat, title: room.title, on: true });
+      if (room) calls = await runLookCalls(calls, () => store.get(LUOFU_STATE)); // 翻梦廊：同手机那头，照这台电脑上的进度，只读
       for (const t of toys) calls = await t.run(calls, { at: step.him.ts });
       step.him.calls = calls;
       continue;

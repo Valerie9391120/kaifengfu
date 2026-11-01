@@ -2,6 +2,7 @@ import { firstClause, remainingIn } from "./pool.js";
 import type {
   EngineOptions,
   GalleryEntry,
+  GalleryTextOptions,
   LuofuPool,
   LuofuState,
   MemoryClarity,
@@ -377,15 +378,34 @@ export function napOnce(
   };
 }
 
-/** 梦廊：做过的 card，最新的在最上面。不写一共多少、还剩多少。 */
-export function galleryText(state: LuofuState): string {
+/**
+ * 梦廊里写的那一天（YYYY-MM-DD）：默认照 UTC（at 取前十个字）；给了 timeZone 照那个时区的日子。
+ * 认不出的时区、读不出的时间，照 UTC 那样写。
+ */
+function dayOf(at: string, timeZone?: string): string {
+  const utc = at.slice(0, 10);
+  if (!timeZone) return utc;
+  const t = Date.parse(at);
+  if (!Number.isFinite(t)) return utc;
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(t));
+    const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    const day = `${part("year")}-${part("month")}-${part("day")}`;
+    return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : utc;
+  } catch {
+    return utc;
+  }
+}
+
+/** 梦廊：做过的 card，最新的在最上面。不写一共多少、还剩多少。哪天做的照 options.timeZone 写（不给照 UTC）。 */
+export function galleryText(state: LuofuState, options: GalleryTextOptions = {}): string {
   if (state.gallery.length === 0) return EMPTY_GALLERY_TEXT;
   return [...state.gallery]
     .reverse()
     .map((entry, index) => {
       const lines = [`${index + 1}. ${entry.title}`];
       if (entry.source) lines.push(`   来源：${entry.source}`);
-      if (entry.at) lines.push(`   ${entry.at.slice(0, 10)}`);
+      if (entry.at) lines.push(`   ${dayOf(entry.at, options.timeZone)}`);
       return lines.join("\n");
     })
     .join("\n\n");
@@ -412,12 +432,13 @@ export function findInGallery(state: LuofuState, idOrTitle: string): GalleryEntr
   return null;
 }
 
-export function readGalleryText(state: LuofuState, idOrTitle: string): string {
+/** 读梦廊里的一场（找法同 findInGallery）。“入梦”那一天照 options.timeZone 写（不给照 UTC）。 */
+export function readGalleryText(state: LuofuState, idOrTitle: string, options: GalleryTextOptions = {}): string {
   const entry = findInGallery(state, idOrTitle);
   if (!entry) return NOT_IN_GALLERY_TEXT;
   const lines = [entry.title];
   if (entry.source) lines.push(`来源：${entry.source}`);
-  if (entry.at) lines.push(`入梦：${entry.at.slice(0, 10)}`);
+  if (entry.at) lines.push(`入梦：${dayOf(entry.at, options.timeZone)}`);
   return `${lines.join("\n")}\n\n${entry.text}`;
 }
 

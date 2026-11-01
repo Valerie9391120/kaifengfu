@@ -93,3 +93,8 @@ export interface EngineOptions {
   rng?: () => number;
   now?: () => Date;
 }
+
+/** 梦廊里写哪一天：不给就照 UTC（存档里的 at 取前十个字）；给了 timeZone（比如 "Europe/Dublin"）照那个时区的日子。 */
+export interface GalleryTextOptions {
+  timeZone?: string;
+}

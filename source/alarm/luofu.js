@@ -6,6 +6,7 @@
 // 存档：梦库 kfs2:luofu:pool 只读（她在手机上梦库那一页导的、改的，同步下来的）；进度和梦廊 kfs2:luofu:state 只有这里写（手机那头只读）。
 // 同一个闹钟里一样一样排着来，先后两回不会互相盖掉（同拼豆板）。
 // 屋里那一行小字：睡觉的一回一行（睡了几觉就几行，同秘戏钱匣“抽几回几行”）；翻梦廊、读一场，一回醒着里一样的只留一行（同拼豆板）
+// 平常聊天里翻梦廊那一样（luofu_gallery，只能看，她 11 月 1 日 21:31 定的）不在这里：任务到点那一回 wake.js 直接用 src/luofu/parts.js 的 runLookCalls（只读，不写进度）
 // =====================================================
 import { LUOFU_TOOL, LUOFU_NAMES, isLuofuCall, LUOFU_POOL, LUOFU_STATE, readLuofuPool, readLuofuState, packLuofuState, napApply, cutLuofu, hasDreams, NOTE } from "../src/luofu/parts.js";
 

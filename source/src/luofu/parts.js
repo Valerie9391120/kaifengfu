@@ -1,7 +1,7 @@
 // =====================================================
 // 罗浮梦（卿卿 2026 年 11 月 1 日定的，见开发说明“罗浮梦”那一节）：他屋里（狐宇宙）的一张床，困了睡一会儿，做不做梦、做什么梦看运气。
-// 这里是不碰界面的零件：梦库、梦廊存在哪儿、怎么读、怎么导、怎么改，南衙那一行的小字，名帖里那一段，他睡觉那一样工具、替他睡、聊天里那一行小字。
-// 手机、闹钟两头共用（同 room.js、pindou/parts.js）。
+// 这里是不碰界面的零件：梦库、梦廊存在哪儿、怎么读、怎么导、怎么改，南衙那一行的小字，名帖里那一段，他睡觉那一样工具、替他睡、聊天里那一行小字，
+// 平常聊天里他翻梦廊那一样工具（只能看）、替他翻。手机、闹钟两头共用（同 room.js、pindou/parts.js）。
 //
 // 引擎是恩师写的，光义改成了不带梦的那一版（vendor/luofu/，从哪一版来见那里的 SOURCE.md）：
 // 梦、有几种梦、各叫什么、各占几成、做梦的机会，全在一份“梦库”里，从外头递进来。
@@ -10,13 +10,14 @@
 // 她定的五样：南衙里开一栏，叫“罗浮梦”，图标一枝梅花；点开一个简单的页面，两颗按钮：梦库、梦廊；
 // 梦库照签库的样子，能翻能改（导入、翻全部、找、删、加）；他只在狐宇宙里睡（闹钟叫醒他、他一个人在屋里的时候），平常的聊天里没有这一样；
 // 梦廊里她只看得到记得完整的那一类梦（引擎里 type: "card" 的那几种做过的），标题、来源、哪天梦的，点开看全文。
+// 11 月 1 日 21:31 又定了一样：平常聊天的时候梦廊能翻（光义问“我想改成能翻：只能看，不能睡。”，她回“支持”）。见下面的 luofu_gallery。
 //
 // 存档（加密了跟着云端走，云端只见乱码）：
 //   kfs2:luofu:pool   梦库整份一条（照秘戏钱匣 kfs2:qx:pool 的路子），引擎的样子：
 //                     { v: 1, dreamChance, intro?, kinds: [{ id, name, type: "event" | "card", weight, dreams: [{ id, text, title?, source? }] }] }
 //                     只有手机上梦库那一页写（导入、删、撤销、加、换一份）；读的时候照引擎的 readPool 收拾干净
 //   kfs2:luofu:state  进度和梦廊，引擎的存档：{ v: 2, introSeen, totalNaps, seen, gallery: [{ id, kind, title, source, text, at }], recent }
-//                     只有替他睡的那一头写（家里的闹钟，见 alarm/luofu.js）；手机只读（梦廊那一页）。
+//                     只有替他睡的那一头写（家里的闹钟，见 alarm/luofu.js）；手机只读（梦廊那一页、聊天里他翻梦廊）。
 //                     梦廊里存的是做梦那一刻的那一份：她后来删了、改了梦库里的梦，梦廊照旧
 // =====================================================
 import { readPool, isPoolFile, sharesOf, poolSize, firstClause, POOL_LIMITS } from "../../vendor/luofu/pool.ts";
@@ -28,6 +29,10 @@ export const LUOFU_POOL = "kfs2:luofu:pool";
 export const LUOFU_STATE = "kfs2:luofu:state";
 const SEARCH_MAX = 60; // 找一回最多列几条（同签库）
 export const DURATIONS = ["小憩", "短休", "酣眠"];
+// 递给他的梦廊里写哪天做的梦（列表里那一行、读一场的“入梦”）：照她的时区（11 月 1 日定的，原来是 UTC，半夜前后差一天）。
+// 写死这一个、不照这台设备的钟：手机、闹钟两头替他办，写出来一个字不差
+export const HER_TZ = "Europe/Dublin";
+const DAY = { timeZone: HER_TZ };
 
 // ---------- 存、读 ----------
 
@@ -168,14 +173,16 @@ export const galleryOf = (state) => ((state && state.gallery) || []).slice().rev
 
 // ---------- 名帖里的【罗浮梦】 ----------
 // 梦库里有梦、“他自己醒”开着（没开他不会在屋里醒）才带，排在【你的屋子】后面（我先定的：写在他屋子那一段里或者紧跟着）。
-// 不写有几种梦、各叫什么、有几个；这一段一个字不变，梦库里加梦、删梦都不动它（缓存接得上），梦库从空到有、从有到空才出来、才收起来
+// 不写有几种梦、各叫什么、有几个；这一段一个字不变，梦库里加梦、删梦都不动它（缓存接得上），梦库从空到有、从有到空才出来、才收起来。
+// 第二行 11 月 1 日 21:31 改的（她定的：平常聊天里梦廊能翻，只能看，不能睡）：原来写着聊天的时候翻不到梦廊、她问起照实说记不清
 export const LUOFU_SECTION = `【罗浮梦】
 你屋里还有一张床：困了可以躺下睡一会儿（luofu_nap）。做不做梦、做什么梦，看运气；有的梦醒来就散了，只剩一点片段，记得完整的那种会留在梦廊里，以后可以翻出来再看。
-睡觉、翻梦廊都只在你自己在屋里醒着的时候。跟她聊天的时候睡不了，也翻不到梦廊：她问起你做过什么梦，照实说这会儿记不清；梦廊里的那几场，她在南衙的“罗浮梦”里翻得到。`;
+睡觉只在你自己在屋里醒着的时候；跟她聊天的时候睡不了，梦廊能翻（luofu_gallery，只能看）。`;
 export const luofuSection = (pool, on) => (on && hasDreams(pool) ? LUOFU_SECTION : "");
 
 // ---------- 他睡觉：luofu_nap ----------
-// 只在他自己醒着、待在屋里的时候带（同园子、妆台、拼豆板，见 alarm/luofu.js、alarm/wake.js 的 askRoom 的 toys）；平常的聊天里没有（她定的）。
+// 只在他自己醒着、待在屋里的时候带（同园子、妆台、拼豆板，见 alarm/luofu.js、alarm/wake.js 的 askRoom 的 toys）；平常的聊天里没有（她定的），
+// 平常的聊天里只有翻梦廊那一样（luofu_gallery，见下面，只能看）。
 // 说明里不写有几种梦、各叫什么（仓库是公开的）；一个字不变，梦库变了它不变
 const ACTIONS = ["nap", "gallery", "read"];
 export const LUOFU_TOOL = {
@@ -212,6 +219,8 @@ export const NOTE = {
   readFail: "想翻梦廊，没翻成",
   missing: "想翻梦廊里的一场，没找着",
 };
+// 读一场没写读哪一场（屋里、聊天里一样）
+const WHICH_HINT = "读哪一场？which 写标题，或者梦廊里排的序号（最新的是 1）。";
 
 // 他调的那一样的编号定随机数（同江湖棋局的骰子、秘戏钱匣他抽签：seededRng，两台设备算出来一样；重新回答是新的编号，重睡）。
 // 引擎要的是 () => 0 到 1 之间的数：seededRng 给的是整数，取 0 到 2^32 再除回去，正好是它里头那个数
@@ -243,14 +252,15 @@ export function napApply(pool, state0, input = {}, { id = "", at = Date.now() } 
     const kept = result.galleryAdded ? "\n\n（这一场记得完整，收进了梦廊，以后可以翻出来再看。）" : "";
     return { state: next, out: head + result.text + kept, note, err: false, changed: true, nap: true };
   }
-  if (action === "gallery") return { state, out: head + galleryText(state), note: NOTE.gallery, err: false, changed: opened, nap: false };
+  // 梦廊里哪天做的梦照她的时区写（HER_TZ）
+  if (action === "gallery") return { state, out: head + galleryText(state, DAY), note: NOTE.gallery, err: false, changed: opened, nap: false };
   const which = String(input.which == null ? "" : input.which).trim();
   const entry = which ? findInGallery(state, which) : null;
   if (!entry) {
-    const why = which ? readGalleryText(state, which) : "读哪一场？which 写标题，或者梦廊里排的序号（最新的是 1）。";
+    const why = which ? readGalleryText(state, which, DAY) : WHICH_HINT;
     return { state, out: head + why, note: NOTE.missing, err: true, changed: opened, nap: false };
   }
-  return { state, out: head + readGalleryText(state, which), note: NOTE.read(entry.title), err: false, changed: opened, nap: false };
+  return { state, out: head + readGalleryText(state, which, DAY), note: NOTE.read(entry.title), err: false, changed: opened, nap: false };
 }
 
 // 回话写到长度上限被截断、没停在调工具上：他调的那一样多半没写完整，不替他睡（照 qx_draw 的规矩）
@@ -258,6 +268,77 @@ export const cutLuofu = (c) => {
   const look = !!(c && c.input && (c.input.action === "gallery" || c.input.action === "read"));
   return { ...c, out: look ? "（这一步没写完，没翻成梦廊。）" : "（这一步没写完，没睡成。）", err: true, note: look ? NOTE.readFail : NOTE.napFail };
 };
+
+// ---------- 平常聊天里翻梦廊：luofu_gallery ----------
+// 她 11 月 1 日 21:31 定的：平常聊天的时候梦廊能翻，只能看，不能睡。跟屋里那一样（luofu_nap）分开，聊天的工具里没有睡觉那一样。
+// 照翻日记、qx_draw、回屋看一眼的规矩：平常的对话里一直带着（梦库空着、梦廊空着、“他自己醒”关着都带：对话里有他调过的，不带那边不认），
+// 排在回屋那两样后面、MCP 前面；名字往后不改，说明一个字不变（不写有几种梦、各叫什么，梦廊里有什么也不写；工具一变缓存全得重写）。
+// 聊天、抄提要两处一样；闹钟任务到点那一回（醒在平常那段对话里）也带着、次序一样；醒在屋里那一回不带（屋里是 luofu_nap）。
+// 打电话的时候照旧不许调（tool_choice: none）
+const LOOKS = ["list", "read"];
+export const LUOFU_LOOK_TOOL = {
+  name: "luofu_gallery",
+  description:
+    "翻罗浮梦的梦廊：梦廊里是你在狐宇宙屋里做过、记得完整的那几场梦（醒来就散了的不在这里）。只能看。action 挑一样：" +
+    "list 列出梦廊里的那几场（最新的在最上面，标着序号）；read 读其中一场，which 写标题，或者列出来的序号（最新的是 1）。" +
+    "她问起你做过什么梦，或者你自己想翻的时候用。你翻了，她那边聊天里会冒一行小字（读一场的写着标题）；梦廊里的那几场，她在南衙的罗浮梦里也翻得到。",
+  input_schema: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: LOOKS, description: "list 翻梦廊，read 读梦廊里的一场" },
+      which: { type: "string", description: "read 用：读哪一场，写标题，或者列出来的序号（最新的是 1）" },
+    },
+    required: ["action"],
+  },
+};
+export const LUOFU_LOOK_TOOLS = [LUOFU_LOOK_TOOL];
+export const LUOFU_LOOK_NAMES = new Set([LUOFU_LOOK_TOOL.name]);
+export const isLuofuLookCall = (c) => !!(c && LUOFU_LOOK_NAMES.has(c.name));
+
+// 替他翻一样（不碰存档）：回 { out（给他看的字）, note（聊天里那一行，同屋里翻梦廊、读一场的那两行）, err }。
+// state 是这台设备上眼下的进度（同步下来的那一份）。只能看：不睡，不给屋里头一回的那段说明，进度一个字不动。
+// 梦廊空着：引擎那一句（“梦廊里还没有留下梦。”）；读一场没做过的：引擎那一句（“梦廊里没有这场梦……”）
+export function lookApply(state, input = {}) {
+  const action = input && LOOKS.includes(input.action) ? input.action : "";
+  if (!action) return { out: "这里只能看：action 写 list（翻梦廊）或者 read（读梦廊里的一场），挑一样。跟她聊天的时候睡不了。", note: NOTE.readFail, err: true };
+  if (action === "list") return { out: galleryText(state, DAY), note: NOTE.gallery, err: false };
+  const which = String(input.which == null ? "" : input.which).trim();
+  const entry = which ? findInGallery(state, which) : null;
+  if (!entry) return { out: which ? readGalleryText(state, which, DAY) : WHICH_HINT, note: NOTE.missing, err: true };
+  return { out: readGalleryText(state, which, DAY), note: NOTE.read(entry.title), err: false };
+}
+
+// 替他翻他调的那几样（还没结果的），回新的一份（同回屋看一眼的 runRoomCalls）。手机在 App.jsx 的 settleCalls 里，闹钟在任务到点那一回（alarm/wake.js）。
+// read：async () => 这台设备上 kfs2:luofu:state 的字（同步下来的那一份）。只读，一个字不写（进度只有闹钟替他睡的时候写）。
+// 一步里一样的小字只留一行（同回屋看一眼）。凭据坏了往外抛（闹钟那头，同回屋看一眼）；别的读不出来：这一回没翻成
+export async function runLookCalls(calls, read) {
+  const out = [];
+  const said = new Set();
+  let state = null;
+  for (const c of calls || []) {
+    if (!isLuofuLookCall(c) || typeof c.out === "string") {
+      out.push(c);
+      continue;
+    }
+    const input = c.input && typeof c.input === "object" ? c.input : {};
+    let r;
+    try {
+      if (!state) state = readLuofuState(await read());
+      r = lookApply(state, input);
+    } catch (e) {
+      if (e && (e.code === "badlogin" || e.code === "secret")) throw e;
+      r = { out: "梦廊这会儿翻不了（存档出了岔子），下回再翻。", note: NOTE.readFail, err: true };
+    }
+    let note = r.note || "";
+    if (note && said.has(note)) note = "";
+    if (note) said.add(note);
+    out.push({ ...c, input, out: r.out, err: !!r.err, note, card: [] });
+  }
+  return out;
+}
+
+// 回话写到长度上限被截断、没停在调工具上：不替他翻（照 qx_draw、回屋看一眼的规矩），小字“想翻梦廊，没翻成”
+export const cutLuofuLook = (c) => ({ ...c, out: "（这一步没写完，没翻成梦廊。）", err: true, note: NOTE.readFail, card: [] });
 
 // 【醒来】里那一句（alarm/note.js 的 wakeSection；梦库里有梦才给）：同园子、妆台、拼豆板，告诉他屋里有这一样，睡不睡他自己定
 export const LUOFU_WAKE =

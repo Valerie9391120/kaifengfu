@@ -21,7 +21,7 @@ SHOTS = os.path.join(HERE_DIR, "shots")
 os.makedirs(SHOTS, exist_ok=True)
 NOTES = "() => [...document.querySelectorAll('.kfs-chat-rows .kfs-diary-note')].map((d) => d.innerText.trim())"
 PAGE = "() => document.querySelector('.kfs-chat-rows').innerText"
-TOOLS = ["diary_list", "diary_read", "diary_search", "diary_note", "qx_draw", "room_look", "room_memo"]
+TOOLS = ["diary_list", "diary_read", "diary_search", "diary_note", "qx_draw", "room_look", "room_memo", "luofu_gallery"]  # 最后那一样是翻梦廊（罗浮梦，11 月 1 日起随时带着，见 src/luofu/parts.js）
 
 def shot(page, name):
     page.screenshot(path=os.path.join(SHOTS, f"room_{name}.png"))
