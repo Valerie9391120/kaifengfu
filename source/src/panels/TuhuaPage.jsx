@@ -3,7 +3,7 @@ import { SERIF, T, glass, fill, HAIRLINE } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { useLongPress } from "../ui/press.js";
 import { useSlideIn } from "../ui/enter.js";
-import { dateOf, cleanTitle, TITLE_MAX, pageLayout, mountOf, vaseOf, hashStr } from "../tuhua.js";
+import { dateOf, cleanTitle, TITLE_MAX, pageLayout, mountOf, vaseOf, hashStr, ZHOU } from "../tuhua.js";
 
 // 图画院（见 tuhua.js、开发说明“图画院”“图画院：框景”两节）。
 // 11 月 1 日照卿卿的草图换了样子：恩师那张画拆成的框景——一面墙，右上角挂落，底下一张长案，案上月白瓶里插着当天那一瓶花（十瓶轮着）；
@@ -21,8 +21,11 @@ const A =
         wall: "./static/tuhua/wall.webp",
         lattice: "./static/tuhua/lattice.webp",
         table: "./static/tuhua/table.webp",
-        damask: "./static/tuhua/damask.webp",
-        paper: "./static/tuhua/paper.webp",
+        zhouTop: "./static/tuhua/zhou-top.webp",
+        zhouTian: "./static/tuhua/zhou-tian.webp",
+        zhouPaper: "./static/tuhua/zhou-paper.webp",
+        zhouDi: "./static/tuhua/zhou-di.webp",
+        zhouBottom: "./static/tuhua/zhou-bottom.webp",
         vases: Array.from({ length: 10 }, (_, i) => `./static/tuhua/vase${i + 1}.webp`),
       };
 
@@ -30,9 +33,8 @@ const A =
 const INK = "#3b2e25";
 const INK_SOFT = "rgba(74,58,46,0.74)";
 const WALL = "#ddccb6";
-const ROD = "linear-gradient(180deg, #a07a5a 0%, #6d4c36 42%, #3f2c1e 100%)";
-const KNOB = "radial-gradient(circle at 38% 32%, #85614a 0%, #3e2a1d 68%, #24170f 100%)";
-const EDGE = "#4b3527";
+// 天头地头淡淡透一点裱绫的颜色（她 11 月 1 日挑的“染得淡一些”）：白里调进三成五，正片叠底盖在秘戏钱匣那一截锦上
+const TINT = 0.35;
 
 // 翻页的手感（照藏音匣 page.js 的 P：pageThreshold、pageVelocity、pageK、pageC）
 const PAGE_THRESHOLD = 0.2; // 划过多少才翻（占屏高）
@@ -53,10 +55,12 @@ function menuTop(rect) {
   return Math.max(12, Math.min(vh - MENU_H - 12, top + 20));
 }
 
-function darken(hex, f) {
-  const n = parseInt(hex.slice(1), 16);
-  const c = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => Math.round(v * f));
-  return `rgb(${c[0]},${c[1]},${c[2]})`;
+// 两种颜色按 t 调一下（t=0 是 a，t=1 是 b）
+function mix(a, b, t) {
+  const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const x = p(a);
+  const y = p(b);
+  return `rgb(${x.map((v, i) => Math.round(v + (y[i] - v) * t)).join(",")})`;
 }
 
 // 一幅轴
@@ -64,14 +68,11 @@ function Scroll({ it, nowYear, onOpen, onLong, current }) {
   const { e, x, y, w, p } = it;
   const lp = useLongPress((rect) => onLong(e, rect));
   const [, col] = mountOf(e.id);
-  const line = darken(col, 0.7);
-  const silk = { backgroundColor: col, backgroundImage: `url(${A.damask})`, backgroundSize: "100% auto", backgroundPosition: "center", backgroundBlendMode: "multiply" };
+  const tint = mix("#ffffff", col, TINT);
+  const silk = (src) => ({ backgroundColor: tint, backgroundImage: `url(${src})`, backgroundSize: "100% 100%", backgroundBlendMode: "multiply" });
   const hh = hashStr(e.id + "/签");
   const tilt = ((hh % 1000) / 1000 - 0.5) * 5; // 小签本来就有一点歪（±2.5°）
   const delay = (hh >>> 10) % 320; // 一进来各自晃两下，先后差一点
-  const ov = Math.round(w * 0.03);
-  const knobW = Math.max(5, Math.round(w * 0.07));
-  const knobH = Math.round(p.rodB * 1.4);
   const rodB = p.rodT + p.face;
   const tagTop = rodB + p.rodB;
   return (
@@ -90,25 +91,16 @@ function Scroll({ it, nowYear, onOpen, onLong, current }) {
         <circle cx={w / 2} cy={4} r={3.6} fill="#8d6c44" stroke="#5b4430" strokeWidth="0.8" />
         <circle cx={w / 2 - 1} cy={3} r={1.2} fill="#ecd8ad" opacity="0.85" />
       </svg>
-      {/* 天杆 */}
-      <span aria-hidden="true" style={{ position: "absolute", left: -ov, width: w + 2 * ov, top: 0, height: p.rodT, borderRadius: p.rodT / 2, background: ROD, boxShadow: "0 1px 2px rgba(40,25,15,0.35)" }} />
-      {/* 轴面：天头、细线、画心、细线、地头；两边一道深褐的边 */}
-      <span
-        className="th-face"
-        style={{ position: "absolute", left: 0, top: p.rodT, width: w, height: p.face, background: EDGE, padding: `0 ${p.edge}px`, display: "flex", flexDirection: "column", boxShadow: "0 9px 18px rgba(70,48,28,0.2), 0 2px 5px rgba(70,48,28,0.16)" }}
-      >
-        <span style={{ height: p.tian, flexShrink: 0, ...silk }} />
-        <span style={{ height: p.sep, flexShrink: 0, background: line }} />
-        <span style={{ height: p.core, flexShrink: 0, padding: p.m, backgroundColor: "#efe5cf", backgroundImage: `url(${A.paper})`, backgroundSize: "100% auto" }}>
+      {/* 秘戏钱匣那一轴：天杆、天头、画心、地头、地杆（tools/make_tuhua_zhou.py 从那一页拍下来切的） */}
+      <span className="th-face" style={{ position: "absolute", left: 0, top: p.rodT, width: w, height: p.face, display: "flex", flexDirection: "column", boxShadow: "0 8px 16px rgba(70,48,28,0.16), 0 2px 4px rgba(70,48,28,0.12)" }}>
+        <span style={{ height: p.tian, flexShrink: 0, ...silk(A.zhouTian) }} />
+        <span style={{ height: p.core, flexShrink: 0, padding: p.m, backgroundColor: "#efe3cb", backgroundImage: `url(${A.zhouPaper})`, backgroundSize: "100% auto", backgroundPosition: "center top" }}>
           <img src={e.thumb} alt="" draggable={false} style={{ display: "block", width: p.iw, height: p.ih, objectFit: "cover", WebkitTouchCallout: "none" }} />
         </span>
-        <span style={{ height: p.sep, flexShrink: 0, background: line }} />
-        <span style={{ height: p.di, flexShrink: 0, ...silk }} />
+        <span style={{ height: p.di, flexShrink: 0, ...silk(A.zhouDi) }} />
       </span>
-      {/* 地杆、两头的轴头 */}
-      <span aria-hidden="true" style={{ position: "absolute", left: -ov, width: w + 2 * ov, top: rodB, height: p.rodB, borderRadius: p.rodB / 2, background: ROD, boxShadow: "0 2px 3px rgba(40,25,15,0.35)" }} />
-      <span aria-hidden="true" style={{ position: "absolute", left: -ov - knobW + 2, top: rodB - (knobH - p.rodB) / 2, width: knobW, height: knobH, borderRadius: knobW * 0.4, background: KNOB }} />
-      <span aria-hidden="true" style={{ position: "absolute", left: w + ov - 2, top: rodB - (knobH - p.rodB) / 2, width: knobW, height: knobH, borderRadius: knobW * 0.4, background: KNOB }} />
+      <img aria-hidden="true" alt="" draggable={false} src={A.zhouTop} style={{ position: "absolute", left: ZHOU.top.x * w, top: 0, width: ZHOU.top.w * w, height: p.rodT, maxWidth: "none" }} />
+      <img aria-hidden="true" alt="" draggable={false} src={A.zhouBottom} style={{ position: "absolute", left: ZHOU.bottom.x * w, top: rodB, width: ZHOU.bottom.w * w, height: p.rodB, maxWidth: "none" }} />
       {/* 底下垂一张小签：名字、哪天画的 */}
       <span key={current} className={current ? "th-tagwrap th-sway" : "th-tagwrap"} style={{ position: "absolute", left: w / 2, top: tagTop, width: 0, height: 0, "--th-tilt": `${tilt.toFixed(2)}deg`, animationDelay: `${delay}ms` }}>
         <span aria-hidden="true" style={{ position: "absolute", left: -0.5, top: -1, width: 1, height: p.string + 3, background: "#7a6250" }} />

@@ -2,15 +2,15 @@
 #   wall.webp     光墙（挂落、两幅空轴、瓶子花枝都抹掉，案面以上那一截）
 #   lattice.webp  右上角的挂落（抠出来，带透明）
 #   table.webp    底下的长案（案面往下那一截；瓶底那一段从右边挪过来补齐）
-# 再把十瓶花转成 webp，量好瓶底在图里的位置；从秘戏钱匣的卷轴上取锦（天头地头）和画心的纸。
-# 用法：python3 tools/make_tuhua_assets.py 恩师那张框景.jpg 秘戏钱匣的卷轴.jpg 十瓶所在目录 static/tuhua
-#   恩师那张画（771×1672）不在仓库里；秘戏钱匣的卷轴是 static/qianxia.html 里的 scrollFace（768×1828，拆出来存成图）；
+# 再把十瓶花转成 webp，量好瓶底在图里的位置。卷轴（秘戏钱匣那一轴切成的五截）见 tools/make_tuhua_zhou.py。
+# 用法：python3 tools/make_tuhua_assets.py 恩师那张框景.jpg - 十瓶所在目录 static/tuhua
+#   恩师那张画（771×1672）不在仓库里；第二个参数原来是秘戏钱匣的卷轴，现在不用了（写个 - 占位）；
 #   十瓶是 tools/flora/ 出的 arr_1.png … arr_10.png（800×1370，透明底）
 import sys, os, json
 import numpy as np, cv2
 from PIL import Image
 
-src, qx_face, vase_dir, out = sys.argv[1:5]
+src, _unused, vase_dir, out = sys.argv[1:5]
 os.makedirs(out, exist_ok=True)
 im = np.array(Image.open(src).convert('RGB')).astype(np.float32)
 H, W = im.shape[:2]
@@ -152,21 +152,5 @@ for i in range(1, 11):
     r.save(f'{out}/vase{i}.webp', quality=86, method=6)
 json.dump(meta, open(f'{out}/vases.json', 'w'))
 
-# ---------------- 锦和纸（秘戏钱匣的卷轴） ----------------
-f = np.array(Image.open(qx_face).convert('RGB')).astype(np.float32)
-fh, fw = f.shape[:2]
-col = f[:, fw // 2]
-lum = col.mean(1)
-# 天头那一段到第一道深色细线为止；左右深褐的边不要
-edge = np.nonzero(f[fh // 2, :, :].mean(1) > 120)[0]; ex0, ex1 = int(edge.min()) + 2, int(edge.max()) - 2
-lines = np.nonzero(lum < lum.mean() - 40)[0]
-first = int(lines[lines > 40].min()) if len(lines[lines > 40]) else int(fh * 0.16)
-dam = f[4:first - 3, ex0:ex1]
-# 花纹显一点：亮度围着均值拉开 2.2 倍，整体压在偏亮的地方（页面上拿裱绫的颜色“正片叠底”，不至于太暗）
-m_ = dam.mean(2).mean()
-dam = np.clip((dam - m_) * 2.2 + m_, 0, 255); dam = np.clip(dam - dam.mean() + 238, 150, 255)
-Image.fromarray(dam.astype(np.uint8)).save(f'{out}/damask.webp', quality=84, method=6)
-mid = f[int(fh * 0.3):int(fh * 0.7), ex0:ex1]
-Image.fromarray(np.clip(mid, 0, 255).astype(np.uint8)).save(f'{out}/paper.webp', quality=80, method=6)
-print('ok', 'table rows', tab.shape, 'lattice', lat.size, 'damask', dam.shape, 'first line', first, 'edges', ex0, ex1)
+print('ok', 'table rows', tab.shape, 'lattice', lat.size)
 print(json.dumps(meta))

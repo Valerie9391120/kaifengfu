@@ -87,8 +87,8 @@ const T0 = Date.UTC(2026, 9, 30, 21, 40);
      `裱绫的颜色：她点的六样打头，又添了几样；同一张永远同一个颜色；四十张里有 ${cols.size} 样`);
   // 一幅轴：竖的最长、横的最短（都挂成竖轴）；各部分加起来就是总高
   const pv = scrollParts("竖", 150), pf = scrollParts("方", 150), ph = scrollParts("横", 150);
-  ok(pv.h > pf.h && pf.h > ph.h && pv.ih > pv.iw && ph.ih < ph.iw && pf.ih === pf.iw && pv.tian > pv.di,
-     `横竖方都挂成竖轴：竖的 ${pv.h}、方的 ${pf.h}、横的 ${ph.h}；天头比地头长`);
+  ok(pv.h > pf.h && pf.h > ph.h && pv.ih > pv.iw && ph.ih < ph.iw && pf.ih === pf.iw && pv.di > pv.tian && pv.tian > 0.3 * pv.wi,
+     `横竖方都挂成竖轴：竖的 ${pv.h}、方的 ${pf.h}、横的 ${ph.h}；天头地头照秘戏钱匣那样长，地头比天头还长一点`);
   ok(pv.h === pv.rodT + pv.face + pv.rodB + pv.string + pv.tagH && pv.face === pv.tian + 2 * pv.sep + pv.core + pv.di && pv.core === pv.ih + 2 * pv.m,
      "一幅轴各部分加起来就是总高（天杆、轴面、地杆、细绳、小签）");
   ok(scrollParts("", 150).ratio === "方" && scrollParts("竖", 150, 1).tagH < pv.tagH, "认不出横竖的当方的挂；没名字的小签矮一些（只写日期）");

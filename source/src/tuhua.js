@@ -185,31 +185,36 @@ export function hashStr(t) {
 }
 export const mountOf = (id) => MOUNTS[hashStr(id) % MOUNTS.length];
 
-// 一幅轴各部分多高（w：轴宽）。横的、竖的、方的都挂成竖轴，横的那一幅短一些（她 10 月 31 日定的）。
-// 从上往下：挂绳（在天杆上面，cord 高）、天杆、天头（锦）、一道细线、画心（纸，画贴在中间）、一道细线、地头（锦）、地杆、
-// 一根细绳、底下垂的小签（名字、哪天画的；她 11 月 1 日定的）
-const TIAN = { 竖: 0.36, 方: 0.32, 横: 0.26 };
-const DI = { 竖: 0.22, 方: 0.2, 横: 0.17 };
+// 一幅轴就是秘戏钱匣那一轴（她 11 月 1 日 04:14 说“为啥不能直接拿秘戏钱匣的卷轴过来用”）：
+// 从那一页里把展开的卷轴原样拍下来，切成五截（tools/make_tuhua_zhou.py）：天杆、天头、画心那段纸、地头、地杆。
+// 这几个数都是“卷轴面宽的几分之几”；天杆、地杆连着两头的轴头，比卷轴面宽，x 是往左伸出去多少。
+export const ZHOU = {
+  top: { h: 0.055, x: -0.038, w: 1.076 },
+  tian: 0.383,
+  paper: 1.503,
+  di: 0.45,
+  bottom: { h: 0.094, x: -0.088, w: 1.176 },
+};
+// 一幅轴各部分多高（w：卷轴面宽）。横的、竖的、方的都挂成竖轴（她 10 月 31 日定的）：天头、地头跟秘戏钱匣一样长，
+// 画心照画的横竖截长截短，横的那一幅就短一些。
+// 从上往下：挂绳（在天杆上面，cord 高）、天杆、天头、画心（纸，画贴在中间）、地头、地杆、一根细绳、底下垂的小签（名字、哪天画的）
 const PIC = { 竖: 4 / 3, 方: 1, 横: 3 / 4 };
 export function scrollParts(ratio, w, lines = 2) {
   const r = PIC[ratio] ? ratio : "方";
-  const edge = Math.max(2, Math.round(w * 0.022));
-  const wi = w - 2 * edge;
-  const sep = Math.max(1.5, Math.round(w * 0.024) / 2);
-  const m = Math.round(wi * 0.045);
-  const iw = wi - 2 * m;
+  const m = Math.round(w * 0.065); // 画四周留的纸（让开卷轴面两边那道深色的边）
+  const iw = w - 2 * m;
   const ih = Math.round(iw * PIC[r]);
-  const tian = Math.round(wi * TIAN[r]);
-  const di = Math.round(wi * DI[r]);
+  const tian = Math.round(w * ZHOU.tian);
+  const di = Math.round(w * ZHOU.di);
   const core = ih + 2 * m;
-  const face = tian + sep + core + sep + di;
-  const rodT = Math.max(4, Math.round(w * 0.05));
-  const rodB = Math.max(5, Math.round(w * 0.065));
+  const face = tian + core + di;
+  const rodT = Math.max(3, Math.round(w * ZHOU.top.h));
+  const rodB = Math.max(4, Math.round(w * ZHOU.bottom.h));
   const cord = Math.round(w * 0.34);
   const string = Math.round(w * 0.1);
   const tagH = lines > 1 ? 44 : 28;
   const tagW = Math.round(Math.min(w * 0.88, 168));
-  return { ratio: r, edge, wi, sep, m, iw, ih, tian, di, core, face, rodT, rodB, cord, string, tagH, tagW, h: rodT + face + rodB + string + tagH };
+  return { ratio: r, wi: w, sep: 0, m, iw, ih, tian, di, core, face, rodT, rodB, cord, string, tagH, tagW, h: rodT + face + rodB + string + tagH };
 }
 
 // 一页两幅（她 11 月 1 日 03:39 说清楚的：“画面上固定只有两幅卷轴 上滑翻页 才划出别的来”），翻到第几页不标。
@@ -227,14 +232,14 @@ export function pageLayout(entries, W, H, { safeTop = 0, vase = 0 } = {}) {
   const dy = Math.max(0, safeTop + 14 - SLOTS[0].nail * s); // 左边那颗钉子别钉到刘海里（返回那个箭头小，在钉子左边），右边跟着往下挪一样多
   const room = (slot) => (slot.x * s < sc.flowersRight + 4 ? Math.min(sc.flowersTop - 8, sc.tableTop - 10) : sc.tableTop - 10);
   let f = 1;
-  for (let k = 0; k < 6; k++) {
+  for (let k = 0; k < 10; k++) {
     let need = 1;
     for (const slot of SLOTS) {
       const p = scrollParts("竖", Math.round(slot.w * s * f), 2);
       need = Math.min(need, (room(slot) - (slot.nail * s + dy + p.cord)) / p.h);
     }
-    if (need >= 0.995) break;
-    f = Math.max(0.45, f * need);
+    if (need >= 1) break;
+    f = Math.max(0.45, f * Math.min(need, 0.995));
   }
   const pages = [];
   (entries || []).forEach((e, i) => {
