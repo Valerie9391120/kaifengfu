@@ -46,6 +46,10 @@ import { PindouPage } from "./pindou/PindouPage.jsx";
 import { PindouRow } from "./pindou/PindouRow.jsx";
 import { PD_STATE, PD_WORK, PD_HIS, readState, packState, listWorks, packWork, readHis, fromCode, toCode, countBeads, PD_SUB } from "./pindou/parts.js";
 import { pngFor } from "./pindou/draw.js";
+import { LuofuPanel } from "./luofu/LuofuPanel.jsx";
+import { LuofuPoolSheet } from "./luofu/LuofuPoolSheet.jsx";
+import { LuofuGallery } from "./luofu/LuofuGallery.jsx";
+import { LUOFU_POOL, LUOFU_STATE, emptyLuofuPool, readLuofuPool, packLuofuPool, readLuofuState, luofuSub, luofuSection } from "./luofu/parts.js";
 import { buildRows } from "./chat/rows.js";
 import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/overview.js";
 import { BubbleRow } from "./chat/Bubble.jsx";
@@ -472,6 +476,11 @@ export default function App({ account = {} }) {
   // owe：开着的这一阵里有要回的（她丢了签、进来之前刚说完一句、别处想叫他回被拦下了）。关上的时候只认这个：
   // 什么都没丢、也没拦下过，就不替她叫他（江湖棋局里“点这里让我接着说”的那一步、别的设备的那一步，照旧不自己接）
   const qxHold = useRef({ on: false, owe: false });
+  // 罗浮梦（见 luofu/）：梦库（kfs2:luofu:pool，只有这台手机上梦库那一页写）、进度和梦廊（kfs2:luofu:state，家里的闹钟写的，这里只读）
+  const [lfPool, setLfPool] = useState(emptyLuofuPool);
+  const lfPoolRef = useRef(lfPool); // 名帖里那一段照它拼（requestReply、抄提要在回调里，拿最新的）
+  lfPoolRef.current = lfPool;
+  const [lfState, setLfState] = useState(() => readLuofuState(null));
   // 拼豆作（见 pindou/）：那一层开着没有；她的作品集（kfs2:pd:work:<编号>，新的在前）；他屋里那块板子（kfs2:pindou，家里的闹钟写的）。
   // 开着的时候她发给他的那几幅也照秘戏钱匣先攒着（借 qxHold，两样不会同时开着），关上了再回（见 openPd、closePd）
   const [pdOpen, setPdOpen] = useState(false);
@@ -676,6 +685,7 @@ export default function App({ account = {} }) {
       refreshFox();
       refreshQx();
       refreshPd();
+      refreshLuofu();
       setBooted(true);
     })();
   }, []);
@@ -752,6 +762,8 @@ export default function App({ account = {} }) {
       // 拼豆作：别的设备存了、删了一幅；家里的闹钟写了他那块板子；别的设备上拼了她那块（开着的话那一页换上，见 page.js 的 adopt）
       if (has(PD_WORK) || keys.includes(PD_HIS)) refreshPd();
       if (keys.includes(PD_STATE)) setPdIncoming(readState(store.peek(PD_STATE)));
+      // 罗浮梦：别的设备导了、删了、加了梦；家里的闹钟替他睡了一觉（进度、梦廊）
+      if (keys.includes(LUOFU_POOL) || keys.includes(LUOFU_STATE)) refreshLuofu();
       // 别的设备念好的语音同步下来了（这台设备上要念的那一条就不用再念了）
       if (has(VOICE_KEY) && speakerRef.current) speakerRef.current.synced(keys.filter((k) => k.startsWith(VOICE_KEY)));
       // 别的设备画好的画、没画成的、开了画的同步下来了
@@ -1487,6 +1499,22 @@ export default function App({ account = {} }) {
     setQxOpen(false);
     releaseHold();
   };
+  // ---- 罗浮梦（见 luofu/parts.js）----
+  // 梦库一整份存在一条里（同签库），改一下整条重存；进度和梦廊只读（家里的闹钟写的，同步下来的）
+  const refreshLuofu = () => {
+    const p = readLuofuPool(store.peek(LUOFU_POOL));
+    lfPoolRef.current = p;
+    setLfPool(p);
+    setLfState(readLuofuState(store.peek(LUOFU_STATE)));
+  };
+  const saveLuofu = (p) => {
+    lfPoolRef.current = p;
+    setLfPool(p);
+    store.set(LUOFU_POOL, packLuofuPool(p)).then((ok) => {
+      if (!ok) markStorageFail();
+    });
+  };
+
   // 开着的时候翻到别的对话（点了通知）、他打来电话她接了：哪一层开着就关哪一层，攒着的这就交出去
   const closeHeld = () => {
     setQxOpen(false);
@@ -1984,6 +2012,7 @@ export default function App({ account = {} }) {
       game,
       qx: qxSection(qxPoolRef.current), // 秘戏钱匣：签库里有签才有这一段，只写维度名（见 qx/pool.js）
       room: roomSection(wakeOn(st)), // 他的屋子：“他自己醒”开着才有这一段（见 room.js）
+      luofu: luofuSection(lfPoolRef.current, wakeOn(st)), // 他屋里那张床（罗浮梦）：“他自己醒”开着、梦库里有梦才有这一段，一个字不变（见 luofu/parts.js）
       draw: !!st.draw, // 他能画画（API 面板里的开关，默认关着；见 draw.js）
     });
     // 任务标记（见 fox.js）：“他自己醒”开着的时候，平常的对话里【此刻】后面附一段，他知道能定个闹钟到点来找她。在记号后面，名帖一个字不动
@@ -4006,7 +4035,7 @@ export default function App({ account = {} }) {
     // 名帖那一大段和聊天时寄的一个字不差（缓存接得上；正在打电话的这段对话，心里话那一条照关着算，见 thoughtsFor；
     // 江湖棋局那一段带着【江湖棋局】那一段，见 game/jianghu.js）；【此刻】这回用不着
     const game = isOn(id) ? { board: null, mixed: !isGameChat(id) } : hasSteps(msgs) ? { off: true } : null;
-    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game, qx: qxSection(qxPoolRef.current), room: roomSection(wakeOn(st)), draw: !!st.draw });
+    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game, qx: qxSection(qxPoolRef.current), room: roomSection(wakeOn(st)), luofu: luofuSection(lfPoolRef.current, wakeOn(st)), draw: !!st.draw });
     // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
     const photos = {};
     for (const m of msgs) {
@@ -5551,7 +5580,7 @@ export default function App({ account = {} }) {
     }
     if (sheet === "api") {
       // “他记多长”照眼下这个模型算出来的数；眼前这段对话抄到哪儿了（见 recap.js 的 gauge）
-      const fit = recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false, qx: qxSection(qxPool), room: roomSection(wakeOn(settings)), draw: !!settings.draw }).staticText);
+      const fit = recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false, qx: qxSection(qxPool), room: roomSection(wakeOn(settings)), luofu: luofuSection(lfPool, wakeOn(settings)), draw: !!settings.draw }).staticText);
       return (
         <Sheet title="API" onClose={() => { setSheet(null); setTestNote(""); setVoiceTestNote(""); if (recapTry && recapTry.done) setRecapTry(null); }}>
           <ApiPanel
@@ -5597,13 +5626,15 @@ export default function App({ account = {} }) {
       return (
         <Sheet title="南衙" onClose={() => setSheet(null)}>
           <NanyaPanel
-            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length), tuhua: thSub(thList.length), qx: hasLots(qxPool) ? `签库里 ${poolSize(qxPool)} 条签` : "签库还空着", pindou: PD_SUB }}
+            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length), tuhua: thSub(thList.length), qx: hasLots(qxPool) ? `签库里 ${poolSize(qxPool)} 条签` : "签库还空着", pindou: PD_SUB, luofu: luofuSub(lfPool) }}
             open={{
               // 狐宇宙：菜单收起，翻到那段对话（他自己醒来说的话都在那儿，见 fox.js）
               fox: () => {
                 setSheet(null);
                 openChat(FOX_CHAT);
               },
+              // 罗浮梦：这张菜单换成罗浮梦那一张（两颗按钮：梦库、梦廊，见 luofu/LuofuPanel.jsx）
+              luofu: () => setSheet("luofu"),
               diary: () => {
                 setSheet(null);
                 setDiaryOpen(true);
@@ -5642,6 +5673,22 @@ export default function App({ account = {} }) {
           />
         </Sheet>
       );
+    }
+    if (sheet === "luofu") {
+      // 罗浮梦（见 luofu/）：她定的一个简单的页面，两颗按钮。点了梦库、梦廊，这一张换成那一页；那一页的叉回到这一张
+      return (
+        <Sheet title="罗浮梦" onClose={() => setSheet(null)}>
+          <LuofuPanel onPool={() => setSheet("luofu-pool")} onGallery={() => setSheet("luofu-gallery")} />
+        </Sheet>
+      );
+    }
+    if (sheet === "luofu-pool") {
+      // 梦库：照签库的样子（见 luofu/LuofuPoolSheet.jsx）。加一条的时候编号不跟梦廊里做过的那些重
+      return <LuofuPoolSheet pool={lfPool} taken={lfState.seen.concat(lfState.gallery.map((e) => e.id))} onPool={saveLuofu} onClose={() => setSheet("luofu")} />;
+    }
+    if (sheet === "luofu-gallery") {
+      // 梦廊：记得完整的那一类梦，最新的在最上面（见 luofu/LuofuGallery.jsx）
+      return <LuofuGallery state={lfState} now={now} onClose={() => setSheet("luofu")} />;
     }
     if (sheet === "jianghu") {
       // 江湖棋局（见 game/GameParts.jsx 的 JianghuPanel）：接着上一局，就是翻到最近那一局的那段对话；

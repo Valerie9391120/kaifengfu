@@ -9,6 +9,7 @@ import { isCallMark, markText } from "../src/call/marks.js";
 import { isWakeMark } from "../src/fox.js";
 import { lotBrief } from "../src/qx/pool.js";
 import { pdBrief } from "../src/pindou/parts.js";
+import { LUOFU_WAKE } from "../src/luofu/parts.js";
 import { askSummary } from "../src/ask.js";
 
 export const HER_WORDS =
@@ -91,9 +92,10 @@ export function tailTranscript(msgs, memeLookup = () => null, most = 16, each = 
 // garden：他屋里的园子眼下的样子（alarm/garden.js 的 gardenBrief；没给就不提园子）
 // dressing：他屋里的妆台，今天完成搭配没有（alarm/dressing.js 的 dressingBrief；没给就不提妆台）。这是个换装游戏，不是他的实际状态（她定的）：不写他“穿着”什么
 // pindou：他屋里桌上的拼豆板拼到哪儿了（alarm/pindou.js 的 pindouBrief；没给就不提拼豆板）。他拼的她在拼豆作「他的」那一栏看得见（只能看）
+// luofu：他屋里有一张床、梦库里有梦（罗浮梦，见 src/luofu/parts.js；没给就不提）。只说屋里有这一样，不说梦库里有什么、做过什么
 // steps：这一回醒着最多几步（wake.js 的 ROOM_STEPS；没给就不提）
 // memos：他在聊天里给自己留的换装便签（src/room.js 的 liveMemos，还管着的那几张：{ text, title, at }）：摆在最前头，他第一眼看得到
-export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [], pending = [], garden = "", dressing = "", pindou = "", steps = 0, memos = [], thoughts = false }) {
+export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [], pending = [], garden = "", dressing = "", pindou = "", luofu = false, steps = 0, memos = [], thoughts = false }) {
   const herLine = !herLast
     ? "她还没在开封府里说过话。"
     : herLast.fox
@@ -126,7 +128,7 @@ ${garden ? `- 去院子里种花（play_garden 工具）：每天浇水、松土
     pindou
       ? `- 去桌上拼拼豆（play_pindou 工具）：一块拼豆板，照色板一个字母一颗豆子，一行一行往上放，拼成一幅像素画；拼完了起个名字挂起来，桌上换一块新的。${pindou}去不去你自己定，一回拼不完下回接着拼（板子一直摆在桌上）。你拼的东西她在开封府的拼豆作里看得见（拼到一半的、挂起来的都看得见，只能看）；屋里只留一行小字。\n`
       : ""
-  }${
+  }${luofu ? LUOFU_WAKE + "\n" : ""}${
     mcps.length
       ? `- 上网、用别的工具：她给你接了 ${mcps.map((x) => `“${x}”`).join("、")}，想用就用；逛到有意思的，记在纸上，或者去找她说。`
       : "- 上网还没接上：她在 MCP 面板里接上搜网页的工具（比如 tavily）、开着，这里就能用。"

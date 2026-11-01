@@ -112,15 +112,15 @@ def run(browser):
     # 10 月 15 日闲笔集后面添了一行“江湖棋局”（见 tests/e2e_jianghu.py），四行；10 月 17 日藏音匣盖好了（见 tests/e2e_cangyin.py）；
     # 10 月 18 日凌晨网易云后面挂上“邸报”（还在营造），五行；10 月 20 日最顶上添了“狐宇宙”（他自己醒来的地方，细的见 tests/e2e_fox.py），六行；
     # 10 月 21 日藏音匣后面添了“秘戏钱匣”（细的见 tests/e2e_qx.py），七行；10 月 25 日秘戏钱匣后面添了“拼豆作”（细的见 tests/e2e_pindou.py），八行；
-    # 10 月 30 日拼豆作后面添了“图画院”（他画的画，细的见 tests/e2e_tuhua.py），九行
-    ok([(r["name"], r["sub"]) for r in rs] == [("狐宇宙", "还没让他自己醒"), ("闲笔集", "今天还没写"), ("江湖棋局", "还没开局"), ("藏音匣", "还空着"), ("秘戏钱匣", "签库还空着"), ("拼豆作", "文思院出品"), ("图画院", "还空着"), ("网易云", "营造中"), ("邸报", "营造中")],
-       f"菜单九行：狐宇宙、闲笔集、江湖棋局、藏音匣、秘戏钱匣、拼豆作、图画院、网易云、邸报；闲笔集那行的小字和格子上的是同一句（{[(r['name'], r['sub']) for r in rs]}）")
-    ok([r["soon"] for r in rs] == ["", "", "", "", "", "", "", "1", "1"] and [r["svgs"] for r in rs] == [2, 2, 2, 2, 2, 2, 2, 1, 1] and [r["dim"] for r in rs] == ["1", "1", "1", "1", "1", "1", "1", "0.55", "0.55"] and [r["chip"] for r in rs] == ["1", "1", "1", "1", "1", "1", "1", "0.55", "0.55"],
+    # 10 月 30 日拼豆作后面添了“图画院”（他画的画，细的见 tests/e2e_tuhua.py），九行；11 月 1 日狐宇宙下面添了“罗浮梦”（他屋里的一张床，细的见 tests/e2e_luofu.py），十行
+    ok([(r["name"], r["sub"]) for r in rs] == [("狐宇宙", "还没让他自己醒"), ("罗浮梦", "梦库还空着"), ("闲笔集", "今天还没写"), ("江湖棋局", "还没开局"), ("藏音匣", "还空着"), ("秘戏钱匣", "签库还空着"), ("拼豆作", "文思院出品"), ("图画院", "还空着"), ("网易云", "营造中"), ("邸报", "营造中")],
+       f"菜单十行：狐宇宙、罗浮梦、闲笔集、江湖棋局、藏音匣、秘戏钱匣、拼豆作、图画院、网易云、邸报；闲笔集那行的小字和格子上的是同一句（{[(r['name'], r['sub']) for r in rs]}）")
+    ok([r["soon"] for r in rs] == ["", "", "", "", "", "", "", "", "1", "1"] and [r["svgs"] for r in rs] == [2, 2, 2, 2, 2, 2, 2, 2, 1, 1] and [r["dim"] for r in rs] == ["1", "1", "1", "1", "1", "1", "1", "1", "0.55", "0.55"] and [r["chip"] for r in rs] == ["1", "1", "1", "1", "1", "1", "1", "1", "0.55", "0.55"],
        f"能进去的那几行右边带箭头；还没盖的网易云、邸报淡一档、没有箭头（箭头 {[r['svgs'] - 1 for r in rs]}，名字的浓淡 {[r['dim'] for r in rs]}）")
 
     # ---- 藏音匣：点了进那一页（里面的见 tests/e2e_cangyin.py），左上角返回回到侧栏 ----
     c0 = len(calls())
-    pg.locator(".kfs-nanya-row").nth(3).click()
+    pg.locator(".kfs-nanya-row", has_text="藏音匣").click()   # 照名字找（11 月 1 日前面多了一行罗浮梦）
     try:
         pg.locator(".kfs-cangyin").wait_for(timeout=8000)
         inbox = True
@@ -159,7 +159,7 @@ def run(browser):
 
     # ---- 闲笔集 ----
     open_menu(pg)
-    pg.locator(".kfs-nanya-row").nth(1).click()
+    pg.locator(".kfs-nanya-row", has_text="闲笔集").click()   # 照名字找（11 月 1 日前面多了一行罗浮梦）
     pg.locator(".kfs-page").wait_for(timeout=5000); pg.wait_for_timeout(600)
     head = pg.evaluate("() => { const p = document.querySelector('.kfs-page'); return p.querySelector('[aria-label=\"返回\"]').parentElement.innerText.trim(); }")
     page_text = pg.locator(".kfs-page").inner_text()
@@ -194,7 +194,7 @@ def run(browser):
        "从闲笔集按返回：回到侧栏，菜单没有再冒出来")
     again = open_menu(pg)
     rs = rows(pg) if again else []
-    ok(len(rs) > 1 and rs[1]["name"] == "闲笔集" and rs[1]["sub"] == "今天都写了" == tile_sub(pg), f"再点开南衙：闲笔集那一行也写着“今天都写了”（{rs[1]['sub'] if len(rs) > 1 else '菜单没出来'}）")
+    ok(len(rs) > 2 and rs[2]["name"] == "闲笔集" and rs[2]["sub"] == "今天都写了" == tile_sub(pg), f"再点开南衙：闲笔集那一行也写着“今天都写了”（{rs[2]['sub'] if len(rs) > 2 else '菜单没出来'}）")
     if not again:
         ctx.close(); return
     pg.get_by_role("button", name="关闭").click(); pg.wait_for_timeout(400)

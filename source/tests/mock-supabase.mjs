@@ -27,18 +27,18 @@ let claudeRelease = null; // 正压着的那一回：叫它现在就答
 // 测试用：排好的回话（tests/look.py 截图用）。平常的话按次序一句一句取，取完了照旧回“收到：…”；
 // 写日记、抄提要那几种不取。/__debug/reply-queue?text=… 往后排一句，/__debug/reset 清空
 const replyQueue = [];
-// 他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js、拼豆板 alarm/pindou.js）：/__debug/tool-queue?name=play_garden&input={"action":"water"}&text=先去看看花 往后排一步调工具
-// （name 写 play_dressing_room 就是去妆台，写 play_pindou 就是去桌上拼拼豆）。带着那几样工具的那一回照排好的调；结果递回来以后，还有排着的接着调，没有了照 reply-queue 说
-// （没排就说一句“（测试园子）结果的头一行”）
+// 他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js、拼豆板 alarm/pindou.js、床 alarm/luofu.js）：/__debug/tool-queue?name=play_garden&input={"action":"water"}&text=先去看看花 往后排一步调工具
+// （name 写 play_dressing_room 就是去妆台，写 play_pindou 就是去桌上拼拼豆，写 luofu_nap 就是上床睡一觉）。带着那几样工具的那一回照排好的调；结果递回来以后，还有排着的接着调，没有了照 reply-queue 说
+// （没排就说一句“（测试园子）结果的头一行”）。再写 &stop=max_tokens：这一步写到长度上限截断了（调的那一样开封府不该替他办）
 const toolQueue = [];
-const TOYS = new Set(["play_garden", "play_dressing_room", "play_pindou"]);
+const TOYS = new Set(["play_garden", "play_dressing_room", "play_pindou", "luofu_nap"]);
 function fakeGarden(body) {
   const msgs = body.messages || [];
   const blocksOf = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || []);
   const lastUser = msgs[msgs.length - 1];
   const results = lastUser && lastUser.role === "user" ? blocksOf(lastUser).filter((b) => b.type === "tool_result") : [];
   const usage = { input_tokens: 60, cache_creation_input_tokens: 0, cache_read_input_tokens: 9000, output_tokens: 50 };
-  const step = (q) => ({ status: 200, json: { model: body.model, stop_reason: "tool_use", content: (q.text ? [{ type: "text", text: q.text }] : []).concat([{ type: "tool_use", id: "toolu_garden_" + ++toolSeq, name: q.name, input: q.input }]), usage } });
+  const step = (q) => ({ status: 200, json: { model: body.model, stop_reason: q.stop || "tool_use", content: (q.text ? [{ type: "text", text: q.text }] : []).concat([{ type: "tool_use", id: "toolu_garden_" + ++toolSeq, name: q.name, input: q.input }]), usage } });
   const say = (text) => ({ status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text }], usage } });
   if (results.length) {
     const prev = msgs[msgs.length - 2];
@@ -269,6 +269,57 @@ function fakeRoom(body) {
   return null;
 }
 
+// 罗浮梦（他屋里的一张床，见 src/luofu/parts.js、alarm/luofu.js）的假的那边的我（tests/e2e_luofu.py、tests/e2e_alarm.mjs 用；带着 luofu_nap 的时候，就是醒在屋里那一回）。
+// 屋里没人跟他说话：照她最后一回在便签纸上留的那一句（“[开封府提示：她来你屋里转了一圈，在便签纸上留了一句：……]”）：
+//   “睡一觉”：先说“困了，睡一会儿。”，再调 luofu_nap（action: nap，不挑睡多久）；“睡一觉 酣眠”（小憩、短休也行）：挑了睡多久
+//   “睡两觉”：睡一觉，结果递回来再睡一觉，再递回来才说完
+//   “翻梦廊”：调 luofu_nap（action: gallery）
+//   “读一场 某某”：调 luofu_nap（action: read，which 写某某）
+//   “睡到一半”：说“困着困着”、调了 luofu_nap，可回话停在 max_tokens 上（写到长度上限截断）：开封府不该替他睡
+//   结果递回来：说“（测试罗浮梦）”加结果的头一行（排好了话的照排好的说）
+//   她那一句后面他已经调过 luofu_nap 了（上一回醒来睡过了）、排着别的要他调的（tool-queue）、没留过这几句：回 null（交给别人）
+function fakeLuofu(body) {
+  if (toolQueue.length) return null;
+  const msgs = body.messages || [];
+  const blocksOf = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || []);
+  let at = -1;
+  let note = "";
+  for (let i = msgs.length - 1; i >= 0 && at < 0; i--) {
+    if (msgs[i].role !== "user") continue;
+    for (const b of blocksOf(msgs[i])) {
+      const m = b.type === "text" && /在便签纸上留了一句：([^\]]*)\]/.exec(b.text || "");
+      if (m) {
+        at = i;
+        note = m[1].trim();
+      }
+    }
+  }
+  if (at < 0) return null;
+  const used = msgs.slice(at + 1).filter((m) => m.role === "assistant").flatMap((m) => blocksOf(m).filter((b) => b.type === "tool_use" && b.name === "luofu_nap"));
+  const lastUser = msgs[msgs.length - 1];
+  const results = lastUser && lastUser.role === "user" ? blocksOf(lastUser).filter((b) => b.type === "tool_result") : [];
+  const usage = { input_tokens: 60, cache_creation_input_tokens: 0, cache_read_input_tokens: 9000, output_tokens: 50 };
+  const use = (input) => ({ type: "tool_use", id: "toolu_luofu_" + ++toolSeq, name: "luofu_nap", input });
+  const step = (text, call) => ({ status: 200, json: { model: body.model, stop_reason: "tool_use", content: (text ? [{ type: "text", text }] : []).concat([call]), usage } });
+  const say = (text) => ({ status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text }], usage } });
+  const text = (r) => String((r && (typeof r.content === "string" ? r.content : JSON.stringify(r.content))) || "");
+  if (results.length) {
+    const ids = new Set(used.map((u) => u.id));
+    if (!results.some((r) => ids.has(r.tool_use_id))) return null;
+    if (/睡两觉/.test(note) && used.length < 2) return step("再睡一会儿。", use({ action: "nap" }));
+    if (replyQueue.length) return say(replyQueue.shift());
+    return say(`（测试罗浮梦）${results[0].is_error ? "没成：" : ""}${text(results[0]).split("\n")[0].slice(0, 40)}`);
+  }
+  if (used.length) return null;
+  if (/睡到一半/.test(note)) return { status: 200, json: { model: body.model, stop_reason: "max_tokens", content: [{ type: "text", text: "困着困着" }, use({ action: "nap" })], usage } };
+  const long = /(小憩|短休|酣眠)/.exec(note);
+  if (/睡一觉|睡两觉/.test(note)) return step("困了，睡一会儿。", use(long ? { action: "nap", duration: long[1] } : { action: "nap" }));
+  if (/翻梦廊/.test(note)) return step("翻翻梦廊。", use({ action: "gallery" }));
+  const one = /读一场\s*(\S.*)$/.exec(note);
+  if (one) return step("翻出来看看。", use({ action: "read", which: one[1] }));
+  return null;
+}
+
 // 闲笔集里的手帐（同页那一本）：她在「交给光义」那一屏点了发送（tests/e2e_tongye.py 用，见 src/tongye/host.js 的 tyArrangeAsk）。
 // 跟在名帖后面的那段规矩是【排手帐】开头的。照寄来的编号排：原话挑头两句（再编一个不存在的，开封府该认不出），
 // 头一张照片当主照片、第二三张当双联照（有的话），再编一张不存在的当截图；留一条批注贴在主照片旁边。她说的“想要”抄进正文（看得出带过来了）。
@@ -343,6 +394,11 @@ function fakeAnthropic(body, beta, via) {
   // 排手帐（不带工具，跟在名帖后面的是【排手帐】那段规矩）
   const jz = fakeArrange(body);
   if (jz) return jz;
+  // 他屋里的床（带着 luofu_nap，见 alarm/luofu.js）：照她最后在便签纸上留的那一句睡一觉、翻梦廊、读一场
+  if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "luofu_nap")) {
+    const l = fakeLuofu(body);
+    if (l) return l;
+  }
   // 他屋里的园子、妆台（带着 play_garden、play_dressing_room，见 alarm/garden.js、alarm/dressing.js）：排好了要他调的，照排好的调
   if (Array.isArray(body.tools) && body.tools.some((t) => t && TOYS.has(t.name))) {
     const g = fakeGarden(body);
@@ -654,7 +710,7 @@ const server = http.createServer(async (req, res) => {
       try {
         input = JSON.parse(url.searchParams.get("input") || "{}");
       } catch (e) {}
-      toolQueue.push({ name: url.searchParams.get("name") || "play_garden", input, text: url.searchParams.get("text") || "" });
+      toolQueue.push({ name: url.searchParams.get("name") || "play_garden", input, text: url.searchParams.get("text") || "", stop: url.searchParams.get("stop") || "" });
       return send(res, 200, { ok: true, queued: toolQueue.length });
     }
     // 往后排一句回话（截图用，见上面 replyQueue）

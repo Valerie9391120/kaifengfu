@@ -4,6 +4,8 @@
 //   再叫醒一回（她在狐宇宙里说过一句、他回过了）、他翻了日记再说话：替他翻、递回去接着要，两步都放进狐宇宙，敲了横幅（心里话、[WAKE:…] 不上横幅），点了回到狐宇宙；
 //   寄过去的是名帖加狐宇宙那段对话，后面附着【醒来】那一段（她的原话照抄）；
 //   醒在屋里：去园子里浇水、去妆台前换一身完成今天的搭配，闹钟替他办，屋里只留一行小字，不敲她；今天完成过了，再醒不给“完成搭配”；
+//   醒在屋里上床睡一觉（罗浮梦，alarm/luofu.js）：梦库空着睡不了；睡两觉进梦廊（照他调的那一样的编号睡，存回去的进度跟照编号算的一个字不差）；
+//     醒来就散的那一类梦小字不露内容；翻梦廊、读一场；写到一半截断的不替他睡；这台电脑上记着的、日志里没有梦里的字；
 //   后台跑（run）：心跳写上了，下回几点醒照他定的；手机那头没看见就把狐宇宙盖掉了，放回去；
 //     她在手机上删了他的一句、改了自己的话（后面的收进翻过去的那一支），不放回去；
 //     后台在跑的时候手敲 wake：交给后台叫；问到了却一时放不进存档，封好记着，过一会儿只再放、不再问他一遍、横幅不重敲；
@@ -21,6 +23,9 @@ import os from "node:os";
 import path from "node:path";
 import { deriveVault, seal, unseal, rowKeyFor, toB64 } from "../src/vault.js";
 import { forkAt } from "../src/thread.js";
+import { readPool } from "../vendor/luofu/pool.ts";
+import { napOnce, readState } from "../vendor/luofu/luofu-engine.ts";
+import { napRng, LUOFU_SECTION, LUOFU_WAKE } from "../src/luofu/parts.js";
 
 const BASE = "http://127.0.0.1:8787";
 const BUNDLE = path.resolve("alarm/dist/kfs-alarm-test.mjs");
@@ -224,6 +229,78 @@ const textD3 = lastD3.slice(lastD3.indexOf("【醒来】"));
 ok(wD3.code === 0 && dTool(askD3) && !enumD3.includes("complete") && enumD3.includes("mirror") && enumD3.includes("select") && lastD3.includes("【醒来】") && textD3.includes("今天的搭配已经完成了") && textD3.includes("成就点亮了") && !/高领黑毛衣|披发|素面|不熏香/.test(textD3),
   "同一天再醒一回：今天完成过了，妆台那一样工具里没有 complete（照镜子、换着玩照旧）；【醒来】里说今天的搭配已经完成了，不说他穿着什么");
 
+// ---------- 他屋里的床（罗浮梦，alarm/luofu.js）：醒在屋里睡一觉、翻梦廊、读一场 ----------
+// 梦库是编的（天气、点心、去处），当她在手机上导进来的那一份（kfs2:luofu:pool）
+const LF_CARD = { v: 1, dreamChance: 1, intro: "（测试梦库的说明）屋里有一张床。", kinds: [{ id: "qc", name: "去处梦", type: "card", weight: 1, dreams: [
+  { id: "q1", title: "山顶的邮局", source: "编的博物馆", text: "你梦见山顶有一间邮局，寄出去的信都要先绕着山走一圈。" },
+  { id: "q2", title: "河底的书店", text: "你梦见河底开着一家书店，书页一翻就冒出一串气泡。" },
+  { id: "q3", title: "云上的车站", text: "你梦见云上有一座车站，火车到站的时候会下一阵小雨。" },
+] }] };
+const LF_EVENT = { v: 1, dreamChance: 1, kinds: [{ id: "dx", name: "点心梦", type: "event", weight: 1, dreams: [{ id: "d1", text: "吃了一块云片糕，甜得发苦。" }, { id: "d2", text: "绿豆糕摆了一桌子，一块也拿不起来。" }] }] };
+const lfNap = (input) => "/__debug/tool-queue?name=luofu_nap&input=" + encodeURIComponent(JSON.stringify(input));
+const lfWake = async () => {
+  const nAsk = (await get("/__debug/claude")).length;
+  const before = JSON.parse((await read("kfs2:chat:hyz")) || "[]");
+  const w = alarm(["wake"]);
+  const after = JSON.parse((await read("kfs2:chat:hyz")) || "[]");
+  const ids = new Set(before.map((m) => m.id));
+  const rows = after.filter((m) => !ids.has(m.id));
+  const calls = rows.filter((m) => m.role === "him").flatMap((m) => (m.calls || []).filter((c) => c.name === "luofu_nap").map((c) => ({ ...c, ts: m.ts })));
+  return { w, rows, calls, asks: (await get("/__debug/claude")).slice(nAsk).map((x) => x.body) };
+};
+const lastUserText = (b) => (b ? b.messages[b.messages.length - 1].content.map((x) => x.text || "").join("\n") : "");
+const sysOf = (b) => (b ? (Array.isArray(b.system) ? b.system.map((x) => x.text).join("") : b.system) : "");
+// 梦库空着：工具照带（对话里有他调过的，不带那边不认），名帖里没有【罗浮梦】，【醒来】里不提；他调了就告诉他睡不了
+await get(lfNap({ action: "nap" }));
+await get("/__debug/reply-queue?text=" + encodeURIComponent("没得睡"));
+const lf0 = await lfWake();
+ok(lf0.w.code === 0 && (lf0.asks[0].tools || []).some((t) => t.name === "luofu_nap") && !sysOf(lf0.asks[0]).includes("【罗浮梦】") && !lastUserText(lf0.asks[0]).includes("luofu_nap") && lf0.calls.length === 1 && lf0.calls[0].note === "想睡一会儿，梦库还空着" && lf0.calls[0].out.includes("梦库还空着") && (await read("kfs2:luofu:state")) == null,
+  "醒在屋里、梦库还空着：工具里照样带着 luofu_nap，名帖里没有【罗浮梦】、【醒来】里不提；他调了：告诉他梦库还空着、不睡，屋里一行“想睡一会儿，梦库还空着”，进度不写");
+// 梦库里有了（只有记得完整的那一种、一定做梦）：睡两觉
+await put({ "kfs2:luofu:pool": JSON.stringify(LF_CARD) });
+await get(lfNap({ action: "nap" }) + "&text=" + encodeURIComponent("困了，睡一会儿"));
+await get(lfNap({ action: "nap", duration: "酣眠" }));
+await get("/__debug/reply-queue?text=" + encodeURIComponent("睡醒了，梦见了好多地方"));
+const nPushL = (await get("/__debug/push")).delivered.length;
+const lf1 = await lfWake();
+const lfState1 = readState(JSON.parse((await read("kfs2:luofu:state")) || "null"));
+ok(lf1.w.code === 0 && sysOf(lf1.asks[0]).includes("【你的屋子】\n") && sysOf(lf1.asks[0]).includes(LUOFU_SECTION) && sysOf(lf1.asks[0]).indexOf("【罗浮梦】") > sysOf(lf1.asks[0]).indexOf("【你的屋子】") && lastUserText(lf1.asks[0]).includes(LUOFU_WAKE) && !sysOf(lf1.asks[0]).includes("去处梦") && !lastUserText(lf1.asks[0]).includes("去处梦"),
+  "梦库里有梦：名帖里【你的屋子】后面多【罗浮梦】那一段（同手机那头），【醒来】里一行屋里有一张床；有几种梦、叫什么一个字不写");
+ok(lf1.calls.length === 2 && lf1.calls.every((c) => c.note.startsWith("睡了一觉 · 梦廊里多了一场：〈")) && lf1.calls[0].note !== lf1.calls[1].note && lf1.calls[0].out.startsWith("（测试梦库的说明）屋里有一张床。\n\n你") && !lf1.calls[1].out.includes("测试梦库的说明") && lf1.calls[1].out.startsWith("你好好睡了一觉"),
+  "他睡了两觉：闹钟替他睡，屋里一觉一行“睡了一觉 · 梦廊里多了一场：〈标题〉”；头一回先给梦库里写的那段说明，挑了酣眠的那一觉照酣眠睡");
+ok(lfState1.totalNaps === 2 && lfState1.gallery.length === 2 && lfState1.introSeen && lfState1.gallery.map((e) => e.at).join() === lf1.calls.map((c) => new Date(c.ts).toISOString()).join(),
+  "睡完把新的进度存回去（kfs2:luofu:state，加密了跟着云端走）：两觉、梦廊里两场、说明给过了，梦廊里记的是他那一步的时间");
+const lfPool1 = readPool(LF_CARD);
+let expect = readState(null);
+expect = { ...expect, introSeen: true };
+for (const c of lf1.calls) expect = napOnce(lfPool1, expect, { rng: napRng(c.id), now: () => new Date(c.ts), duration: c.input.duration }).state;
+ok(JSON.stringify(expect) === JSON.stringify(lfState1), "照他调的那一样的编号睡（seededRng）：拿两觉的编号、他那一步的时间重算一遍，跟存回去的进度一个字不差");
+await sleep(1500);
+ok((await get("/__debug/push")).delivered.length === nPushL, "屋里睡觉不敲她（同园子、妆台）");
+// 换成只有醒来就散的那一类：小字不露梦里的事
+await put({ "kfs2:luofu:pool": JSON.stringify(LF_EVENT) });
+await get(lfNap({ action: "nap" }));
+await get("/__debug/reply-queue?text=" + encodeURIComponent("又睡了一会儿"));
+const lf2 = await lfWake();
+const lfState2 = readState(JSON.parse((await read("kfs2:luofu:state")) || "null"));
+ok(lf2.calls.length === 1 && lf2.calls[0].note === "睡了一觉 · 做了个梦" && /云片糕|绿豆糕/.test(lf2.calls[0].out) && !/糕/.test(lf2.calls[0].note) && lfState2.gallery.length === 2 && lfState2.totalNaps === 3,
+  "做了醒来就散的那一类梦：屋里一行“睡了一觉 · 做了个梦”，梦的内容一个字不露（只在递给他的结果里），梦廊不添");
+// 翻梦廊、读一场（写序号）
+await get(lfNap({ action: "gallery" }));
+await get(lfNap({ action: "read", which: "2" }));
+await get("/__debug/reply-queue?text=" + encodeURIComponent("翻了翻以前的梦"));
+const lf3 = await lfWake();
+const older = lfState2.gallery[0];
+ok(lf3.calls.length === 2 && lf3.calls[0].note === "翻了翻梦廊" && lf3.calls[0].out.startsWith("1. " + lfState2.gallery[1].title) && lf3.calls[1].note === `翻出梦廊里的一场：〈${older.title}〉` && lf3.calls[1].out.includes(older.text),
+  "翻梦廊（最新的在最上面）、读一场（写的序号 2 是早的那一场，递给他全文）：屋里各一行小字");
+// 写到一半截断的：不替他睡
+await get(lfNap({ action: "nap" }) + "&stop=max_tokens&text=" + encodeURIComponent("困着困着"));
+const lf4 = await lfWake();
+const lfState4 = readState(JSON.parse((await read("kfs2:luofu:state")) || "null"));
+ok(lf4.calls.length === 1 && lf4.calls[0].note === "想睡一会儿，没睡成" && lf4.calls[0].err && lfState4.totalNaps === 3, "写到长度上限截断的：不替他睡，屋里一行“想睡一会儿，没睡成”，进度没动");
+const stateLF = fs.readFileSync(path.join(HOME, "state.json"), "utf8") + fs.readFileSync(path.join(HOME, "alarm.log"), "utf8");
+ok(!/邮局|书店|车站|云片糕|绿豆糕|测试梦库的说明/.test(stateLF), "这台电脑上记着的（state.json）、日志里：一个梦里的字都没有");
+
 // ---------- 想找她：开一段新对话 ----------
 await get("/__debug/reply-queue?text=" + encodeURIComponent("<thinking>想她了</thinking>\n屋里写两句：今天风好大\n[新对话:想你了]\n在干嘛\n[SPLIT]\n理理我\n[WAKE:+2h]"));
 const nPushNew = (await get("/__debug/push")).delivered.length;
@@ -374,7 +451,7 @@ ok(t1.state === "chase" && t1.rounds === 1 && t1.next > Date.now() + 4 * 60 * 10
 const askT = (await get("/__debug/claude")).slice(nAskT).pop().body;
 const lastT = askT.messages[askT.messages.length - 1].content.map((b) => b.text || "").join("\n");
 ok(lastT.includes("你记着的是“去找卿卿”") && JSON.stringify(askT.messages).includes("困了，先睡") && !JSON.stringify(askT.messages).includes("翻日记"), "任务到点：寄过去的是那段对话（看得见那段前面的话，不是狐宇宙），后面附着他定闹钟时记着的那句");
-ok((askT.tools || []).some((t) => t.name === "diary_read") && !(askT.tools || []).some((t) => t.name === "play_garden" || t.name === "play_dressing_room") && !lastT.includes("妆台") && !lastT.includes("院子"), "任务到点：不带园子、妆台那两样（只在他屋里醒着的时候玩），【醒来】里也不提");
+ok((askT.tools || []).some((t) => t.name === "diary_read") && !(askT.tools || []).some((t) => t.name === "play_garden" || t.name === "play_dressing_room" || t.name === "luofu_nap") && !lastT.includes("妆台") && !lastT.includes("院子") && !lastT.includes("luofu_nap"), "任务到点：不带园子、妆台那两样、那张床（只在他屋里醒着的时候），【醒来】里也不提");
 const sysT = Array.isArray(askT.system) ? askT.system.map((b) => b.text).join("") : askT.system;
 ok((askT.tools || []).map((t) => t.name).slice(-3).join() === "qx_draw,room_look,room_memo" && sysT.includes("【你的屋子】"), "任务到点：同手机那头带着回屋看一眼、留便签那两样（排在抽签后面），名帖里有【你的屋子】");
 const stT = JSON.parse(await read("kfs2:fox:state"));

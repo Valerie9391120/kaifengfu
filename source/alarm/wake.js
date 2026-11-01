@@ -35,6 +35,8 @@ import { ROOM_TOOLS, ROOM_NAMES, isRoomCall, runRoomCalls, roomSection, cutRoom,
 import { gardenOf, gardenBrief, gardenToy } from "./garden.js";
 import { dressingOf, dressingBrief, dressingToy } from "./dressing.js";
 import { pindouOf, pindouBrief, pindouToy } from "./pindou.js";
+import { luofuOf, luofuToy } from "./luofu.js";
+import { LUOFU_POOL, readLuofuPool, luofuSection } from "../src/luofu/parts.js";
 import { completedToday } from "../vendor/dressing/dressing-engine.ts";
 import { wakeSection, taskSection, wakeNowNote, tailTranscript, LAST_STEP_NOTE, THOUGHT_DONE_NOTE } from "./note.js";
 import { askSummary } from "../src/ask.js";
@@ -217,8 +219,9 @@ function withoutNewChat(step) {
 // 问他一回（几步）。msgs 是寄过去的那段对话（最后一条是醒了那一行），section 是【此刻】后面附的【醒来】那一段。
 // game：那段对话里下过江湖棋局（同手机那头：摆开过又收了的平常对话，对话里有他调过引擎的，四样工具照带，不带那边不认）。
 //   闹钟不替他下棋（引擎在手机那头）：一律当收着棋（{ off: true }，【此刻】里写一句收起来了）；他真调了，这一步到此为止
-// toys：他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js、拼豆板 alarm/pindou.js 的 gardenToy、dressingToy、pindouToy；只有醒在屋里的时候给，她 10 月 21 日定的，拼豆板 10 月 25 日添的）：
-//   一样带一样工具，他调了就替他办、递回去接着要。一样是 { tool, names, is(call), cut(call), run(calls) }
+// toys：他屋里能玩的那几样（园子 alarm/garden.js、妆台 alarm/dressing.js、拼豆板 alarm/pindou.js、床 alarm/luofu.js 的 gardenToy、dressingToy、pindouToy、luofuToy；
+//   只有醒在屋里的时候给，她 10 月 21 日定的，拼豆板 10 月 25 日添的，床 11 月 1 日添的）：
+//   一样带一样工具，他调了就替他办、递回去接着要。一样是 { tool, names, is(call), cut(call), run(calls, { at }) }（at 是他这一步的时间：床记梦廊里哪天做的梦用，别的几样不看）
 // most：最多几步（调一回工具、拿到结果接着往下说算一步）；lastNote：到了最后一步（前面一步调了工具，接着要的那一回）附在【醒来】后面的提醒，没给就不提醒
 // room：醒在平常的对话里（任务到点那一回）是 { chat, title }：同手机那头，带着回屋看一眼、留换装便签那两样（src/room.js），他调了就替他办；
 //   醒在屋里那一回不给（他就在屋里，园子、妆台自己带着）
@@ -255,6 +258,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     game,
     qx: qxSection(qxPool),
     room: roomSection(wakeOn(st)), // 【你的屋子】：同手机那头（“他自己醒”开着才有；闹钟叫他的时候总是开着的）
+    luofu: luofuSection(readLuofuPool(store.peek(LUOFU_POOL)), wakeOn(st)), // 【罗浮梦】：同手机那头（梦库里有梦才有，见 src/luofu/parts.js）
     draw: !!st.draw, // 他能画画：同手机那头（名帖一样才接得上缓存）。闹钟自己不画，他醒着画的手机上点了才画
   });
   const roomOf = (sure) => roomFor(windowOf(model), staticText.length, maxTokens, sure);
@@ -405,7 +409,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
       let calls = await runDiaryCalls(step.him.calls, reader, new Date());
       calls = runQxCalls(calls, qxPool);
       if (room) calls = await runRoomCalls(calls, { get: (k) => store.get(k), set: (k, v) => store.set(k, v), today: localDay(), at: step.him.ts, chat: room.chat, title: room.title, on: true });
-      for (const t of toys) calls = await t.run(calls);
+      for (const t of toys) calls = await t.run(calls, { at: step.him.ts });
       step.him.calls = calls;
       continue;
     }
@@ -471,6 +475,8 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
   const dressed = await dressing.load();
   // 他屋里桌上的拼豆板（10 月 25 日添的）：【醒来】里告诉他拼到哪儿了，去不去他自己定；拼的东西她在拼豆作「他的」那一栏看得见
   const pd = pindouOf(store, pindouOpts);
+  // 他屋里的一张床（罗浮梦，11 月 1 日添的）：梦库里有梦，【醒来】里告诉他一句，睡不睡他自己定；工具一直带着（对话里有他调过的，不带那边不认），梦库空着他调了就告诉他睡不了
+  const bed = luofuOf(store);
   // 他在聊天里给自己留的换装便签（src/room.js）：还管着的摆在【醒来】里；过了三天的、留它的那一步已经不在那段对话里的（她改了话、重新回答、删了那段），收起来
   const memos = liveMemos(await Promise.all(store.keys(MEMO_KEY).map(async (key) => ({ key, text: await store.get(key) }))), now);
   const chats = new Map();
@@ -505,6 +511,7 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     garden: gardenBrief(await garden.load(), garden.today()),
     dressing: dressingBrief(dressed, dressing.today()),
     pindou: pindouBrief(await pd.load()),
+    luofu: await bed.hasDreams(),
     steps: ROOM_STEPS,
     memos: memoLines(shown),
     // 心里话一回醒着写一段（她 10 月 24 日 02:05 说十二步写了十二段、差不多都是一个意思，02:09 定的“醒来写一回”）；她关了“他写心里话”就不提
@@ -541,7 +548,7 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     }
     return out;
   };
-  const toys = [gardenToy(garden), { ...dress, run: dressRun }, pindouToy(pd)];
+  const toys = [gardenToy(garden), { ...dress, run: dressRun }, pindouToy(pd), luofuToy(bed)];
   // 心里话写过了的那几步，附上 THOUGHT_DONE_NOTE（她关了“他写心里话”就不附）
   const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section, toys, most: ROOM_STEPS, lastNote: LAST_STEP_NOTE, thoughtNote: ctx.settings.thoughts !== false ? THOUGHT_DONE_NOTE : "" });
   // 便签：完成搭配那一下没收成的，醒完再收一遍
