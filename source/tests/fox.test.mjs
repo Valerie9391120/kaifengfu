@@ -480,6 +480,8 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   const inFox = wakeSection({ now, herLast: { ts: at(15, 50), title: "狐宇宙", fox: true }, lastWake: at(15, 0), n: 2, gap: 30, max: 12, transcript: "", pending: [{ title: "洗澡", at: at(17, 0), label: "去找卿卿" }] });
   ok(inFox.includes("她最后一回来，是 10 分钟前") && inFox.includes("便签纸") && inFox.includes("[新对话:起个名字]") && inFox.includes("不弹横幅") && inFox.includes("《洗澡》") && inFox.includes("“去找卿卿”"),
     "【醒来】：醒在自己屋里（写的字落在便签纸上、不敲她）；想找她开新对话；她最后是来屋里留的便签；他定过、还没到点的闹钟");
+  ok(inFox.includes("不用跟她报备") && inFox.includes("不写长信") && inFox.includes("随手留两个字的地方") && inFox.includes("抒情、感悟、碎碎念别往纸上写") && inFox.includes("别写在纸上，开一段新对话找她") && inFox.includes("半夜也行") && !inFox.includes("写便签：随笔") && !inFox.includes("想让她知道什么，写在便签纸上"),
+    "【醒来】：屋里的东西是他自己玩的，不用报备；纸上只留两个字，不写长信、不写抒情碎碎念；有话跟她说就开新对话，半夜也行（她 11 月 1 日 23:36、23:40、23:46 定的）");
   ok(s.includes("屋里打不了电话、也弹不了选项卡") && s.includes("在那段里打、在那段里弹"), "【醒来】：屋里打不了电话、也弹不了选项卡，想让她挑就开新对话");
   const ts1 = taskSection({ now, label: "去找卿卿", set: at(15, 0), round: 1, max: 12, mcps: [] });
   const ts3 = taskSection({ now, label: "", set: at(15, 0), round: 3, max: 12, mcps: ["tavily"] });

@@ -72,8 +72,8 @@ const lookT = ROOM_TOOLS[0];
 const memoT = ROOM_TOOLS[1];
 ok(JSON.stringify(lookT.input_schema.properties.what.enum) === '["garden","dressing","wardrobe","pindou"]' && lookT.input_schema.required.join() === "what" && lookT.description.includes("只能看、动不了") && lookT.description.includes("一行小字"),
   "room_look：what 挑园子、妆台、衣柜、拼豆板一样（拼豆板 10 月 25 日添的，见 tests/pindou.test.mjs）；说明里写着只能看、她那边冒一行小字");
-ok(memoT.input_schema.required.join() === "text" && memoT.description.includes("只在她明说要你下回在妆台穿什么的时候用，平常用不着") && memoT.description.includes(`“${MEMO_NOTE}”`) && memoT.description.includes("最多三天") && MEMO_NOTE === "记录了下次换装偏好",
-  "room_memo：只在她明说要他下回穿什么的时候用（她 02:41 定的：说明书里写死）；她那边那一行是她的原话“记录了下次换装偏好”；管到下一回完成搭配，最多三天");
+ok(memoT.input_schema.required.join() === "text" && memoT.description.includes("只在她明说要你下回在妆台穿什么的时候用，平常用不着") && memoT.description.includes(`“${MEMO_NOTE}”`) && memoT.description.includes("最多三天") && MEMO_NOTE === "在屋里留了一张便签" && MEMO_FAIL === "想在屋里留一张便签，没留成",
+  "room_memo：只在她明说要他下回穿什么的时候用（她 02:41 定的：说明书里写死）；她那边那一行“在屋里留了一张便签”（原来是“记录了下次换装偏好”，她 11 月 1 日 23:30 改的）；管到下一回完成搭配，最多三天");
 
 // =====================================================
 // 名帖里的【你的屋子】
@@ -190,7 +190,7 @@ ok(both.staticText.indexOf("【日记本】") < both.staticText.indexOf("【你�
   const m = await runRoomCalls([call("toolu_m1", "room_memo", { text: "  答应了卿卿\n下次穿高领黑毛衣 " })], io);
   const memo = JSON.parse(s.m.get(MEMO_KEY + "toolu_m1") || "null");
   ok(m[0].note === MEMO_NOTE && !m[0].err && memo && memo.v === 1 && memo.text === "答应了卿卿 下次穿高领黑毛衣" && memo.chat === "c1" && memo.title === "布丁" && memo.at === 1761100000000,
-    `留便签：记在 kfs2:fox:memo:<编号>（写的那句、哪段对话、他那一条的时间），她那边一行“记录了下次换装偏好”（${JSON.stringify(memo)}）`);
+    `留便签：记在 kfs2:fox:memo:<编号>（写的那句、哪段对话、他那一条的时间），她那边一行“${MEMO_NOTE}”（${JSON.stringify(memo)}）`);
   ok(m[0].out.includes("答应了卿卿 下次穿高领黑毛衣") && m[0].out.includes("第一眼就看得到") && m[0].out.includes("最多三天") && !m[0].out.includes("关着"), "递给他：留好了、写的什么、下回在屋里醒来第一眼看得到、最多三天");
   const s2 = kv();
   const m2 = await runRoomCalls([call("toolu_m1", "room_memo", { text: "  答应了卿卿\n下次穿高领黑毛衣 " })], { ...io, get: s2.get, set: s2.set });
