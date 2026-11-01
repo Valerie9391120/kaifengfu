@@ -184,6 +184,23 @@ if (TEST_URL) {
   define.__KFS_SUPABASE_KEY__ = JSON.stringify("sb_publishable_test");
 }
 
+// 图画院的框景（见开发说明“图画院：框景”那节）：光墙、挂落、长案、十瓶花，卷轴上的锦和画心的纸。
+// 名字带指纹；点进图画院才取（瓶花只取当天那一瓶）
+const thAsset = (f) => {
+  const buf = fs.readFileSync(`static/tuhua/${f}`);
+  const out = `th-${f.replace(/\.webp$/, "")}-${hash(buf)}.webp`;
+  fs.writeFileSync(`${OUT}/assets/${out}`, buf);
+  return `./assets/${out}`;
+};
+define.__KFS_TUHUA_ASSETS__ = JSON.stringify({
+  wall: thAsset("wall.webp"),
+  lattice: thAsset("lattice.webp"),
+  table: thAsset("table.webp"),
+  damask: thAsset("damask.webp"),
+  paper: thAsset("paper.webp"),
+  vases: Array.from({ length: 10 }, (_, i) => thAsset(`vase${i + 1}.webp`)),
+});
+
 const result = await build({
   entryPoints: ["src/main.jsx"],
   bundle: true,

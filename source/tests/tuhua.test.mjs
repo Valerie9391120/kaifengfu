@@ -18,6 +18,7 @@ const J = (x) => JSON.stringify(x);
 
 const th = await loadBundle("src/tuhua.js");
 const { TH_KEY, TH_IMG, TITLE_MAX, packEntry, packGone, readEntry, listEntries, cleanTitle, drawsOf, toCollect, thSub, dateOf, byMonth } = th;
+const { MOUNTS, mountOf, vaseOf, sceneOf, scrollParts, layoutScrolls, VASE_TOPS, VASE_RIGHTS, ART_W, TABLE_H } = th;
 const THUMB = "data:image/jpeg;base64,thumb";
 const T0 = Date.UTC(2026, 9, 30, 21, 40);
 
@@ -69,6 +70,52 @@ const T0 = Date.UTC(2026, 9, 30, 21, 40);
   const list = [{ id: "a", at: T0 }, { id: "b", at: T0 - 86400000 }, { id: "c", at: Date.UTC(2026, 8, 30, 12) }, { id: "d", at: Date.UTC(2025, 9, 1, 12) }];
   const g = byMonth(list, 2026);
   ok(J(g.map((x) => [x.label, x.items.map((e) => e.id)])) === J([["十月", ["a", "b"]], ["九月", ["c"]], ["2025 年 十月", ["d"]]]), "按月断开：今年的写“十月”，别的年份带上年");
+}
+
+// ================= 框景（11 月 1 日换的样子） =================
+{
+  // 当天那一瓶：一天换一瓶，十瓶轮着；同一天里不换（早上、半夜都是同一瓶）
+  const d0 = new Date(2026, 10, 1, 0, 5), d1 = new Date(2026, 10, 1, 23, 55), d2 = new Date(2026, 10, 2, 9);
+  const seen = new Set();
+  for (let i = 0; i < 10; i++) seen.add(vaseOf(new Date(2026, 10, 1 + i, 12)));
+  ok(vaseOf(d0) === vaseOf(d1) && vaseOf(d2) === (vaseOf(d0) + 1) % 10 && seen.size === 10 && VASE_TOPS.length === 10 && VASE_RIGHTS.length === 10,
+     `当天那一瓶：同一天不换，第二天换下一瓶，十天十瓶各一回（${vaseOf(d0)} → ${vaseOf(d2)}）`);
+  // 裱绫：同一张永远是同一个颜色；十几张里颜色不止一两样
+  const ids = Array.from({ length: 40 }, (_, i) => `m${i}.${i % 3}`);
+  const cols = new Set(ids.map((id) => mountOf(id)[0]));
+  ok(MOUNTS.length >= 12 && MOUNTS.slice(0, 6).map((m) => m[0]).join("") === "月白浅青淡黄藕荷松花浅绛" && mountOf("m1.1") === mountOf("m1.1") && cols.size >= 8,
+     `裱绫的颜色：她点的六样打头，又添了几样；同一张永远同一个颜色；四十张里有 ${cols.size} 样`);
+  // 一幅轴：竖的最长、横的最短（都挂成竖轴）；各部分加起来就是总高
+  const pv = scrollParts("竖", 150), pf = scrollParts("方", 150), ph = scrollParts("横", 150);
+  ok(pv.h > pf.h && pf.h > ph.h && pv.ih > pv.iw && ph.ih < ph.iw && pf.ih === pf.iw && pv.tian > pv.di,
+     `横竖方都挂成竖轴：竖的 ${pv.h}、方的 ${pf.h}、横的 ${ph.h}；天头比地头长`);
+  ok(pv.h === pv.rodT + pv.face + pv.rodB + pv.string + pv.tagH && pv.face === pv.tian + 2 * pv.sep + pv.core + pv.di && pv.core === pv.ih + 2 * pv.m,
+     "一幅轴各部分加起来就是总高（天杆、轴面、地杆、细绳、小签）");
+  ok(scrollParts("", 150).ratio === "方" && scrollParts("竖", 150, 1).tagH < pv.tagH, "认不出横竖的当方的挂；没名字的小签矮一些（只写日期）");
+  // 框景照屏宽缩放：长案贴底，瓶底站在案面上，挂落在右上角
+  const sc = sceneOf(390, 844, 0);
+  ok(Math.abs(sc.s - 390 / ART_W) < 1e-9 && Math.abs(sc.tableTop - (844 - TABLE_H * sc.s)) < 1e-9 && sc.vase.y + 1325 * sc.s / 2 > sc.tableTop && sc.flowersTop < sc.tableTop && sc.latticeW > 150,
+     `框景照屏宽缩放：长案顶在 ${sc.tableTop.toFixed(0)}，瓶底站在案面上，花最高到 ${sc.flowersTop.toFixed(0)}`);
+  // 排法：左右错落，从新到旧；同一列不重叠；右边头一幅挂在挂落底下
+  const es = Array.from({ length: 7 }, (_, i) => ({ id: `k${i}`, ratio: ["竖", "横", "方"][i % 3], title: i % 2 ? "" : "名字", at: 1000 - i }));
+  const L = layoutScrolls(es, 390, 844, { top: 105, vase: 0 });
+  const cols2 = L.items.map((it) => it.col).join("");
+  let overlap = false;
+  for (const c of [0, 1]) {
+    const col = L.items.filter((it) => it.col === c);
+    for (let i = 1; i < col.length; i++) if (col[i].y - col[i].p.cord < col[i - 1].y + col[i - 1].p.h) overlap = true;
+  }
+  const ys = L.items.map((it) => it.y);
+  ok(cols2 === "0101010" && !overlap && ys.every((y, i) => i === 0 || y > ys[i - 1]) && L.items[0].e.id === "k0",
+     `左一幅右一幅错落着挂（${cols2}），一幅比一幅低，同一列连挂绳都不重叠，新的在最上面`);
+  ok(L.items[1].y - L.items[1].p.cord >= sc.latticeH + 8 && L.items[0].y - L.items[0].p.cord >= 105,
+     "右边头一幅连挂绳挂在挂落底下；左边头一幅在“返回”那一条底下");
+  const right = L.items[1].x + L.items[1].w;
+  ok(L.items[0].x >= 10 && right <= 390 - 10 && L.items[1].x > L.items[0].x + L.items[0].w, `两列都在屏幕里，中间隔开（${L.items[0].x}…${right}）`);
+  // 翻到底：最后几幅都能整个露出来（挨着瓶花的高过花，另一列高过长案）
+  const okEnd = L.items.every((it) => it.y + it.p.h - L.maxScroll <= (it.x < sc.flowersRight ? sc.flowersTop - 10 : sc.tableTop - 14) + 0.5);
+  ok(L.maxScroll > 0 && okEnd, `翻到底（往上翻 ${L.maxScroll}）：挨着瓶花的那一列高过花，另一列高过长案`);
+  ok(layoutScrolls([], 390, 844).items.length === 0 && layoutScrolls([], 390, 844).maxScroll === 0, "一张都没有：不用翻");
 }
 
 console.log(`\n通过 ${passed}  失败 ${failed}`);

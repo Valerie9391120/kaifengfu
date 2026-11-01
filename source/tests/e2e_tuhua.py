@@ -19,7 +19,13 @@ ROWS = """() => [...document.querySelectorAll('.kfs-nanya .kfs-nanya-row')].map(
 CARDS = """() => [...document.querySelectorAll('.kfs-tuhua .kfs-tuhua-card')].map((c) => ({ id: c.dataset.id,
   date: (c.querySelector('.kfs-tuhua-date') || {}).textContent || '', title: (c.querySelector('.kfs-tuhua-title') || {}).textContent || '',
   thumb: (c.querySelector('img') || {}).src || '', w: Math.round(c.getBoundingClientRect().width) }))"""
-MONTHS = "() => [...document.querySelectorAll('.kfs-tuhua .kfs-tuhua-month')].map((m) => m.firstElementChild.textContent)"
+# 框景（11 月 1 日换的样子）：每一幅轴在哪儿、底下的小签、瓶花、挂落、长案；翻到哪儿了
+SCENE = r"""() => { const q = (s) => document.querySelector('.kfs-tuhua ' + s); const img = (s) => { const i = q(s); return i ? { ok: i.complete && i.naturalWidth > 0, src: i.getAttribute('src'), r: i.getBoundingClientRect().toJSON(), vase: i.dataset.vase || '' } : null; };
+  const deck = q('.th-deck'); const m = deck ? /translate3d\(0(?:px)?, (-?[0-9.]+)px/.exec(deck.style.transform) : null;
+  return { vase: img('.th-vase'), lattice: img('.th-front img'), table: img('.th-front img:nth-child(2)'), y: m ? -parseFloat(m[1]) : null, W: innerWidth, H: innerHeight,
+    cards: [...document.querySelectorAll('.kfs-tuhua .kfs-tuhua-card')].map((c) => { const r = c.getBoundingClientRect(); const t = c.querySelector('.th-tag').getBoundingClientRect(); const f = c.querySelector('.th-face').getBoundingClientRect();
+      return { id: c.dataset.id, col: c.dataset.col, x: r.x, w: r.width, top: r.top, bottom: Math.max(r.bottom, t.bottom), tagX: t.x + t.width / 2, faceX: f.x + f.width / 2, faceBottom: f.bottom, tagTop: t.top }; }) }; }"""
+VASE_TOPS = [136, 305, 129, 261, 147, 240, 236, 365, 249, 224]
 
 def setup(q): mock("/__debug/draw-setup?" + q)
 def his(page): return page.evaluate(HIS)
@@ -156,8 +162,36 @@ with sync_playwright() as p:
         ts = titles(pa)
         ok(ts[k1] == "月下读书" and ts[k2] == "窗外" and ts[k3] == "" and not pa.locator(".kfs-tuhua-say").count() and "画好啦" not in pa.locator(".kfs-tuhua").inner_text(),
            f"每张底下写名字和日期，他那句话不摆了；没起名字的只写日期（{ts}）")
-        ok(pa.evaluate(MONTHS) and re.fullmatch(r"[一二三四五六七八九十]+月", pa.evaluate(MONTHS)[0]) and all(150 < c["w"] < 200 for c in cs), f"按月断开（{pa.evaluate(MONTHS)}）；一行两格（{[c['w'] for c in cs]}）")
+        sc = pa.evaluate(SCENE)
+        cc = sc["cards"]
+        ok([c["col"] for c in cc] == ["0", "1", "0"] and cc[1]["top"] > cc[0]["top"] and cc[2]["top"] > cc[1]["top"] and cc[1]["x"] > cc[0]["x"] + cc[0]["w"] and abs(cc[0]["x"] - cc[2]["x"]) < 1,
+           f"框景：一幅一幅竖轴左右错落着挂，新的在上面（{[(c['col'], round(c['top'])) for c in cc]}）")
+        ok(all(abs(c["tagX"] - c["faceX"]) < 12 and c["tagTop"] > c["faceBottom"] for c in cc), "每一幅底下垂一张小签（名字、哪天画的）")
+        ok(sc["vase"] and sc["vase"]["ok"] and "th-vase" in sc["vase"]["src"] and sc["lattice"]["ok"] and "th-lattice" in sc["lattice"]["src"] and sc["table"]["ok"] and "th-table" in sc["table"]["src"]
+           and abs(sc["table"]["r"]["bottom"] - sc["H"]) < 2 and abs(sc["lattice"]["r"]["right"] - sc["W"]) < 2 and sc["lattice"]["r"]["top"] < 1,
+           f"框景：挂落贴右上角、长案贴底、案上插着当天那一瓶（第 {sc['vase'] and sc['vase']['vase']} 瓶）")
         shot(pa, "tuhua-grid.png")
+        # 上下翻：手指一推，松手慢慢停；翻到底最后那一幅整个露出来（高过瓶花）；推过的那一下不算点开
+        k = sc["vase"]["r"]["width"] / 800
+        flowers_top = sc["vase"]["r"]["top"] + VASE_TOPS[int(sc["vase"]["vase"]) - 1] * k
+        pa.mouse.move(300, 700); pa.mouse.down()
+        for i in range(1, 21): pa.mouse.move(300, 700 - i * 15); pa.wait_for_timeout(16)
+        pa.wait_for_timeout(200); pa.mouse.up(); pa.wait_for_timeout(1500)
+        y1 = pa.evaluate(SCENE)["y"]
+        ok(y1 is not None and 250 < y1 <= 320, f"往上推 300：跟着手指翻上去，松手不乱跑（{y1}）")
+        box = pa.locator(f".kfs-tuhua-card[data-id='{k1}']").bounding_box()
+        pa.mouse.move(box["x"] + 40, box["y"] + 120); pa.mouse.down()
+        for i in range(1, 9): pa.mouse.move(box["x"] + 40, box["y"] + 120 - i * 40); pa.wait_for_timeout(10)
+        pa.mouse.up(); pa.wait_for_timeout(2500)
+        s2 = pa.evaluate(SCENE)
+        last = next(c for c in s2["cards"] if c["id"] == k1)
+        ok(pa.locator(".kfs-tuhua-big").count() == 0, "从一幅轴上推着翻：不算点开")
+        ok(s2["y"] > y1 and last["bottom"] <= flowers_top + 1 and last["top"] > 0, f"甩一下翻到底：弹回来停住，最后那一幅整个露在瓶花上面（{round(last['bottom'])} ≤ {round(flowers_top)}）")
+        shot(pa, "tuhua-end.png")
+        pa.mouse.move(200, 200); pa.mouse.down()
+        for i in range(1, 31): pa.mouse.move(200, 200 + i * 30); pa.wait_for_timeout(10)
+        pa.mouse.up(); pa.wait_for_timeout(2500)
+        ok(pa.evaluate(SCENE)["y"] == 0, "往下拉过头：弹回最上面")
         pa.locator(f".kfs-tuhua-card[data-id='{k1}']").click(); pa.wait_for_timeout(700)
         big = pa.evaluate("(() => { const b = document.querySelector('.kfs-tuhua-big'); if (!b) return null; const i = b.querySelector('img'); return { src: i.src.slice(0, 30), w: Math.round(i.getBoundingClientRect().width), text: b.innerText }; })()")
         ok(big and big["src"].startswith("data:image/jpeg") and big["w"] > 250 and big["text"].startswith("月下读书") and re.search(r"\d+月\d+日", big["text"]) and "给你画了一张" not in big["text"],

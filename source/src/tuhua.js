@@ -122,3 +122,125 @@ export function byMonth(list, nowYear) {
   }
   return out;
 }
+
+// ======================= 框景（卿卿 11 月 1 日的草图 + 恩师那张画；见开发说明“图画院：框景”那节） =======================
+// 恩师那张画 771 宽：挂落在右上角（388..771 × 0..294），长案从 1514 那一行往下（158 高），瓶子站在案面上 (132, 1529)。
+// 页面上照屏宽缩放（s = 屏宽 / 771）：长案贴底，挂落贴右上角，瓶花站在长案上，墙铺满；中间一幅一幅的轴在这几样后面上下翻。
+export const ART_W = 771;
+export const LATTICE = { w: 383, h: 294 };
+export const TABLE_H = 158;
+const VASE_AT = { x: 132, y: 15 }; // 瓶底中心：离画的左边 132，案面后沿往下 15
+// 十瓶花的图（tools 见开发说明）：800×1370，瓶底中心在 (278, 1325)；图里一单位 214 像素，画里一单位 107 像素，所以缩一半贴上去。
+// tops：每一瓶最高那一枝在图里多高；rights：最右边伸到哪儿（翻到底的时候，挨着瓶花的轴要整个露出来）
+export const VASE_IMG = { w: 800, h: 1370, cx: 278, by: 1325 };
+export const VASE_TOPS = [136, 305, 129, 261, 147, 240, 236, 365, 249, 224];
+export const VASE_RIGHTS = [788, 708, 647, 757, 534, 620, 537, 580, 735, 609];
+// 当天插哪一瓶：照本地日期，一天换一瓶，十瓶轮着（她定的“每天换一束”）
+export function vaseOf(now) {
+  const d = now instanceof Date ? now : new Date(now || Date.now());
+  const day = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+  const n = VASE_TOPS.length;
+  return ((day % n) + n) % n;
+}
+export function sceneOf(W, H, vase = 0) {
+  const s = W / ART_W;
+  const tableTop = H - TABLE_H * s;
+  const k = s / 2;
+  const vx = VASE_AT.x * s - VASE_IMG.cx * k;
+  const vy = tableTop + VASE_AT.y * s - VASE_IMG.by * k;
+  return {
+    s,
+    tableTop,
+    latticeW: LATTICE.w * s,
+    latticeH: LATTICE.h * s,
+    vase: { x: vx, y: vy, w: VASE_IMG.w * k, h: VASE_IMG.h * k },
+    flowersTop: vy + VASE_TOPS[vase] * k,
+    flowersRight: vx + VASE_RIGHTS[vase] * k,
+  };
+}
+
+// 裱绫的颜色：每一张随机挑一个（照那一张的编号算：换设备、重开都是同一个颜色）。
+// 她点了月白、浅青、淡黄、藕荷、松花、浅绛，说“甚至可以再多加几样”，我添了后面六样
+export const MOUNTS = [
+  ["月白", "#d3e2ea"],
+  ["浅青", "#c8dbcf"],
+  ["淡黄", "#eee0b2"],
+  ["藕荷", "#dbc5d5"],
+  ["松花", "#dde2aa"],
+  ["浅绛", "#e6c4ab"],
+  ["缃色", "#ead39c"],
+  ["天水碧", "#c0d8d5"],
+  ["秋香", "#d6c78f"],
+  ["茶白", "#ebe5d2"],
+  ["湖蓝", "#c4d2e1"],
+  ["杏红", "#eecdb6"],
+];
+export function hashStr(t) {
+  let h = 2166136261;
+  for (const ch of String(t)) {
+    h ^= ch.codePointAt(0);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+export const mountOf = (id) => MOUNTS[hashStr(id) % MOUNTS.length];
+
+// 一幅轴各部分多高（w：轴宽）。横的、竖的、方的都挂成竖轴，横的那一幅短一些（她 10 月 31 日定的）。
+// 从上往下：挂绳（在天杆上面，cord 高）、天杆、天头（锦）、一道细线、画心（纸，画贴在中间）、一道细线、地头（锦）、地杆、
+// 一根细绳、底下垂的小签（名字、哪天画的；她 11 月 1 日定的）
+const TIAN = { 竖: 0.36, 方: 0.32, 横: 0.26 };
+const DI = { 竖: 0.22, 方: 0.2, 横: 0.17 };
+const PIC = { 竖: 4 / 3, 方: 1, 横: 3 / 4 };
+export function scrollParts(ratio, w, lines = 2) {
+  const r = PIC[ratio] ? ratio : "方";
+  const edge = Math.max(2, Math.round(w * 0.022));
+  const wi = w - 2 * edge;
+  const sep = Math.max(1.5, Math.round(w * 0.024) / 2);
+  const m = Math.round(wi * 0.045);
+  const iw = wi - 2 * m;
+  const ih = Math.round(iw * PIC[r]);
+  const tian = Math.round(wi * TIAN[r]);
+  const di = Math.round(wi * DI[r]);
+  const core = ih + 2 * m;
+  const face = tian + sep + core + sep + di;
+  const rodT = Math.max(4, Math.round(w * 0.05));
+  const rodB = Math.max(5, Math.round(w * 0.065));
+  const cord = Math.round(w * 0.34);
+  const string = Math.round(w * 0.1);
+  const tagH = lines > 1 ? 44 : 28;
+  const tagW = Math.round(Math.min(w * 0.88, 168));
+  return { ratio: r, edge, wi, sep, m, iw, ih, tian, di, core, face, rodT, rodB, cord, string, tagH, tagW, h: rodT + face + rodB + string + tagH };
+}
+
+// 一幅一幅错落着挂（她草图上那样）：左一幅、右一幅，右边那一幅往下错开一截；新的在上面。
+// W、H 屏幕多大；top 头上那一条（返回、标题）底下从哪儿算；vase 当天那一瓶。
+// 返回 { items: [{ e, x, y（天杆顶）, w, col, p }], maxScroll（往上翻最多翻多少）, w, scene }
+export function layoutScrolls(entries, W, H, { top = 64, vase = 0 } = {}) {
+  const sc = sceneOf(W, H, vase);
+  const w = Math.round(Math.min(W * 0.385, 210));
+  const xL = Math.round(Math.max(10, W * 0.075));
+  const xR = Math.round(W - xL - w);
+  const items = [];
+  const colBottom = [null, null];
+  let prev = null;
+  (entries || []).forEach((e, i) => {
+    const col = i % 2;
+    const p = scrollParts(e.ratio, w, e.title ? 2 : 1);
+    let y = top + p.cord + 6;
+    if (col === 1) y = Math.max(y, sc.latticeH + p.cord + 10); // 右边头一幅挂在挂落底下
+    if (prev) y = Math.max(y, prev.y + prev.p.h * 0.42);
+    if (colBottom[col] != null) y = Math.max(y, colBottom[col] + 18 + p.cord);
+    const it = { e, x: col ? xR : xL, y: Math.round(y), w, col, p };
+    items.push(it);
+    colBottom[col] = it.y + p.h;
+    prev = it;
+  });
+  // 翻到底：每一幅都能整个露出来——挨着瓶花的要高过花，别的高过长案
+  let maxScroll = 0;
+  for (const it of items) {
+    const byFlowers = it.x < sc.flowersRight;
+    const lim = byFlowers ? sc.flowersTop - 10 : sc.tableTop - 14;
+    maxScroll = Math.max(maxScroll, it.y + it.p.h - lim);
+  }
+  return { items, maxScroll: Math.max(0, Math.round(maxScroll)), w, scene: sc };
+}
