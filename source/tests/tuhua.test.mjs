@@ -18,7 +18,7 @@ const J = (x) => JSON.stringify(x);
 
 const th = await loadBundle("src/tuhua.js");
 const { TH_KEY, TH_IMG, TITLE_MAX, packEntry, packGone, readEntry, listEntries, cleanTitle, drawsOf, toCollect, thSub, dateOf, byMonth } = th;
-const { MOUNTS, mountOf, vaseOf, sceneOf, scrollParts, layoutScrolls, VASE_TOPS, VASE_RIGHTS, ART_W, TABLE_H } = th;
+const { MOUNTS, mountOf, vaseOf, sceneOf, scrollParts, pageLayout, VASE_TOPS, VASE_RIGHTS, ART_W, TABLE_H } = th;
 const THUMB = "data:image/jpeg;base64,thumb";
 const T0 = Date.UTC(2026, 9, 30, 21, 40);
 
@@ -96,26 +96,24 @@ const T0 = Date.UTC(2026, 9, 30, 21, 40);
   const sc = sceneOf(390, 844, 0);
   ok(Math.abs(sc.s - 390 / ART_W) < 1e-9 && Math.abs(sc.tableTop - (844 - TABLE_H * sc.s)) < 1e-9 && sc.vase.y + 1325 * sc.s / 2 > sc.tableTop && sc.flowersTop < sc.tableTop && sc.latticeW > 150,
      `框景照屏宽缩放：长案顶在 ${sc.tableTop.toFixed(0)}，瓶底站在案面上，花最高到 ${sc.flowersTop.toFixed(0)}`);
-  // 排法：左右错落，从新到旧；同一列不重叠；右边头一幅挂在挂落底下
-  const es = Array.from({ length: 7 }, (_, i) => ({ id: `k${i}`, ratio: ["竖", "横", "方"][i % 3], title: i % 2 ? "" : "名字", at: 1000 - i }));
-  const L = layoutScrolls(es, 390, 844, { top: 105, vase: 0 });
-  const cols2 = L.items.map((it) => it.col).join("");
-  let overlap = false;
-  for (const c of [0, 1]) {
-    const col = L.items.filter((it) => it.col === c);
-    for (let i = 1; i < col.length; i++) if (col[i].y - col[i].p.cord < col[i - 1].y + col[i - 1].p.h) overlap = true;
-  }
-  const ys = L.items.map((it) => it.y);
-  ok(cols2 === "0101010" && !overlap && ys.every((y, i) => i === 0 || y > ys[i - 1]) && L.items[0].e.id === "k0",
-     `左一幅右一幅错落着挂（${cols2}），一幅比一幅低，同一列连挂绳都不重叠，新的在最上面`);
-  ok(L.items[1].y - L.items[1].p.cord >= sc.latticeH + 8 && L.items[0].y - L.items[0].p.cord >= 105,
-     "右边头一幅连挂绳挂在挂落底下；左边头一幅在“返回”那一条底下");
-  const right = L.items[1].x + L.items[1].w;
-  ok(L.items[0].x >= 10 && right <= 390 - 10 && L.items[1].x > L.items[0].x + L.items[0].w, `两列都在屏幕里，中间隔开（${L.items[0].x}…${right}）`);
-  // 翻到底：最后几幅都能整个露出来（挨着瓶花的高过花，另一列高过长案）
-  const okEnd = L.items.every((it) => it.y + it.p.h - L.maxScroll <= (it.x < sc.flowersRight ? sc.flowersTop - 10 : sc.tableTop - 14) + 0.5);
-  ok(L.maxScroll > 0 && okEnd, `翻到底（往上翻 ${L.maxScroll}）：挨着瓶花的那一列高过花，另一列高过长案`);
-  ok(layoutScrolls([], 390, 844).items.length === 0 && layoutScrolls([], 390, 844).maxScroll === 0, "一张都没有：不用翻");
+  // 一页两幅（照恩师那张画：左上一幅窄些短些，右下一幅宽些长些、顶低一截），新的在前，单下一张的那一页只挂左边
+  const es = Array.from({ length: 5 }, (_, i) => ({ id: `k${i}`, ratio: ["竖", "横", "方"][i % 3], title: i % 2 ? "" : "名字", at: 1000 - i }));
+  const L = pageLayout(es, 390, 844, { safeTop: 59, vase: 0 });
+  const P0 = L.pages[0], P2 = L.pages[2];
+  ok(L.pages.length === 3 && L.pages.map((p) => p.map((it) => it.e.id).join(",")).join(" | ") === "k0,k1 | k2,k3 | k4" && P2.length === 1 && P2[0].slot === 0,
+     `一页两幅，新的在前；单下的那一张挂在左边（${L.pages.map((p) => p.map((it) => it.e.id).join(",")).join(" | ")}）`);
+  const [l, r] = P0;
+  ok(l.x + l.w < r.x && r.w > l.w && r.y > l.y && L.pages[1][0].x === l.x && L.pages[1][1].y === r.y,
+     `左上一幅窄些（${l.w}）、右下一幅宽些（${r.w}），右边的顶低一截（${l.y} → ${r.y}）；每一页都挂在同样的两个地方`);
+  ok(l.y - l.p.cord >= 59 + 50 && L.scale === 1, `左边那颗钉子钉在“返回”那一小块底下（${l.y - l.p.cord}）；iPhone 这么大的屏幕不用缩`);
+  // 最长的（竖的、有名字的）也放得下：左边高过瓶花，右边高过长案
+  const tall = pageLayout([{ id: "a", ratio: "竖", title: "名字" }, { id: "b", ratio: "竖", title: "名字" }], 390, 844, { safeTop: 59, vase: 2 });
+  const sc2 = tall.scene, [tl, tr] = tall.pages[0];
+  ok(tl.y + tl.p.h <= sc2.flowersTop - 8 + 0.5 && tr.y + tr.p.h <= sc2.tableTop - 10 + 0.5, `两幅都是竖的也放得下：左边高过最高的那瓶花，右边高过长案（${tl.y + tl.p.h} ≤ ${Math.round(sc2.flowersTop - 8)}，${tr.y + tr.p.h} ≤ ${Math.round(sc2.tableTop - 10)}）`);
+  const se = pageLayout([{ id: "a", ratio: "竖", title: "名字" }, { id: "b", ratio: "竖", title: "名字" }], 375, 667, { safeTop: 20, vase: 2 });
+  const [sl, sr] = se.pages[0];
+  ok(se.scale < 1 && sl.y + sl.p.h <= se.scene.flowersTop - 8 + 1 && sr.y + sr.p.h <= se.scene.tableTop - 10 + 1, `矮屏幕放不下就两幅一起缩（缩到 ${se.scale.toFixed(2)}）`);
+  ok(pageLayout([], 390, 844).pages.length === 0, "一张都没有：没有页");
 }
 
 console.log(`\n通过 ${passed}  失败 ${failed}`);

@@ -4,12 +4,12 @@ import { Icon } from "../ui/Icon.jsx";
 import { useLongPress } from "../ui/press.js";
 import { IconBtn } from "../ui/parts.jsx";
 import { useSlideIn } from "../ui/enter.js";
-import { dateOf, cleanTitle, TITLE_MAX, layoutScrolls, mountOf, vaseOf, hashStr, sceneOf } from "../tuhua.js";
+import { dateOf, cleanTitle, TITLE_MAX, pageLayout, mountOf, vaseOf, hashStr } from "../tuhua.js";
 
 // 图画院（见 tuhua.js、开发说明“图画院”“图画院：框景”两节）。
 // 11 月 1 日照卿卿的草图换了样子：恩师那张画拆成的框景——一面墙，右上角挂落，底下一张长案，案上月白瓶里插着当天那一瓶花（十瓶轮着）；
-// 中间他画的画一幅一幅裱成竖轴，左右错落挂着，从新到旧；手指一推上下翻，带一点阻尼（手感照藏音匣第二页）。
-// 轴在挂落、长案、瓶花后面翻过去；翻到底，最后那几幅都能整个露出来。
+// 墙上一页只挂两幅轴（左上一幅窄些短些、右下一幅宽些长些，照恩师那张画），往上划翻一页才划出别的来，从新到旧，翻到第几页不标。
+// 翻页的手感照藏音匣：两幅轴跟着手指走，下一页的两幅从长案、瓶花后面跟上来；松手过了两成就翻过去，不够就弹回来；第一页往下拉、最后一页往上推都弹回来。
 // 裱绫的颜色每一张随机挑一个（tuhua.js 的 MOUNTS）；横的挂成短一些的竖轴；轴底下垂一张小签，写名字和哪天画的（她 11 月 1 日挑的）。
 // 点一幅看大图；长按一幅“改名字”（没名字的写“起名字”）、“删掉这张”（再点一次才删）。
 // entries 见 tuhua.js 的 listEntries；imgOf(id) 那一张的大图（data URL，没取到是空的）；onRemove(id) 删掉这一张；onRename(id, 名字) 改名字
@@ -35,11 +35,12 @@ const ROD = "linear-gradient(180deg, #a07a5a 0%, #6d4c36 42%, #3f2c1e 100%)";
 const KNOB = "radial-gradient(circle at 38% 32%, #85614a 0%, #3e2a1d 68%, #24170f 100%)";
 const EDGE = "#4b3527";
 
-// 手感（照藏音匣第二页）：松手以后滑多远、翻过头弹回来的劲
-const FRICTION = 4.5;
-const EDGE_K = 180;
-const EDGE_C = 26;
-const RUBBER = 0.35;
+// 翻页的手感（照藏音匣 page.js 的 P：pageThreshold、pageVelocity、pageK、pageC）
+const PAGE_THRESHOLD = 0.2; // 划过多少才翻（占屏高）
+const PAGE_VELOCITY = 0.45; // 甩多快就翻（像素/毫秒）
+const PAGE_K = 240; // 翻页弹簧的劲
+const PAGE_C = 27; // 翻页弹簧的阻尼
+const RUBBER = 0.3; // 第一页往下拉、最后一页往上推，手指拉着只走三成
 const TAP = 7;
 
 const MENU_H = 104; // 长按那个菜单大约多高（两项）
@@ -60,7 +61,7 @@ function darken(hex, f) {
 }
 
 // 一幅轴
-function Scroll({ it, nowYear, onOpen, onLong }) {
+function Scroll({ it, nowYear, onOpen, onLong, current }) {
   const { e, x, y, w, p } = it;
   const lp = useLongPress((rect) => onLong(e, rect));
   const [, col] = mountOf(e.id);
@@ -80,7 +81,7 @@ function Scroll({ it, nowYear, onOpen, onLong }) {
       onClick={() => onOpen(e)}
       className="kfs-tuhua-card th-scroll"
       data-id={e.id}
-      data-col={it.col}
+      data-slot={it.slot}
       aria-label={e.title || dateOf(e.at, nowYear)}
       style={{ position: "absolute", left: x, top: y, width: w, height: p.h, padding: 0, margin: 0, border: 0, background: "none", textAlign: "left", WebkitTouchCallout: "none" }}
     >
@@ -110,7 +111,7 @@ function Scroll({ it, nowYear, onOpen, onLong }) {
       <span aria-hidden="true" style={{ position: "absolute", left: -ov - knobW + 2, top: rodB - (knobH - p.rodB) / 2, width: knobW, height: knobH, borderRadius: knobW * 0.4, background: KNOB }} />
       <span aria-hidden="true" style={{ position: "absolute", left: w + ov - 2, top: rodB - (knobH - p.rodB) / 2, width: knobW, height: knobH, borderRadius: knobW * 0.4, background: KNOB }} />
       {/* 底下垂一张小签：名字、哪天画的 */}
-      <span className="th-tagwrap" style={{ position: "absolute", left: w / 2, top: tagTop, width: 0, height: 0, "--th-tilt": `${tilt.toFixed(2)}deg`, animationDelay: `${delay}ms` }}>
+      <span key={current} className={current ? "th-tagwrap th-sway" : "th-tagwrap"} style={{ position: "absolute", left: w / 2, top: tagTop, width: 0, height: 0, "--th-tilt": `${tilt.toFixed(2)}deg`, animationDelay: `${delay}ms` }}>
         <span aria-hidden="true" style={{ position: "absolute", left: -0.5, top: -1, width: 1, height: p.string + 3, background: "#7a6250" }} />
         <span
           className="th-tag"
@@ -206,13 +207,13 @@ function useSafeTop() {
 
 export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
   const pageRef = useRef(null);
-  const stageRef = useRef(null);
   const deckRef = useRef(null);
   useSlideIn(pageRef);
   const [big, setBig] = useState(null); // 点开的那一张
   const [act, setAct] = useState(null); // 长按的那一张：{ e, rect, armed }
   const [naming, setNaming] = useState(null); // 正在改名字的那一张
   const [size, setSize] = useState({ W: 390, H: 844 });
+  const [pg, setPg] = useState(0); // 翻到第几页（松手那一下就定了，弹簧还在走）
   const safeTop = useSafeTop();
   const today = now || new Date();
   const nowYear = today.getFullYear();
@@ -231,14 +232,17 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
     return () => (ro ? ro.disconnect() : window.removeEventListener("resize", read));
   }, []);
   const { W, H } = size;
-  const lay = useMemo(() => layoutScrolls(list, W, H, { top: safeTop + 58, vase }), [list, W, H, safeTop, vase]);
-  const sc = lay.scene || sceneOf(W, H, vase);
+  const lay = useMemo(() => pageLayout(list, W, H, { safeTop, vase }), [list, W, H, safeTop, vase]);
+  const sc = lay.scene;
+  const last = Math.max(0, lay.pages.length - 1);
 
-  // ======================= 上下翻（手感照藏音匣第二页：松手以后慢慢停；翻过头弹回来） =======================
-  const st = useRef({ y: 0, v: 0, finger: null, dragged: false, stopped: false, raf: 0, last: 0, max: 0 });
+  // ======================= 翻页（手感照藏音匣：跟着手指走，松手由弹簧送到那一页） =======================
+  const st = useRef({ pos: 0, v: 0, target: 0, finger: null, dragged: false, stopped: false, raf: 0, last: 0, H: 844, max: 0, wheelAt: 0 });
+  st.current.H = H;
+  st.current.max = last;
   const paint = () => {
     const d = deckRef.current;
-    if (d) d.style.transform = `translate3d(0, ${(-st.current.y).toFixed(2)}px, 0)`;
+    if (d) d.style.transform = `translate3d(0, ${(-st.current.pos * st.current.H).toFixed(2)}px, 0)`;
   };
   const loop = (t) => {
     const S = st.current;
@@ -246,20 +250,16 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
     S.last = t;
     let busy = false;
     if (!S.finger) {
-      const mx = S.max;
-      if (S.y < 0 || S.y > mx) {
-        const edge = S.y < 0 ? 0 : mx;
-        S.v += (-(S.y - edge) * EDGE_K - S.v * EDGE_C) * dt;
-        S.y += S.v * dt;
-        if (Math.abs(S.y - edge) < 0.3 && Math.abs(S.v) < 5) {
-          S.y = edge;
-          S.v = 0;
-        } else busy = true;
-      } else if (Math.abs(S.v) > 4) {
-        S.y += S.v * dt;
-        S.v *= Math.exp(-FRICTION * dt);
-        busy = true;
-      } else S.v = 0;
+      const n = Math.max(1, Math.ceil(dt / 0.004));
+      for (let i = 0; i < n; i++) {
+        const a = -PAGE_K * (S.pos - S.target) - PAGE_C * S.v;
+        S.v += a * (dt / n);
+        S.pos += S.v * (dt / n);
+      }
+      if (Math.abs(S.pos - S.target) < 0.0005 && Math.abs(S.v) < 0.01) {
+        S.pos = S.target;
+        S.v = 0;
+      } else busy = true;
     }
     paint();
     S.raf = busy ? requestAnimationFrame(loop) : 0;
@@ -270,10 +270,19 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
     S.last = performance.now();
     S.raf = requestAnimationFrame(loop);
   };
-  useEffect(() => {
-    st.current.max = lay.maxScroll;
+  const goPage = (n, v = 0) => {
+    const S = st.current;
+    S.target = Math.max(0, Math.min(S.max, n));
+    S.v = v;
+    setPg(S.target);
     kick();
-  }, [lay.maxScroll]);
+  };
+  // 删了一张、换了屏幕：页数变少了就回到还在的那一页；屏幕高了矮了照新的屏高摆
+  useEffect(() => {
+    const S = st.current;
+    if (S.target > last) goPage(last);
+    else paint();
+  }, [last, H]);
   useEffect(() => () => st.current.raf && cancelAnimationFrame(st.current.raf), []);
 
   const onMove = (ev) => {
@@ -284,15 +293,15 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
     while (f.samples.length > 2 && ev.timeStamp - f.samples[0].t > 90) f.samples.shift();
     if (!f.mode) {
       if (Math.hypot(ev.clientX - f.x0, ev.clientY - f.y0) < TAP) return;
-      f.mode = "scroll";
+      f.mode = "page";
       f.y0 = ev.clientY;
-      f.s0 = S.y;
+      f.p0 = S.pos;
       S.dragged = true;
     }
-    let y = f.s0 - (ev.clientY - f.y0);
-    if (y < 0) y *= RUBBER;
-    else if (y > S.max) y = S.max + (y - S.max) * RUBBER;
-    S.y = y;
+    let p = f.p0 - (ev.clientY - f.y0) / S.H;
+    if (p < 0) p *= RUBBER;
+    else if (p > S.max) p = S.max + (p - S.max) * RUBBER;
+    S.pos = p;
     paint();
   };
   const onUp = (ev, cancel) => {
@@ -304,13 +313,20 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
     window.removeEventListener("pointerup", onUpEv);
     window.removeEventListener("pointercancel", onCancelEv);
     // 松手时的速度：最后九十毫秒里手指走了多远；停了一会儿才松手的，不甩
+    let vy = 0;
     if (f.mode && !cancel && f.samples.length > 1 && ev.timeStamp - f.samples[f.samples.length - 1].t < 80) {
       const a = f.samples[0];
       const b = f.samples[f.samples.length - 1];
-      const dt = b.t - a.t;
-      S.v = dt > 0 ? (-(b.y - a.y) / dt) * 1000 : 0;
+      vy = b.t > a.t ? (b.y - a.y) / (b.t - a.t) : 0; // 像素/毫秒，往下为正
     }
-    kick();
+    const from = f.start;
+    const moved = S.pos - from;
+    let n = from;
+    if (f.mode && !cancel) {
+      if (moved > PAGE_THRESHOLD || -vy > PAGE_VELOCITY) n = from + 1;
+      else if (-moved > PAGE_THRESHOLD || vy > PAGE_VELOCITY) n = from - 1;
+    }
+    goPage(n, (-vy * 1000) / S.H);
   };
   const onUpEv = (ev) => onUp(ev, false);
   const onCancelEv = (ev) => onUp(ev, true);
@@ -319,21 +335,21 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
     const S = st.current;
     if (S.finger) return;
     S.dragged = false;
-    S.stopped = Math.abs(S.v) > 40; // 正在滑：这一下只是按停，不算点
+    S.stopped = Math.abs(S.v) > 0.3 || Math.abs(S.pos - S.target) > 0.03; // 正在翻：这一下只是按住，不算点
     S.v = 0;
-    S.finger = { id: ev.pointerId, x0: ev.clientX, y0: ev.clientY, s0: S.y, mode: "", samples: [{ t: ev.timeStamp, y: ev.clientY }] };
+    S.finger = { id: ev.pointerId, x0: ev.clientX, y0: ev.clientY, p0: S.pos, start: S.target, mode: "", samples: [{ t: ev.timeStamp, y: ev.clientY }] };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUpEv);
     window.addEventListener("pointercancel", onCancelEv);
   };
+  // 电脑上滚轮：滚一下翻一页（触控板一甩会连着来好几下，翻完这一页之前不认）
   const onWheel = (ev) => {
     const S = st.current;
-    S.v = 0;
-    S.y = Math.max(-60, Math.min(S.max + 60, S.y + ev.deltaY));
-    paint();
-    kick();
+    if (S.finger || Math.abs(ev.deltaY) < 12 || ev.timeStamp - S.wheelAt < 450) return;
+    S.wheelAt = ev.timeStamp;
+    goPage(S.target + (ev.deltaY > 0 ? 1 : -1));
   };
-  // 推过、按停的那一下，松手时浏览器补的点击不算点
+  // 推过、按住的那一下，松手时浏览器补的点击不算点
   const onClickCapture = (ev) => {
     const S = st.current;
     if (S.dragged || S.stopped) {
@@ -343,12 +359,15 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
     S.dragged = false;
     S.stopped = false;
   };
+  const shown = [];
+  for (let k = Math.max(0, pg - 1); k <= Math.min(last, pg + 1); k++) if (lay.pages[k]) shown.push(k);
 
   const bigSrc = big ? imgOf(big.id) || big.thumb : "";
   return (
     <div ref={pageRef} className="kfs-tuhua absolute inset-0 z-40 kfs-page" style={{ background: WALL, animation: "none", overflow: "hidden" }}>
       <style>{`
-        .kfs-tuhua .th-tagwrap { transform-origin: 0 0; transform: rotate(var(--th-tilt)); animation: th-sway 1.7s cubic-bezier(.3,.6,.4,1) both; }
+        .kfs-tuhua .th-tagwrap { transform-origin: 0 0; transform: rotate(var(--th-tilt)); }
+        .kfs-tuhua .th-sway { animation: th-sway 1.7s cubic-bezier(.3,.6,.4,1) both; }
         @keyframes th-sway {
           0% { transform: rotate(calc(var(--th-tilt) + 7deg)); }
           30% { transform: rotate(calc(var(--th-tilt) - 4deg)); }
@@ -356,23 +375,26 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
           78% { transform: rotate(calc(var(--th-tilt) - 0.8deg)); }
           100% { transform: rotate(var(--th-tilt)); }
         }
-        @media (prefers-reduced-motion: reduce) { .kfs-tuhua .th-tagwrap { animation: none; } }
+        @media (prefers-reduced-motion: reduce) { .kfs-tuhua .th-sway { animation: none; } }
       `}</style>
       {/* 墙 */}
       <div aria-hidden="true" style={{ position: "absolute", inset: 0, backgroundColor: WALL, backgroundImage: `url(${A.wall})`, backgroundSize: "cover", backgroundPosition: "center top" }} />
 
-      {/* 中间：一幅一幅的轴，上下翻 */}
+      {/* 中间：一页两幅轴，往上划翻页（只摆这一页和前后两页） */}
       <div
-        ref={stageRef}
         className="th-stage"
         onPointerDown={onDown}
         onWheel={onWheel}
         onClickCapture={onClickCapture}
         style={{ position: "absolute", inset: 0, zIndex: 10, overflow: "hidden", touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
       >
-        <div ref={deckRef} className="th-deck" style={{ position: "absolute", left: 0, top: 0, width: "100%", height: 0, willChange: "transform" }}>
-          {lay.items.map((it) => (
-            <Scroll key={it.e.id} it={it} nowYear={nowYear} onOpen={setBig} onLong={(x, rect) => setAct({ e: x, rect, armed: false, at: Date.now() })} />
+        <div ref={deckRef} className="th-deck" data-page={pg} style={{ position: "absolute", left: 0, top: 0, width: "100%", height: 0, willChange: "transform" }}>
+          {shown.map((k) => (
+            <div key={k} className="th-page" data-page={k} style={{ position: "absolute", left: 0, top: k * H, width: "100%", height: H }}>
+              {lay.pages[k].map((it) => (
+                <Scroll key={it.e.id} it={it} nowYear={nowYear} current={k === pg} onOpen={setBig} onLong={(x, rect) => setAct({ e: x, rect, armed: false, at: Date.now() })} />
+              ))}
+            </div>
           ))}
         </div>
         {list.length === 0 && (
@@ -381,7 +403,7 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
               <line x1="8" y1="4" x2="8" y2="41" stroke="#7a6250" strokeWidth="1" />
               <circle cx="8" cy="4" r="3.6" fill="#8d6c44" stroke="#5b4430" strokeWidth="0.8" />
             </svg>
-            <div className="th-tagwrap" style={{ position: "absolute", left: 0, top: 0, width: 0, height: 0, "--th-tilt": "-1.5deg" }}>
+            <div className="th-tagwrap th-sway" style={{ position: "absolute", left: 0, top: 0, width: 0, height: 0, "--th-tilt": "-1.5deg" }}>
               <p
                 className="kfs-tuhua-empty"
                 style={{ position: "absolute", left: -58, top: 0, width: 116, padding: "10px 6px 8px", textAlign: "center", fontFamily: SERIF, fontSize: 14, letterSpacing: "0.12em", color: INK_SOFT, background: "#f6eedd", border: "1px solid rgba(150,120,90,0.32)", borderRadius: 3, boxShadow: "0 3px 7px rgba(70,48,28,0.18)" }}

@@ -212,35 +212,37 @@ export function scrollParts(ratio, w, lines = 2) {
   return { ratio: r, edge, wi, sep, m, iw, ih, tian, di, core, face, rodT, rodB, cord, string, tagH, tagW, h: rodT + face + rodB + string + tagH };
 }
 
-// 一幅一幅错落着挂（她草图上那样）：左一幅、右一幅，右边那一幅往下错开一截；新的在上面。
-// W、H 屏幕多大；top 头上那一条（返回、标题）底下从哪儿算；vase 当天那一瓶。
-// 返回 { items: [{ e, x, y（天杆顶）, w, col, p }], maxScroll（往上翻最多翻多少）, w, scene }
-export function layoutScrolls(entries, W, H, { top = 64, vase = 0 } = {}) {
+// 一页两幅（她 11 月 1 日 03:39 说清楚的：“画面上固定只有两幅卷轴 上滑翻页 才划出别的来”），翻到第几页不标。
+// 两幅的位置、大小照恩师那张画：左上一幅窄些、短些；右下一幅宽些、长些，顶比左边低一截（画里两颗钉子在 (216,104)、(561,436)）。
+// 新的在前：第一页左边是最新的一张、右边是第二新的；单下一张的那一页只挂左边。
+// 每一幅从钉子往下挂，竖的长、横的短；放不下（矮屏幕）就两幅一起缩：左边那一幅要高过瓶花，右边那一幅高过长案。
+// 返回 { pages: [[{ e, x, y（天杆顶）, w, p, slot }]], scale, scene }；第 k 页的轴在页面上往下错开 k 个屏高
+const SLOTS = [
+  { x: 88, w: 252, nail: 104 }, // 左上
+  { x: 418, w: 287, nail: 436 }, // 右下
+];
+export function pageLayout(entries, W, H, { safeTop = 0, vase = 0 } = {}) {
   const sc = sceneOf(W, H, vase);
-  const w = Math.round(Math.min(W * 0.385, 210));
-  const xL = Math.round(Math.max(10, W * 0.075));
-  const xR = Math.round(W - xL - w);
-  const items = [];
-  const colBottom = [null, null];
-  let prev = null;
-  (entries || []).forEach((e, i) => {
-    const col = i % 2;
-    const p = scrollParts(e.ratio, w, e.title ? 2 : 1);
-    let y = top + p.cord + 6;
-    if (col === 1) y = Math.max(y, sc.latticeH + p.cord + 10); // 右边头一幅挂在挂落底下
-    if (prev) y = Math.max(y, prev.y + prev.p.h * 0.42);
-    if (colBottom[col] != null) y = Math.max(y, colBottom[col] + 18 + p.cord);
-    const it = { e, x: col ? xR : xL, y: Math.round(y), w, col, p };
-    items.push(it);
-    colBottom[col] = it.y + p.h;
-    prev = it;
-  });
-  // 翻到底：每一幅都能整个露出来——挨着瓶花的要高过花，别的高过长案
-  let maxScroll = 0;
-  for (const it of items) {
-    const byFlowers = it.x < sc.flowersRight;
-    const lim = byFlowers ? sc.flowersTop - 10 : sc.tableTop - 14;
-    maxScroll = Math.max(maxScroll, it.y + it.p.h - lim);
+  const s = sc.s;
+  const dy = Math.max(0, safeTop + 56 - SLOTS[0].nail * s); // 左边那颗钉子钉在“返回”那一小块底下，右边跟着往下挪一样多
+  const room = (slot) => (slot.x * s < sc.flowersRight + 4 ? Math.min(sc.flowersTop - 8, sc.tableTop - 10) : sc.tableTop - 10);
+  let f = 1;
+  for (let k = 0; k < 6; k++) {
+    let need = 1;
+    for (const slot of SLOTS) {
+      const p = scrollParts("竖", Math.round(slot.w * s * f), 2);
+      need = Math.min(need, (room(slot) - (slot.nail * s + dy + p.cord)) / p.h);
+    }
+    if (need >= 0.995) break;
+    f = Math.max(0.45, f * need);
   }
-  return { items, maxScroll: Math.max(0, Math.round(maxScroll)), w, scene: sc };
+  const pages = [];
+  (entries || []).forEach((e, i) => {
+    const slot = SLOTS[i % 2];
+    const w = Math.round(slot.w * s * f);
+    const p = scrollParts(e.ratio, w, e.title ? 2 : 1);
+    const it = { e, x: Math.round((slot.x + slot.w / 2) * s - w / 2), y: Math.round(slot.nail * s + dy + p.cord), w, p, slot: i % 2 };
+    (pages[Math.floor(i / 2)] = pages[Math.floor(i / 2)] || []).push(it);
+  });
+  return { pages, scale: f, scene: sc };
 }
