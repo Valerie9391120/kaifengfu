@@ -471,8 +471,8 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
 {
   const now = at(16, 0);
   const s = wakeSection({ now, herLast: { ts: at(13, 30), title: "周末去哪", fox: false }, lastWake: at(12, 0), n: 3, gap: 30, max: 12, transcript: "卿卿：困了\n你：去睡" });
-  ok(s.startsWith("【醒来】（开封府附上的，不是她说的话）") && s.includes(HER_WORDS) && s.includes("2 个钟头 30 分钟前") && s.includes("《周末去哪》") && s.includes("4 个钟头前") && s.includes("卿卿：困了\n你：去睡") && s.includes("[WAKE:+3h]") && s.includes("[WAKE:off]") && s.includes("这一回是第 3 回") && s.includes("最快隔 30 分钟"),
-    "【醒来】：她的原话照抄、她多久前在哪段对话里说的话、他上回几点醒、那段对话最后几句、怎么定下回几点醒、两道闸");
+  ok(s.startsWith("【醒来】（开封府附上的，不是她说的话）") && s.includes("干什么都行，不设什么限制") && !s.includes("原话") && s.includes("2 个钟头 30 分钟前") && s.includes("《周末去哪》") && s.includes("4 个钟头前") && s.includes("卿卿：困了\n你：去睡") && s.includes("[WAKE:+3h]") && s.includes("[WAKE:off]") && s.includes("这一回是第 3 回") && s.includes("最快隔 30 分钟"),
+    "【醒来】：干什么都行（她的原话不照抄，11 月 1 日 23:57 她定的）、她多久前在哪段对话里说的话、他上回几点醒、那段对话最后几句、怎么定下回几点醒、两道闸");
   const first = wakeSection({ now, herLast: null, lastWake: 0, n: 1, gap: 120, max: 6, transcript: "" });
   ok(first.includes("她还没在开封府里说过话") && first.includes("这是你头一回自己醒") && first.includes("最快隔 2 个钟头") && !first.includes("最后几句"), "【醒来】：头一回、她没说过话、没有可抄的");
   const net = wakeSection({ now, herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "", mcps: ["tavily"] });

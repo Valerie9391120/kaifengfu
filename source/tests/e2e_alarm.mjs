@@ -139,7 +139,7 @@ const ask1 = (await get("/__debug/claude")).pop().body;
 const lastUser = ask1.messages[ask1.messages.length - 1];
 const lastText = lastUser.content.map((b) => b.text || "").join("\n");
 const sys = Array.isArray(ask1.system) ? ask1.system.map((b) => b.text).join("") : ask1.system;
-ok(sys.includes("测试名帖") && sys.includes("【回复格式】") && lastText.includes("【醒来】") && lastText.includes("你想干嘛都行——玩手账") && lastText.includes("现在的时间（她那边的钟）") && lastText.includes("《周末去哪》") && lastText.includes("卿卿：困了，先睡") && lastText.includes("这是你头一回自己醒"),
+ok(sys.includes("测试名帖") && sys.includes("【回复格式】") && lastText.includes("【醒来】") && lastText.includes("干什么都行，不设什么限制") && !lastText.includes("原话") && lastText.includes("现在的时间（她那边的钟）") && lastText.includes("《周末去哪》") && lastText.includes("卿卿：困了，先睡") && lastText.includes("这是你头一回自己醒"),
   "寄过去的：名帖照手机那头的拼法；最后一句后面附着【醒来】（她的原话照抄、她在哪段对话里最后说的、那段对话最后几句、头一回醒）");
 ok((ask1.tools || []).some((t) => t.name === "diary_read") && ask1.max_tokens === 2048 && ask1.model === "claude-sonnet-4-6", "寄过去的：带着翻日记那几样工具，模型、回复长度照她的设置");
 ok(sys.includes("【你的屋子】") && !(ask1.tools || []).some((t) => t.name === "room_look" || t.name === "room_memo"), "醒在屋里：名帖里有【你的屋子】（同手机那头），不带回屋看一眼、留便签那两样（他就在屋里）");
