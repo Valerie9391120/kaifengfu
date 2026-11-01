@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { SERIF, T, glass, fill, HAIRLINE } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { useLongPress } from "../ui/press.js";
-import { IconBtn } from "../ui/parts.jsx";
 import { useSlideIn } from "../ui/enter.js";
 import { dateOf, cleanTitle, TITLE_MAX, pageLayout, mountOf, vaseOf, hashStr } from "../tuhua.js";
 
@@ -422,13 +421,17 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
         <img className="th-vase" data-vase={vase + 1} src={A.vases[vase]} alt="" draggable={false} style={{ position: "absolute", left: sc.vase.x, top: sc.vase.y, width: sc.vase.w, height: sc.vase.h }} />
       </div>
 
-      {/* 左上角：返回、“图画院”（一小块玻璃，轴翻上去从它底下过） */}
-      <div className="flex items-center" style={{ position: "absolute", zIndex: 30, left: 10, top: "calc(10px + env(safe-area-inset-top))", ...glass(0.55, 18), borderRadius: 999, padding: "0 16px 0 0" }}>
-        <IconBtn onClick={onBack} label="返回">
-          <Icon name="chevL" />
-        </IconBtn>
-        <span style={{ fontFamily: SERIF, fontSize: 16.5, letterSpacing: "0.16em", color: INK }}>图画院</span>
-      </div>
+      {/* 左上角很淡的一个返回（照藏音匣那个：没有底、没有字；卿卿 11 月 1 日说要“简约一点”） */}
+      <button
+        onClick={onBack}
+        aria-label="返回"
+        className="kfs-tap"
+        style={{ position: "absolute", zIndex: 30, left: "max(10px, env(safe-area-inset-left, 0px))", top: "calc(8px + env(safe-area-inset-top))", width: 40, height: 40, display: "grid", placeItems: "center", opacity: 0.42, background: "none", border: 0, padding: 0 }}
+      >
+        <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
+          <path d="M11.5 3.5 L6 9 L11.5 14.5" fill="none" stroke={INK} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
 
       {/* 点开的那一张：大图，底下名字、哪天画的。点一下关掉 */}
       {big && (

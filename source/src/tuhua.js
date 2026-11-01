@@ -224,7 +224,7 @@ const SLOTS = [
 export function pageLayout(entries, W, H, { safeTop = 0, vase = 0 } = {}) {
   const sc = sceneOf(W, H, vase);
   const s = sc.s;
-  const dy = Math.max(0, safeTop + 56 - SLOTS[0].nail * s); // 左边那颗钉子钉在“返回”那一小块底下，右边跟着往下挪一样多
+  const dy = Math.max(0, safeTop + 14 - SLOTS[0].nail * s); // 左边那颗钉子别钉到刘海里（返回那个箭头小，在钉子左边），右边跟着往下挪一样多
   const room = (slot) => (slot.x * s < sc.flowersRight + 4 ? Math.min(sc.flowersTop - 8, sc.tableTop - 10) : sc.tableTop - 10);
   let f = 1;
   for (let k = 0; k < 6; k++) {

@@ -105,7 +105,7 @@ const T0 = Date.UTC(2026, 9, 30, 21, 40);
   const [l, r] = P0;
   ok(l.x + l.w < r.x && r.w > l.w && r.y > l.y && L.pages[1][0].x === l.x && L.pages[1][1].y === r.y,
      `左上一幅窄些（${l.w}）、右下一幅宽些（${r.w}），右边的顶低一截（${l.y} → ${r.y}）；每一页都挂在同样的两个地方`);
-  ok(l.y - l.p.cord >= 59 + 50 && L.scale === 1, `左边那颗钉子钉在“返回”那一小块底下（${l.y - l.p.cord}）；iPhone 这么大的屏幕不用缩`);
+  ok(l.y - l.p.cord >= 59 + 12 && l.x + l.w / 2 > 50 + 30 && L.scale === 1, `左边那颗钉子在刘海底下（${l.y - l.p.cord}），在左上角返回那个箭头右边；iPhone 这么大的屏幕不用缩`);
   // 最长的（竖的、有名字的）也放得下：左边高过瓶花，右边高过长案
   const tall = pageLayout([{ id: "a", ratio: "竖", title: "名字" }, { id: "b", ratio: "竖", title: "名字" }], 390, 844, { safeTop: 59, vase: 2 });
   const sc2 = tall.scene, [tl, tr] = tall.pages[0];
