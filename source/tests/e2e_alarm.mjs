@@ -139,8 +139,8 @@ const ask1 = (await get("/__debug/claude")).pop().body;
 const lastUser = ask1.messages[ask1.messages.length - 1];
 const lastText = lastUser.content.map((b) => b.text || "").join("\n");
 const sys = Array.isArray(ask1.system) ? ask1.system.map((b) => b.text).join("") : ask1.system;
-ok(sys.includes("测试名帖") && sys.includes("【回复格式】") && lastText.includes("【醒来】") && lastText.includes("干什么都行，不设什么限制") && !lastText.includes("原话") && lastText.includes("现在的时间（她那边的钟）") && lastText.includes("《周末去哪》") && lastText.includes("卿卿：困了，先睡") && lastText.includes("这是你头一回自己醒"),
-  "寄过去的：名帖照手机那头的拼法；最后一句后面附着【醒来】（她的原话照抄、她在哪段对话里最后说的、那段对话最后几句、头一回醒）");
+ok(sys.includes("测试名帖") && sys.includes("【回复格式】") && lastText.includes("【醒来】") && lastText.includes("醒着的时候想做什么或者不做任何都可以") && !lastText.includes("原话") && lastText.includes("现在的时间（她那边的钟）") && lastText.includes("《周末去哪》") && lastText.includes("卿卿：困了，先睡") && lastText.includes("这是你头一回自己醒"),
+  "寄过去的：名帖照手机那头的拼法；最后一句后面附着【醒来】（她改过的那一版，原话不照抄；她在哪段对话里最后说的、那段对话最后几句、头一回醒）");
 ok((ask1.tools || []).some((t) => t.name === "diary_read") && ask1.max_tokens === 2048 && ask1.model === "claude-sonnet-4-6", "寄过去的：带着翻日记那几样工具，模型、回复长度照她的设置");
 ok(sys.includes("【你的屋子】") && !(ask1.tools || []).some((t) => t.name === "room_look" || t.name === "room_memo"), "醒在屋里：名帖里有【你的屋子】（同手机那头），不带回屋看一眼、留便签那两样（他就在屋里）");
 
@@ -190,7 +190,7 @@ const gardenSt = JSON.parse((await read("kfs2:garden")) || "{}");
 const asksG = (await get("/__debug/claude")).slice(nAskG).map((x) => x.body);
 const askG0 = asksG[0] ? JSON.stringify(asksG[0].messages) : "";
 const askG1 = asksG[1] ? JSON.stringify(asksG[1].messages) : "";
-ok(wG.code === 0 && asksG.length === 2 && (asksG[0].tools || []).some((t) => t.name === "play_garden") && askG0.includes("去院子里种花") && askG0.includes("还没进去过"),
+ok(wG.code === 0 && asksG.length === 2 && (asksG[0].tools || []).some((t) => t.name === "play_garden") && askG0.includes("- 园艺（play_garden 工具）") && askG0.includes("还没进去过"),
   "醒在屋里：带着园子那一样工具，【醒来】里告诉他园子眼下的样子（还没进去过）");
 ok(gStep && gStep.calls[0].note === "去园子里浇了水" && askG1.includes("缘识") && askG1.includes("浇了一圈水") && gardenSt.currentPlant === "peony_weizi" && gardenSt.careDays === 1 && fox[fox.length - 1].items.map((x) => x.text).join() === "浇过水了，叶子绿绿的",
   "他去院子里浇了水：闹钟替他办（头一回先推开园门，那首诗给他看），存档记进 kfs2:garden，屋里一行小字“去园子里浇了水”，他接着说完");
@@ -211,7 +211,7 @@ const asksD = (await get("/__debug/claude")).slice(nAskD).map((x) => x.body);
 const dTool = (b) => (b && b.tools ? b.tools.find((t) => t.name === "play_dressing_room") : null);
 const askD0 = asksD[0] ? JSON.stringify(asksD[0].messages) : "";
 const askD2 = asksD[2] ? JSON.stringify(asksD[2].messages) : "";
-ok(wD.code === 0 && asksD.length === 3 && dTool(asksD[0]) && dTool(asksD[0]).input_schema.properties.action.enum.includes("complete") && (asksD[0].tools || []).some((t) => t.name === "play_garden") && askD0.includes("去妆台前玩换装") && askD0.includes("妆台你还没去过") && askD0.includes("不是你这会儿真穿着什么") && askD0.includes("这一回醒着最多 12 步"),
+ok(wD.code === 0 && asksD.length === 3 && dTool(asksD[0]) && dTool(asksD[0]).input_schema.properties.action.enum.includes("complete") && (asksD[0].tools || []).some((t) => t.name === "play_garden") && askD0.includes("- 妆台（play_dressing_room 工具）") && askD0.includes("妆台你还没去过") && askD0.includes("奇迹狐狐换装游戏") && askD0.includes("这一回醒着最多 12 步"),
   "醒在屋里：园子、妆台两样工具都带着（今天还没完成搭配，有 complete）；【醒来】里说这是个换装小游戏、妆台还没去过、这一回最多十二步");
 ok(dNotes.join("|") === "在妆台前换了换行头|完成了今天的搭配：披发、素面、不熏香；衣柜：高领黑毛衣" && askD2.includes("衣柜、妆台和配饰已经准备好了") && askD2.includes("今天的搭配完成了") && askD2.includes("成就解锁——初整衣冠") && dressSt.completedLook && dressSt.completedLook.date === day(Date.now()) && dressSt.completedLook.appearance.outfits.includes("outfit_black_turtleneck") && fox[fox.length - 1].items.map((x) => x.text).join() === "换好了，今天就这一身",
   "他换了一身、完成了今天的搭配：闹钟替他办（头一回先推开，开场那段给他看），成就给他看，存档记进 kfs2:dressing；屋里两行小字，完成的那一行写那一身；他接着说完");

@@ -471,18 +471,18 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
 {
   const now = at(16, 0);
   const s = wakeSection({ now, herLast: { ts: at(13, 30), title: "周末去哪", fox: false }, lastWake: at(12, 0), n: 3, gap: 30, max: 12, transcript: "卿卿：困了\n你：去睡" });
-  ok(s.startsWith("【醒来】（开封府附上的，不是她说的话）") && s.includes("干什么都行，不设什么限制") && !s.includes("原话") && s.includes("2 个钟头 30 分钟前") && s.includes("《周末去哪》") && s.includes("4 个钟头前") && s.includes("卿卿：困了\n你：去睡") && s.includes("[WAKE:+3h]") && s.includes("[WAKE:off]") && s.includes("这一回是第 3 回") && s.includes("最快隔 30 分钟"),
-    "【醒来】：干什么都行（她的原话不照抄，11 月 1 日 23:57 她定的）、她多久前在哪段对话里说的话、他上回几点醒、那段对话最后几句、怎么定下回几点醒、两道闸");
+  ok(s.startsWith("【醒来】（开封府提示）你醒在“狐宇宙”里：这是你自己的屋子。") && s.includes("醒着的时候想做什么或者不做任何都可以，下回几点醒自己定。") && !s.includes("原话") && s.includes("2 个钟头 30 分钟前") && s.includes("《周末去哪》") && s.includes("4 个钟头前") && s.includes("卿卿：困了\n你：去睡") && s.includes("[WAKE:+3h]") && s.includes("[WAKE:off]") && s.includes("这一回是第 3 回") && s.includes("最快隔 30 分钟"),
+    "【醒来】：她 11 月 2 日 00:30 改过的那一版（开头、想做什么都可以；她的原话不照抄）、她多久前在哪段对话里说的话、他上回几点醒、那段对话最后几句、怎么定下回几点醒、两道闸");
   const first = wakeSection({ now, herLast: null, lastWake: 0, n: 1, gap: 120, max: 6, transcript: "" });
   ok(first.includes("她还没在开封府里说过话") && first.includes("这是你头一回自己醒") && first.includes("最快隔 2 个钟头") && !first.includes("最后几句"), "【醒来】：头一回、她没说过话、没有可抄的");
   const net = wakeSection({ now, herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "", mcps: ["tavily"] });
   ok(net.includes("她给你接了 “tavily”，想用就用") && first.includes("上网还没接上") && !net.includes("上网还没接上"), "【醒来】：她接了 tavily（MCP 开着），告诉他能上网；没接的时候照实说");
   const inFox = wakeSection({ now, herLast: { ts: at(15, 50), title: "狐宇宙", fox: true }, lastWake: at(15, 0), n: 2, gap: 30, max: 12, transcript: "", pending: [{ title: "洗澡", at: at(17, 0), label: "去找卿卿" }] });
-  ok(inFox.includes("她最后一回来，是 10 分钟前") && inFox.includes("便签纸") && inFox.includes("[新对话:起个名字]") && inFox.includes("不弹横幅") && inFox.includes("《洗澡》") && inFox.includes("“去找卿卿”"),
-    "【醒来】：醒在自己屋里（写的字落在便签纸上、不敲她）；想找她开新对话；她最后是来屋里留的便签；他定过、还没到点的闹钟");
-  ok(inFox.includes("不用跟她报备") && inFox.includes("不写长信") && inFox.includes("随手留两个字的地方") && inFox.includes("抒情、感悟、碎碎念别往纸上写") && inFox.includes("别写在纸上，开一段新对话找她") && inFox.includes("半夜也行") && !inFox.includes("写便签：随笔") && !inFox.includes("想让她知道什么，写在便签纸上"),
-    "【醒来】：屋里的东西是他自己玩的，不用报备；纸上只留两个字，不写长信、不写抒情碎碎念；有话跟她说就开新对话，半夜也行（她 11 月 1 日 23:36、23:40、23:46 定的）");
-  ok(s.includes("屋里打不了电话、也弹不了选项卡") && s.includes("在那段里打、在那段里弹"), "【醒来】：屋里打不了电话、也弹不了选项卡，想让她挑就开新对话");
+  ok(inFox.includes("她最后一回来，是 10 分钟前") && inFox.includes("- 便签：她来过可能会留两个字") && inFox.includes("[新对话:起个名字]") && inFox.includes("《洗澡》") && inFox.includes("“去找卿卿”"),
+    "【醒来】：醒在自己屋里；便签那一条；想找她开新对话；她最后是来屋里留的便签；他定过、还没到点的闹钟");
+  ok(inFox.includes("同理你也可以选择进行简短回应，想多说就开新chat，不想写就不写") && inFox.includes("- 有话想说、想打电话：直接开一段新对话。") && !inFox.includes("写便签：随笔") && !inFox.includes("想让她知道什么，写在便签纸上"),
+    "【醒来】：便签只留两个字、想多说就开新对话；有话想说、想打电话就开新对话（她 11 月 2 日 00:30 改的字）");
+  ok(s.includes("有话想说、想打电话：直接开一段新对话") && s.endsWith("这是为了防闹钟出岔子。"), "【醒来】：想打电话就开新对话；最后一句照她改的");
   const ts1 = taskSection({ now, label: "去找卿卿", set: at(15, 0), round: 1, max: 12, mcps: [] });
   const ts3 = taskSection({ now, label: "", set: at(15, 0), round: 3, max: 12, mcps: ["tavily"] });
   ok(ts1.includes("你记着的是“去找卿卿”") && ts1.includes("到点了，她还没回这段对话") && ts1.includes("[WAKE:+5m]") && ts1.includes("最多 12 回") && ts3.includes("接着追她的第 3 回") && ts3.includes("“tavily”"),
@@ -620,7 +620,7 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   // 【醒来】：给了妆台那一句才提妆台；说这是游戏，不说他穿着什么
   const base = { now: at(14), herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "" };
   const withD = wakeSection({ ...base, dressing: "今天还没完成搭配。" });
-  ok(withD.includes("play_dressing_room") && withD.includes("不是你这会儿真穿着什么") && withD.includes("今天还没完成搭配。去不去你自己定") && withD.includes("她来转一圈看得见") && !wakeSection(base).includes("妆台"), "【醒来】：妆台那一句（换装小游戏，不是他真穿着什么；完成的那一身屋里看得见）；没给就不提");
+  ok(withD.includes("- 妆台（play_dressing_room 工具）：奇迹狐狐换装游戏。") && withD.includes("只照得出今天完成的那一套。今天还没完成搭配。") && !wakeSection(base).includes("妆台"), "【醒来】：妆台那一句（她改的字：换装游戏；眼下怎么样那一小句跟在后面）；没给就不提");
 }
 
 // ================= 醒在屋里，园子、妆台那两样怎么带、怎么办（askRoom、askTask 对着假的存档、假的那边） =================

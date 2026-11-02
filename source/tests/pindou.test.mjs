@@ -234,7 +234,7 @@ ok(threw, "密码不对、凭据坏了：往外抛（闹钟那头照这个停下
 const cu = cutPindou(call("j", { action: "paint", rows: [{ y: 0, beads: "kk" }] }));
 ok(cu.err && cu.note === PD_NOTE.fail && cu.out.includes("没写完"), "写到长度上限截断的：不替他办");
 const sec = wakeSection({ now: T0, herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "", pindou: "桌上那块 24×24 拼了 6 颗，拼到一半。" });
-ok(sec.includes("- 去桌上拼拼豆（play_pindou 工具）") && sec.includes("桌上那块 24×24 拼了 6 颗") && sec.includes("她在开封府的拼豆作里看得见"), "【醒来】里一行：去桌上拼拼豆、拼到哪儿了、她看得见");
+ok(sec.includes("- 拼豆（play_pindou 工具）") && sec.includes("桌上那块 24×24 拼了 6 颗") && sec.includes("她在开封府的拼豆作里看得见"), "【醒来】里一行：拼豆、拼到哪儿了、她看得见");
 ok(!wakeSection({ now: T0, herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "" }).includes("拼豆"), "没给就不提拼豆板");
 
 // =====================================================

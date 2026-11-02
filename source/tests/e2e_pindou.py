@@ -334,7 +334,7 @@ def run(browser):
     code, out = alarm(["wake"], home)
     woke = calls()[c1]["body"] if len(calls()) > c1 else {}
     ok(code == 0 and "醒过了" in out, f"叫醒他一回（{out.strip().splitlines()[-1] if out.strip() else ''}）")
-    ok("play_pindou" in names_of(woke) and "- 去桌上拼拼豆（play_pindou 工具）" in last_her(woke) and "拼豆板还空着" in last_her(woke), "醒在屋里：工具里带着 play_pindou，【醒来】里一行拼豆板（还空着）")
+    ok("play_pindou" in names_of(woke) and "- 拼豆（play_pindou 工具）" in last_her(woke) and "拼豆板还空着" in last_her(woke), "醒在屋里：工具里带着 play_pindou，【醒来】里一行拼豆板（还空着）")
     after = calls()[c1 + 1]["body"] if len(calls()) > c1 + 1 else {}
     res = last_result(after)
     ok("放好了：这一笔放了 16 颗" in res and "kkkkkkkk" in res, "替他办：放好了几颗，递给他板子眼下的样子")
