@@ -16,6 +16,12 @@
 //     这台电脑上记着的（state.json）、日志里，一个他说的字都没有；
 //   后台在跑的时候重装：叫旧的自己停、换新的跑起来；
 //   卸干净（后台那一个也停了）。
+//   从屋里回到她最后说话的那一段（[回去]，她 11 月 2 日 01:53 定的；另装一份闹钟，对着同一个假 Supabase）：
+//     屋里醒来写 [回去]：那段旧对话里多了他的话（最前头一行她看不见）、敲了她、点横幅回那段，狐宇宙里一行“去《…》找你了”，前面写的留在屋里，[WAKE] 管屋里；
+//     没有那一段（她没在平常对话里说过话）、那段里她那句还没回上：【醒来】里不提，写了也摘掉、不放、不敲；
+//     他醒着的工夫里她把那段删了：不放、不敲、屋里不留“去《…》找你了”；
+//     后台跑：一时放不进那段（库房不应），过一会儿只再放一回，不再问他、不重复放、不重复敲；手机那头没看见就盖掉了，放回去、不再敲；
+//     她删了他那一句（手机那头看见过），不放回去；这台电脑上记着的、日志里没有他说的字、她说的字、对话的名字。
 // 先起假 Supabase（npm run mock &）。跑：npm run test:alarm（会先打好闹钟的测试包）
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -505,6 +511,188 @@ const un = alarm(["uninstall"]);
 await sleep(500);
 ok(un.out.includes("卸干净了") && !fs.existsSync(HOME) && !(await pingSock()), "卸：后台那一个停了，凭据、存档、日志都删了");
 if (child.exitCode === null && child.signalCode === null) child.kill();
+
+// ---------- 从屋里回到她最后说话的那一段（[回去]，她 11 月 2 日 01:53 定的）：另装一份闹钟，对着同一个假 Supabase ----------
+{
+  const HOME2 = fs.mkdtempSync(path.join(os.tmpdir(), "kfs-alarm-back-"));
+  const env2 = { ...env, KFS_ALARM_HOME: HOME2 };
+  const alarm2 = (args, extra = {}) => {
+    try {
+      return { code: 0, out: execFileSync(process.execPath, [BUNDLE, ...args], { env: { ...env2, ...extra }, encoding: "utf8", timeout: 120000 }) };
+    } catch (e) {
+      return { code: e.status || 1, out: String(e.stdout || "") + String(e.stderr || "") };
+    }
+  };
+  // 叫他的工夫里要动手脚的（她在他醒着的时候删了那段）：不等它，回头再等
+  const alarm2Async = (args) =>
+    new Promise((resolve) => {
+      const p = spawn(process.execPath, [BUNDLE, ...args], { env: env2 });
+      let out = "";
+      p.stdout.on("data", (d) => (out += d));
+      p.stderr.on("data", (d) => (out += d));
+      p.on("exit", (code) => resolve({ code, out }));
+    });
+  // 她在手机上删了一样（存档里记一笔删了，同 alarm/store.js 的 del）
+  const drop = async (k) => fetch(`${BASE}/rest/v1/kv`, { method: "POST", headers: H, body: JSON.stringify([{ key: await rowKeyFor(vault, k), value: await seal(vault, JSON.stringify({ k, d: 1 })) }]) });
+  const chatOf = async (id) => JSON.parse((await read("kfs2:chat:" + id)) || "null");
+  const pushes = async () => (await get("/__debug/push")).delivered;
+  const asks = async () => (await get("/__debug/claude")).length;
+  const tagOf = async (id) => (await rowKeyFor(vault, "notice:" + id)).slice(2);
+  const lastOf = (b) => (b ? b.messages[b.messages.length - 1].content.map((x) => x.text || "").join("\n") : "");
+  const texts = (m) => ((m && m.items) || []).map((x) => x.text).join("|");
+  const added = (before, after) => {
+    const ids = new Set((before || []).map((m) => m.id));
+    return (after || []).filter((m) => !ids.has(m.id));
+  };
+  const lineBack = (t) => `- 有话想说、想打电话：开一段新对话，或者回到她最后说话的那一段《${t}》。开新的，单独一行写 [新对话:起个名字]；回《${t}》，单独一行写 [回去]。这一行后面写的就是对她说的话，照【回复格式】写（分几条、发语音、打电话都行）。`;
+  const LINE_NEW = "- 有话想说、想打电话：直接开一段新对话。在回复里单独一行写 [新对话:起个名字]，这一行后面写的就是对她说的话，照【回复格式】写（分几条、发语音、打电话都行），落进那段新对话。";
+  const entry = (id, title, preview) => ({ id, title, preview, updatedAt: Date.now() });
+  // 她新说的那一句要是她在开封府里说的最后一句（比前面几段里她说过的都晚），又得在他醒来以前：歇一下再取钟点，她那句早一秒、他回的那句早半秒
+  const fresh = async () => {
+    await sleep(2500);
+    return Date.now();
+  };
+  // 她手机上眼下的样子：狐宇宙收拾干净（醒过一回、她刚来屋里留了一张便签“回去找我”），新聊的一段《晚饭吃什么》（她说了一句、他回过了），排在历史对话最前头
+  let t = await fresh();
+  await put({
+    "kfs2:chat:hyz": JSON.stringify([{ id: "bw0", role: "event", who: "him", kind: "wake", ts: t - 2 * 3600 * 1000, quiet: true }, { id: "bn1", role: "her", ts: t - 60 * 1000, text: "回去找我", note: true }]),
+    "kfs2:chat:c2": JSON.stringify([{ id: "bh1", role: "her", ts: t - 1000, text: "今晚吃面吧" }, { id: "bg1", role: "him", ts: t - 500, raw: "好", items: [{ type: "text", text: "好" }] }]),
+    "kfs2:index": JSON.stringify([entry("c2", "晚饭吃什么", "好")].concat(JSON.parse(await read("kfs2:index")))),
+  });
+  const s2 = alarm2(["setup"]);
+  ok(s2.code === 0 && s2.out.includes("暗号对上了"), "回去：另装一份闹钟（对着同一个假 Supabase）");
+
+  // 屋里醒来写 [回去]（假的那边的我照她便签上那句“回去找我”写，见 tests/mock-supabase.mjs 的 fakeBack）
+  const fox0 = JSON.parse(await read("kfs2:chat:hyz"));
+  let nPush = (await pushes()).length;
+  let nAsk = await asks();
+  const b1 = alarm2(["wake"]);
+  const c2 = await chatOf("c2");
+  const fox1 = JSON.parse(await read("kfs2:chat:hyz"));
+  const add1 = added(fox0, fox1);
+  const ev1 = add1.find((m) => m.kind === "wake");
+  const room1 = add1.find((m) => m.role === "him");
+  const ask1b = (await get("/__debug/claude")).slice(nAsk).map((x) => x.body);
+  const last1 = lastOf(ask1b[0]);
+  ok(b1.code === 0 && ask1b.length === 1 && last1.includes(lineBack("晚饭吃什么")) && !last1.includes(LINE_NEW) && last1.includes("卿卿：今晚吃面吧") && JSON.stringify(ask1b[0].messages).includes("在便签纸上留了一句：回去找我"),
+    "回去：醒在屋里，【醒来】里那一条写着她最后说话的那一段《晚饭吃什么》、[回去] 怎么写（那段最后几句照旧抄着）");
+  ok(c2 && c2.length === 4 && c2[0].id === "bh1" && c2[1].id === "bg1" && c2[2].hidden && c2[2].back && c2[2].kind === "wake" && texts(c2[3]) === "（测试回去）回《晚饭吃什么》来找你了|在吗" && !("wake" in c2[3]) && (await read("kfs2:fox:task:" + c2[3].id)) == null,
+    "回去：那段旧对话里接着原来的话多了他这一句（最前头一行她看不见），[WAKE] 不跟过去、不在那段里定闹钟");
+  ok(ev1 && ev1.go && ev1.go.how === "back" && ev1.go.chat === "c2" && ev1.go.title === "晚饭吃什么" && room1 && texts(room1) === "（测试回去）屋里留一句" && room1.wake === "+3h" && !JSON.stringify(add1).includes("来找你了"),
+    "回去：狐宇宙里一行“去《晚饭吃什么》找你了”，[回去] 前面写的留在屋里纸上，[WAKE:+3h] 管他下回几点醒（记在屋里）；他在那边说的屋里不重复");
+  await sleep(3000);
+  const p1 = (await pushes()).slice(nPush);
+  const tagC2 = await tagOf("c2");
+  ok(p1.length === 2 && p1.map((d) => d.json.notification.body).join("|") === "（测试回去）回《晚饭吃什么》来找你了|在吗" && p1.every((d) => d.endpoint === phone.endpoint && d.json.notification.navigate.startsWith(`http://127.0.0.1:8080/#n=r.${tagC2}.`)) && b1.out.includes("回到你最后说话的那段对话里找你"),
+    `回去：敲她（一个气泡一条，屋里写的不上横幅），点了回《晚饭吃什么》那段（${p1.length} 条）`);
+  const idx1b = JSON.parse(await read("kfs2:index")).filter((c) => c.id !== "hyz");
+  ok(idx1b[0].id === "c2" && idx1b[0].title === "晚饭吃什么" && idx1b[0].preview === "（测试回去）回《晚饭吃什么》来找你了", "回去：那段在她的历史对话里挪到最前头（名字照旧），预览是他说的");
+
+  // 没有那一段（最近那几段里她只在屋里留过便签，平常的对话里一句话没说）：【醒来】里不提，他写了 [回去] 也摘掉，字留在屋里，不放、不敲
+  const idxSave = JSON.parse(await read("kfs2:index"));
+  await put({
+    "kfs2:chat:hyz": JSON.stringify(fox1.concat([{ id: "bn2", role: "her", ts: Date.now(), text: "再回去找我", note: true }])),
+    "kfs2:index": JSON.stringify(idxSave.filter((c) => c.id === "hyz" || c.id === newEntry.id)),
+  });
+  const c2Was = await read("kfs2:chat:c2");
+  nPush = (await pushes()).length;
+  nAsk = await asks();
+  const b2 = alarm2(["wake"]);
+  const fox2 = JSON.parse(await read("kfs2:chat:hyz"));
+  const add2 = added(fox1, fox2).filter((m) => m.id !== "bn2");
+  const last2 = lastOf((await get("/__debug/claude")).slice(nAsk).map((x) => x.body)[0]);
+  await sleep(1500);
+  ok(b2.code === 0 && last2.includes(LINE_NEW) && !last2.includes("[回去]") && (await read("kfs2:chat:c2")) === c2Was && (await pushes()).length === nPush && add2.length === 2 && !add2[0].go && texts(add2[1]) === "（测试回去）屋里留一句\n\n（测试回去）回不去" && !JSON.stringify(add2).includes("[回去]"),
+    "回去：没有那一段（她没在平常的对话里说过话）：【醒来】里是她原来那一条；他写了 [回去] 也摘掉、不摆成字，后面的字留在屋里，不放、不敲");
+  await put({ "kfs2:index": JSON.stringify(idxSave) });
+
+  // 那段里她那句还没回上（她刚在《晚饭吃什么》里说了一句就锁了屏，回话在信箱里）：这一回回不去，同上
+  await put({ "kfs2:chat:c2": JSON.stringify(c2.concat([{ id: "bh2", role: "her", ts: Date.now(), text: "到家了吗" }])) });
+  await get("/__debug/reply-queue?text=" + encodeURIComponent("[回去]\n回来了"));
+  const c2Owed = await read("kfs2:chat:c2");
+  nPush = (await pushes()).length;
+  nAsk = await asks();
+  const b3 = alarm2(["wake"]);
+  const fox3b = JSON.parse(await read("kfs2:chat:hyz"));
+  const add3 = added(fox2, fox3b);
+  const last3 = lastOf((await get("/__debug/claude")).slice(nAsk).map((x) => x.body)[0]);
+  await sleep(1500);
+  ok(b3.code === 0 && last3.includes(LINE_NEW) && !last3.includes(lineBack("晚饭吃什么")) && (await read("kfs2:chat:c2")) === c2Owed && (await pushes()).length === nPush && add3.length === 2 && !add3[0].go && texts(add3[1]) === "回来了",
+    "回去：那段里她那句还没回上（回话多半在信箱里）：这一回回不去，【醒来】里不提，写了也摘掉、不放、不敲");
+
+  // 他醒着的工夫里她把那段删了：那段不放、不敲，屋里不留“去《…》找你了”（屋里写的照留）
+  t = await fresh();
+  await put({
+    "kfs2:chat:c3": JSON.stringify([{ id: "bh3", role: "her", ts: t - 1000, text: "出去走走" }, { id: "bg3", role: "him", ts: t - 500, raw: "去吧", items: [{ type: "text", text: "去吧" }] }]),
+    "kfs2:index": JSON.stringify([entry("c3", "散步", "去吧")].concat(JSON.parse(await read("kfs2:index")))),
+  });
+  await get("/__debug/reply-queue?text=" + encodeURIComponent("屋里写一句：外头起风了\n[回去]\n你回来了吗"));
+  await get("/__debug/claude-hold?ms=30000");
+  nPush = (await pushes()).length;
+  const w4 = alarm2Async(["wake"]);
+  let held = false;
+  for (let i = 0; i < 160 && !held; i++) {
+    await sleep(250);
+    held = (await get("/__debug/claude-held")).held;
+  }
+  await drop("kfs2:chat:c3");
+  await put({ "kfs2:index": JSON.stringify(JSON.parse(await read("kfs2:index")).filter((c) => c.id !== "c3")) });
+  await get("/__debug/claude-release");
+  const b4 = await w4;
+  const add4 = added(fox3b, JSON.parse(await read("kfs2:chat:hyz")));
+  await sleep(1500);
+  ok(held && b4.code === 0 && (await read("kfs2:chat:c3")) == null && (await pushes()).length === nPush && add4.length === 2 && !add4[0].go && texts(add4[1]) === "屋里写一句：外头起风了" && b4.out.includes("那段没放成") && !JSON.parse(await read("kfs2:index")).some((c) => c.id === "c3"),
+    "回去：他醒着的工夫里她把那段删了：那段不放回来、不敲，屋里不留“去《…》找你了”，屋里写的照留");
+
+  // 后台跑：一时放不进那段对话（库房不应），封好记着，过一会儿只再放一回：不再问他、不重复放、不重复敲
+  t = await fresh();
+  await put({
+    "kfs2:chat:c4": JSON.stringify([{ id: "bh4", role: "her", ts: t - 1000, text: "晚上看电影吗" }, { id: "bg4", role: "him", ts: t - 500, raw: "看", items: [{ type: "text", text: "看" }] }]),
+    "kfs2:index": JSON.stringify([entry("c4", "看电影", "看")].concat(JSON.parse(await read("kfs2:index")))),
+  });
+  const bg = spawn(process.execPath, [BUNDLE, "run"], { env: { ...env2, KFS_ALARM_TICK: "500", KFS_ALARM_PULL: "500" }, stdio: "ignore" });
+  for (let i = 0; i < 40 && !fs.existsSync(path.join(HOME2, "alarm.sock")); i++) await sleep(250);
+  await sleep(1500);
+  await get("/__debug/reply-queue?text=" + encodeURIComponent("[回去]\n电影票买好了"));
+  await get("/__debug/kv-fail?times=1&key=" + encodeURIComponent(await rowKeyFor(vault, "kfs2:chat:c4")));
+  nPush = (await pushes()).length;
+  nAsk = await asks();
+  const b5 = alarm2(["wake"]);
+  let c4 = [];
+  for (let i = 0; i < 40; i++) {
+    await sleep(250);
+    c4 = (await chatOf("c4")) || [];
+    if (c4.length === 4) break;
+  }
+  await sleep(2500);
+  const p5 = (await pushes()).slice(nPush);
+  const tagC4 = await tagOf("c4");
+  ok(b5.out.includes("交给它叫") && b5.out.includes("还没放进去") && c4.length === 4 && c4[2].hidden && c4[2].back && texts(c4[3]) === "电影票买好了" && (await asks()) - nAsk === 1 && p5.length === 1 && p5[0].json.notification.body === "电影票买好了" && p5[0].json.notification.navigate.startsWith(`http://127.0.0.1:8080/#n=r.${tagC4}.`),
+    `回去：后台跑，一时放不进那段（库房不应）：过一会儿只再放一回，没再问他（问了 ${(await asks()) - nAsk} 回），那段里只多一回、横幅只敲一回（${p5.length} 条）`);
+  // 手机那头没看见这两行就写了那段对话（它那一份还是原来的两句）：盖掉了。后台放回去，不再敲她
+  nPush = (await pushes()).length;
+  nAsk = await asks();
+  await put({ "kfs2:chat:c4": JSON.stringify(c4.slice(0, 2)) });
+  let c4b = [];
+  for (let i = 0; i < 40; i++) {
+    await sleep(250);
+    c4b = (await chatOf("c4")) || [];
+    if (c4b.length === 4) break;
+  }
+  await sleep(2000);
+  ok(c4b.map((m) => m.id).join() === c4.map((m) => m.id).join() && (await pushes()).length === nPush && (await asks()) === nAsk, "回去：手机那头没看见就把那段盖掉了：后台放回去（次序照旧），不再敲她、不再问他");
+  // 她在手机上删了他那一句（手机那头看见过：她看不见的那一行还在）：不放回去
+  await put({ "kfs2:chat:c4": JSON.stringify(c4b.slice(0, 3)) });
+  await sleep(2500);
+  const c4c = (await chatOf("c4")) || [];
+  ok(c4c.length === 3 && !c4c.some((m) => m.id === c4[3].id), "回去：她在手机上删了他那一句（手机那头看见过）：不放回去");
+  const kept2 = fs.readFileSync(path.join(HOME2, "state.json"), "utf8") + fs.readFileSync(path.join(HOME2, "alarm.log"), "utf8");
+  ok(!/晚饭吃什么|散步|看电影|测试回去|今晚吃面|电影票|外头起风|到家了吗|回去找我/.test(kept2), "回去：这台电脑上记着的（state.json）、日志里，没有他说的字、她说的字、对话的名字");
+  const un2 = alarm2(["uninstall"]);
+  await sleep(500);
+  ok(un2.out.includes("卸干净了") && !fs.existsSync(HOME2), "回去：卸了另装的那一份（后台那一个也停了）");
+  if (bg.exitCode === null && bg.signalCode === null) bg.kill();
+}
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);
 if (failN) process.exitCode = 1;

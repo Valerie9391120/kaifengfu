@@ -14,10 +14,12 @@
 //       到点她还没回那段对话，闹钟在那段对话里叫醒他，他想找她就照常说话、发语音、打电话（弹横幅）；
 //       还想接着追，回话里再写下回几点（最短五分钟），一个任务最多追十二回，她一回那段对话就停；没到点她先回来了，作废。
 //   二、没任务的时候，他在屋里想找她：开一段新对话（[新对话:名字]，后面的话落进那段新对话，弹横幅；那段进历史对话）。
-// 聊天里他每醒一回留一行 event：{ id, role: "event", who: "him", kind: "wake", ts, quiet?, go?, hidden?, task? }：
+//       或者回到她最后说话的那一段平常对话（[回去]，后面的话落进那段对话，弹横幅；她 11 月 2 日 01:53 定的，见开发说明“狐宇宙：回到她最后说话的那一段”）。
+// 聊天里他每醒一回留一行 event：{ id, role: "event", who: "him", kind: "wake", ts, quiet?, go?, hidden?, task?, back? }：
 //   quiet  这一回一个看得见的字都没留
-//   go     （狐宇宙里的那一行）这一回去了哪段对话：{ chat, title, how: "task" 任务到点回原对话 | "new" 开的新对话 }
-//   hidden （落在别的对话里的那一行）她看不见、只给他看的：任务到点那一回（task 记着那一句话），开的新对话最前头那一行
+//   go     （狐宇宙里的那一行）这一回去了哪段对话：{ chat, title, how: "task" 任务到点回原对话 | "new" 开的新对话 | "back" 从屋里回到她最后说话的那一段 }
+//   hidden （落在别的对话里的那一行）她看不见、只给他看的：任务到点那一回（task 记着那一句话），开的新对话最前头那一行，
+//          从屋里回到那段对话的那一回（back）
 //
 // 存档里另有几样（加密了跟着云端走）：
 //   kfs2:fox:state       闹钟写的：醒着没有、上回几点醒、下回打算几点醒、他说了先不醒、闹钟还活着没有（at，隔 BEAT_MS 写一回）
@@ -76,19 +78,23 @@ export function wakeText(m) {
   return m.quiet ? `${HIS_NAME}醒了一会儿，没留话` : `${HIS_NAME}醒了`;
 }
 // 寄给那边的我的那一行（见 prompt/messages.js）：他下回醒来看得见自己前几回干了什么
+// （从屋里回去的那两种是 11 月 2 日添的：原来的说法一个是“到点……你定的闹钟”，一个是“这段对话是你自己醒来开的”，对不上，他会当自己定过闹钟、开过这段）
 export function wakeNote(m) {
   const t = clock(m.ts);
   const g = m.go;
   if (m.hidden && m.task != null) return `[开封府提示：${t} 你在这段对话里定的闹钟到点了${m.task ? `（你记着的是“${m.task}”）` : ""}，你醒过来，在这里${m.quiet ? "；那一回什么也没说" : ""}]`;
+  if (m.hidden && m.back) return `[开封府提示：${t} 你自己醒了，从屋里回到这段对话里来找她]`;
   if (m.hidden) return `[开封府提示：这段对话是你 ${t} 自己醒来开的，来找她]`;
   if (g && g.how === "new") return `[开封府提示：${t} 你自己醒了一回，开了一段新对话《${g.title || "新对话"}》找她]`;
+  if (g && g.how === "back") return `[开封府提示：${t} 你自己醒了一回，回到《${g.title || "一段对话"}》那段对话里找她]`;
   if (g) return `[开封府提示：${t} 你自己醒了一回，到点去《${g.title || "一段对话"}》找她（你在那段对话里定的闹钟）${m.quiet ? "，去了没说话" : ""}]`;
   return `[开封府提示：${t} 你自己醒了一回${m.quiet ? "，那一回什么也没说" : ""}]`;
 }
-// 抄前情提要的那一行（见 prompt/recap.js）
+// 抄前情提要的那一行（见 prompt/recap.js）。狐宇宙里从屋里回去的那一行照“去《…》找她”抄，用不着另写
 export function wakeRecap(m) {
   const g = m.go;
   if (m.hidden && m.task != null) return `[${HIS_NAME}定的闹钟到点，醒过来在这段对话里${m.quiet ? "，没说话" : ""}]`;
+  if (m.hidden && m.back) return `[${HIS_NAME}自己醒了，从屋里回到这段对话里找她]`;
   if (m.hidden) return `[这段对话是${HIS_NAME}自己醒来开的]`;
   if (g && g.how === "new") return `[${HIS_NAME}自己醒了一回，开了一段新对话《${g.title || "新对话"}》]`;
   if (g) return `[${HIS_NAME}自己醒了一回，去《${g.title || "一段对话"}》找她${m.quiet ? "，没说话" : ""}]`;

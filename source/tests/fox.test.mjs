@@ -8,7 +8,8 @@ import { buildRows } from "../src/chat/rows.js";
 import { makePreview } from "../src/chat/overview.js";
 import { parseWake, splitWake, planNext, planTasks, nextChase, lastMark, fracOf, infoOf, RHYTHM_MIN, RHYTHM_MAX, RESUME_MIN, RESUME_MAX, PRESENT_PUSH, RETRY_MS, DAY_MS, OWED_MS, TASK_STALE } from "../alarm/plan.js";
 import { wakeSection, taskSection, wakeNowNote, tailTranscript, agoText, HER_WORDS } from "../alarm/note.js";
-import { doorsOf, idsDeep, putRows, putBlocks, toRescue, commitWake, owedOf, splitNewChat, normBundle, noCall, noAsk, askRoom, askTask } from "../alarm/wake.js";
+import { doorsOf, idsDeep, putRows, putBlocks, toRescue, commitWake, owedOf, splitNewChat, splitGo, herLastOf, backOf, gather, normBundle, noCall, noAsk, askRoom, askTask } from "../alarm/wake.js";
+import { ON_KEY } from "../src/game/jianghu.js";
 import { loadSecret } from "../alarm/secret.js";
 import { gardenOf, runGardenCalls, gardenBrief, gardenNote, GARDEN_KEY } from "../alarm/garden.js";
 import { dressingOf, runDressingCalls, dressingBrief, dressingTool, lookLine, cutDressing, DRESSING_KEY } from "../alarm/dressing.js";
@@ -721,6 +722,234 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   cloud = cloudOf([thinkUse(1, true), said("看完了")]);
   await askRoom({ store: kv6(), cloud, ctx: offCtx, ...opts });
   ok(!lastText(cloud.bodies[1]).includes(DONE), "她关了“他写心里话”：不说");
+}
+
+// ================= 从屋里回到她最后说话的那一段（[回去]，她 11 月 2 日 01:53 定的） =================
+{
+  const kv7 = (init = {}) => {
+    const m = new Map(Object.entries(init));
+    return {
+      m,
+      get: async (k) => (m.has(k) ? m.get(k) : null),
+      set: async (k, v) => void m.set(k, v),
+      del: async (k) => void m.delete(k),
+      peek: (k) => (m.has(k) ? m.get(k) : null),
+      keys: (p = "") => [...m.keys()].filter((k) => k.startsWith(p)),
+      pull: async () => {},
+      nameFor: async (n) => "h_" + Buffer.from(n).toString("hex"),
+    };
+  };
+  const her = (id, ts, extra = {}) => ({ id, role: "her", ts, text: "嗯", ...extra });
+  const him = (id, ts, text = "好", extra = {}) => ({ id, role: "him", ts, items: [{ type: "text", text }], raw: text, ...extra });
+  const opts = { dressingOpts: { today: () => "2026-11-02" }, gardenOpts: { today: () => "2026-11-02", rng: () => 0.5 } };
+  const ctxOf = (extra = {}) => ({ settings: { model: "claude-sonnet-4-6", maxTokens: 2048 }, names: { her: "", him: "" }, avatars: { her: null, him: { type: "meme", file: "fox_reading_book.jpg" } }, memDocs: [], index: [], fox: [], recaps: [], herLast: null, herChat: null, wakes: [], extras: [], ...extra });
+  const cloudOf = (replies) => {
+    const bodies = [];
+    return {
+      bodies,
+      callClaude: async (body) => {
+        bodies.push(JSON.parse(JSON.stringify(body)));
+        const r = replies.shift();
+        if (!r) throw new Error("没排回话");
+        return { model: body.model, usage: { input_tokens: 1, output_tokens: 1 }, ...r };
+      },
+    };
+  };
+  const said = (text) => ({ stop_reason: "end_turn", content: [{ type: "text", text }] });
+  const use = (id, name, input) => ({ type: "tool_use", id, name, input });
+  const lastText = (body) => body.messages[body.messages.length - 1].content.map((x) => x.text || "").join("\n");
+  const sysText = (body) => (Array.isArray(body.system) ? body.system.map((x) => x.text || "").join("\n") : String(body.system || ""));
+  const texts = (r) => ((r && r.items) || []).map((x) => x.text).join("|");
+  const doors = { "kfs2:fox:doors": JSON.stringify({ d: { e: "https://push.example/a", at: 1 } }) };
+  const pushTo = () => {
+    const sent = [];
+    return { sent, push: async (p) => (sent.push(p), { queued: 2 }), endpoints: async () => ["https://push.example/a"] };
+  };
+  const T0 = Date.now();
+  const c1 = [her("h1", T0 - 3 * H, { text: "今晚吃面吧" }), him("g1", T0 - 3 * H + M, "好")];
+  const herChat = { ts: T0 - 3 * H, id: "c1", title: "晚饭吃什么", fox: false };
+  const LINE_BACK = "- 有话想说、想打电话：开一段新对话，或者回到她最后说话的那一段《晚饭吃什么》。开新的，单独一行写 [新对话:起个名字]；回《晚饭吃什么》，单独一行写 [回去]。这一行后面写的就是对她说的话，照【回复格式】写（分几条、发语音、打电话都行）。";
+  const LINE_NEW = "- 有话想说、想打电话：直接开一段新对话。在回复里单独一行写 [新对话:起个名字]，这一行后面写的就是对她说的话，照【回复格式】写（分几条、发语音、打电话都行），落进那段新对话。";
+
+  // 【醒来】：回得去的时候只换“有话想说、想打电话”那一条；回不去就是她 00:30 改的那一条，一个字不变
+  const base = { now: at(16, 0), herLast: { ts: at(13, 30), title: "晚饭吃什么", fox: false }, lastWake: at(12, 0), n: 3, gap: 30, max: 12, transcript: "卿卿：今晚吃面吧\n你：好", mcps: ["tavily"], steps: 12, thoughts: true, luofu: true, pending: [{ title: "洗澡", at: at(17, 0), label: "去找卿卿" }] };
+  const pl = wakeSection(base).split("\n");
+  const bl = wakeSection({ ...base, back: { id: "c1", title: "晚饭吃什么" } }).split("\n");
+  const differ = bl.map((l, i) => (l !== pl[i] ? i : -1)).filter((i) => i >= 0);
+  ok(pl.includes(LINE_NEW) && !pl.join("\n").includes("[回去]") && bl.includes(LINE_BACK) && !bl.includes(LINE_NEW) && pl.length === bl.length && differ.length === 1 && pl[differ[0]] === LINE_NEW && bl[differ[0]] === LINE_BACK,
+    "【醒来】：回得去的时候只换“有话想说、想打电话”那一条（写着那段对话的名字、[回去] 怎么写），别的字一个不动；回不去就是她原来那一条");
+  ok(wakeSection({ ...base, back: { id: "c1", title: "" } }).includes("或者回到她最后说话的那一段《一段对话》。") && wakeSection({ ...base, back: null }) === pl.join("\n"), "【醒来】：那段对话没名字写“一段对话”（同她最后在哪段说话那一句）；back 给 null 跟不给一样");
+
+  // 切 [回去]：单独一行，前面的留在屋里，后面的落进那段对话；只认心里话、文档块外头的；两样都写了只认先出现的；这一回回不去不认
+  const g1 = splitGo("<thinking>想她了</thinking>\n屋里写一句\n[回去]\n在吗\n[SPLIT]\n想你了", true);
+  ok(g1 && g1.how === "back" && g1.before.startsWith("<thinking>") && g1.before.endsWith("屋里写一句") && g1.after === "在吗\n[SPLIT]\n想你了" && splitGo("  [回去]  \n在吗", true).after === "在吗",
+    "切 [回去]：单独一行（前后空格不碍事），前面的留在屋里，后面的落进那段对话");
+  ok(splitGo("说到 [回去] 这两个字", true) === null && splitGo("[回去]\n在吗", false) === null && splitGo("没写", true) === null && splitGo("[回去:晚饭吃什么]\n在吗", true) === null,
+    "切 [回去]：夹在句子里的不算；这一回回不去不认；写成别的样子（带名字）不认");
+  const inThought = splitGo("<thinking>要不要回去找她？\n[回去]\n还是别吵她</thinking>\n看了会儿书", true);
+  const openThought = splitGo("看了会儿书\n<thinking>要不要回去\n[回去]\n算了", true);
+  const inDoc = splitGo("写了一份\n[DOC:草稿.md]\n[回去]\n[/DOC]\n好了", true);
+  const afterDoc = splitGo("[DOC:草稿.md]\n一\n[/DOC]\n[回去]\n给你写的", true);
+  ok(inThought === null && openThought === null && inDoc === null && afterDoc && afterDoc.how === "back" && afterDoc.before.includes("[/DOC]") && afterDoc.after === "给你写的",
+    "切 [回去]：心里话里（连没收尾的心里话）、文档块里写的不算，文档块后面的照认");
+  const backFirst = splitGo("[回去]\n先回去\n[新对话:不开了]\n还在那段\n[回去]\n又写一回", true);
+  const newFirst = splitGo("[新对话:想你了]\n开新的\n[回去]\n不回了", true);
+  const newOnly = splitGo("[新对话:想你了]\n开新的\n[回去]\n不回了", false);
+  ok(backFirst.how === "back" && backFirst.after === "先回去\n\n还在那段\n\n又写一回" && newFirst.how === "new" && newFirst.title === "想你了" && newFirst.after === "开新的\n\n不回了" && newOnly.how === "new" && newOnly.after === "开新的\n\n不回了",
+    "两样都写了：只认先出现的那一个，后面那一行（连同又写了一回的）摘掉、不摆成字");
+
+  // 回哪一段：她最后说话的那一段平常对话（狐宇宙不算：她在屋里便签纸上留的不算；醒了那几行、换头像提示本来就不算），同一套办法找，记下编号和名字
+  const idx = [{ id: "hyz", title: "狐宇宙" }, { id: "c2", title: "新开的" }, { id: "c1", title: "晚饭吃什么" }];
+  const sH = kv7({
+    "kfs2:chat:hyz": JSON.stringify([{ id: "w1", role: "event", kind: "wake", ts: T0 - H }, her("n1", T0 - 10 * M, { note: true, text: "来过" })]),
+    "kfs2:chat:c2": JSON.stringify([{ id: "w2", role: "event", kind: "wake", ts: T0 - 2 * H, hidden: true }, him("g2", T0 - 2 * H)]),
+    "kfs2:chat:c1": JSON.stringify(c1.concat([{ id: "av", role: "event", who: "her", ts: T0 - H, av: null }])),
+    "kfs2:index": JSON.stringify(idx),
+  });
+  const anyLast = await herLastOf(sH, idx);
+  const normal = await herLastOf(sH, idx, false);
+  const ctxH = await gather(sH);
+  ok(anyLast.id === "hyz" && anyLast.fox && normal && normal.id === "c1" && normal.title === "晚饭吃什么" && !normal.fox && normal.ts === T0 - 3 * H && ctxH.herLast.id === "hyz" && ctxH.herChat.id === "c1",
+    "回哪一段：她最后来屋里留了便签，“她最后一回来”照旧是狐宇宙；回得去的是她最后说话的那一段平常对话（他自己开的、她没说过话的那段不算；换头像提示不算）");
+  const onlyNotes = kv7({ "kfs2:chat:hyz": JSON.stringify([her("n1", T0, { note: true })]), "kfs2:chat:c2": JSON.stringify([him("g2", T0)]) });
+  ok((await herLastOf(onlyNotes, idx, false)) === null && (await backOf(onlyNotes, null, T0)) === null && (await backOf(onlyNotes, { id: "hyz", title: "狐宇宙", ts: T0 }, T0)) === null && (await herLastOf(kv7({}), [], false)) === null,
+    "她还没在平常的对话里说过话（只在屋里留过便签、一句话没说过）：没有那一段；狐宇宙本身不算");
+  const backed = (msgs) => backOf(kv7({ "kfs2:chat:c1": JSON.stringify(msgs) }), herChat, T0);
+  const ok1 = await backed(c1);
+  const owedHer = await backed(c1.concat([her("h2", T0 - 30 * M)]));
+  const stopped = await backed(markStopped(c1.concat([her("h2", T0 - 30 * M)])));
+  const oldOwed = await backed(c1.concat([her("h2", T0 - OWED_MS - M)]));
+  const midTurn = await backed(c1.concat([{ ...him("g2", T0 - 20 * M), stop: "tool_use", calls: [{ id: "x", name: "diary_list", input: {}, out: "目录" }] }]));
+  ok(ok1 && ok1.id === "c1" && ok1.title === "晚饭吃什么" && owedHer === null && stopped && stopped.id === "c1" && oldOwed && midTurn === null && (await backed([])) === null && (await backOf(kv7({}), herChat, T0)) === null,
+    "回不回得去：她那句还没回上（回话多半在信箱里）、他说到一半的，这一回不回；她按了停的、搁了三天的照回；那段对话空了、没了不回");
+
+  // 醒在屋里写 [回去]：后面的落进那段对话（最前头一行她看不见），敲她；狐宇宙里一行“去《…》找你了”；前面写的留在屋里；[WAKE] 管屋里
+  const store1 = kv7({ "kfs2:chat:c1": JSON.stringify(c1), "kfs2:index": JSON.stringify([{ id: "c1", title: "晚饭吃什么", preview: "好", updatedAt: 1 }]), ...doors });
+  let cloud = cloudOf([said("<thinking>想她了</thinking>\n屋里写一句：面真好吃\n[回去]\n面我煮好了\n[SPLIT]\n快回来\n[WAKE:+2h]")]);
+  const b = await askRoom({ store: store1, cloud, ctx: ctxOf({ herChat, herLast: herChat }), now: T0, ...opts });
+  const there = b.puts[0];
+  const room = b.puts[1];
+  const ev = room.rows[0];
+  ok(lastText(cloud.bodies[0]).includes(LINE_BACK) && !lastText(cloud.bodies[0]).includes(LINE_NEW) && lastText(cloud.bodies[0]).includes("卿卿：今晚吃面吧"),
+    "醒在屋里、回得去：【醒来】里那一条写着那段对话的名字和 [回去] 怎么写（那段最后几句照旧抄着）");
+  ok(b.back && b.back.id === "c1" && !b.newChat && !b.quiet && b.puts.length === 2 && there.chat === "c1" && there.back === true && !there.create && there.rows.length === 2 && there.rows[0].hidden && there.rows[0].back && there.rows[0].kind === "wake" && there.rows[0].ts === T0 && texts(there.rows[1]) === "面我煮好了|快回来" && !("wake" in there.rows[1]),
+    "写了 [回去]：那一行后面的落进那段对话（先放那一段；最前头一行她看不见），[WAKE] 不跟过去");
+  ok(room.chat === "hyz" && ev.go && ev.go.how === "back" && ev.go.chat === "c1" && ev.go.title === "晚饭吃什么" && wakeText(ev) === "光义醒了，去《晚饭吃什么》找你了" && texts(room.rows[1]) === "屋里写一句：面真好吃" && room.rows[1].thinking === "想她了" && room.rows[room.rows.length - 1].wake === "+2h" && b.wake === "+2h",
+    "写了 [回去]：狐宇宙里一行“光义醒了，去《晚饭吃什么》找你了”，前面写的留在屋里纸上，[WAKE:+2h] 管的是他下回几点醒（挪回屋里）");
+  ok(Array.isArray(room.bare) && room.bare.length === room.rows.length && room.bare[0].id === ev.id && !room.bare[0].go && room.bare[1].id === room.rows[1].id && room.bare[room.bare.length - 1].wake === "+2h" && b.knocks.length === 1 && b.knocks[0].chat === "c1" && b.knocks[0].texts.join() === "面我煮好了\n[SPLIT]\n快回来\n[WAKE:+2h]",
+    "写了 [回去]：敲她的是那一截（[WAKE] 推送的小后端照旧摘）；那段没放成的时候狐宇宙换成放的那几行（bare）不写去了哪儿");
+  const gameNames = ["new_game", "roll", "game_action", "game_info"];
+  ok(!(cloud.bodies[0].tools || []).some((t) => gameNames.includes(t.name) || t.name === "room_look") && JSON.stringify(cloud.bodies[0].messages).indexOf("面真好吃") < 0,
+    "寄过去的还是屋里那一段（狐宇宙、【醒来】），那段对话不另寄一回");
+  // 放进去：那段对话里多了这两行，目录里那段挪到最前头、预览是他的话；狐宇宙里那一行带着去了哪儿；一个气泡一条横幅，点了回那段对话
+  const p1 = pushTo();
+  const marks1 = [];
+  const r1 = await commitWake({ store: store1, cloud: p1, bundle: b, mark: async (st, v) => void marks1.push([st, v]) });
+  const c1After = JSON.parse(store1.m.get("kfs2:chat:c1"));
+  const foxAfter = JSON.parse(store1.m.get("kfs2:chat:hyz"));
+  const idx1 = JSON.parse(store1.m.get("kfs2:index"));
+  const seen1 = idx1.filter((c) => c.id !== "hyz"); // 历史对话的列表里不列狐宇宙
+  ok(c1After.map((m) => m.id).slice(0, 2).join() === "h1,g1" && c1After.length === 4 && c1After[2].hidden && c1After[2].back && texts(c1After[3]) === "面我煮好了|快回来" && seen1[0].id === "c1" && seen1[0].title === "晚饭吃什么" && seen1[0].preview === "面我煮好了" && seen1[0].updatedAt > 1,
+    "放进去：那段对话里接着原来的话多了他这两行，名字照旧，历史对话里挪到最前头、预览是他说的");
+  ok(foxAfter.length === 2 && foxAfter[0].go.how === "back" && p1.sent.length === 1 && p1.sent[0].reply === b.knocks[0].texts[0] && p1.sent[0].tag === Buffer.from("notice:c1").toString("hex") && r1.knocked === 2 && marks1.map((x) => x[0]).filter((s) => s !== "usage").join() === "put0,put1,said:c1" && Object.keys(r1.bases).join() === "c1,hyz",
+    "放进去：狐宇宙那一行带着去了哪儿；敲她的横幅点了回那段对话；每一步办过都记着（各记各的，回头核对两段都看）");
+  // 重跑一遍（放到一半关了机、断了网）：办过的不再办——那段对话不再放一遍、横幅不再敲
+  const p2 = pushTo();
+  const before2 = store1.m.get("kfs2:chat:c1");
+  const r2 = await commitWake({ store: store1, cloud: p2, bundle: b, done: { put0: true, put1: true, "said:c1": 1, knocked: 2 }, mark: async () => {} });
+  const sHalf = kv7({ "kfs2:chat:c1": JSON.stringify(c1After), "kfs2:index": "[]", ...doors });
+  const p3 = pushTo();
+  await commitWake({ store: sHalf, cloud: p3, bundle: b, done: { put0: true }, mark: async () => {} });
+  ok(store1.m.get("kfs2:chat:c1") === before2 && p2.sent.length === 0 && r2.knocked === 2 && JSON.parse(sHalf.m.get("kfs2:chat:c1")).length === 4 && JSON.parse(sHalf.m.get("kfs2:chat:hyz"))[0].go.how === "back" && p3.sent.length === 1,
+    "重跑一遍：办过的那段不再放、横幅不再敲；那段放过了、狐宇宙还没放的，接着放狐宇宙、接着敲");
+  // 他醒着的工夫里她把那段删了：那段不放、不敲；狐宇宙里照没去找她的样子放（醒了那一行照留，不写去了哪儿；屋里写的照留）
+  const sGone = kv7({ "kfs2:index": "[]", ...doors });
+  const pG = pushTo();
+  const marksG = [];
+  const rG = await commitWake({ store: sGone, cloud: pG, bundle: b, mark: async (st, v) => void marksG.push([st, v]) });
+  const foxG = JSON.parse(sGone.m.get("kfs2:chat:hyz"));
+  ok(!sGone.m.has("kfs2:chat:c1") && pG.sent.length === 0 && rG.gone.includes("c1") && marksG[0].join() === "put0,gone" && foxG.length === 2 && !foxG[0].go && wakeText(foxG[0]) === "光义醒了" && texts(foxG[1]) === "屋里写一句：面真好吃" && foxG[1].wake === "+2h",
+    "她在他醒着的工夫里把那段删了：不放、不敲，屋里不留“去《…》找你了”（醒了那一行、屋里写的照留）");
+  const sWas = kv7({ "kfs2:index": "[]", ...doors });
+  const pW = pushTo();
+  await commitWake({ store: sWas, cloud: pW, bundle: b, done: { put0: "gone" }, mark: async () => {} });
+  ok(!JSON.parse(sWas.m.get("kfs2:chat:hyz"))[0].go && pW.sent.length === 0, "上回已经认定那段没了（记着 gone），再放的时候也照没去找她的样子放、不敲");
+  // 放进去会接在她还没回上的那句后面（她那句钟点比他醒来早、问完了才到云端）：同删了，不放、不敲（信箱里那封回话还等着放进来）
+  const sHeld = kv7({ "kfs2:chat:c1": JSON.stringify(c1.concat([her("h3", T0 - M, { text: "还在吗" })])), "kfs2:index": "[]", ...doors });
+  const pH = pushTo();
+  const marksH = [];
+  await commitWake({ store: sHeld, cloud: pH, bundle: b, mark: async (st, v) => void marksH.push([st, v]) });
+  ok(JSON.parse(sHeld.m.get("kfs2:chat:c1")).length === 3 && pH.sent.length === 0 && marksH[0].join() === "put0,held" && !JSON.parse(sHeld.m.get("kfs2:chat:hyz"))[0].go,
+    "放进去会接在她还没回上的那句后面：不放、不敲，屋里不留“去《…》找你了”");
+  // 她在他醒着的工夫里（他醒了以后）在那段里又说了一句：他这两行挨在一起排在她那句前面，她那句还是最后一句（信箱里的回话放得进来），照放照敲
+  const sDur = kv7({ "kfs2:chat:c1": JSON.stringify(c1.concat([her("h4", T0 + M, { text: "我回来了" })])), "kfs2:index": "[]", ...doors });
+  const pD = pushTo();
+  await commitWake({ store: sDur, cloud: pD, bundle: b, mark: async () => {} });
+  const durAfter = JSON.parse(sDur.m.get("kfs2:chat:c1"));
+  ok(durAfter.map((m) => m.id).join() === ["h1", "g1", there.rows[0].id, there.rows[1].id, "h4"].join() && owedOf(durAfter) === T0 + M && pD.sent.length === 1,
+    "她在他醒着的工夫里在那段里又说了一句：他这两行排在她那句前面，不夹住她的话；照放照敲");
+
+  // 回不去的时候写了 [回去]（她还没在平常的对话里说过话）：当没写，那一行摘掉，后面的字留在屋里，不敲；【醒来】里是她原来那一条
+  cloud = cloudOf([said("屋里写一句\n[回去]\n在吗")]);
+  let x = await askRoom({ store: kv7({ "kfs2:chat:c1": JSON.stringify(c1) }), cloud, ctx: ctxOf(), now: T0, ...opts });
+  ok(!x.back && !x.newChat && x.puts.length === 1 && x.knocks.length === 0 && texts(x.puts[0].rows[1]) === "屋里写一句\n\n在吗" && !JSON.stringify(x.puts).includes("[回去]") && lastText(cloud.bodies[0]).includes(LINE_NEW) && !lastText(cloud.bodies[0]).includes("[回去]"),
+    "回不去（没有那一段）写了 [回去]：那一行摘掉、不摆成字，后面的字留在屋里纸上，不敲她；【醒来】里是她原来那一条");
+  cloud = cloudOf([said("[回去]\n在吗")]);
+  x = await askRoom({ store: kv7({ "kfs2:chat:c1": JSON.stringify(c1.concat([her("h2", T0 - 30 * M)])) }), cloud, ctx: ctxOf({ herChat }), now: T0, ...opts });
+  ok(!x.back && x.knocks.length === 0 && x.puts.length === 1 && texts(x.puts[0].rows[1]) === "在吗" && lastText(cloud.bodies[0]).includes(LINE_NEW),
+    "那段对话里她那句还没回上：这一回回不去，同上（【醒来】不提，写了也摘掉）");
+  cloud = cloudOf([said("<thinking>算了</thinking>\n[回去]")]);
+  x = await askRoom({ store: kv7({}), cloud, ctx: ctxOf(), now: T0, ...opts });
+  ok(x.quiet && x.puts[0].rows.length === 1 && x.puts[0].rows[0].quiet && x.puts[0].rows[0].thinking === "算了", "回不去、只写了一行 [回去]：摘掉以后什么都不剩，当这一回没留话");
+  const logs = [];
+  cloud = cloudOf([said("屋里写一句\n[回去]\n[WAKE:+1h]")]);
+  x = await askRoom({ store: kv7({ "kfs2:chat:c1": JSON.stringify(c1) }), cloud, ctx: ctxOf({ herChat }), now: T0, log: (l) => logs.push(l), ...opts });
+  ok(!x.back && x.knocks.length === 0 && x.puts.length === 1 && texts(x.puts[0].rows[1]) === "屋里写一句" && x.wake === "+1h" && logs.some((l) => l.includes("后面没写字，不回")),
+    "回得去、[回去] 后面一个字没写：不回，屋里照常，[WAKE] 照管屋里");
+  // 两样都写了：只认先出现的那一个
+  cloud = cloudOf([said("[新对话:想你了]\n在干嘛\n[回去]\n不回了")]);
+  x = await askRoom({ store: kv7({ "kfs2:chat:c1": JSON.stringify(c1) }), cloud, ctx: ctxOf({ herChat }), now: T0, ...opts });
+  ok(x.newChat && x.newChat.title === "想你了" && !x.back && x.puts[1].create && texts(x.puts[1].rows[1]) === "在干嘛\n\n不回了" && x.knocks[0].chat === x.newChat.id && !x.puts.some((p) => p.chat === "c1") && !x.puts[1].rows[0].back,
+    "两样都写了、[新对话:…] 在前：开新的，后面那一行 [回去] 摘掉");
+  cloud = cloudOf([said("[回去]\n回来了\n[新对话:想你了]\n不开了")]);
+  x = await askRoom({ store: kv7({ "kfs2:chat:c1": JSON.stringify(c1) }), cloud, ctx: ctxOf({ herChat }), now: T0, ...opts });
+  ok(x.back && !x.newChat && x.puts.length === 2 && x.puts[0].chat === "c1" && texts(x.puts[0].rows[1]) === "回来了\n\n不开了" && x.puts[1].chat === "hyz",
+    "两样都写了、[回去] 在前：回去，后面那一行 [新对话:…] 摘掉");
+  // 只认最后一步：翻日记那几步（前面几步）里写的 [回去] 摘掉，不摆成字，不回
+  cloud = cloudOf([{ stop_reason: "tool_use", content: [{ type: "text", text: "[回去]\n我先翻翻" }, use("d1", "diary_list", {})] }, said("翻完了")]);
+  x = await askRoom({ store: kv7({ "kfs2:chat:c1": JSON.stringify(c1) }), cloud, ctx: ctxOf({ herChat }), now: T0, ...opts });
+  ok(!x.back && x.knocks.length === 0 && x.puts.length === 1 && texts(x.puts[0].rows[1]) === "我先翻翻" && x.puts[0].rows[1].calls && texts(x.puts[0].rows[2]) === "翻完了" && !JSON.stringify(x.puts).includes("[回去]"),
+    "只认最后一步：前面几步（翻日记的半截）里写的 [回去] 摘掉、不摆成字，不回");
+  // 心里话里写的 [回去] 不算（最后一步）
+  cloud = cloudOf([said("<thinking>要不要回去\n[回去]\n算了</thinking>\n看了会儿书")]);
+  x = await askRoom({ store: kv7({ "kfs2:chat:c1": JSON.stringify(c1) }), cloud, ctx: ctxOf({ herChat }), now: T0, ...opts });
+  ok(!x.back && x.knocks.length === 0 && x.puts.length === 1 && texts(x.puts[0].rows[1]) === "看了会儿书", "心里话里写的 [回去] 不算：不回，屋里照常");
+  // 那段对话里下过江湖棋局（摆着棋盘、对话里有他调过引擎的）：他那一截是在屋里写的，寄过去的是狐宇宙那一段，不带那四样工具；放进去的那一条只是说话、不带调用
+  const gameC1 = c1.concat([{ ...him("g9", T0 - 2 * H, "我替你扔。"), calls: [{ id: "r1", name: "roll", input: {}, out: "掷出 3 点", card: ["掷出 3 点"] }] }]);
+  cloud = cloudOf([said("[回去]\n这局先放着，想你了")]);
+  x = await askRoom({ store: kv7({ "kfs2:chat:c1": JSON.stringify(gameC1), [ON_KEY]: JSON.stringify(["c1"]) }), cloud, ctx: ctxOf({ herChat, herLast: herChat }), now: T0, ...opts });
+  ok(x.back && x.back.id === "c1" && !(cloud.bodies[0].tools || []).some((t) => gameNames.includes(t.name)) && !sysText(cloud.bodies[0]).includes("【江湖棋局】") && !x.puts[0].rows[1].calls && texts(x.puts[0].rows[1]) === "这局先放着，想你了",
+    "那段对话里下过江湖棋局：照样回得去；寄过去的是屋里那一段（不带棋局工具），放进去的那一条只是说话、不带调用");
+  // 任务到点那一回（醒在旧对话里）不认 [回去]：同不认 [新对话:…]，那一行摘掉；只写了这一行的那一步当没说话
+  cloud = cloudOf([said("[回去]\n人呢")]);
+  x = await askTask({ store: kv7({}), cloud, ctx: ctxOf({ herChat }), task: { key: "kfs2:fox:task:t", raw: "+5m", set: T0 }, chat: { id: "c1", title: "晚饭吃什么", msgs: c1 } });
+  ok(texts(x.puts[0].rows[1]) === "人呢" && x.knocks[0].texts.join().trim() === "人呢" && !x.back && !lastText(cloud.bodies[0]).includes("[回去]") && x.puts[1].rows[0].go.how === "task",
+    "任务到点那一回：不认 [回去]，那一行摘掉、不摆成字");
+  cloud = cloudOf([said("<thinking>不吵她了</thinking>\n[回去]")]);
+  x = await askTask({ store: kv7({}), cloud, ctx: ctxOf({ herChat }), task: { key: "kfs2:fox:task:t2", raw: "+5m", set: T0 }, chat: { id: "c1", title: "晚饭吃什么", msgs: c1 } });
+  ok(x.quiet && x.knocks.length === 0 && x.puts[1].rows[0].quiet && wakeText(x.puts[1].rows[0]).includes("看了看，没说话"), "任务到点那一回只写了一行 [回去]：摘掉以后当没说话，不敲");
+
+  // 寄给他的、抄提要的、聊天里摆的：从屋里回去的那两行（狐宇宙里那一行、那段对话里她看不见的那一行）
+  const goBack = { id: "w", role: "event", kind: "wake", ts: at(3, 12), go: { chat: "c1", title: "晚饭吃什么", how: "back" } };
+  const hidBack = { id: "x", role: "event", kind: "wake", ts: at(3, 12), hidden: true, back: true };
+  ok(wakeText(goBack) === "光义醒了，去《晚饭吃什么》找你了" && wakeNote(goBack) === "[开封府提示：03:12 你自己醒了一回，回到《晚饭吃什么》那段对话里找她]" && wakeNote(hidBack) === "[开封府提示：03:12 你自己醒了，从屋里回到这段对话里来找她]" && wakeRecap(hidBack) === "[光义自己醒了，从屋里回到这段对话里找她]" && wakeRecap(goBack) === "[光义自己醒了一回，去《晚饭吃什么》找她]",
+    "从屋里回去的那两行：狐宇宙里那一行照旧“去《…》找你了”；寄给他的写明是从屋里回去的（不说闹钟、不说这段是他开的）");
+  const cMsgs = c1.concat([hidBack, him("g5", at(3, 13), "想你了")]);
+  const cRows = buildRows(cMsgs, null);
+  const packed = buildMessages(cMsgs, { her: null, him: null }, () => null, () => null, () => null, () => null, {}).messages;
+  const at5 = packed.findIndex((m) => m.role === "assistant" && JSON.stringify(m.content).includes("想你了"));
+  ok(!cRows.some((r) => r.type === "notice" && r.kind === "wake") && !cRows.some((r) => r.key === "sep-x") && makePreview(cMsgs) === "想你了" && makePreview(c1.concat([hidBack])) === "好" && at5 > 0 && JSON.stringify(packed[at5 - 1].content).includes("你自己醒了，从屋里回到这段对话里来找她") && !JSON.stringify(packed).includes("这段对话是你"),
+    "那段对话里她看不见的那一行：聊天里不摆、不冒时间、预览跳过；她下回在那段里说话，寄给他的在他那句前面写明是从屋里回来的");
 }
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);

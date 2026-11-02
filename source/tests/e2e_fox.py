@@ -7,6 +7,9 @@
 #   他想找她：开一段新对话（名字他起的）：横幅敲到这台手机，那段对话进历史对话，最前头那一行她看不见；点横幅进那段对话；
 #   任务标记：她在那段对话里说“九点回”，他回话最后写 [WAKE:+1m 去找卿卿]：气泡里看不见，记一个任务；寄过去的带着【自己醒】；
 #     到点她还没回：闹钟在那段对话里叫醒他，敲她；狐宇宙里留一行“去《布丁》找你了”；她回了话，这个任务就收了。
+#   他在屋里醒着，回到她最后说话的那一段（[回去]，她 11 月 2 日 01:53 定的；假的那边的我照她便签上那句“回去找我”写）：
+#     【醒来】里那一条写着《布丁》；横幅敲到这台手机，点了回《布丁》，他的话接在原来那几句后面，她看不见的那一行不摆；狐宇宙里又一行“去《布丁》找你了”；
+#     她在那段里接着说：寄给他的在他那句前面一行写明是他从屋里回来找她的（手机这头的说法，11 月 2 日添的）。
 # 真的浏览器、假 Supabase、假的 Anthropic。账号和话都是编的。
 # 先在 source/ 里 npm run build:test、KFS_TEST_URL=http://127.0.0.1:8787 node alarm/build.mjs，起好两个服务（见开发说明），再：python3 tests/e2e_fox.py
 # （任务那一段要等闹钟到点，整份跑两分钟上下）
@@ -266,6 +269,46 @@ def run(browser):
         pg.get_by_text("可算回来了").last.wait_for(timeout=20000)
         got = until(pg, lambda: task_of(pg, hid).get("state") == "done", 15)
         ok(got, f"她在那段对话里回了话：这个任务收了，不再追（{task_of(pg, hid).get('state')}）")
+
+        # ---- 他在屋里醒着，回到她最后说话的那一段（[回去]）----
+        open_fox(pg)
+        pg.locator(".kfs-fox-pad-input").fill("回去找我")
+        pg.locator(".kfs-fox-pad-save").click(); time.sleep(2.5)  # 等便签推上云端（同上面头一张）
+        n3 = len(banners())
+        c3 = len(calls())
+        code, out = alarm(["wake"], home)
+        ok(code == 0 and "回到你最后说话的那段对话里找你" in out, f"屋里醒着写了 [回去]（{out.strip().splitlines()[-1] if out.strip() else ''}）")
+        asked = calls()[c3]["body"] if len(calls()) > c3 else {}
+        flat = json.dumps(asked, ensure_ascii=False)
+        ok("或者回到她最后说话的那一段《布丁》" in flat and "回《布丁》，单独一行写 [回去]" in flat and "在便签纸上留了一句：回去找我" in flat, "【醒来】里那一条写着她最后说话的那一段《布丁》、[回去] 怎么写（他看得见她刚留的便签）")
+        got = wait_mock(lambda: len(banners()) >= n3 + 2, 15)
+        bs3 = banners()[n3:]
+        ok(got and [b["json"]["notification"]["body"] for b in bs3] == ["（测试回去）回《布丁》来找你了", "在吗"] and all(b["endpoint"] == dev.get("endpoint") and tag_of(b["json"]["notification"]["navigate"]) == tag_of(target) for b in bs3),
+           f"回去找她：横幅敲到这台手机，一个气泡一条（屋里写的那句不上横幅），点了回《布丁》（{[b['json']['notification']['body'] for b in bs3]}）")
+        got = until(pg, lambda: sum("去《布丁》找你了" in n for n in pg.evaluate(NOTICES)) >= 2)
+        said = pg.evaluate(BUBBLES)
+        ok(got and "（测试回去）屋里留一句" in said and not any("来找你了" in x for x in said),
+           f"狐宇宙里又一行“去《布丁》找你了”，[回去] 前面写的留在屋里，他在那边说的屋里不重复（{pg.evaluate(NOTICES)}）")
+        hide_side(pg)
+        shot(pg, "11_back_room")
+        pg.evaluate("(u) => { location.hash = new URL(u).hash; }", bs3[-1]["json"]["notification"]["navigate"])
+        wait_js(pg, "(() => [...document.querySelectorAll('.kfs-chat-rows [data-kfs-bubble=\"him\"]')].some((b) => b.innerText.includes('来找你了')))()", 8000)
+        said = pg.evaluate(BUBBLES)
+        notes = pg.evaluate(NOTICES)
+        ok("（测试回去）回《布丁》来找你了" in said and "在吗" in said and "可算回来了" in said and said.index("可算回来了") < said.index("（测试回去）回《布丁》来找你了") and not any("醒" in n for n in notes) and pg.locator(".kfs-composer").count() == 1,
+           f"点横幅：回到《布丁》，他的话接在原来那几句后面，她看不见的那一行不摆（{notes}）")
+        hide_side(pg)
+        shot(pg, "12_back_chat")
+        # 她在那段里接着说：寄给他的在他那句前面一行写明是他从屋里回来找她的（不当成闹钟到点，不当成这段是他开的）
+        mock("/__debug/reply-queue?text=" + quote("嗯，在屋里待了一会儿就来了"))
+        c4 = len(calls())
+        say(pg, "看到你回来了")
+        pg.get_by_text("嗯，在屋里待了一会儿就来了").last.wait_for(timeout=20000)
+        asked = calls()[c4]["body"] if len(calls()) > c4 else {}
+        flat = json.dumps(asked, ensure_ascii=False)
+        i_note = flat.find("你自己醒了，从屋里回到这段对话里来找她")
+        ok(i_note >= 0 and i_note < flat.find("（测试回去）回《布丁》来找你了") and flat.count("自己醒来开的") == 1,
+           "她在那段里接着说：寄给他的在他那句前面一行写明是他从屋里回来找她的（这段最前头那一行照旧是“这段是你自己醒来开的”）")
 
         # ---- 狐宇宙里留着他这几回干了什么 ----
         open_fox(pg)

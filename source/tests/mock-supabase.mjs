@@ -320,6 +320,36 @@ function fakeLuofu(body) {
   return null;
 }
 
+// 从屋里回到她最后说话的那一段（[回去]，见 alarm/wake.js 的 splitGo）的假的那边的我（tests/e2e_alarm.mjs、tests/e2e_fox.py 用）。醒在屋里那一回（最后一句里附着【醒来】）：
+//   她最后一回在便签纸上留的那一句里有“回去找我”：屋里写一句“（测试回去）屋里留一句”，单独一行 [回去]，后面照【醒来】里那一条写着的名字说
+//     “（测试回去）回《名字》来找你了”“在吗”，最后一行 [WAKE:+3h]（管的是他下回几点醒）；
+//     【醒来】里没有那一条（回不去）也照写 [回去]，后面说“（测试回去）回不去”：开封府该把那一行摘掉，字留在屋里
+//   她那一句后面他已经回去过了（狐宇宙里有“回到《…》那段对话里找她”那一行）、排着别的要他说的（reply-queue）、要他调的（tool-queue）：回 null（交给别人）
+function fakeBack(body) {
+  if (toolQueue.length || replyQueue.length) return null;
+  const msgs = body.messages || [];
+  const blocksOf = (m) => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content || []);
+  const lastUser = msgs[msgs.length - 1];
+  const woke = lastUser && lastUser.role === "user" ? blocksOf(lastUser).filter((b) => b.type === "text").map((b) => b.text || "").join("\n") : "";
+  if (!woke.includes("【醒来】") || !woke.includes("你醒在“狐宇宙”里")) return null;
+  // 一句一句排开（同一条里挨着的几句也分得清先后），找她最后留的那张便签
+  const flat = msgs.flatMap((m) => (m.role === "user" ? blocksOf(m).filter((b) => b.type === "text").map((b) => b.text || "") : []));
+  let at = -1;
+  let note = "";
+  flat.forEach((t, i) => {
+    const m = /在便签纸上留了一句：([^\]]*)\]/.exec(t);
+    if (m) {
+      at = i;
+      note = m[1].trim();
+    }
+  });
+  if (at < 0 || !/回去找我/.test(note)) return null;
+  if (flat.slice(at + 1).some((t) => /回到《[^》]*》那段对话里找她/.test(t))) return null;
+  const title = (/回到她最后说话的那一段《([^》]*)》/.exec(woke) || [])[1];
+  const text = title != null ? `（测试回去）屋里留一句\n[回去]\n（测试回去）回《${title}》来找你了\n[SPLIT]\n在吗\n[WAKE:+3h]` : "（测试回去）屋里留一句\n[回去]\n（测试回去）回不去";
+  return { status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text }], usage: { input_tokens: 60, cache_creation_input_tokens: 0, cache_read_input_tokens: 9000, output_tokens: 50 } } };
+}
+
 // 平常聊天里翻梦廊的假的那边的我（罗浮梦，带着 luofu_gallery 的时候，见 src/luofu/parts.js；tests/e2e_luofu.py 用）。照她最后说的那句话：
 //   “翻翻梦廊”：先说“我翻翻梦廊。”，再调 luofu_gallery（action: list）
 //   “读梦廊 某某”：先说“翻出来看看。”，再调 luofu_gallery（action: read，which 写某某）
@@ -442,6 +472,9 @@ function fakeAnthropic(body, beta, via) {
   // 排手帐（不带工具，跟在名帖后面的是【排手帐】那段规矩）
   const jz = fakeArrange(body);
   if (jz) return jz;
+  // 醒在屋里、她在便签纸上留了“回去找我”：单独一行 [回去]，回到她最后说话的那一段（见 alarm/wake.js 的 splitGo）
+  const bk = fakeBack(body);
+  if (bk) return bk;
   // 他屋里的床（带着 luofu_nap，见 alarm/luofu.js）：照她最后在便签纸上留的那一句睡一觉、翻梦廊、读一场
   if (Array.isArray(body.tools) && body.tools.some((t) => t && t.name === "luofu_nap")) {
     const l = fakeLuofu(body);

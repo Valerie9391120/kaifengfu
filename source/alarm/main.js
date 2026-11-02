@@ -300,6 +300,10 @@ const resultLine = (r) =>
   r.ok
     ? r.newChat
       ? `醒过了，他开了一段新对话找你（敲了 ${r.knocked || 0} 条横幅）。`
+      : r.back
+      ? r.backGone
+        ? "醒过了，他想回到你最后说话的那段对话里找你，那段没放成（删了，或者你那句他还没回上），没放、没敲你。"
+        : `醒过了，他回到你最后说话的那段对话里找你（敲了 ${r.knocked || 0} 条横幅）。`
       : r.quiet
       ? "醒过了，他这一回没写字。"
       : "醒过了，他在屋里的便签纸上写了点东西（不敲你）。去狐宇宙看看。"
@@ -491,9 +495,24 @@ function createAlarm({ cloud, store, vault, st, setBusy }) {
       st.pending = null;
       st.lastErr = "";
       save();
-      const what = bundle.kind === "task" ? (bundle.quiet ? "任务到点，他去那段对话看了看，没说话" : `任务到点，他去那段对话找她了，敲了 ${r.knocked} 条横幅`) : bundle.newChat ? `他开了一段新对话找她，敲了 ${r.knocked} 条横幅` : bundle.quiet ? "他没写字" : "他在屋里写了点东西（不敲她）";
+      // 从屋里回去的那一段没放成（她删了、她那句还没回上，见 wake.js 的 commitWake）。日志里照旧不写那段对话叫什么
+      const backGone = !!bundle.back && r.gone.includes(bundle.back.id);
+      const what =
+        bundle.kind === "task"
+          ? bundle.quiet
+            ? "任务到点，他去那段对话看了看，没说话"
+            : `任务到点，他去那段对话找她了，敲了 ${r.knocked} 条横幅`
+          : bundle.newChat
+          ? `他开了一段新对话找她，敲了 ${r.knocked} 条横幅`
+          : bundle.back
+          ? backGone
+            ? "他想回到她最后说话的那段对话里找她，那段没放成（删了、她那句还没回上），没放、没敲"
+            : `他回到她最后说话的那段对话里找她，敲了 ${r.knocked} 条横幅`
+          : bundle.quiet
+          ? "他没写字"
+          : "他在屋里写了点东西（不敲她）";
       log(`放进去了：${what}${p.tries ? `（第 ${p.tries + 1} 回才放完）` : ""}`);
-      return { done: true, quiet: bundle.quiet, knocked: r.knocked, newChat: !!bundle.newChat };
+      return { done: true, quiet: bundle.quiet, knocked: r.knocked, newChat: !!bundle.newChat, back: !!bundle.back, backGone };
     } catch (e) {
       if (FATAL.has(e.code)) throw e;
       p.tries = (p.tries || 0) + 1;
@@ -513,7 +532,7 @@ function createAlarm({ cloud, store, vault, st, setBusy }) {
     save();
     log(`问完了：要了 ${bundle.steps} 步${bundle.cost != null ? `，约 $${bundle.cost.toFixed(4)}` : ""}${markLine(bundle.wake, now)}`);
     const r = await commitPending();
-    return r.done ? { ok: true, quiet: r.quiet, knocked: r.knocked || 0, newChat: r.newChat } : { ok: false, pending: true, err: r.err };
+    return r.done ? { ok: true, quiet: r.quiet, knocked: r.knocked || 0, newChat: r.newChat, back: r.back, backGone: r.backGone } : { ok: false, pending: true, err: r.err };
   }
 
   // 平常那种：叫醒他一回，醒在狐宇宙。回 { ok, quiet, knocked, newChat } 或 { ok: false, pending?, err }
