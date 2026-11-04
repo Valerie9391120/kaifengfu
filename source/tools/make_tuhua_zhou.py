@@ -1,5 +1,6 @@
 # 图画院的卷轴：直接从秘戏钱匣那一页里把展开的卷轴原样拍下来，切成五截。
 #   zhou-top.webp     天杆（连两头的小轴头）
+#   （天头、画心、地头这三截，卷轴面左右两道深色的边拿掉了，补上紧挨着的锦和纸）
 #   zhou-tian.webp    天头（锦，底下连着那道细线）
 #   zhou-paper.webp   画心那段纸（图画院里照画的横竖截长截短，画贴在上面）
 #   zhou-di.webp      地头（锦，上面连着那道细线）
@@ -90,6 +91,16 @@ def slice_(target=480):
     rt = np.nonzero((a[:face_top] > 0.3).any(axis=0))[0]
     top_x0, top_x1 = int(rt.min()), int(rt.max()) + 1
     k = target / fw
+    # 卷轴面左右两道深色的边拿掉（图画院里不要）：照中间那一截量出边有多宽，拿紧挨着里面那一溜镜像过来补上
+    mid = im[int(H * 0.3):int(H * 0.7), fl:fr, :3].mean(axis=(0, 2))
+    inner = float(np.median(mid[int(fw * 0.1):int(fw * 0.9)]))
+    eL = int(np.argmax(mid >= 0.97 * inner)); eR = int(np.argmax(mid[::-1] >= 0.97 * inner))
+
+    def no_edge(arr):
+        arr = arr.copy()
+        arr[:, :eL] = arr[:, eL:2 * eL][:, ::-1]
+        arr[:, fw - eR:] = arr[:, fw - 2 * eR:fw - eR][:, ::-1]
+        return arr
 
     def save(name, arr):
         img = Image.fromarray(arr.astype(np.uint8), "RGBA")
@@ -99,9 +110,9 @@ def slice_(target=480):
 
     sz = {
         "top": save("zhou-top.webp", im[0:face_top, top_x0:top_x1]),
-        "tian": save("zhou-tian.webp", im[face_top:tian_end, fl:fr]),
-        "paper": save("zhou-paper.webp", im[tian_end:di_start, fl:fr]),
-        "di": save("zhou-di.webp", im[di_start:roll_top, fl:fr]),
+        "tian": save("zhou-tian.webp", no_edge(im[face_top:tian_end, fl:fr])),
+        "paper": save("zhou-paper.webp", no_edge(im[tian_end:di_start, fl:fr])),
+        "di": save("zhou-di.webp", no_edge(im[di_start:roll_top, fl:fr])),
         "bottom": save("zhou-bottom.webp", im[roll_top:H, 0:W]),
     }
     # 都折成“卷轴面宽的几分之几”：页面上照轴宽缩放
@@ -113,7 +124,7 @@ def slice_(target=480):
     print(f"  di: {f(roll_top - di_start)},")
     print(f"  bottom: {{ h: {f(H - roll_top)}, x: {f(0 - fl)}, w: {f(W)} }},")
     print("};")
-    print("图的大小", sz)
+    print("图的大小", sz, "拿掉的边（左、右，原图像素）", eL, eR)
 
 
 if __name__ == "__main__":
