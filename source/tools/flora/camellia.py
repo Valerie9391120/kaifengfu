@@ -1,6 +1,7 @@
 # 茶花：重瓣，花瓣厚润整齐、层层围拢，颜色浓丽；叶子浓绿发亮；一朵开在枝头，旁边一个花苞
 import math
 import numpy as np
+import kit
 from kit import MB, tube, ellipsoid, frame_from, place, norm, rot, srgb
 import flora as F
 from flora import pframe, at
@@ -72,7 +73,9 @@ def leaf(G, rng, p, d, size=1.0, up=(0, 0, 1)):
 def branch(G, rng, p0, p1, face=(0, -1, 0), size=1.0, bud_at=0.7, leaves=6, bend=(0, 0, 0)):
     """一根短枝：枝头一朵（朝 face），叶子互生，枝上一个花苞。"""
     P = F.curve(p0, p1, bend=bend, n=20)
-    V, Q, T, UV = tube(P, np.linspace(0.03, 0.02, len(P)) * size, sides=8, cap=True)
+    R = np.linspace(0.03, 0.02, len(P)) * size
+    nk = kit.neck(P, R); P = nk.P     # 从瓶口正经出来；瓶口以下不挂叶子
+    V, Q, T, UV = tube(P, R, sides=8, cap=True)
     G['bark'].add(V, Q, T, UV, young=0.5)
     (pe, Te), = F.points_along(P, [1.0])
     ax = norm(Te + 1.2 * np.asarray(face, float))
@@ -82,9 +85,9 @@ def branch(G, rng, p0, p1, face=(0, -1, 0), size=1.0, bud_at=0.7, leaves=6, bend
         (p, Tt), = F.points_along(P, [s])
         o = norm(np.cross(Tt, (0, 1, 0))) * sgn; sgn = -sgn
         d = norm(o + 0.6 * Tt + 0.3 * np.asarray(face, float))
-        leaf(G, rng, p, d, size=size, up=norm(np.array([0, 0, 1.0]) + 0.6 * np.asarray(face, float)))
+        leaf(G if nk.ok(s) else kit.SINK, rng, p, d, size=size, up=norm(np.array([0, 0, 1.0]) + 0.6 * np.asarray(face, float)))
     if bud_at:
-        (p, Tt), = F.points_along(P, [bud_at])
+        (p, Tt), = F.points_along(P, [nk.up(bud_at)])
         o = norm(np.cross(Tt, (0, 1, 0)))
         bud(G, rng, p + o * 0.03, norm(o + Tt + 0.5 * np.asarray(face, float)), size=size)
     return P

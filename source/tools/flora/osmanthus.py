@@ -1,6 +1,7 @@
 # 金桂：革质的深绿叶对生，叶腋里一簇簇碎金似的小花（四裂，橙黄）
 import math
 import numpy as np
+import kit
 from kit import MB, tube, ellipsoid, frame_from, place, norm, rot, srgb
 import flora as F
 from flora import pframe, at
@@ -65,6 +66,7 @@ def branch(G, rng, p0, d0, L, face=(0, -1, 0), size=1.0, pairs=6, side=(0, 1, 0)
     from plum import path, radii
     P, nn = path(rng, p0, d0, L, step=0.04, node=0.28, kink=(5, 12), side=side, lift=0.015)
     R = radii(P, 0.026, 0.01, nn, knot=0.08)
+    nk = kit.neck(P, R, woody=True); P = nk.P     # 从瓶口正经出来；瓶口以下不挂叶、不开花
     V, Q, T, UV = tube(P, R, sides=8, cap=True)
     G['bark'].add(V, Q, T, UV, young=0.5)
     fa = np.asarray(face, float)
@@ -73,11 +75,12 @@ def branch(G, rng, p0, d0, L, face=(0, -1, 0), size=1.0, pairs=6, side=(0, 1, 0)
         base = norm(np.cross(Tt, (0, 1, 0)))
         ang = (math.pi / 2) * (j % 2) + rng.normal(0, 0.2)
         o = norm(math.cos(ang) * base + math.sin(ang) * np.cross(Tt, base))
+        g = G if nk.ok(s) else kit.SINK
         for sgn in (1, -1):
             d = norm(sgn * o + 0.55 * Tt)
-            leaf(G, rng, p, d, size=size, up=norm(np.array([0, 0, 1.0]) + 0.5 * fa))
+            leaf(g, rng, p, d, size=size, up=norm(np.array([0, 0, 1.0]) + 0.5 * fa))
             if s >= bloom_from and s < 0.95:
-                fascicle(G, rng, p + d * 0.02, norm(sgn * o * 0.6 + Tt * 0.5), face=face, size=size)
+                fascicle(g, rng, p + d * 0.02, norm(sgn * o * 0.6 + Tt * 0.5), face=face, size=size)
     # 梢上一对小嫩叶
     (pe, Te), = F.points_along(P, [1.0])
     for sgn in (1, -1):

@@ -1,6 +1,7 @@
 # 魏紫：开着的一朵、一个花苞、复叶、花梗。颜色照书房那朵魏紫（紫红，瓣边浅紫透光）
 import math
 import numpy as np
+import kit
 from kit import (MB, tube, ellipsoid, grid_quads, frame_from, place, norm, rot,
                  new_mat, ramp, uv_xy, attr, math_node, mix_rgb, hsv, thin_surface, noise_bump, srgb)
 import bpy
@@ -280,8 +281,25 @@ def leaflet(G, rng, L, R, t, lobes3=True):
             G['leaf'].add(place(V, R, t), Q, [], UV, rand=rand)
 
 
+_STEMS = {}   # 每个园子里已经建好的花梗（中线、半径）：叶子的叶柄从梗上长出来
+
+
+def _on_stem(G, o):
+    """这个园子里离 o 最近的花梗上一点（中线上，瓶口以上），没有梗就 None。"""
+    best = None
+    for P, R in _STEMS.get(id(G), []):
+        s = kit.arclen(P); t = np.linspace(0, s[-1], 240)
+        Q = np.stack([np.interp(t, s, P[:, k]) for k in range(3)], -1)
+        if kit.LIP is not None: Q = Q[Q[:, 2] > kit.LIP + 0.06]
+        if not len(Q): continue
+        d = np.linalg.norm(Q - o, axis=1); i = int(np.argmin(d))
+        if best is None or d[i] < best[1]: best = (Q[i], d[i])
+    return best
+
+
 def leaf(G, rng, origin, direction, up=(0, 0, 1), size=1.0, petiole=0.5):
-    """一片三出复叶：叶柄 + 顶生小叶 + 两片侧生小叶。direction 是叶柄伸出去的方向。"""
+    """一片三出复叶：叶柄 + 顶生小叶 + 两片侧生小叶。direction 是叶柄伸出去的方向。
+    这个园子里已经有花梗的，叶柄从离 origin 最近的那根梗上长出来，弯过去接到三片小叶那儿（小叶还在原地方）。"""
     d = norm(direction)
     x = norm(np.cross(d, up)); z = np.cross(x, d)
     R = np.stack([x, d, z], 1) * size   # 局部 y 沿叶柄，z 朝上
@@ -289,8 +307,19 @@ def leaf(G, rng, origin, direction, up=(0, 0, 1), size=1.0, petiole=0.5):
     # 叶柄：微微拱起
     s = np.linspace(0, 1, 8)
     P = np.stack([0 * s, petiole * s, 0.12 * petiole * np.sin(np.pi * s * 0.8)], -1)
-    V, Q, T, UV = tube(P, np.linspace(0.016, 0.011, 8), sides=6, cap=False)
-    G['stem'].add(place(V, R, o), Q, T, UV)
+    on = _on_stem(G, o)
+    if on is None:
+        V, Q, T, UV = tube(P, np.linspace(0.016, 0.011, 8), sides=6, cap=False)
+        G['stem'].add(place(V, R, o), Q, T, UV)
+    else:
+        p0 = on[0]; tw = place(P[-1], R, o)
+        dt = norm(R @ np.array([0, 1.0, -0.244]))          # 原来叶柄到头那一下的走向，小叶照这个接
+        L = np.linalg.norm(tw - p0)
+        t0 = norm(norm(tw - p0) + np.array([0, 0, 0.45]))   # 从梗上斜斜往上出
+        Pw = bezier(p0, p0 + t0 * L * 0.35, tw - dt * L * 0.35, tw, n=14)
+        V, Q, T, UV = tube(Pw, np.linspace(0.016, 0.011, 14) * size, sides=6, cap=False)
+        G['stem'].add(V, Q, T, UV)
+        print(f'peony.leaf: 叶柄接到梗上（原来离梗 {on[1]:.3f}，新叶柄长 {kit.arclen(Pw)[-1]:.2f}）')
     tip = P[-1]
     Lt = rng.uniform(0.62, 0.74)
     leaflet(G, rng, Lt, R @ rot((1, 0, 0), -0.08), place(tip, R, o))
@@ -309,5 +338,8 @@ def bezier(p0, p1, p2, p3, n=24):
 
 
 def stem(G, pts, r0=0.032, r1=0.025):
-    V, Q, T, UV = tube(pts, np.linspace(r0, r1, len(pts)), sides=10, cap=False)
+    R = np.linspace(r0, r1, len(pts))
+    pts = kit.neck(pts, R).P          # 从瓶里起头的：瓶颈那截捋顺，从瓶口正经出来
+    _STEMS.setdefault(id(G), []).append((pts, R))
+    V, Q, T, UV = tube(pts, R, sides=10, cap=False)
     G['stem'].add(V, Q, T, UV)

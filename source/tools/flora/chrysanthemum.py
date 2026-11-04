@@ -1,6 +1,7 @@
 # 秋菊：黄花，细长花瓣层层舒卷，愈到外层愈疏朗（外层长瓣下垂、瓣尖往上勾，里层短瓣往里抱）；叶有深裂
 import math
 import numpy as np
+import kit
 from kit import MB, tube, ellipsoid, frame_from, place, norm, rot, srgb, grid_quads
 import flora as F
 from flora import pframe, at
@@ -84,7 +85,9 @@ def leaf(G, rng, p, d, size=1.0, up=(0, 0, 1)):
 
 def stem(G, rng, p0, p1, face=(0, -1, 0), bend=(0, 0, 0), size=1.0, leaves=4):
     P = F.curve(p0, p1, bend=bend, n=24)
-    V, Q, T, UV = tube(P, np.linspace(0.022, 0.016, len(P)), sides=8, cap=False)
+    R = np.linspace(0.022, 0.016, len(P))
+    nk = kit.neck(P, R); P = nk.P     # 从瓶口正经出来；瓶口以下不挂叶子
+    V, Q, T, UV = tube(P, R, sides=8, cap=False)
     G['stem'].add(V, Q, T, UV)
     (pe, Te), = F.points_along(P, [1.0])
     ax = norm(Te + 1.0 * np.asarray(face, float))
@@ -93,7 +96,7 @@ def stem(G, rng, p0, p1, face=(0, -1, 0), bend=(0, 0, 0), size=1.0, leaves=4):
     for s in np.linspace(0.3, 0.85, leaves):
         (p, Tt), = F.points_along(P, [s])
         o = norm(np.cross(Tt, (0, 1, 0))) * sgn; sgn = -sgn
-        leaf(G, rng, p, norm(o + 0.6 * Tt + 0.3 * fa), size=size, up=norm(np.array([0, 0, 1.0]) + 0.5 * fa))
+        leaf(G if nk.ok(s) else kit.SINK, rng, p, norm(o + 0.6 * Tt + 0.3 * fa), size=size, up=norm(np.array([0, 0, 1.0]) + 0.5 * fa))
     return P
 
 

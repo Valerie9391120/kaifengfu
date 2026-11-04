@@ -6,10 +6,10 @@ import { useSlideIn } from "../ui/enter.js";
 import { dateOf, cleanTitle, TITLE_MAX, pageLayout, mountOf, vaseOf, hashStr, ZHOU } from "../tuhua.js";
 
 // 图画院（见 tuhua.js、开发说明“图画院”“图画院：框景”两节）。
-// 11 月 1 日照卿卿的草图换了样子：恩师那张画拆成的框景——一面墙，右上角挂落，底下一张长案，案上月白瓶里插着当天那一瓶花（十瓶轮着）；
+// 框景是恩师那张画拆成的——一面墙，右上角挂落，底下一张长案，案上月白瓶里插着当天那一瓶花（十瓶轮着）；
 // 墙上一页只挂两幅轴（左上一幅窄些短些、右下一幅宽些长些，照恩师那张画），往上划翻一页才划出别的来，从新到旧，翻到第几页不标。
 // 翻页的手感照藏音匣：两幅轴跟着手指走，下一页的两幅从长案、瓶花后面跟上来；松手过了两成就翻过去，不够就弹回来；第一页往下拉、最后一页往上推都弹回来。
-// 裱绫的颜色每一张随机挑一个（tuhua.js 的 MOUNTS）；横的挂成短一些的竖轴；轴底下垂一张小签，写名字和哪天画的（她 11 月 1 日挑的）。
+// 裱绫的颜色每一张随机挑一个（tuhua.js 的 MOUNTS）；横的挂成短一些的竖轴；轴底下垂一张小签，写名字和哪天画的。
 // 点一幅看大图；长按一幅“改名字”（没名字的写“起名字”）、“删掉这张”（再点一次才删）。
 // entries 见 tuhua.js 的 listEntries；imgOf(id) 那一张的大图（data URL，没取到是空的）；onRemove(id) 删掉这一张；onRename(id, 名字) 改名字
 
@@ -33,7 +33,7 @@ const A =
 const INK = "#3b2e25";
 const INK_SOFT = "rgba(74,58,46,0.74)";
 const WALL = "#ddccb6";
-// 天头地头淡淡透一点裱绫的颜色（她 11 月 1 日挑的“染得淡一些”）：白里调进三成五，正片叠底盖在秘戏钱匣那一截锦上
+// 天头地头淡淡透一点裱绫的颜色（染得淡一些）：白里调进三成五，正片叠底盖在秘戏钱匣那一截锦上
 const TINT = 0.35;
 
 // 翻页的手感（照藏音匣 page.js 的 P：pageThreshold、pageVelocity、pageK、pageC）
@@ -413,7 +413,7 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
         <img className="th-vase" data-vase={vase + 1} src={A.vases[vase]} alt="" draggable={false} style={{ position: "absolute", left: sc.vase.x, top: sc.vase.y, width: sc.vase.w, height: sc.vase.h }} />
       </div>
 
-      {/* 左上角很淡的一个返回（照藏音匣那个：没有底、没有字；卿卿 11 月 1 日说要“简约一点”） */}
+      {/* 左上角很淡的一个返回（照藏音匣那个：没有底、没有字） */}
       <button
         onClick={onBack}
         aria-label="返回"

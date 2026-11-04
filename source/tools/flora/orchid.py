@@ -1,6 +1,7 @@
 # 芷兰：修长的叶片一丛，抽出花茎，数朵清雅小花（淡黄绿，唇瓣白里带红点）
 import math
 import numpy as np
+import kit
 from kit import MB, tube, ellipsoid, frame_from, place, norm, rot, srgb
 import flora as F
 
@@ -59,15 +60,17 @@ def flower(G, rng, origin, axis, size=1.0):
 
 def scape(G, rng, p0, p1, bend=(0, 0, 0), n_flowers=5, face=(0, -1, 0), size=1.0):
     P = F.curve(p0, p1, bend=bend, n=24)
-    V, Q, T, UV = tube(P, np.linspace(0.018, 0.011, len(P)), sides=7, cap=True)
+    R = np.linspace(0.018, 0.011, len(P))
+    nk = kit.neck(P, R); P = nk.P     # 从瓶口正经出来；苞片、花都在瓶口以上
+    V, Q, T, UV = tube(P, R, sides=7, cap=True)
     G['scape'].add(V, Q, T, UV)
     # 花茎下半截一两片苞片
     for s in (0.22, 0.42):
         (p, Tt), = F.points_along(P, [s])
         V, Q, UV = F.leaf_blade(rng, 0.12, 0.05, shape='lanceolate', nu=5, nv=6, fold=0.6, droop=-0.1)
         x = norm(np.cross(Tt, (0, -1, 0.2))); z = np.cross(x, Tt)
-        G['bract'].add(place(V, np.stack([x, Tt, z], 1), p), Q, [], UV)
-    ss = np.linspace(0.5, 0.97, n_flowers)
+        (G if nk.ok(s) else kit.SINK)['bract'].add(place(V, np.stack([x, Tt, z], 1), p), Q, [], UV)
+    ss = nk.spread(np.linspace(0.5, 0.97, n_flowers))
     sgn = 1
     for s in ss:
         (p, Tt), = F.points_along(P, [s])

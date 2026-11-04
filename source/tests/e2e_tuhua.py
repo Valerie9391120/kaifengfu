@@ -1,4 +1,4 @@
-# 图画院：他画的画都收在南衙里这一栏（卿卿 10 月 30 日晚上要的，见 src/tuhua.js）。
+# 图画院：他画的画都收在南衙里这一栏（见 src/tuhua.js）。
 # 真的浏览器、真的 draw 函数（跑在假 Supabase 里）、假的 ElevenLabs，同 tests/e2e_draw.py。
 # 先在 source/ 里 npm run build:test，起好两个服务（见开发说明），再：python3 tests/e2e_tuhua.py [截图目录]
 import json, os, re, subprocess, sys, time

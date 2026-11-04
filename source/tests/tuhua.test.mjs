@@ -84,7 +84,7 @@ const T0 = Date.UTC(2026, 9, 30, 21, 40);
   const ids = Array.from({ length: 40 }, (_, i) => `m${i}.${i % 3}`);
   const cols = new Set(ids.map((id) => mountOf(id)[0]));
   ok(MOUNTS.length >= 12 && MOUNTS.slice(0, 6).map((m) => m[0]).join("") === "月白浅青淡黄藕荷松花浅绛" && mountOf("m1.1") === mountOf("m1.1") && cols.size >= 8,
-     `裱绫的颜色：她点的六样打头，又添了几样；同一张永远同一个颜色；四十张里有 ${cols.size} 样`);
+     `裱绫的颜色：月白那六样打头，又添了几样；同一张永远同一个颜色；四十张里有 ${cols.size} 样`);
   // 一幅轴：竖的最长、横的最短（都挂成竖轴）；各部分加起来就是总高
   const pv = scrollParts("竖", 150), pf = scrollParts("方", 150), ph = scrollParts("横", 150);
   ok(pv.h > pf.h && pf.h > ph.h && pv.ih > pv.iw && ph.ih < ph.iw && pf.ih === pf.iw && pv.di > pv.tian && pv.tian > 0.3 * pv.wi,

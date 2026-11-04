@@ -154,6 +154,7 @@ def a9():
     side = (0, 1, 0)
     T, tn = plum.path(rng, IN(0.0, 0.05), (0.3, 0.05, 1), 3.4, step=0.05, node=0.32, kink=(16, 32), side=side)
     TR = plum.radii(T, 0.085, 0.02, tn)
+    T = kit.neck(T, TR, woody=True).P      # 老枝从瓶口正经出来
     plum.add_branch(G, T, TR, sides=12)
     def br(at, d, L, scale=0.6):
         i = int(at * (len(T) - 1))

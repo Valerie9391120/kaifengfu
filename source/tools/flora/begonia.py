@@ -1,6 +1,7 @@
 # 西府海棠：粉白相间的花压满枝头，花梗细长、花微微垂首；花苞深粉红；新叶带一点红
 import math
 import numpy as np
+import kit
 from kit import MB, tube, ellipsoid, frame_from, place, norm, rot, srgb
 import flora as F
 from flora import pframe, at
@@ -104,12 +105,13 @@ def branch(G, rng, p0, d0, L, r0=0.035, face=(0, -1, 0), every=(0.16, 0.26), siz
     from plum import path, radii
     P, nn = path(rng, p0, d0, L, step=0.04, node=0.3, kink=(8, 18), side=side, lift=0.01)
     R = radii(P, r0, 0.008, nn, knot=0.1)
+    nk = kit.neck(P, R, woody=True); P = nk.P     # 从瓶口正经出来；瓶口以下不开花
     V, Q, T, UV = tube(P, R, sides=9, cap=True)
     G['bark'].add(V, Q, T, UV, young=0.4)
     s = 0.22
     while s < 0.97:
         (p, Tt), = F.points_along(P, [s])
-        cluster(G, rng, p, Tt, face=face, size=size)
+        cluster(G if nk.ok(s) else kit.SINK, rng, p, Tt, face=face, size=size)
         s += rng.uniform(*every) / L * 1.0
     return P, R
 

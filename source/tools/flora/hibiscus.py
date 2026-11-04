@@ -1,6 +1,7 @@
 # 木槿：薄软的五瓣花，花色温柔明净（淡粉紫），瓣根一圈深红的“眼”；中间一根雄蕊柱；花苞紧拢；叶三浅裂、有粗齿
 import math
 import numpy as np
+import kit
 from kit import MB, tube, ellipsoid, frame_from, place, norm, rot, srgb, grid_quads
 import flora as F
 from flora import pframe, at
@@ -110,12 +111,14 @@ def leaf(G, rng, p, d, size=1.0, up=(0, 0, 1)):
 
 def branch(G, rng, p0, p1, face=(0, -1, 0), size=1.0, flowers=(0.62, 0.9), buds=(0.45, 0.78, 1.0), leaves=6, bend=(0, 0, 0)):
     P = F.curve(p0, p1, bend=bend, n=24)
-    V, Q, T, UV = tube(P, np.linspace(0.026, 0.012, len(P)), sides=8, cap=True)
+    R = np.linspace(0.026, 0.012, len(P))
+    nk = kit.neck(P, R); P = nk.P     # 从瓶口正经出来；瓶口以下不挂叶子，花、苞挪到瓶口以上
+    V, Q, T, UV = tube(P, R, sides=8, cap=True)
     G['bark'].add(V, Q, T, UV, young=0.4)
     fa = np.asarray(face, float)
     sgn = 1
     for s in flowers:
-        (p, Tt), = F.points_along(P, [s])
+        (p, Tt), = F.points_along(P, [nk.up(s)])
         o = norm(np.cross(Tt, (0, 1, 0))) * sgn; sgn = -sgn
         ax = norm(o * 0.6 + 0.4 * Tt + 1.1 * fa)
         q = p + o * 0.05
@@ -123,7 +126,7 @@ def branch(G, rng, p0, p1, face=(0, -1, 0), size=1.0, flowers=(0.62, 0.9), buds=
         G['bark'].add(V, Q, T, UV, young=1.0)
         flower(G, rng, q + ax * 0.03, ax, size=size)
     for s in buds:
-        (p, Tt), = F.points_along(P, [min(s, 0.999)])
+        (p, Tt), = F.points_along(P, [min(nk.up(s), 0.999)])
         o = norm(np.cross(Tt, rng.normal(0, 1, 3)))
         ax = norm(o * 0.5 + Tt + 0.4 * fa) if s < 1 else Tt
         bud(G, rng, p + o * 0.02, ax, size=size * 0.9)
@@ -131,7 +134,7 @@ def branch(G, rng, p0, p1, face=(0, -1, 0), size=1.0, flowers=(0.62, 0.9), buds=
     for s in np.linspace(0.12, 0.9, leaves):
         (p, Tt), = F.points_along(P, [s])
         o = norm(np.cross(Tt, (0, 1, 0))) * sg; sg = -sg
-        leaf(G, rng, p, norm(o + 0.6 * Tt + 0.3 * fa), size=size, up=norm(np.array([0, 0, 1.0]) + 0.5 * fa))
+        leaf(G if nk.ok(s) else kit.SINK, rng, p, norm(o + 0.6 * Tt + 0.3 * fa), size=size, up=norm(np.array([0, 0, 1.0]) + 0.5 * fa))
     return P
 
 

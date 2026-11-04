@@ -1,6 +1,7 @@
 # 水仙：青叶之间，细长花茎托起数朵洁白小花，白瓣清透，中央一点金黄（金盏银台）
 import math
 import numpy as np
+import kit
 from kit import MB, tube, ellipsoid, frame_from, place, norm, rot, srgb
 import flora as F
 from flora import pframe, at
@@ -48,7 +49,9 @@ def flower(G, rng, origin, axis, size=1.0):
 def stalk(G, rng, p0, p1, face=(0, -1, 0), n=(4, 7), size=1.0, bend=(0, 0, 0), leaves=3, leaf_len=(1.1, 1.7)):
     """一根花葶：顶上一个膜质的苞，伞形地垂下几根花梗，各托一朵；底下几片带状的叶。"""
     P = F.curve(p0, p1, bend=bend, n=20)
-    V, Q, T, UV = tube(P, np.linspace(0.022, 0.018, len(P)), sides=8, cap=True)
+    R = np.linspace(0.022, 0.018, len(P))
+    P = kit.neck(P, R).P              # 从瓶口正经出来
+    V, Q, T, UV = tube(P, R, sides=8, cap=True)
     G['scape'].add(V, Q, T, UV)
     (pe, Te), = F.points_along(P, [1.0])
     V, Q, UV = F.leaf_blade(rng, 0.16, 0.06, shape='lanceolate', nu=5, nv=8, fold=0.5, droop=-0.05)

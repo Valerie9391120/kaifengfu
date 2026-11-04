@@ -37,6 +37,7 @@ rng = np.random.default_rng(5)
 side = (0, 1, 0)
 T, tn = plum.path(rng, (0.06, 0.08, MZ - 0.5), (-0.16, 0.06, 1), 3.7, step=0.05, node=0.34, kink=(16, 32), side=side)
 TR = plum.radii(T, 0.08, 0.02, tn)
+T = kit.neck(T, TR, woody=True).P      # 老枝从瓶口正经出来（瓶里那截顺着瓶颈下去）
 plum.add_branch(G, T, TR, sides=12)
 
 def branch(at, d, L, r1=0.011, node=0.28, lift=0.0, scale=0.58):

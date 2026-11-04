@@ -1,6 +1,7 @@
 # 映山红：鲜红的漏斗形花，枝头两三朵一簇；上面那片裂瓣有深红的斑点；长长的雄蕊翘出来；小叶簇生在枝梢
 import math
 import numpy as np
+import kit
 from kit import MB, tube, ellipsoid, frame_from, place, norm, rot, srgb
 import flora as F
 from flora import pframe, at
@@ -75,13 +76,14 @@ def branch(G, rng, p0, d0, L, face=(0, -1, 0), size=1.0, forks=3, side=(0, 1, 0)
     from plum import path, radii
     P, nn = path(rng, p0, d0, L, step=0.04, node=0.25, kink=(8, 20), side=side, lift=0.02)
     R = radii(P, 0.022, 0.009, nn, knot=0.12)
+    nk = kit.neck(P, R, woody=True); P = nk.P     # 从瓶口正经出来；分枝都在瓶口以上分
     V, Q, T, UV = tube(P, R, sides=8, cap=True)
     G['bark'].add(V, Q, T, UV, young=0.3)
     (pe, Te), = F.points_along(P, [1.0])
     tip_cluster(G, rng, pe, Te, face=face, size=size)
     for j in range(forks):
         s = rng.uniform(0.35, 0.85)
-        (p, Tt), = F.points_along(P, [s])
+        (p, Tt), = F.points_along(P, [nk.up(s)])
         d = norm(Tt + norm(np.cross(Tt, rng.normal(0, 1, 3))) * 0.9 + np.array([0, 0, 0.3]))
         Pq, _ = path(rng, p, d, L * rng.uniform(0.3, 0.5), step=0.04, node=0, wander=0.02, lift=0.02)
         Rq = radii(Pq, 0.011, 0.007)

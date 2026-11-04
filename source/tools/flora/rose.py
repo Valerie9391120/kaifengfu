@@ -1,6 +1,7 @@
 # 月季：柔软的花瓣一层层舒展，颜色鲜润（粉红）；高心，外瓣边缘往外翻卷；羽状复叶五小叶；茎上有小刺
 import math
 import numpy as np
+import kit
 from kit import MB, tube, ellipsoid, frame_from, place, norm, rot, srgb, grid_quads
 import flora as F
 from flora import pframe, at
@@ -109,14 +110,16 @@ def leaf(G, rng, p, d, size=1.0, up=(0, 0, 1)):
 
 def stem(G, rng, p0, p1, face=(0, -1, 0), bend=(0, 0, 0), size=1.0, leaves=2, with_bud=True):
     P = F.curve(p0, p1, bend=bend, n=24)
-    V, Q, T, UV = tube(P, np.linspace(0.024, 0.018, len(P)), sides=8, cap=False)
+    R = np.linspace(0.024, 0.018, len(P))
+    nk = kit.neck(P, R); P = nk.P     # 从瓶口正经出来；瓶口以下不长刺、不挂叶子
+    V, Q, T, UV = tube(P, R, sides=8, cap=False)
     G['stem'].add(V, Q, T, UV)
     # 小刺
     for s in rng.uniform(0.05, 0.85, 10):
         (p, Tt), = F.points_along(P, [s])
         o = norm(np.cross(Tt, rng.normal(0, 1, 3)))
         V, Q, T, UV = tube(np.array([p + o * 0.016, p + o * 0.04 - Tt * 0.012]), [0.008, 0.0005], sides=5, cap=False)
-        G['prickle'].add(V, Q, T, UV)
+        (G if nk.ok(s) else kit.SINK)['prickle'].add(V, Q, T, UV)
     (pe, Te), = F.points_along(P, [1.0])
     ax = norm(Te + 0.9 * np.asarray(face, float))
     bloom(G, rng, pe + ax * 0.05, ax, size=size)
@@ -124,9 +127,9 @@ def stem(G, rng, p0, p1, face=(0, -1, 0), bend=(0, 0, 0), size=1.0, leaves=2, wi
     for s in np.linspace(0.45, 0.8, leaves):
         (p, Tt), = F.points_along(P, [s])
         o = norm(np.cross(Tt, (0, 1, 0))) * sgn; sgn = -sgn
-        leaf(G, rng, p, norm(o + 0.7 * Tt + 0.3 * fa), size=size, up=norm(np.array([0, 0, 1.0]) + 0.5 * fa))
+        leaf(G if nk.ok(s) else kit.SINK, rng, p, norm(o + 0.7 * Tt + 0.3 * fa), size=size, up=norm(np.array([0, 0, 1.0]) + 0.5 * fa))
     if with_bud:
-        (p, Tt), = F.points_along(P, [0.62])
+        (p, Tt), = F.points_along(P, [nk.up(0.62)])
         o = norm(np.cross(Tt, (0, 1, 0))) * -1
         q = p + norm(o + Tt) * 0.3
         Pb = F.curve(p, q, bend=Tt * 0.04, n=8)

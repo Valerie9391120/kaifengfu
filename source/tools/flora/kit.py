@@ -1,5 +1,5 @@
 # 共用的：清场、渲染设置、光、相机、月白瓶、网格小工具、材质小工具
-import bpy, math
+import bpy, math, os
 import numpy as np
 
 # ---------------- 场景 ----------------
@@ -111,6 +111,7 @@ def frame_from(d, up=(0, 0, 1)):
 def tube(P, R, sides=8, cap=True, v0=0.0, v1=1.0, twist_up=None):
     """沿一串点 P 拉一根管子，半径 R（每个点一个）。返回 V, quads, tris, UV。"""
     P = np.asarray(P, float); n = len(P); R = np.broadcast_to(np.asarray(R, float), (n,))
+    if SEC is not None and P[0, 2] > 0.5 and where(P[:1])[0] == 1: TUBES.append((P.copy(), np.array(R), _who()))   # 局部坐标里先建的小零件（花丝之类）不算
     T = np.gradient(P, axis=0); T = norm(T)
     up = np.array([0, 0, 1.0]) if twist_up is None else np.asarray(twist_up, float)
     if abs(np.dot(T[0], up)) > 0.95: up = np.array([1.0, 0, 0])
@@ -320,4 +321,264 @@ def vase(N=96):
     so = ob.modifiers.new('wall', 'SOLIDIFY'); so.thickness = 0.04; so.offset = -1.0
     sub = ob.modifiers.new('sub', 'SUBSURF'); sub.levels = 2; sub.render_levels = 2
     me.materials.append(vase_mat())
+    measure_vase(ob)
     return ob
+
+
+# ---------------- 瓶口：枝梗得从瓶口正经出来 ----------------
+# 瓶壁的纵剖面（ρ=到瓶轴的距离, z）：vase() 建好以后，从细分、加厚过的网格上沿一条经线量出来。
+# 外壁从瓶底往上走到口沿顶，内壁从口沿顶往下走到瓶里底。花枝离瓶壁多远、有没有戳穿，都照这个算。
+SEC = None      # 剖面一圈 (m, 2)
+LIP = None      # 口沿顶的 z
+_OUT = None     # 外壁 (k, 2)，z 递增
+_INN = None     # 内壁 (k, 2)，z 递增
+TUBES = []      # 从瓶里起头的管子（中线、半径、谁建的），查穿模用
+NOTES = []      # neck() 改了哪几根、怎么改的
+
+
+def measure_vase(ob):
+    global SEC, LIP, _OUT, _INN
+    dg = bpy.context.evaluated_depsgraph_get()
+    ev = ob.evaluated_get(dg); me = ev.to_mesh()
+    V = np.array([v.co[:] for v in me.vertices]); E = np.array([e.vertices[:] for e in me.edges])
+    ev.to_mesh_clear()
+    on = (np.abs(V[:, 1]) < 1e-5) & (V[:, 0] > -1e-6)
+    adj = {}
+    for a, b in E[on[E[:, 0]] & on[E[:, 1]]]:
+        adj.setdefault(a, []).append(b); adj.setdefault(b, []).append(a)
+    ends = [k for k, v in adj.items() if len(v) == 1]
+    order = [min(ends, key=lambda k: V[k, 2])]; prev = -1
+    while True:
+        nx = [n for n in adj[order[-1]] if n != prev]
+        if not nx: break
+        prev = order[-1]; order.append(nx[0])
+    P = V[order][:, [0, 2]]
+    top = int(np.argmax(P[:, 1]))
+    SEC, LIP = P, float(P[top, 1])
+    _OUT, _INN = P[:top + 1], P[top:][::-1]
+    EXITS.clear(); TUBES.clear(); NOTES.clear(); STEMS.clear()
+
+
+def outer_r(z): return np.interp(z, _OUT[:, 1], _OUT[:, 0], right=0.0)
+def inner_r(z): return np.interp(z, _INN[:, 1], _INN[:, 0], left=0.0, right=0.0)
+
+
+def _rz(P):
+    P = np.atleast_2d(np.asarray(P, float))
+    return np.hypot(P[:, 0], P[:, 1]), P[:, 2]
+
+
+def where(P):
+    """每个点在哪：0 瓶外，1 瓶里（口沿以下、内壁以内），2 瓷里头（瓶壁里）。"""
+    r, z = _rz(P)
+    solid = (z <= LIP) & (r <= outer_r(z)) & ((r >= inner_r(z)) | (z < _INN[0, 1]))
+    cav = (z < LIP) & (r < inner_r(z)) & (z >= _INN[0, 1]) & ~solid
+    return np.where(solid, 2, np.where(cav, 1, 0))
+
+
+def clearance(P):
+    """每个点离瓷面多远（在瓷里头算负的）。"""
+    r, z = _rz(P)
+    Q = np.stack([r, z], -1); A = SEC[:-1]; B = SEC[1:]
+    AB = B - A; t = np.clip(((Q[:, None] - A[None]) * AB[None]).sum(2) / np.maximum((AB ** 2).sum(1), 1e-12), 0, 1)
+    d = np.sqrt(((Q[:, None] - (A[None] + t[..., None] * AB[None])) ** 2).sum(2)).min(1)
+    return np.where(where(P) == 2, -d, d)
+
+
+def _who():
+    import sys
+    f = sys._getframe(2); out = []
+    while f is not None and len(out) < 3:
+        nm = f.f_code.co_name; mod = f.f_globals.get('__name__', '?')
+        if nm not in ('<module>',): out.append(f"{mod}.{nm}:{f.f_lineno}")
+        f = f.f_back
+    return ' ← '.join(out)
+
+
+# 一根枝从瓶里出来该怎么走：瓶里顺着瓶颈下去（看不见），从口沿里面出来，再顺顺地接上原来露在外面的那截。
+GAP = 0.008     # 离瓷面至少留这么一丝
+EXITS = []      # 这一瓶里已经占了的出口（口沿平面上的位置、半径），后来的枝从旁边出，不挤在一处
+STEMS = []      # 这一瓶里已经插好的、从瓶里起头的枝梗（中线、半径）：后来的出瓶那段别和它们穿在一起
+
+
+def _bez(p0, p1, p2, p3, n):
+    t = np.linspace(0, 1, n)[:, None]
+    return (1 - t) ** 3 * p0 + 3 * (1 - t) ** 2 * t * p1 + 3 * (1 - t) * t ** 2 * p2 + t ** 3 * p3
+
+
+def arclen(P):
+    return np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))])
+
+
+def _resample(P, m):
+    s = arclen(P); t = np.linspace(0, s[-1], m)
+    return np.stack([np.interp(t, s, P[:, k]) for k in range(3)], -1)
+
+
+def _ang(a, b):
+    return math.acos(float(np.clip(np.dot(norm(a), norm(b)), -1, 1)))
+
+
+def _bend(P):
+    """一条线一共拐了多少（弧度）、最急的地方曲率多大。"""
+    d = np.diff(P, axis=0); ds = np.linalg.norm(d, axis=1); d = d / np.maximum(ds[:, None], 1e-12)
+    a = np.arccos(np.clip((d[1:] * d[:-1]).sum(1), -1, 1))
+    k = a / np.maximum(0.5 * (ds[1:] + ds[:-1]), 1e-9)
+    return float(a.sum()), float(k.max()) if len(k) else 0.0
+
+
+def _ok_path(P, R, gap):
+    """整根都不碰瓷，而且是从瓶口出来的（瓶里的点后头紧跟着瓶外口沿以下的点，就是从瓶身上穿出去的）。"""
+    if (clearance(P) - R < gap).any(): return False
+    w = where(P)
+    for a, b, zb in zip(w[:-1], w[1:], P[1:, 2]):
+        if a == 1 and b == 0 and zb < LIP: return False
+    return True
+
+
+def _exit_spot(ex, r, rmax):
+    """出口别和前头几根挤在一处：挨得太近就推开一点，再收回口沿里面。"""
+    ex = np.array(ex, float)
+    for _ in range(30):
+        moved = False
+        for (e2, r2) in EXITS:
+            d = ex - e2; L = np.linalg.norm(d); need = r + r2 + 0.006
+            if L < need:
+                ex = ex + (d / L if L > 1e-6 else np.array([0.0, 1.0])) * (need - L) * 0.6; moved = True
+        L = np.linalg.norm(ex)
+        if L > rmax: ex *= rmax / L
+        if not moved: break
+    return ex
+
+
+def _inside(E, D, r, length, gap, ds=0.02):
+    """从出口往瓶里走：先顺着出瓶的方向，快碰壁了就往下、往瓶轴那边拐。"""
+    pts = [np.array(E, float)]; d = -norm(D); acc = 0.0
+    down = np.array([0.0, 0.0, -1.0])
+    while acc < length:
+        q = None
+        for _ in range(60):
+            c = pts[-1] + d * ds
+            if where(c[None])[0] == 1 and clearance(c[None])[0] >= r + gap: q = c; break
+            h = np.array([c[0], c[1], 0.0]); L = np.linalg.norm(h)
+            want = norm(down - 0.9 * h / L) if L > 1e-6 else down
+            d = norm(d + 0.2 * want)
+        if q is None: break
+        pts.append(q); acc += ds
+        if q[2] < 0.3: break
+    return np.array(pts)
+
+
+def _apart(P, R):
+    """这一根在瓶口上头那段，离已经插好的那几根最近还隔多少（负的就是穿在一起了）。"""
+    m = P[:, 2] > LIP - 0.01
+    if not m.any() or not STEMS: return 1.0
+    A = P[m]; RA = np.asarray(R)[m]; best = 1.0
+    for (S, RS) in STEMS:
+        k = S[:, 2] > LIP - 0.01
+        if not k.any(): continue
+        d = np.linalg.norm(A[:, None] - S[k][None], axis=2) - RA[:, None] - RS[k][None]
+        best = min(best, float(d.min()))
+    return best
+
+
+class Neck:
+    """neck() 的结果：P 是新的中线；按长度比例 s_clear 往后才算出了瓶。
+    ok(s)：沿枝 s 处挂叶子、刺行不行——出瓶以前的就不挂了（插花本来就把瓶口以下的叶子摘掉）；
+    不挂的那片照样用 SINK 建一遍（随机数照旧往下走，别的叶子、花一点不变），只是不进画。
+    up(s)：花、苞这类挪到出瓶以后；spread(一串 s)：一串花整串往出瓶以后匀一匀。"""
+    def __init__(self, P, s_clear=0.0, note=''):
+        self.P, self.s_clear, self.note = P, float(s_clear), note
+
+    def ok(self, s):
+        return s >= self.s_clear
+
+    def up(self, s):
+        return max(float(s), self.s_clear + 0.02) if self.s_clear > 0 else float(s)
+
+    def spread(self, ss):
+        ss = np.asarray(ss, float); c = self.s_clear + 0.02
+        if self.s_clear <= 0 or ss.min() >= c: return ss
+        lo, hi = ss.min(), ss.max()
+        if hi <= c: return np.full_like(ss, c)
+        return c + (ss - lo) * (hi - c) / max(hi - lo, 1e-9)
+
+
+class _Sink(dict):
+    """什么都收、什么都不留的“园子”：G['leaf'].add(...) 照样调，东西扔了。"""
+    def __getitem__(self, k): return self
+    def add(self, *a, **k): pass
+
+
+SINK = _Sink()
+
+
+def _s_clear(P, R, m=0.1):
+    """沿着枝，从哪儿往后才算出了瓶、离口沿也够远（挂叶子不至于碰着瓶）。"""
+    far = np.linalg.norm(P - np.array([0, 0, LIP]), axis=1) > 0.6
+    ok = ((P[:, 2] >= LIP + m) | far) & (clearance(P) - R >= 0.02) & (where(P) == 0)
+    tail = np.flip(np.cumprod(np.flip(ok))).astype(bool)
+    i = int(np.argmax(tail)) if tail.any() else len(P) - 1
+    s = arclen(P); return s[i] / max(s[-1], 1e-9)
+
+
+def neck(P, R, gap=GAP, woody=False):
+    """一根从瓶里起头的枝/梗（第一个点在瓶里）：要是穿了瓶壁、压着口沿，就把瓶里那截重新走线——
+    瓶里顺着瓶颈下去，从口沿里面出来，再顺顺地接上原来露在外面的那截（接头往后一点不动，点数、长短都不变，
+    沿枝按位置挂的叶子、花还在原地方）。接在哪儿：挑出瓶以后拐得最缓的那个接法；
+    woody=True（老枝、木本的枝）多留原来的样子（之字折），宁可接得早些。
+    原来那截压根没从瓶口上头过的（贴着瓶身横出去的），整根往上提，提到能从瓶口顺顺出来为止。返回 Neck。"""
+    P = np.asarray(P, float).copy(); n = len(P)
+    R = np.broadcast_to(np.asarray(R, float), (n,)).astype(float)
+    if SEC is None or n < 4 or P[0, 2] < 0.5 or where(P[:1])[0] != 1 or os.environ.get('KIT_NO_NECK'):
+        return Neck(P)
+    if _ok_path(P, R, gap) and _apart(P, R) >= 0:
+        STEMS.append((P, R)); return Neck(P, _s_clear(P, R))
+    s_old = arclen(P)
+    r = float(R[:max(2, n // 2)].max())
+    M = np.array([0.0, 0.0, LIP])
+    rmax = float(inner_r(LIP - 0.025)) - r - gap
+    cap = math.radians(55)
+    wlen = 0.8 if woody else 0.12
+    for lift in np.arange(0.0, 1.21, 0.06):
+        Q = P + np.array([0.0, 0.0, lift])
+        far = np.linalg.norm(Q - M, axis=1) > 0.6
+        ok = (clearance(Q) - R >= gap) & (where(Q) == 0) & ((Q[:, 2] >= LIP + 0.1) | far)
+        tail = np.flip(np.cumprod(np.flip(ok))).astype(bool)
+        best = None
+        for j in range(1, n):
+            if not tail[j] or Q[j, 2] < LIP + 0.12: continue
+            Pj = Q[j]; Tj = norm(Q[min(j + 1, n - 1)] - Q[j - 1])
+            h = Pj[:2]
+            if np.linalg.norm(h) > 0.03: u = h / np.linalg.norm(h)
+            elif np.linalg.norm(Tj[:2]) > 1e-3: u = Tj[:2] / np.linalg.norm(Tj[:2])
+            else: u = np.array([1.0, 0.0])
+            ch = Pj - M; thc = math.atan2(np.linalg.norm(ch[:2]), ch[2])
+            tht = math.atan2(np.linalg.norm(Tj[:2]), Tj[2])
+            o = P[0, :2]; op = o - np.dot(o, u) * u
+            for th in {round(min(max(t, 0.0), cap), 3) for t in (tht, thc, 0.5 * (tht + thc), 0.75 * thc, 0.6 * tht, 1.15 * thc)}:
+                D = np.array([u[0] * math.sin(th), u[1] * math.sin(th), math.cos(th)])
+                ex = _exit_spot(u * rmax * float(np.clip(th / cap, 0.15, 0.95)) + op * 0.8, r, rmax)
+                E = np.array([ex[0], ex[1], LIP])
+                L = np.linalg.norm(Pj - E)
+                B = _bez(E, E + D * L * 0.4, Pj - Tj * L * 0.4, Pj, max(10, int(L / 0.015)))
+                if (clearance(B) - r < gap).any(): continue
+                tot, kmax = _bend(B)
+                if tot > _ang(D, Tj) + 0.35 or kmax > 1.0 / max(0.15, 2.5 * r): continue
+                Lb = arclen(B)[-1]
+                score = kmax * 0.25 + wlen * Lb + 0.3 * np.linalg.norm(ex) / max(rmax, 1e-6)
+                score += 40.0 * max(0.0, 0.004 - _apart(B, np.full(len(B), r)))   # 和先插的那几根穿在一起的，尽量不要
+                if best is None or score < best[0]: best = (score, j, E, D, B, ex)
+        if best is None: continue
+        _, j, E, D, B, ex = best
+        I = _inside(E, D, r, max(0.15, s_old[j] - arclen(B)[-1]), gap)
+        low = _resample(np.vstack([I[::-1], B[1:]]), j + 1)
+        new = np.vstack([low[:-1], Q[j:]])
+        if not _ok_path(new, R, gap * 0.5): continue
+        EXITS.append((ex, r)); STEMS.append((new, R))
+        note = f'接在第 {j}/{n - 1} 点' + (f'，整根提了 {lift:.2f}' if lift > 0 else '')
+        nk = Neck(new, _s_clear(new, R), note)
+        NOTES.append((_who(), f'{note}，出瓶以后才挂东西：{nk.s_clear:.2f}'))
+        return nk
+    NOTES.append((_who(), '没找着顺的走法，原样留着'))
+    return Neck(P, _s_clear(P, R), '没改成')
