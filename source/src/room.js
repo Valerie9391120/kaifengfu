@@ -131,6 +131,22 @@ function lookText(a, heading) {
   ].join("\n");
 }
 
+// 完成的那一身写成一行（狐宇宙里完成搭配那一行小字、推近铜镜的卡片上用）：梳发、妆面、熏香，再是衣柜、下装、鞋履、配饰（空着的不写）。叠得太多，写到 max 个字为止，后面写一共几样
+const LOOK_MAX = 80;
+export function lookLine(a, max = LOOK_MAX) {
+  if (!a) return "";
+  const bits = [a.hair, a.makeup, a.scent].filter(Boolean).map((id, i) => (i ? "、" : "") + itemName(id));
+  for (const [c, ids] of [["outfit", a.outfits], ["bottom", a.bottoms], ["shoes", a.shoes], ["accessory", a.accessories]]) {
+    (ids || []).forEach((id, i) => bits.push((i ? "、" : `；${CATEGORY_LABELS[c]}：`) + itemName(id)));
+  }
+  let out = "";
+  for (const b of bits) {
+    if ((out + b).length > max) return `${out}……一共 ${bits.length} 样`;
+    out += b;
+  }
+  return out;
+}
+
 const ONLY_GARDEN = "只能看，动不了：浇水、松土、修剪、赏花，只在你自己在屋里醒着的时候。";
 const ONLY_DRESSING = "只能看，动不了：换装、完成搭配、照镜子，只在你自己在屋里醒着的时候。这是妆台小游戏里搭的那一身，不是你这会儿真穿着的。";
 

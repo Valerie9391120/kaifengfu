@@ -40,6 +40,7 @@ import { pindouOf, pindouBrief, pindouToy } from "./pindou.js";
 import { luofuOf, luofuToy } from "./luofu.js";
 import { LUOFU_POOL, LUOFU_STATE, readLuofuPool, luofuSection, LUOFU_LOOK_TOOLS, LUOFU_LOOK_NAMES, isLuofuLookCall, runLookCalls, cutLuofuLook } from "../src/luofu/parts.js";
 import { completedToday } from "../vendor/dressing/dressing-engine.ts";
+import { DESK_READ, readRead, wakeContext } from "../src/desk/parts.js";
 import { wakeSection, taskSection, wakeNowNote, tailTranscript, LAST_STEP_NOTE, THOUGHT_DONE_NOTE } from "./note.js";
 import { askSummary } from "../src/ask.js";
 import { DRAW_JOB_KEY, drawsIn, drawImgOf, readJob } from "../src/draw.js";
@@ -153,6 +154,8 @@ export async function gather(store, extras = []) {
   const index = parse(await store.get("kfs2:index"), []) || [];
   const fox = parse(await store.get(chatKey(FOX_CHAT)), []) || [];
   const recaps = normRecaps(parse(await store.get(RECAP_KEY + FOX_CHAT), []));
+  // 她在案上的信笺上点了已阅的那几轮（见 src/desk/parts.js）：醒在屋里寄给他的狐宇宙那段对话里，那几轮、它们回的便签不寄
+  const read = readRead(await store.get(DESK_READ));
   const herLast = await herLastOf(store, index);
   // 她最后说话的那一段平常对话（不算狐宇宙）：他从屋里回得去的那一段（见 backOf）
   const herChat = await herLastOf(store, index, false);
@@ -161,7 +164,7 @@ export async function gather(store, extras = []) {
   const wakes = marks.map((m) => m.ts || 0).sort((a, b) => a - b);
   const capWakes = marks.filter((m) => !(m.go && m.go.how === "task")).map((m) => m.ts || 0).sort((a, b) => a - b);
   const tasks = await tasksOf(store);
-  return { settings, names, avatars, memDocs, index, fox, recaps, herLast, herChat, wakes, capWakes, mark: lastMark(fox), tasks, extras };
+  return { settings, names, avatars, memDocs, index, fox, recaps, read, herLast, herChat, wakes, capWakes, mark: lastMark(fox), tasks, extras };
 }
 
 // 那段对话里她发过的照片、文档：全文另存着，打包之前取出来（同手机那头的 loadImagesFor、loadDocsFor）
@@ -597,7 +600,7 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
   };
   const toys = [gardenToy(garden), { ...dress, run: dressRun }, pindouToy(pd), luofuToy(bed)];
   // 心里话写过了的那几步，附上 THOUGHT_DONE_NOTE（她关了“他写心里话”就不附）
-  const r = await askCore({ store, cloud, ctx, log, msgs: ctx.fox.concat([event]), recaps: ctx.recaps, section, toys, most: ROOM_STEPS, lastNote: LAST_STEP_NOTE, thoughtNote: ctx.settings.thoughts !== false ? THOUGHT_DONE_NOTE : "" });
+  const r = await askCore({ store, cloud, ctx, log, msgs: wakeContext(ctx.fox, ctx.read || new Set(), ctx.recaps).concat([event]), recaps: ctx.recaps, section, toys, most: ROOM_STEPS, lastNote: LAST_STEP_NOTE, thoughtNote: ctx.settings.thoughts !== false ? THOUGHT_DONE_NOTE : "" });
   // 便签：完成搭配那一下没收成的，醒完再收一遍
   try {
     await retire();

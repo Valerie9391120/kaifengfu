@@ -20,3 +20,4 @@
 
 - 南衙里的秘戏钱匣：签的分法和签 Based on Ruota della Fortuna by Copper (29-Cu)（https://github.com/29-Cu/routa-della-fortuna）。签库不在这个仓库里，在她手机上。
 - 锦盒里的铜钱声：Kenney 的 RPG Audio、Vinrax 的 Coin Drop（OpenGameArt），都是 CC0。
+- 南衙里的狐宇宙（他屋里的一张书案）：three.js r128（MIT，授权留在那一页开头）；字是霞鹜文楷（LXGW WenKai，SIL OFL 1.1，npm 的 lxgw-wenkai-webfont 切好的原样文件）、龙藏体（Long Cang，SIL OFL 1.1）和藏音匣那一套刻本体。

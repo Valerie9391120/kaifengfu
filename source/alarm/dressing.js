@@ -13,10 +13,10 @@
 // =====================================================
 import { DressingEngine, completedToday } from "../vendor/dressing/dressing-engine.ts";
 import { dressingToolSchema } from "../vendor/dressing/dressing-tool.ts";
-import { CATEGORY_LABELS, itemName } from "../vendor/dressing/dressing-data.ts";
+import { CATEGORY_LABELS } from "../vendor/dressing/dressing-data.ts";
 import { ACHIEVEMENTS } from "../vendor/dressing/achievements.ts";
 import { localDay, storeOf } from "./garden.js";
-import { DRESSING_KEY } from "../src/room.js";
+import { DRESSING_KEY, lookLine } from "../src/room.js";
 
 export { DRESSING_KEY }; // 跟聊天里回屋看一眼（src/room.js）用的是同一把钥匙
 const NAME = dressingToolSchema(true).name;
@@ -51,21 +51,8 @@ export function dressingOf(store, { today = () => localDay() } = {}) {
   return { engine: new DressingEngine(storeOf(store, DRESSING_KEY), { today }), load: async () => parse(await store.get(DRESSING_KEY)), today };
 }
 
-// 完成的那一身写成一行：梳发、妆面、熏香，再是衣柜、下装、鞋履、配饰（空着的不写）。叠得太多，写到 max 个字为止，后面写一共几样
-const LOOK_MAX = 80;
-export function lookLine(a, max = LOOK_MAX) {
-  if (!a) return "";
-  const bits = [a.hair, a.makeup, a.scent].filter(Boolean).map((id, i) => (i ? "、" : "") + itemName(id));
-  for (const [c, ids] of [["outfit", a.outfits], ["bottom", a.bottoms], ["shoes", a.shoes], ["accessory", a.accessories]]) {
-    (ids || []).forEach((id, i) => bits.push((i ? "、" : `；${CATEGORY_LABELS[c]}：`) + itemName(id)));
-  }
-  let out = "";
-  for (const b of bits) {
-    if ((out + b).length > max) return `${out}……一共 ${bits.length} 样`;
-    out += b;
-  }
-  return out;
-}
+// 完成的那一身写成一行：挪到 src/room.js 了（推近铜镜的卡片上也写这一行，见 src/desk/parts.js），这里照旧递出去
+export { lookLine };
 
 const sameLook = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
 // 这一回调的算哪一种（定那一行小字用）：complete 完成了今天的搭配；mirror 照了镜子；change 换了行头；look 别的（看看衣柜、成就……）

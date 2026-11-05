@@ -65,7 +65,44 @@ export function IconBtn({ onClick, label, active, children }) {
 
 export const SHEET_TITLE = { fontFamily: SERIF, fontSize: 19, letterSpacing: "0.08em", color: T.ink };
 
-export function Sheet({ title, onClose, children }) {
+// look="room"：盖在狐宇宙那一层上的（锦盒里的梦库、梦廊）：照屋里推近一样东西冒出来的那张卡片的样子（深色、文楷、方角、细线），
+// 颜色借 .kfs-room 那一套换掉（见 style.js 的 GLOBAL_CSS），里头的东西不用改；sub 是标题上面那一小行
+export function Sheet({ title, onClose, children, look = "", sub = "" }) {
+  if (look === "room") {
+    return (
+      <div className="kfs-room absolute inset-0 z-40 flex flex-col justify-end" onClick={onClose} style={{ background: "rgba(8,4,2,0.34)" }}>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="kfs-sheet kfs-sheet-box kfs-room-box kfs-scroll overflow-y-auto"
+          style={{
+            margin: "0 calc(16px + env(safe-area-inset-right)) calc(18px + var(--kfs-sab, env(safe-area-inset-bottom))) calc(16px + env(safe-area-inset-left))",
+            maxHeight: "calc(100% - env(safe-area-inset-top) - 76px)",
+            padding: "16px 18px 22px",
+            borderRadius: 4,
+            background: "rgba(22,16,13,0.88)",
+            border: "1px solid rgba(239,230,214,0.14)",
+            boxShadow: "0 12px 32px rgba(0,0,0,0.38)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            color: "#efe6d6",
+          }}
+        >
+          <div className="flex items-start justify-between" style={{ gap: 12, marginBottom: 16 }}>
+            <div className="min-w-0">
+              {sub && <p className="kfs-room-sub" style={{ margin: 0, fontSize: 13, letterSpacing: "0.06em", color: "#c4b5a0" }}>{sub}</p>}
+              <div className="kfs-room-title" role="heading" aria-level={2} style={{ margin: "4px 0 0", fontWeight: 500, fontSize: 22, letterSpacing: "0.2em" }}>
+                {title}
+              </div>
+            </div>
+            <button onClick={onClose} aria-label="关闭" className="kfs-tap flex-shrink-0 flex items-center justify-center" style={{ width: 36, height: 36, marginRight: -8, color: "rgba(239,230,214,0.72)" }}>
+              <Icon name="x" size={18} />
+            </button>
+          </div>
+          {children}
+        </div>
+      </div>
+    );
+  }
   return (
     <div
       className="absolute inset-0 z-40 flex flex-col justify-end"

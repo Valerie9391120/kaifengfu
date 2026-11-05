@@ -68,6 +68,18 @@ def poll(fn, timeout=8.0, step=0.15):
     return False
 
 
+def poll_until(fn, timeout=8.0, step=0.2):
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if fn():
+                return True
+        except Exception:
+            pass
+        time.sleep(step)
+    return False
+
+
 def shot(pg, name):
     if SHOTS:
         os.makedirs(SHOTS, exist_ok=True)
@@ -118,7 +130,7 @@ def run(browser):
     open_nanya(pg)
     rows = pg.evaluate(NANYA)
     qx = next((r for r in rows if r["name"] == "秘戏钱匣"), None)
-    ok([r["name"] for r in rows][4:7] == ["藏音匣", "秘戏钱匣", "拼豆作"] and qx and qx["sub"] == "签库还空着" and qx["shapes"] == ["circle", "rect"],
+    ok([r["name"] for r in rows][3:6] == ["藏音匣", "秘戏钱匣", "拼豆作"] and qx and qx["sub"] == "签库还空着" and qx["shapes"] == ["circle", "rect"],
        f"南衙：藏音匣后面一行“秘戏钱匣”，图标是外圆内方的铜钱，小字“签库还空着”（{[r['name'] for r in rows]}，{qx}）")
     ok(not got, "点之前没去下载锦盒那一页")
     pg.locator(".kfs-nanya .kfs-nanya-row", has_text="秘戏钱匣").click()
@@ -281,18 +293,34 @@ def run(browser):
     pg.locator(".kfs-qx-close").click(); pg.wait_for_timeout(500)
     ok(pg.locator(".kfs-qx").count() == 0, "叉一点回去")
 
-    # ---- 狐宇宙（他的屋子，她只留便签）里不丢签 ----
+    # ---- 狐宇宙：11 月 5 日起是盖上来的那一层（他屋里的书案，见 tests/e2e_desk.py），不翻到狐宇宙那段对话；关上回来，签照样能丢 ----
+    # （眼前那段要是狐宇宙那段对话，签不丢：只有画不出案上那一页的手机翻得到那段，那样的手机也画不出锦盒，这里试不着）
+    here = last_chat(pg)
     open_nanya(pg)
-    pg.locator(".kfs-nanya .kfs-nanya-row", has_text="狐宇宙").click(); pg.wait_for_timeout(1200)
+    pg.locator(".kfs-nanya .kfs-nanya-row", has_text="狐宇宙").click()
+    ok(poll_until(lambda: pg.locator(".kfs-desk").count() == 1, 10), "南衙里点狐宇宙：盖上他屋里那一层")
+    end = time.time() + 120
+    while time.time() < end and pg.locator(".kfs-desk").count():
+        try:
+            if pg.locator(".kfs-desk-close").count():
+                pg.locator(".kfs-desk-close").click(timeout=3000)
+            else:
+                h = pg.query_selector(".kfs-desk iframe")
+                f = h.content_frame() if h else None
+                if f: f.evaluate("(() => { const b = document.getElementById('back'); if (b && !b.hidden) b.click(); })()")
+        except Exception:
+            pass
+        time.sleep(1.0)
+    ok(pg.locator(".kfs-desk").count() == 0 and last_chat(pg) == here, "关上：还在原来那段对话（没翻到狐宇宙那段）")
     open_nanya(pg)
     pg.locator(".kfs-nanya .kfs-nanya-row", has_text="秘戏钱匣").click()
     fr = qx_frame(pg)
     if fr:
         draw(pg, fr)
         shown = fr.evaluate("getComputedStyle(document.getElementById('send')).display")
-        ok(shown == "none" and len(fr.evaluate(INSIDE)["cols"]) == 3, f"在狐宇宙里打开：照样能抽，只是不摆“发给光义”（{shown}）")
+        ok(shown != "none" and len(fr.evaluate(INSIDE)["cols"]) == 3, f"再打开秘戏钱匣：照样能抽，“发给光义”照摆（{shown}）")
     else:
-        ok(False, "在狐宇宙里打开：锦盒那一页没画出来")
+        ok(False, "再打开秘戏钱匣：锦盒那一页没画出来")
     n1 = len(calls())
     pg.locator(".kfs-qx-close").click(); pg.wait_for_timeout(2500)
     ok(pg.locator(".kfs-qx").count() == 0 and len(calls()) == n1, "什么都没丢就关上：不替她叫他")

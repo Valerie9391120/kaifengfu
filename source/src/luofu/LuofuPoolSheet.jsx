@@ -47,7 +47,7 @@ function Dream({ card, d, open, onToggle, onDrop, kind }) {
   );
 }
 
-export function LuofuPoolSheet({ pool, taken = [], onPool, onClose }) {
+export function LuofuPoolSheet({ pool, taken = [], onPool, onClose, look = "" }) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(null); // 翻全部里点开的那一种（种类编号）
   const [shown, setShown] = useState({}); // 点开看全文的那几个梦（编号 → true）
@@ -112,7 +112,7 @@ export function LuofuPoolSheet({ pool, taken = [], onPool, onClose }) {
   };
 
   return (
-    <Sheet title="梦库" onClose={onClose}>
+    <Sheet title="梦库" onClose={onClose} look={look} sub={look ? "锦盒 · 罗浮梦" : ""}>
       <input ref={file} type="file" onChange={onFile} style={{ display: "none" }} />
       {empty ? (
         <div className="kfs-lf-empty">

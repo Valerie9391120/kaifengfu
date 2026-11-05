@@ -1,8 +1,8 @@
 # 罗浮梦（卿卿 2026 年 11 月 1 日定的，见开发说明“罗浮梦”那一节；零件在 src/luofu/，单测在 tests/luofu.test.mjs）：手机这头走一遍，家里的闹钟用真的那一份（测试包）。
-#   南衙里狐宇宙下面一行“罗浮梦”（一枝梅花，手绘那一套），梦库空着写“梦库还空着”；点了菜单换成罗浮梦那一张：两颗按钮，梦库、梦廊；
+#   梦库、梦廊在案上的锦盒里（11 月 5 日起，南衙里罗浮梦那一行拿掉了）：这里的浏览器不开 WebGL，那一层画不出来，走那一层上留的两个口子（同锦盒里那两颗，照屋里卡片的样子弹出来）；
 #   梦库空着：一句话、一颗“导入梦库文件”；导一份不对的文件说一句（不是梦库的文档、签库文件）；导入编的那一份（tests/fixtures/梦库-测试.json）；
 #   梦库那一页：一种一行（几条、占几成、哪几种进梦廊）、做梦的机会；翻全部（醒来就散的写那一段，记得完整的写标题和来源，点开看正文）；
-#   找梦（几个词都得有）；点叉删、撤销（放回原处）；加一条（两类）；换一份先问一声；梦廊空着；南衙的小字跟着梦库；
+#   找梦（几个词都得有）；点叉删、撤销（放回原处）；加一条（两类）；换一份先问一声；梦廊空着；
 #   名帖：“他自己醒”关着没有【罗浮梦】，开着有（紧跟在【你的屋子】后面）；平常聊天的工具里没有 luofu_nap（他只在屋里睡）；
 #   闹钟叫醒他：她在狐宇宙的便签纸上留“睡两觉”（梦库换成只有记得完整的那一种）——他睡了两觉，狐宇宙里两行小字“睡了一觉 · 梦廊里多了一场：〈…〉”，
 #     进度和梦廊同步到手机上；梦廊里两场（最新的在最上面，标题、来源、哪天；不写一共多少），点开看全文；
@@ -30,7 +30,7 @@ PAGE = "() => document.querySelector('.kfs-chat-rows').innerText"
 NANYA = """() => [...document.querySelectorAll('.kfs-nanya .kfs-nanya-row')].map((b) => { const t = b.children[1].children, svg = b.children[0].querySelector('svg');
   return { name: t[0].textContent, sub: t[1].textContent, shapes: [...svg.querySelectorAll(':scope > *')].map((e) => e.tagName), size: [svg.getBoundingClientRect().width, svg.getBoundingClientRect().height],
     fill: getComputedStyle(svg.firstElementChild).fill, stroke: getComputedStyle(svg.firstElementChild).stroke, color: getComputedStyle(b.children[0]).color }; })"""
-SHEET = "() => { const b = document.querySelector('.kfs-sheet-box'); return b ? b.children[1].firstElementChild.textContent : null; }"
+SHEET = "() => { const b = document.querySelector('.kfs-sheet-box'); if (!b) return null; const t = b.querySelector('.kfs-room-title'); return t ? t.textContent : b.children[1].firstElementChild.textContent; }"
 FIX = json.load(open(POOL, encoding="utf-8"))
 EVENT_TEXTS = [d["text"] for k in FIX["kinds"] if k["type"] == "event" for d in k["dreams"]]
 CARDS = [d for k in FIX["kinds"] if k["type"] == "card" for d in k["dreams"]]
@@ -76,19 +76,20 @@ def open_nanya(pg):
 
 
 def open_luofu(pg):
+    # 南衙里点“狐宇宙”：这里画不出来，那一层写一句话，底下梦库、梦廊两个口子（同锦盒里那两颗）
     open_nanya(pg)
-    pg.locator(".kfs-nanya .kfs-nanya-row", has_text="罗浮梦").click()
-    pg.locator(".kfs-luofu").wait_for(timeout=5000); pg.wait_for_timeout(400)
+    pg.locator(".kfs-nanya .kfs-nanya-row", has_text="狐宇宙").click()
+    pg.locator(".kfs-desk-lf-pool").wait_for(timeout=60000); pg.wait_for_timeout(300)
 
 
 def open_pool(pg):
     open_luofu(pg)
-    pg.locator(".kfs-luofu-pool").click(); pg.wait_for_timeout(500)
+    pg.locator(".kfs-desk-lf-pool").click(); pg.wait_for_timeout(500)
 
 
 def open_gallery(pg):
     open_luofu(pg)
-    pg.locator(".kfs-luofu-gallery").click(); pg.wait_for_timeout(500)
+    pg.locator(".kfs-desk-lf-gallery").click(); pg.wait_for_timeout(500)
 
 
 def close_sheet(pg):
@@ -99,6 +100,8 @@ def close_all(pg):
     for _ in range(3):
         if pg.locator(".kfs-sheet-box").count():
             close_sheet(pg)
+    if pg.locator(".kfs-desk-close").count():
+        pg.locator(".kfs-desk-close").click(); pg.wait_for_timeout(400)
     hide_side(pg)
 
 
@@ -208,6 +211,7 @@ def replace_pool(pg, path):
 def leave_note(pg, text):
     open_nanya(pg)
     pg.locator(".kfs-nanya .kfs-nanya-row", has_text="狐宇宙").click(); pg.wait_for_timeout(1000)
+    fox_box(pg)
     pg.locator(".kfs-fox-pad-input").fill(text)
     pg.locator(".kfs-fox-pad-save").click(); time.sleep(1.0)
     pg.evaluate("window.__away(true)"); time.sleep(1.5); pg.evaluate("window.__away(false)")  # 切走那一下推上云端（闹钟拉得到）
@@ -220,6 +224,7 @@ def wake(pg, home, want_notes):
     asked = [x["body"] for x in calls()[c:]]
     open_nanya(pg)
     pg.locator(".kfs-nanya .kfs-nanya-row", has_text="狐宇宙").click(); pg.wait_for_timeout(800)
+    fox_box(pg)
     got = until(pg, lambda: len(pg.evaluate(NOTES)) >= want_notes, 20)
     return code, out, asked, got
 
@@ -243,27 +248,24 @@ def run(browser):
     ok(len(asked) == 2 and res[-1:] == ["梦廊里还没有留下梦。"] and pg.evaluate(NOTES)[-1:] == ["翻了翻梦廊"] and lf_state(pg) is None,
        f"梦廊空着的时候在聊天里翻：照引擎那一句回（“梦廊里还没有留下梦。”），一行小字“翻了翻梦廊”；进度一个字不写（{res[-1:]}，{pg.evaluate(NOTES)[-1:]}）")
 
-    # ---- 南衙 ----
+    # ---- 南衙：罗浮梦那一行拿掉了（梦库、梦廊在案上的锦盒里） ----
     open_nanya(pg)
-    rows = pg.evaluate(NANYA)
-    names = [r["name"] for r in rows]
-    lf = next((r for r in rows if r["name"] == "罗浮梦"), None)
-    ok(lf and names[:2] == ["狐宇宙", "罗浮梦"] and len(names) == 10, f"南衙里狐宇宙下面多一行“罗浮梦”（{names}）")
-    ok(lf and lf["sub"] == "梦库还空着", f"梦库空着：小字“梦库还空着”（{lf and lf['sub']}）")
-    ok(lf and lf["shapes"] == ["path"] * 4 and lf["size"] == [20, 20] and lf["fill"] == "none" and lf["stroke"] == lf["color"], f"图标是一枝梅花：手绘那一套，20 个点、描线不填色、跟着主题色（{lf}）")
+    names = [r["name"] for r in pg.evaluate(NANYA)]
+    ok("罗浮梦" not in names and names[:2] == ["狐宇宙", "闲笔集"] and len(names) == 9, f"南衙里没有罗浮梦那一行了（{names}）")
     shot(pg, "lf_1_nanya")
-    pg.locator(".kfs-nanya .kfs-nanya-row", has_text="罗浮梦").click(); pg.wait_for_timeout(500)
-    ok(pg.evaluate(SHEET) == "罗浮梦" and pg.locator(".kfs-nanya").count() == 0 and pg.locator(".kfs-luofu button").all_inner_texts() == ["梦库", "梦廊"], "点了：南衙的菜单换成罗浮梦那一张，两颗按钮：梦库、梦廊")
+    pg.locator(".kfs-nanya .kfs-nanya-row", has_text="狐宇宙").click()
+    ok(poll(lambda: pg.locator(".kfs-desk-lf-pool").count() == 1 and pg.locator(".kfs-desk-lf-gallery").count() == 1, 60), "点狐宇宙：那一层上梦库、梦廊两个口子（这里画不出来；画得出来的在锦盒里）")
     shot(pg, "lf_2_page")
 
     # ---- 梦廊空着 ----
-    pg.locator(".kfs-luofu-gallery").click(); pg.wait_for_timeout(500)
+    pg.locator(".kfs-desk-lf-gallery").click(); pg.wait_for_timeout(500)
     ok(pg.evaluate(SHEET) == "梦廊" and pg.locator(".kfs-lf-gempty").inner_text() == "梦廊里还没有留下梦。", "梦廊空着：“梦廊里还没有留下梦。”")
+    ok(pg.locator(".kfs-desk .kfs-room .kfs-room-sub").inner_text() == "锦盒 · 罗浮梦", "照屋里卡片的样子：上面一小行“锦盒 · 罗浮梦”")
     close_sheet(pg)
-    ok(pg.evaluate(SHEET) == "罗浮梦", "梦廊右上角的叉：回到罗浮梦那一张")
+    ok(pg.evaluate(SHEET) is None and pg.locator(".kfs-desk-lf-pool").count() == 1, "梦廊右上角的叉：回到那一层")
 
     # ---- 梦库空着、导入 ----
-    pg.locator(".kfs-luofu-pool").click(); pg.wait_for_timeout(500)
+    pg.locator(".kfs-desk-lf-pool").click(); pg.wait_for_timeout(500)
     ok(pg.evaluate(SHEET) == "梦库" and pg.get_by_role("button", name="导入梦库文件").count() == 1 and "梦库还空着" in pg.locator(".kfs-lf-empty").inner_text(), "梦库空着：一句话、一颗“导入梦库文件”")
     shot(pg, "lf_3_empty")
     fin = pg.locator(".kfs-sheet-box input[type=file]")
@@ -335,11 +337,7 @@ def run(browser):
     pg.get_by_role("button", name="算了").click(); pg.wait_for_timeout(200)
     ok(pg.locator(".kfs-lf-replace").count() == 1 and len(all_ids) == 13, "算了：照旧")
     close_sheet(pg)
-    ok(pg.evaluate(SHEET) == "罗浮梦", "梦库右上角的叉：回到罗浮梦那一张")
-    close_all(pg)
-    open_nanya(pg)
-    lf = next((r for r in pg.evaluate(NANYA) if r["name"] == "罗浮梦"), {})
-    ok(lf.get("sub") == "梦库里 13 个梦", f"南衙那一行的小字跟着梦库：梦库里 13 个梦（{lf.get('sub')}）")
+    ok(pg.evaluate(SHEET) is None and pg.locator(".kfs-desk-lf-pool").count() == 1, "梦库右上角的叉：回到那一层")
     close_all(pg)
 
     # ---- 名帖 ----
@@ -462,7 +460,7 @@ def run(browser):
 
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])
+    browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox", "--disable-3d-apis"]) if CHROME else p.chromium.launch(args=["--no-sandbox", "--disable-3d-apis"])
     try:
         run(browser)
     finally:

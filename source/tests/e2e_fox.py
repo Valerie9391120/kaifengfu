@@ -51,6 +51,7 @@ def nanya(page):
 def open_fox(page):
     nanya(page)
     page.locator(".kfs-nanya-row", has_text="狐宇宙").click(); time.sleep(1.0)
+    fox_box(page)
 
 def close_sheet(page):
     page.get_by_role("button", name="关闭").click(); time.sleep(0.4)
@@ -107,6 +108,7 @@ def run(browser):
     ok(rs and rs[0]["name"] == "狐宇宙" and rs[0]["sub"] == "还没让他自己醒" and not rs[0]["dot"], f"南衙最顶上一行“狐宇宙”，还没让他自己醒（{rs[:1]}）")
     shot(pg, "1_nanya")
     pg.locator(".kfs-nanya-row", has_text="狐宇宙").click(); time.sleep(0.8)
+    fox_box(pg)
     empty = pg.locator(".kfs-fox-empty")
     ok(pg.locator(".kfs-nanya").count() == 0 and empty.count() == 1 and "狐宇宙" in empty.inner_text() and "这是他的屋子" in empty.inner_text() and pg.locator(".kfs-motto").count() == 0,
        "点狐宇宙：菜单收起，进他的屋子；还空着：中间写“狐宇宙”和一句话（不是平常新的一页那行字）")
@@ -168,6 +170,7 @@ def run(browser):
         ok(rs[0]["sub"].startswith("睡着，约 ") and not rs[0]["dot"], f"南衙那一行：睡着，约几点醒（照他定的 +2h），不写“留了话”、不亮小点（{rs[0]}）")
         shot(pg, "4_nanya")
         pg.locator(".kfs-nanya-row", has_text="狐宇宙").click(); time.sleep(1.2)
+        fox_box(pg)
         notes = pg.evaluate(NOTICES)
         said = pg.evaluate(BUBBLES)
         ok(any("光义醒了" in n for n in notes) and "醒了，翻了会儿书" in said and "今天风好大" in said and not any("WAKE" in x for x in said), f"翻开狐宇宙：醒了那一行是一行小字，他写的是气泡（{notes}，{said}）")
@@ -329,7 +332,7 @@ def run(browser):
 if __name__ == "__main__":
     with sync_playwright() as p:
         mock("/__debug/reset")
-        browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])
+        browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox", "--disable-3d-apis"]) if CHROME else p.chromium.launch(args=["--no-sandbox", "--disable-3d-apis"])
         try:
             run(browser)
         finally:

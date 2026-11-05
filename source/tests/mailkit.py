@@ -189,3 +189,11 @@ def long_press(page, locator, hold=0.7):
     cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
     cdp.detach()
     time.sleep(0.5)
+
+# 南衙里点了“狐宇宙”以后，翻到狐宇宙那段对话（信匣）：测试用的浏览器不开 WebGL（--disable-3d-apis），
+# 案上那一页画不出来，那一层写一句、摆一颗“去信匣”（见 src/desk/DeskPage.jsx），点了关上那一层、翻到那段对话，底下摆着便签纸
+def fox_box(page, timeout=60000):
+    page.locator(".kfs-desk-box").wait_for(timeout=timeout)
+    page.locator(".kfs-desk-box").click()
+    page.locator(".kfs-fox-pad").wait_for(timeout=5000)
+    time.sleep(0.4)

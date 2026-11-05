@@ -16,13 +16,13 @@ const dayOf = (at, nowYear) => {
   return Number.isFinite(t) ? dateOf(t, nowYear) : "";
 };
 
-export function LuofuGallery({ state, now = new Date(), onClose }) {
+export function LuofuGallery({ state, now = new Date(), onClose, look = "" }) {
   const [reading, setReading] = useState(null); // 点开的那一场（编号）
   const list = galleryOf(state);
   const year = now.getFullYear();
   const one = reading ? list.find((e) => e.id === reading) : null;
   return (
-    <Sheet title="梦廊" onClose={onClose}>
+    <Sheet title="梦廊" onClose={onClose} look={look} sub={look ? "锦盒 · 罗浮梦" : ""}>
       {one ? (
         <div className="kfs-lf-read">
           <button onClick={() => setReading(null)} className="kfs-lf-back kfs-tap flex items-center" style={{ color: T.inkSoft, fontSize: 13, padding: "2px 2px 10px", gap: 2 }}>

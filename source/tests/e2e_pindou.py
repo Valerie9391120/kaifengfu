@@ -359,6 +359,7 @@ def run(browser):
     # 狐宇宙里的两行小字
     open_nanya(pg)
     pg.locator(".kfs-nanya .kfs-nanya-row", has_text="狐宇宙").click(); pg.wait_for_timeout(1200)
+    fox_box(pg)
     notes = pg.evaluate(NOTES)
     ok(notes == ["在拼豆板上拼了一会儿", "拼完了一幅《一块小糕》，挂了起来"], f"狐宇宙里：两行小字（拼了第二回不再写），板子上的字她看不见（{notes}）")
     ok("kkkkkkkk" not in pg.evaluate(PAGE), "屋里看不到递给他的那一格一格的字")
@@ -413,7 +414,7 @@ def run(browser):
 
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox"]) if CHROME else p.chromium.launch(args=["--no-sandbox"])
+    browser = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox", "--disable-3d-apis"]) if CHROME else p.chromium.launch(args=["--no-sandbox", "--disable-3d-apis"])
     try:
         run(browser)
     finally:

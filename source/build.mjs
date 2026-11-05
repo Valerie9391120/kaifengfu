@@ -102,6 +102,74 @@ const qianxia = Buffer.from(qxSrc.replace('href="./__KFS_JINHUI__"', `href="./${
 const qianxiaName = `qianxia-${hash(qianxia)}.html`;
 fs.writeFileSync(`${OUT}/assets/${qianxiaName}`, qianxia);
 define.__KFS_QIANXIA__ = JSON.stringify(`./assets/${qianxiaName}`);
+// 狐宇宙那一页（他屋里的一张书案，tools/make_desk.py 生成的，见 src/desk/DeskPage.jsx）：页面一个 HTML，图、几何、两份截出来的小字体在 static/desk/files/ 里，
+// 一样一个带指纹的名字放进 assets/desk/（哪一样变了只换那一样，别的照旧读缓存）；页面里的 __KFS_DESK_FILES__ 换成 { 名字: 网址 }，
+// __KFS_DESK_FILE__名字 换成那一样的网址。字：页面上写死的那些字截好了一份（wenkai-ui.woff2）；递进来的字不在里面的，用霞鹜文楷切好的那一份
+// （npm 的 lxgw-wenkai-webfont，Regular，原样拷进 assets/wenkai-<指纹>/，样式表里叫 KFS WenKai，扣掉截好的那些字）；刻本体同藏音匣那一份。
+// 安全规矩里记上页面里每一段脚本的指纹（只许跑这几段）。开封府开门不碰它，南衙里点狐宇宙的时候才用框装进来（DESK_URL）
+const deskFiles = {};
+fs.mkdirSync(`${OUT}/assets/desk`, { recursive: true });
+for (const f of fs.readdirSync("static/desk/files").sort()) {
+  const buf = fs.readFileSync(`static/desk/files/${f}`);
+  const dot = f.lastIndexOf(".");
+  const out = `${f.slice(0, dot)}-${hash(buf)}${f.slice(dot)}`;
+  fs.writeFileSync(`${OUT}/assets/desk/${out}`, buf);
+  deskFiles[f] = `./desk/${out}`;
+}
+const WK = "node_modules/lxgw-wenkai-webfont";
+const wkUi = new Set([...fs.readFileSync("static/desk/wenkai-ui.chars.txt", "utf8")].map((c) => c.codePointAt(0)));
+const wkFaces = [];
+for (const blk of fs.readFileSync(`${WK}/lxgwwenkai-regular.css`, "utf8").match(/@font-face\s*\{[^}]*\}/g) || []) {
+  const url = /url\(['"]?\.\/files\/([^'")]+)['"]?\)/.exec(blk);
+  const range = /unicode-range:\s*([^;}]+)/.exec(blk);
+  if (!url || !range) continue;
+  const cps = [];
+  for (const part of range[1].split(",")) {
+    const [a, b] = part.trim().replace(/^U\+/i, "").split("-").map((x) => parseInt(x, 16));
+    for (let c = a; c <= (b || a); c++) if (!wkUi.has(c)) cps.push(c);
+  }
+  if (cps.length) wkFaces.push({ f: url[1], cps });
+}
+if (wkFaces.length < 50) throw new Error("霞鹜文楷切好的那一份认不出来：看 node_modules/lxgw-wenkai-webfont/lxgwwenkai-regular.css 是不是换了写法");
+const wkBufs = wkFaces.map((x) => fs.readFileSync(`${WK}/files/${x.f}`));
+const wkDir = `wenkai-${hash(Buffer.concat([Buffer.from(JSON.stringify(wkFaces.map((x) => x.f))), ...wkBufs]))}`;
+fs.mkdirSync(`${OUT}/assets/${wkDir}`, { recursive: true });
+wkFaces.forEach((x, i) => fs.writeFileSync(`${OUT}/assets/${wkDir}/${x.f}`, wkBufs[i]));
+fs.copyFileSync(`${WK}/OFL.txt`, `${OUT}/assets/${wkDir}/OFL.txt`);
+const wkCss = Buffer.from(
+  `/* KFS WenKai：霞鹜文楷（LXGW WenKai，github.com/lxgw/LxgwWenKai，SIL OFL 1.1；npm 的 lxgw-wenkai-webfont 切好的原样文件，授权见 ${wkDir}/OFL.txt） */\n` +
+    wkFaces.map((x) => `@font-face{font-family:"KFS WenKai";src:url("${wkDir}/${x.f}") format("woff2");font-weight:300 700;font-display:swap;unicode-range:${ranges(String.fromCodePoint(...x.cps))}}`).join("\n") +
+    "\n"
+);
+const wkCssName = `wenkai-${hash(wkCss)}.css`;
+fs.writeFileSync(`${OUT}/assets/${wkCssName}`, wkCss);
+let deskSrc = fs.readFileSync("static/desk/desk.html", "utf8");
+for (const k of ["__KFS_DESK_FILES__", 'href="./__KFS_WENKAI__"', 'href="./__KFS_JINHUI__"', '"__KFS_DESK_CSP__"'])
+  if (!deskSrc.includes(k)) throw new Error(`static/desk/desk.html 里没找到 ${k}：用 tools/make_desk.py 重新生成`);
+deskSrc = deskSrc
+  .replace("__KFS_DESK_FILES__", JSON.stringify(deskFiles))
+  .replace(/__KFS_DESK_FILE__([A-Za-z0-9_.-]+)/g, (_, f) => {
+    if (!deskFiles[f]) throw new Error(`static/desk/desk.html 要的 ${f} 不在 files/ 里`);
+    return deskFiles[f];
+  })
+  .replace('href="./__KFS_WENKAI__"', `href="./${wkCssName}"`)
+  .replace('href="./__KFS_JINHUI__"', `href="./${jinhuiCssName}"`);
+const deskScripts = [...deskSrc.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => `'sha256-${createHash("sha256").update(m[1]).digest("base64")}'`);
+if ((deskSrc.match(/<script\b/g) || []).length !== deskScripts.length) throw new Error("static/desk/desk.html 里有带属性的 <script>：安全规矩里记不上它的指纹");
+// 图：那一页自己的、递进去的（表情包、照片、他的画都是 data:；仓库里新加的表情包从表情包仓库取，同开封府）；声音：信匣里他念好的语音（递进去的 data:，就在那一页里放）
+const deskCsp = `default-src 'none'; script-src ${deskScripts.join(" ")}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://raw.githubusercontent.com; media-src data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'`;
+const desk = Buffer.from(deskSrc.replace('"__KFS_DESK_CSP__"', `"${deskCsp}"`));
+const deskName = `desk-${hash(desk)}.html`;
+fs.writeFileSync(`${OUT}/assets/${deskName}`, desk);
+define.__KFS_DESK__ = JSON.stringify(`./assets/${deskName}`);
+// 开封府这头也用一份霞鹜文楷：盖在案上那一层上的梦库、梦廊照屋里卡片的样子写（见 src/ui/parts.jsx 的 Sheet look="room"），字跟那一页一样。
+// 截好的那些字（那一页里那一条 @font-face，网址照那一页的写法，相对 assets/）加上切好的那一份，DeskPage.jsx 打开的时候挂上
+const wkUiFace = (deskSrc.match(/@font-face\{font-family:"KFS WenKai";src:url\("[^"]+"\)[^}]*\}/) || [])[0];
+if (!wkUiFace) throw new Error("static/desk/desk.html 里没找到截好的那一份文楷：用 tools/make_desk.py 重新生成");
+const wkHost = Buffer.from(wkUiFace.replace("font-display:block", "font-display:swap") + "\n" + wkCss.toString());
+const wkHostName = `wenkai-host-${hash(wkHost)}.css`;
+fs.writeFileSync(`${OUT}/assets/${wkHostName}`, wkHost);
+define.__KFS_WENKAI_CSS__ = JSON.stringify(`./assets/${wkHostName}`);
 const cyAssets = {
   tex: cyAsset("static/cangyin/paper.webp", "paper"),
   flower: cyAsset("static/cangyin/flower.webp", "flower"),
@@ -365,4 +433,5 @@ console.log(`  ${s2tName}  ${size(`${OUT}/assets/${s2tName}`)}`);
 console.log(`  ${tyName}  ${size(`${OUT}/assets/${tyName}`)}（同页，${ty.scripts} 段脚本记了指纹）`);
 console.log(`  ${tyFonts.dir}/（同页的字：${tyFonts.fonts} 块，连样式表、授权一共 ${(tyFonts.bytes / 1048576).toFixed(1)} MB）`);
 console.log(`  ${jinhuiCssName} + ${jinhuiDir}/（${jinhui.slices.length} 块，${(jinhuiBufs.reduce((n, b) => n + b.length, 0) / 1024).toFixed(0)} KB）`);
+console.log(`  ${deskName} + desk/（狐宇宙：${Object.keys(deskFiles).length} 样）、${wkCssName} + ${wkDir}/（${wkFaces.length} 块）、${wkHostName}`);
 console.log(`  连接：${SUPABASE_URL}`);

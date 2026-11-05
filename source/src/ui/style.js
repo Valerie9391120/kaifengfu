@@ -132,6 +132,12 @@ export const GLOBAL_CSS = `
   .kfs-chat-scroll::-webkit-scrollbar { display: none; }
 }
 .kfs-field::placeholder { color: rgba(var(--k-soft),.45); }
+/* 盖在狐宇宙那一层上的那几页（Sheet 的 look="room"）：颜色换成屋里卡片那一套（纸色的字、深色的底、细线），字是霞鹜文楷（同那一页，DeskPage.jsx 挂上的），角是方的 */
+.kfs-room { --k-ink: 239,230,214; --k-soft: 214,198,176; --k-fill: 74,58,48; --k-hair: rgba(239,230,214,.16); --k-dai: 239,230,214; --k-dai-a: 239,230,214; --k-dai-b: 226,213,192;
+  --k-on-dai: 43,30,24; --k-dai-shade: 0,0,0; --k-shade: 0,0,0; --k-dim: 0,0,0; --k-red: 232,150,128; --k-red-2: 232,150,128; --k-bubble: rgba(74,58,48,.5);
+  --k-float-shadow: 0 12px 32px rgba(0,0,0,.38); --k-glass-sat: 100%; color-scheme: dark; }
+.kfs-room, .kfs-room * { font-family: "KFS WenKai","LXGW WenKai","Kaiti SC","STKaiti","KaiTi","Songti SC",serif !important; }
+.kfs-room .kfs-room-box * { border-radius: 2px !important; }
 .kfs-tap { transition: transform .15s ease; }
 .kfs-tap:active { transform: scale(.94); }
 button { -webkit-tap-highlight-color: transparent; }
