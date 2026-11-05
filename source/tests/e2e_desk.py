@@ -1,6 +1,6 @@
 # 狐宇宙那一页：他屋里的一张书案（见 src/desk/、tools/make_desk.py）。手机这头走一遍，家里的闹钟用真的那一份（测试包）：
 #   南衙里点“狐宇宙”：菜单、侧栏收起，盖一层全屏（层高 60），框里装着案上那一页（点的时候才下载）；框是隔开的、名字里带着暗号，不带暗号的话不理；
-#     刘海、底下那一条照手机量的递进去；眼前那段对话不换；那一页画好以后左上角是它自己的“回开封府”，点了关上、回到原来那段对话；
+#     刘海、底下那一条照手机量的递进去（画面铺满整屏，按钮、卡片让开）；顶上没有“案上”、底下没有两行提示、点了东西不冒名字、返回只有箭头；眼前那段对话不换；那一页画好以后左上角是它自己的“回开封府”，点了关上、回到原来那段对话；
 #   推近花盆、铜镜：卡片上写园子、妆台眼下的样子（还没去过照实说；闹钟替他浇了水、完成了搭配以后照存档写），没有按钮；
 #   锦盒：梦库、梦廊两颗点了在这一层里弹出那一页（那一页先不画），叉一点回到案上；
 #   信笺：推近点“写一张”展开；还空着写“纸上还空着。”；留信：放进狐宇宙那段对话（记着是便签），不叫他、眼前那段对话不换；
@@ -199,8 +199,13 @@ def run(browser):
         ok(poll(lambda: not pg.evaluate(LAYER)["close"], 10), "画好以后，开封府这头的叉收起来（左上角是那一页自己的“回开封府”）")
         reach = fr.evaluate("(() => { try { return String(!!window.parent.document.body); } catch (e) { return 'blocked'; } })()")
         ok(reach == "blocked" and fr.evaluate("window.name") == "", f"那一页够不着开封府这一页（来路是 null）；暗号它读完就清掉了（{reach}）")
-        safe = fr.evaluate("[getComputedStyle(document.documentElement).getPropertyValue('--safe-top').trim(), getComputedStyle(document.documentElement).getPropertyValue('--safe-bottom').trim(), document.getElementById('stage').getBoundingClientRect().top]")
-        ok(safe[0] == "59px" and safe[1] == "34px" and safe[2] == 59, f"刘海、底下那一条照手机量的递进去（框里的 env() 是 0）（{safe}）")
+        safe = fr.evaluate("(() => { const st = document.getElementById('stage').getBoundingClientRect(), bk = document.getElementById('back').getBoundingClientRect(), cs = getComputedStyle(document.documentElement);"
+                           " return [cs.getPropertyValue('--safe-top').trim(), cs.getPropertyValue('--safe-bottom').trim(), st.top, st.height, Math.round(bk.top), innerHeight]; })()")
+        ok(safe[0] == "59px" and safe[1] == "34px" and safe[2] == 0 and safe[3] == safe[5] and safe[4] >= 59,
+           f"刘海、底下那一条照手机量的递进去（框里的 env() 是 0）：画面铺满整屏，左上角那颗让开刘海（{safe}）")
+        gone = fr.evaluate("['pill', 'hint', 'tag'].map((id) => { const e = document.getElementById(id); return !e || getComputedStyle(e).display === 'none'; })"
+                           ".concat([getComputedStyle(document.getElementById('back'), '::before').display === 'none'])")
+        ok(gone == [True, True, True, True], f"顶上没有“案上”、底下没有那两行提示、点了东西不冒名字；返回后头没有那一团暗（{gone}）")
         fonts = fr.evaluate("[...document.querySelectorAll('link[rel=stylesheet]')].map((l) => l.getAttribute('href'))")
         ok(any(re.match(r"\./wenkai-[0-9a-f]{10}\.css$", f) for f in fonts) and any(re.match(r"\./jinhui-[0-9a-f]{10}\.css$", f) for f in fonts), f"字：霞鹜文楷切好的那一份、藏音匣的刻本体（{fonts}）")
         csp = fr.evaluate("document.querySelector('meta[http-equiv=Content-Security-Policy]').content")
