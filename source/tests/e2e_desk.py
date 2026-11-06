@@ -33,6 +33,10 @@ CARD = "() => ({ on: document.getElementById('card').classList.contains('on'), s
 BOX = """() => [...document.querySelectorAll('#xj .xj-b-in > *')].map((e) => { const t = e.querySelector('.xj-t'), r = (t || e).getBoundingClientRect(), in_ = document.querySelector('#xj .xj-b-in').getBoundingClientRect();
   return { cls: e.className, text: e.innerText.trim(), font: getComputedStyle(t || e).fontFamily, seal: !!e.querySelector('.xj-seal'), img: (e.querySelector('img') || {}).src || '',
     left: Math.round(r.left - in_.left), right: Math.round(in_.right - r.right), k: e.dataset.k || '' }; })"""
+# 一段字怎么排：字号、行距、字距、对齐、怎么折行、一行多宽（去掉左右空的）、什么字
+TYPE = """(sel) => { const p = document.querySelector(sel); if (!p) return null; const c = getComputedStyle(p), r = p.getBoundingClientRect();
+  return { size: c.fontSize, lh: c.lineHeight, ls: c.letterSpacing, align: c.textAlign, wb: c.wordBreak, lb: c.lineBreak, wrap: c.textWrapStyle || c.textWrap || '',
+    w: Math.round((r.width - parseFloat(c.paddingLeft) - parseFloat(c.paddingRight)) * 10) / 10, font: c.fontFamily.split(',')[0] }; }"""
 PAPER = """() => [...document.querySelectorAll('#xj .xj-letters .xj-round')].map((s) => ({ id: s.dataset.id, body: s.querySelector('.xj-body').innerText.trim(), simp: s.classList.contains('simp'),
   lines: [...s.querySelectorAll('.xj-lines p')].map((p) => p.textContent), sign: (s.querySelector('.xj-sign') || {}).textContent || '',
   font: getComputedStyle(s.querySelector('.xj-body')).fontFamily }))"""
@@ -377,6 +381,8 @@ def run(browser):
         ok(len(d2) == 1 and d2[0][0] is False and d2[0][1] == "到此一游！", f"他醒来回了信：她那两张收起来，纸底下又是“到此一游！”（{d2}）")
         ind = fr.evaluate("[...document.querySelectorAll('#xj .xj-round .xj-body p')].map((p) => getComputedStyle(p).textIndent)")
         ok(ind and all(x == "0px" for x in ind), f"他写的字不缩进（同信匣里）（{ind}）")
+        t_paper = fr.evaluate(TYPE, "#xj .xj-letters .xj-round:not(.simp) .xj-body p")
+        t_paper_l = fr.evaluate(TYPE, "#xj .xj-letters .xj-round .xj-lines p")
         p1 = fr.evaluate(PAPER)[0]
         ok(p1["body"] == "布丁喫了，園子裏的花也澆過了。\n\n今天風大，記得關窗。" and "KFS Jinhui" in p1["font"], f"他写的字：转成繁体（OpenCC 标准繁体，同藏音匣：吃写成喫）、刻本体，一段一段（{p1['body']}，{p1['font'][:40]}）")
         ok(p1["lines"] == ["去园子里浇了水", "在妆台前换了换行头", "完成了今天的搭配：披发、素面、不熏香；衣柜：高领黑毛衣"], f"后头几行小字（{p1['lines']}）")
@@ -427,6 +433,10 @@ def run(browser):
         wk = [e for e in B if "xj-b-notice" in e["cls"] and "醒了" in e["text"]]
         ok(len(wk) >= 2 and wk[0]["seal"] and not wk[-1]["seal"], f"醒了那一行照原来那一页写；收进信匣的那一轮盖“阅”（{[(e['text'], e['seal']) for e in wk]}）")
         ok(any("xj-b-line" in e["cls"] and e["text"] == "去园子里浇了水" for e in B), "那一回干了什么的小字照摆")
+        t_box = fr.evaluate(TYPE, "#xj .xj-boxp .xj-b-say.me:not(.simp) .xj-t p")
+        t_box_l = fr.evaluate(TYPE, "#xj .xj-boxp .xj-b-line.me")
+        ok(t_paper and t_paper == t_box, f"信笺上他写的字跟信匣里一模一样：一样大、一样的行距字距、一样宽、一样折行（纸上 {t_paper}，信匣 {t_box}）")
+        ok(t_paper_l and t_paper_l == t_box_l, f"底下那几行小字也跟信匣里一样（纸上 {t_paper_l}，信匣 {t_box_l}）")
         th = [e for e in B if "xj-b-think" in e["cls"]]
         ok(th and th[0]["text"] == "心里话" and fr.evaluate("document.querySelector('#xj .xj-b-thought').hidden"), f"心里话收着（{th and th[0]['text']}）")
         fr.evaluate("document.querySelector('#xj .xj-b-think button').click()")
