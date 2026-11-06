@@ -212,6 +212,18 @@ export function closetView(rec, unlockedRewards = []) {
       .map((x) => ({ id: x.id, name: x.name, description: x.description || "", mine: mine.has(x.id), edited: !!r.edit[x.id], reward: !x.base, lock: x.base ? lockOf(r, x.id) : "攒成就换来的" })),
   }));
 }
+// 删掉的那几件（她删的，最近删的在前）：衣柜那一页最底下一栏，一件一个“放回去”
+export function droppedView(rec) {
+  const r = rec || emptyCloset();
+  const items = new Map(closetItems(r).map((x) => [x.id, x]));
+  return r.drop
+    .slice()
+    .reverse()
+    .map((id) => items.get(id))
+    .filter(Boolean)
+    .map((x) => ({ id: x.id, name: x.name, cat: x.category, label: CATEGORY_LABELS[x.category], mine: r.add.some((a) => a.id === x.id) }));
+}
+
 // 找一件：空格隔开的几个词都得有（名字、描述里），不分大小写，最多六十件
 export function findItems(rec, q, unlockedRewards = []) {
   const words = String(q || "")

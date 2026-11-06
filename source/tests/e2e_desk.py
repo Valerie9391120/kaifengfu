@@ -128,20 +128,89 @@ def desk_frame(pg, timeout=120):
 TITLE = {"花盆": "园子", "铜镜": "妆台", "锦盒": "罗浮梦", "信笺": "你留的便签"}
 
 
+# 手指点进框里那一页：这台机器上 Chrome 有时候把点进框里的坐标折半（框在另一个进程里、又仿着两倍屏的时候，哪一回碰上说不准），
+# 点花盆落到了左上角的梨枝上。先在框里铺一层透明的量一回（量的那一下落在这一层上，不碰底下的东西）：
+# 坐标对得上就用真的手指点；对不上就在框里照那个点直接发一串按下、抬起、点击（同手指点一下的次序）
+CAL = """(() => { const d = document.createElement('div'); d.id = '__cal'; d.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:transparent;touch-action:none';
+  const rec = (e) => { e.preventDefault(); e.stopPropagation(); if (e.type === 'pointerdown') window.__calXY = [e.clientX, e.clientY]; };
+  ['pointerdown', 'pointerup', 'pointercancel', 'touchstart', 'touchend', 'mousedown', 'mouseup', 'click'].forEach((t) => d.addEventListener(t, rec, true));
+  window.__calXY = null; document.body.appendChild(d); })()"""
+SYN = """([x, y]) => { const el = document.elementFromPoint(x, y); if (!el) return null;
+  const id = 900 + (window.__synN = (window.__synN || 0) + 1), o = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y };
+  const pe = (t) => el.dispatchEvent(new PointerEvent(t, { ...o, pointerId: id, pointerType: 'touch', isPrimary: true, button: 0, buttons: t === 'pointerdown' ? 1 : 0 }));
+  let tt = null; try { tt = new Touch({ identifier: id, target: el, clientX: x, clientY: y }); } catch (e) {}
+  const te = (t) => { if (tt) try { el.dispatchEvent(new TouchEvent(t, { ...o, touches: t === 'touchend' ? [] : [tt], targetTouches: t === 'touchend' ? [] : [tt], changedTouches: [tt] })); } catch (e) {} };
+  pe('pointerdown'); te('touchstart'); pe('pointerup'); te('touchend'); el.dispatchEvent(new MouseEvent('click', { ...o, button: 0 }));
+  return el.id || el.tagName; }"""
+SYN_DOWN = """([x, y]) => { const el = document.elementFromPoint(x, y); if (!el) return null;
+  const id = 900 + (window.__synN = (window.__synN || 0) + 1), o = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y };
+  let tt = null; try { tt = new Touch({ identifier: id, target: el, clientX: x, clientY: y }); } catch (e) {}
+  window.__synHold = { el, id, o, tt };
+  el.dispatchEvent(new PointerEvent('pointerdown', { ...o, pointerId: id, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1 }));
+  if (tt) el.dispatchEvent(new TouchEvent('touchstart', { ...o, touches: [tt], targetTouches: [tt], changedTouches: [tt] }));
+  return el.id || el.tagName; }"""
+SYN_UP = """(() => { const h = window.__synHold; if (!h) return; window.__synHold = null;
+  h.el.dispatchEvent(new PointerEvent('pointerup', { ...h.o, pointerId: h.id, pointerType: 'touch', isPrimary: true, button: 0, buttons: 0 }));
+  if (h.tt) h.el.dispatchEvent(new TouchEvent('touchend', { ...h.o, touches: [], targetTouches: [], changedTouches: [h.tt] })); })()"""
+synthetic = []
+
+
+def frame_scale(pg, fr):
+    s = fr.evaluate("window.__tapScale || 0")
+    if s:
+        return s
+    ox, oy = pg.evaluate("(() => { const r = document.querySelector('.kfs-desk iframe').getBoundingClientRect(); return [r.left, r.top]; })()")
+    fr.evaluate(CAL)
+    pg.touchscreen.tap(ox + 120, oy + 300)
+    poll(lambda: fr.evaluate("window.__calXY") is not None, 5)
+    xy = fr.evaluate("(() => { const d = document.getElementById('__cal'); if (d) d.remove(); return window.__calXY; })()")
+    s = 1 if xy and abs(xy[0] - 120) < 2 and abs(xy[1] - 300) < 2 else (round(xy[0] / 120, 2) if xy else -1)
+    fr.evaluate(f"window.__tapScale = {s}")
+    if s != 1:
+        print(f"  （这一回框里收到的手指坐标是 {xy}（该是 [120, 300]）：框里的点改成在框里直接发）", flush=True)
+    return s
+
+
+def ftap(pg, fr, x, y):
+    # 点框里 (x, y) 那一点（框里的坐标）
+    if frame_scale(pg, fr) == 1:
+        ox, oy = pg.evaluate("(() => { const r = document.querySelector('.kfs-desk iframe').getBoundingClientRect(); return [r.left, r.top]; })()")
+        pg.touchscreen.tap(ox + x, oy + y)
+    else:
+        synthetic.append(fr.evaluate(SYN, [x, y]))
+
+
+def fpress(pg, fr, cdp, x, y, until, timeout=3):
+    # 长按框里 (x, y)：按下去，等 until() 成了再抬起来；返回按着的时候成没成
+    if frame_scale(pg, fr) == 1:
+        ox, oy = pg.evaluate("(() => { const r = document.querySelector('.kfs-desk iframe').getBoundingClientRect(); return [r.left, r.top]; })()")
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": ox + x, "y": oy + y}]})
+        got = poll(until, timeout)
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    else:
+        synthetic.append(fr.evaluate(SYN_DOWN, [x, y]))
+        got = poll(until, timeout)
+        fr.evaluate(SYN_UP)
+    return got
+
+
 def tap_item(pg, fr, name):
     # 镜头停稳了再点（软着画，慢：一帧画得久了，手指按下、抬起隔得太久，那一页不当是点）；没推近就再点一回
-    for _ in range(5):
+    for i in range(5):
         poll(lambda: not fr.evaluate("window.__scene.moving()"), 10)
         time.sleep(0.5)
         x, y = fr.evaluate(f"(() => {{ const h = window.__scene.holders().find((x) => x[0] === {json.dumps(name)}); return window.__scene.screenOf(h[1], h[2], h[3]); }})()")
-        # 点的那一下先不画（同开封府盖着一层的时候 hold）：软着画一帧要好久，按下、抬起中间隔得太久，那一页不当是点（这台机器两个核的时候常碰上）
+        frame_scale(pg, fr)
+        # 点的那一下先不画（同开封府盖着一层的时候 hold）：软着画一帧要好久，按下、抬起中间隔得太久，那一页不当是点；停画以后等手里那一帧画完再点，没点上就多等一会儿
         fr.evaluate("window.KFSROOM && (KFSROOM.hold = true)")
-        time.sleep(0.4)
-        pg.touchscreen.tap(x, y)
+        time.sleep(0.4 + 0.8 * i)
+        ftap(pg, fr, x, y)
         time.sleep(0.3)
         fr.evaluate("window.KFSROOM && (KFSROOM.hold = false)")
         if poll(lambda: fr.evaluate(CARD)["on"] and fr.evaluate(CARD)["title"] == TITLE[name], 8):
             return True
+        if os.environ.get("DBG"):
+            print("  （点", name, [round(x), round(y)], "没推近；点着的是", fr.evaluate(f"window.__three.hitAt({x}, {y})"), "镜头", fr.evaluate("[window.__scene.where(), window.__scene.moving()]"), "）", flush=True)
     return False
 
 
@@ -379,7 +448,7 @@ def run(browser):
         fr.evaluate(vb + ".scrollIntoView({ block: 'center' })"); time.sleep(0.4)
         px, py = fr.evaluate("(() => { const r = " + vb + ".getBoundingClientRect(); return [r.left + 12, r.top + r.height / 2]; })()")
         for _ in range(3):  # 软着画慢，手指那一下有时候没认上：没放就再点一回
-            pg.touchscreen.tap(px, py)
+            ftap(pg, fr, px, py)
             if poll(lambda: fr.evaluate("window.__played.length") >= 1, 4):
                 break
             time.sleep(0.6)
@@ -398,15 +467,13 @@ def run(browser):
         fr.evaluate("(() => { const s = [...document.querySelectorAll('#xj .xj-b-say.me')].find((x) => x.innerText.includes('布丁喫了')); s.scrollIntoView({ block: 'center' }); })()")
         time.sleep(0.4)
         x, y = fr.evaluate("(() => { const s = [...document.querySelectorAll('#xj .xj-b-say.me')].find((x) => x.innerText.includes('布丁喫了')).querySelector('.xj-t').getBoundingClientRect(); return [s.left + 20, s.top + 10]; })()")
-        cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
-        pressed = poll(lambda: fr.evaluate("!document.querySelector('#xj .xj-copy').hidden"), 3)
-        cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        pressed = fpress(pg, fr, cdp, x, y, lambda: fr.evaluate("!document.querySelector('#xj .xj-copy').hidden"))
         time.sleep(0.6)
         ok(pressed and fr.evaluate("!document.querySelector('#xj .xj-copy').hidden") and fr.evaluate("XJ.view()") == "B", "长按一句：冒出“复制”（手指抬起来也还在）")
         shot(pg, "desk_6c_copy")
         fr.evaluate("(() => { window.__copied = []; const o = document.execCommand.bind(document); document.execCommand = (c) => { if (c === 'copy') window.__copied.push(document.activeElement && document.activeElement.value); return o(c); }; })()")
         bx, by = fr.evaluate("(() => { const r = document.querySelector('#xj .xj-copy button').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()")
-        pg.touchscreen.tap(bx, by)
+        ftap(pg, fr, bx, by)
         ok(poll(lambda: fr.evaluate("document.querySelector('#xj .xj-copy').hidden"), 3) and poll(lambda: "复制好了" in fr.evaluate("document.querySelector('#xj .xj-tip').textContent"), 3),
            "点“复制”：复制好了（纸底下冒一句）")
         cp = fr.evaluate("window.__copied")
@@ -476,12 +543,25 @@ def run(browser):
         free = box_.locator(".kfs-dr-list .kfs-dr-item:has(.kfs-dr-drop)").first
         free_id = free.get_attribute("data-id")
         free_name = free.locator(".kfs-dr-name").inner_text()
-        free.locator(".kfs-dr-drop").click()
-        ok(poll(lambda: box_.locator(f".kfs-dr-item[data-id={free_id}]").count() == 0 and f"删了「{free_name}」" in box_.locator(".kfs-dr-undo").inner_text(), 3), f"点叉删一件：没了，上头一行“删了「{free_name}」 撤销”")
+        it = box_.locator(f".kfs-dr-list .kfs-dr-item[data-id={free_id}]")
+        def drop2():  # 点叉、再点“删掉”
+            it.locator(".kfs-dr-drop").click()
+            poll(lambda: it.locator(".kfs-dr-confirm").count() == 1, 3)
+            it.locator(".kfs-dr-confirm").click()
+        it.locator(".kfs-dr-drop").click()
+        ok(poll(lambda: it.locator(".kfs-dr-confirm").count() == 1, 3) and it.count() == 1, "点叉一下：没删，叉变成“删掉”")
+        ok(poll(lambda: it.locator(".kfs-dr-confirm").count() == 0 and it.locator(".kfs-dr-drop").count() == 1, 6) and it.count() == 1, "三秒不点：变回叉，还是没删")
+        drop2()
+        ok(poll(lambda: it.count() == 0 and f"删了「{free_name}」" in box_.locator(".kfs-dr-undo").inner_text(), 3), f"再点“删掉”才删：没了，上头一行“删了「{free_name}」 撤销”")
         box_.locator(".kfs-dr-undo-btn").click()
-        ok(poll(lambda: box_.locator(f".kfs-dr-item[data-id={free_id}]").count() == 1 and box_.locator(".kfs-dr-undo").count() == 0, 3), "撤销：放回去")
-        box_.locator(f".kfs-dr-item[data-id={free_id}] .kfs-dr-drop").click()
-        ok(poll(lambda: box_.locator(f".kfs-dr-item[data-id={free_id}]").count() == 0, 3), "再删一回，这回不撤")
+        ok(poll(lambda: it.count() == 1 and box_.locator(".kfs-dr-undo").count() == 0, 3), "撤销：放回去")
+        drop2()
+        gone_it = box_.locator(f".kfs-dr-goneitem[data-id={free_id}]")
+        ok(poll(lambda: it.count() == 0 and gone_it.count() == 1 and free_name in gone_it.inner_text(), 3), "最底下“删掉的”里列着它")
+        gone_it.locator(".kfs-dr-restore").click()
+        ok(poll(lambda: it.count() == 1 and gone_it.count() == 0, 3), "“删掉的”里点放回去：回到衣柜里")
+        drop2()
+        ok(poll(lambda: it.count() == 0, 3), "再删一回，这回不放回去")
         box_.locator(".kfs-dr-search").fill("编的 草")
         ok(poll(lambda: box_.locator(".kfs-dr-hits .kfs-dr-item").count() == 1 and "鞋履" in box_.locator(".kfs-dr-hits .kfs-dr-item").inner_text(), 3), "找一件：几个词都得有，写着是哪一样的")
         shot_still(pg, "desk_8b_closet")
@@ -545,5 +625,7 @@ with sync_playwright() as p:
     plain = p.chromium.launch(executable_path=CHROME, args=["--no-sandbox", "--disable-3d-apis"]) if CHROME else p.chromium.launch(args=["--no-sandbox", "--disable-3d-apis"])
     no_gl(plain)
     plain.close()
+if synthetic:
+    print(f"\n（框里收到的手指坐标对不上，有 {len(synthetic)} 下是在框里直接发的：{synthetic[:8]}）")
 print(f"\n通过 {count['passed']}  失败 {count['failed']}")
 raise SystemExit(1 if count["failed"] else 0)

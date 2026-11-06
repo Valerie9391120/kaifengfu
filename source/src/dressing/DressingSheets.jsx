@@ -1,13 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Sheet } from "../ui/parts.jsx";
 import { Icon } from "../ui/Icon.jsx";
 import { T, SERIF, flat, field, chipPrimary, HAIRLINE } from "../ui/style.js";
-import { CATS, CATEGORY_LABELS, closetView, findItems, addItem, editItem, dropItem, undropItem, mirrorView, achievementsView, NAME_MAX, DESC_MAX } from "./closet.js";
+import { CATS, CATEGORY_LABELS, closetView, findItems, droppedView, addItem, editItem, dropItem, undropItem, mirrorView, achievementsView, NAME_MAX, DESC_MAX } from "./closet.js";
 
 // 他屋里妆台的三页（推近铜镜，卡片上那三颗：照镜子、衣柜、成就；在案上那一层里弹出来，照屋里卡片的样子，同锦盒里的梦库、梦廊）。
 // 规矩（见 closet.js）：衣柜里的衣服能加、能删、能改名字和描述；成就、攒成就换来的那几样只看；锁着的（成就要用的）只能改字。
 //   照镜子：同他屋里的镜子，只照得出今天完成的那一身；还没完成是一只裸狐，底下再写上一回完成的那一身
-//   衣柜：找一件、加一件、翻全部（一样一栏，点开是那一样的全部；点一件改字，点叉删，刚删的那一件能撤销）
+//   衣柜：找一件、加一件、翻全部（一样一栏，点开是那一样的全部；点一件改字，点叉删，刚删的那一件能撤销）；
+//     点叉要点两下：头一下叉变成“删掉”，再点才删，三秒不点变回叉（免得手一滑就删了）；最底下一栏“删掉的”，删过的都在，一件一个“放回去”
 //   成就：六十个全列，点亮的亮着、没点亮的灰着；底下攒成就换来的那几样，拿到的亮着
 // state 是妆台的存档（家里的闹钟写的，只读）；closet 是衣柜那一条（见 closet.js）；onCloset(新的一条) 存起来
 const SUB = "铜镜 · 妆台";
@@ -81,8 +82,9 @@ export function DressingMirror({ state, today, closet, onClose }) {
 }
 
 // ---------- 衣柜 ----------
-// 一件：名字（她新添的标着），描述；右边一个叉（锁着的写一个“锁”，攒来的写“攒来的”）。点名字那一块改字
-function Item({ x, label, editing, onEdit, onDrop }) {
+// 一件：名字（她新添的标着），描述；右边一个叉（锁着的写一个“锁”，攒来的写“攒来的”）。点名字那一块改字。
+// 叉点一下变成“删掉”（armed），再点才删
+function Item({ x, label, editing, armed, onEdit, onArm, onDrop }) {
   return (
     <div className="kfs-dr-item flex items-start" data-id={x.id} style={{ ...flat(0.5), borderRadius: 14, padding: "8px 4px 8px 12px", gap: 4 }}>
       <button onClick={x.reward ? undefined : onEdit} disabled={x.reward} aria-expanded={editing} className="flex-1 min-w-0 text-left" style={{ color: T.ink, fontSize: 14, lineHeight: 1.6 }}>
@@ -101,8 +103,12 @@ function Item({ x, label, editing, onEdit, onDrop }) {
         <span className="kfs-dr-lock flex items-center justify-center flex-shrink-0" aria-label={`删不了：${x.lock}`} style={{ width: 28, height: 28, fontSize: 12, color: T.inkFaint }}>
           锁
         </span>
+      ) : armed ? (
+        <button onClick={onDrop} aria-label={`确定删掉 ${x.name}`} className="kfs-dr-confirm kfs-tap flex items-center justify-center flex-shrink-0" style={{ height: 28, padding: "0 11px", borderRadius: 2, fontSize: 12.5, letterSpacing: "0.12em", color: "#f6ecdc", background: "rgba(158,52,36,.88)" }}>
+          删掉
+        </button>
       ) : (
-        <button onClick={onDrop} aria-label={`删掉 ${x.name}`} className="kfs-dr-drop flex items-center justify-center flex-shrink-0" style={{ width: 28, height: 28, borderRadius: 999, color: T.inkFaint }}>
+        <button onClick={onArm} aria-label={`删掉 ${x.name}`} className="kfs-dr-drop flex items-center justify-center flex-shrink-0" style={{ width: 28, height: 28, borderRadius: 999, color: T.inkFaint }}>
           <Icon name="x" size={11} sw={2} />
         </button>
       )}
@@ -143,7 +149,16 @@ export function DressingCloset({ state, closet, onCloset, onClose }) {
   const [desc, setDesc] = useState("");
   const [note, setNote] = useState(""); // 加没加上那一句
   const [undo, setUndo] = useState(null); // 刚删的那一件
+  const [arm, setArm] = useState(null); // 叉点了一下、等着再点一下的那一件
+  const armT = useRef(null);
+  useEffect(() => () => clearTimeout(armT.current), []);
+  const armIt = (id) => {
+    clearTimeout(armT.current);
+    setArm(id);
+    armT.current = setTimeout(() => setArm(null), 3000);
+  };
   const view = useMemo(() => closetView(closet, got), [closet, got.join(",")]);
+  const gone = useMemo(() => droppedView(closet), [closet]);
   const hits = useMemo(() => findItems(closet, q, got), [closet, q, got.join(",")]);
 
   const edit = (id) => {
@@ -157,6 +172,8 @@ export function DressingCloset({ state, closet, onCloset, onClose }) {
     setEditing(null);
   };
   const drop = (id) => {
+    clearTimeout(armT.current);
+    setArm(null);
     const r = dropItem(closet, id);
     if (r.why) return setNote(r.why);
     onCloset(r.rec);
@@ -168,6 +185,11 @@ export function DressingCloset({ state, closet, onCloset, onClose }) {
     onCloset(undropItem(closet, undo.id));
     setUndo(null);
   };
+  // 删掉的那一栏里放回去一件
+  const restore = (id) => {
+    onCloset(undropItem(closet, id));
+    if (undo && undo.id === id) setUndo(null);
+  };
   const add = () => {
     const r = addItem(closet, addCat, { name, description: desc });
     if (r.why) return setNote(r.why);
@@ -178,7 +200,7 @@ export function DressingCloset({ state, closet, onCloset, onClose }) {
   };
   const row = (x, label = "") => (
     <div key={x.id}>
-      <Item x={x} label={label} editing={editing === x.id} onEdit={() => edit(x.id)} onDrop={() => drop(x.id)} />
+      <Item x={x} label={label} editing={editing === x.id} armed={arm === x.id} onEdit={() => edit(x.id)} onArm={() => armIt(x.id)} onDrop={() => drop(x.id)} />
       {editing === x.id && <Editor x={x} note={editNote} onCancel={() => setEditing(null)} onSave={(n, d) => save(x.id, n, d)} />}
     </div>
   );
@@ -194,6 +216,11 @@ export function DressingCloset({ state, closet, onCloset, onClose }) {
         </div>
       )}
 
+      {gone.length > 0 && !undo && (
+        <p className="kfs-dr-gonehint" style={{ ...SMALL, margin: "0 2px 12px" }}>
+          删掉的 {gone.length} 件在最底下，能放回去。
+        </p>
+      )}
       <div style={{ ...H, marginTop: 0 }}>找一件</div>
       <input className="kfs-field kfs-dr-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜一个字、一个词" style={field} />
       {q.trim() && (
@@ -248,7 +275,28 @@ export function DressingCloset({ state, closet, onCloset, onClose }) {
           </div>
         ))}
       </div>
-      <p style={{ ...SMALL, color: T.inkFaint, margin: "12px 2px 0" }}>写着“锁”的是成就要用的，只能改字，删不了。新添的不算看风格的那几条成就。</p>
+      {gone.length > 0 && (
+        <>
+          <div style={H}>删掉的</div>
+          <div className="kfs-dr-gone flex flex-col" style={{ gap: 6 }}>
+            {gone.map((x) => (
+              <div key={x.id} className="kfs-dr-goneitem flex items-center justify-between" data-id={x.id} style={{ ...flat(0.5), borderRadius: 14, padding: "8px 8px 8px 12px", gap: 8 }}>
+                <span className="min-w-0">
+                  <span className="block" style={{ fontSize: 11.5, color: T.inkFaint }}>{x.label}</span>
+                  <span className="kfs-dr-name block" style={{ fontFamily: SERIF, fontSize: 14, color: T.ink, letterSpacing: "0.04em" }}>
+                    {x.name}
+                    {x.mine && <span style={{ fontSize: 11.5, color: T.inkFaint, marginLeft: 6 }}>新添</span>}
+                  </span>
+                </span>
+                <button onClick={() => restore(x.id)} className="kfs-dr-restore kfs-tap flex-shrink-0" style={{ ...pill(false), padding: "5px 12px" }}>
+                  放回去
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <p style={{ ...SMALL, color: T.inkFaint, margin: "12px 2px 0" }}>点叉要再点一下“删掉”才删；删错了，在“删掉的”里放回去。写着“锁”的是成就要用的，只能改字，删不了。新添的不算看风格的那几条成就。</p>
     </Sheet>
   );
 }

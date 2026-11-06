@@ -5,7 +5,7 @@
 // 仓库是公开的：这里加的衣服都是编的。
 import {
   CLOSET_KEY, CATS, emptyCloset, normCloset, readCloset, packCloset, isEmptyCloset, closetItems, closetCatalog, lockOf, addItem, editItem, dropItem, undropItem,
-  closetView, findItems, lookRows, mirrorView, achievementsView, NAME_MAX,
+  closetView, findItems, droppedView, lookRows, mirrorView, achievementsView, NAME_MAX,
 } from "../src/dressing/closet.js";
 import { BASE_ITEMS, DEFAULT_CATALOG, ITEMS } from "../vendor/dressing/dressing-data.ts";
 import { DressingEngine } from "../vendor/dressing/dressing-engine.ts";
@@ -121,6 +121,14 @@ ok(isEmptyCloset(readCloset(null)) && CLOSET_KEY === "kfs2:dressing:closet" && C
   const d = dropItem(r, a.item.id);
   ok(d.dropped && d.dropped.name === "编的长袍" && closetItems(d.rec).find((x) => x.id === a.item.id).gone && dropItem(d.rec, a.item.id).why === "这一件已经删了", "删了；再删说删过了");
   ok(eq(undropItem(d.rec, a.item.id), r), "撤销：放回去");
+  {
+    let g = d.rec;
+    const two = BASE_ITEMS.filter((x) => x.category === "scent" && x.base && !lockOf(g, x.id)).slice(0, 2);
+    for (const x of two) g = dropItem(g, x.id).rec;
+    const dv = droppedView(g);
+    ok(eq(dv.map((x) => x.id), [two[1].id, two[0].id, a.item.id]) && dv[0].label === "熏香" && dv[2].mine && dv[2].name === "编的长袍", `删掉的那一栏：最近删的在前，写着是哪一样的、新添的标着（${dv.map((x) => x.name).join("、")}）`);
+    ok(eq(droppedView(undropItem(g, two[0].id)).map((x) => x.id), [two[1].id, a.item.id]) && eq(droppedView(emptyCloset()), []), "放回去一件：那一栏里少一件；没删过：空的");
+  }
   ok(editItem(d.rec, a.item.id, { name: "改删掉的" }).why === "这一件已经删了", "删掉的不能改");
   const hits = findItems(r, "编的 灰色");
   ok(hits.length === 1 && hits[0].id === a.item.id && hits[0].label === "衣柜" && findItems(r, "旗袍").some((x) => x.id === "outfit_qipao") && !findItems(d.rec, "编的").length && !findItems(r, " ").length, "找：几个词都得有，名字描述里找，删掉的不找");
