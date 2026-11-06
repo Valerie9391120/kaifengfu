@@ -7,7 +7,7 @@
 //   他下回醒来，寄给他的狐宇宙那段对话里也没有那一轮了；那一轮回的她那几张便签（排在上一轮和这一轮中间的）跟着不寄。
 //   狐宇宙那段对话本身一个字不删：信匣里照样一条一条排着，前情提要照样抄。
 // 信匣：原来狐宇宙那一页上摆的（聊天记录那一套，chat/rows.js），一样一样搬到信笺上（他在左、她在右，不带气泡），见 boxOf。
-// 卡片：推近花盆、铜镜，卡片上写园子、妆台眼下的样子（照家里的闹钟写的存档，只读）。
+// 卡片：推近花盆，卡片上写园子眼下的样子（照家里的闹钟写的存档，只读）；推近铜镜，卡片上只有照镜子、衣柜、成就三颗。
 // =====================================================
 import { isWakeMark } from "../fox.js";
 import { plainOf, richBlocks } from "../rich.js";
@@ -17,9 +17,6 @@ import { askSummary } from "../ask.js";
 import { sepLabel } from "../days.js";
 import { buildRows } from "../chat/rows.js";
 import { pickRecap } from "../recap.js";
-import { lookLine } from "../room.js";
-import { completedToday } from "../../vendor/dressing/dressing-engine.ts";
-import { closetCatalog } from "../dressing/closet.js";
 import { PLANTS } from "../../vendor/garden/garden-data.ts";
 
 export const DESK_READ = "kfs2:fox:read"; // 收起来的那几轮：{ v: 1, ids: [那一轮的编号…] }
@@ -204,10 +201,6 @@ export function cn(n) {
   if (n < 100) return NUM[Math.floor(n / 10)] + "十" + (n % 10 ? NUM[n % 10] : "");
   return String(n);
 }
-const dayCn = (d) => {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d || ""));
-  return m ? `${cn(Number(m[2]))}月${cn(Number(m[3]))}日` : "";
-};
 const CARED = { water: "浇过水了", loosen: "松过土了", prune: "修剪过了" };
 const STAGE = (n) => (n >= 21 ? "孕蕾" : n >= 11 ? "抽枝展叶" : "萌动");
 
@@ -224,18 +217,14 @@ export function gardenCard(state, today) {
   return { sub: sub(p), note: `${p.shortName}，${STAGE(state.careDays)}，照料了${cn(state.careDays)}天（满三十天开花）。今天${cared}。${book}`, go: [] };
 }
 
-// 铜镜：今天完成的那一身；今天还没完成，写上一回完成的那一身（镜子里只照得出完成的那一身，眼下摆着、没完成的不写）
-// 底下三颗：照镜子、衣柜、成就（点了在这一层里弹出那一页，见 DeskPage 的 dressing；衣柜能加、删、改，见 dressing/closet.js）。cat：这一份衣柜
+// 铜镜：卡片上不写字了（今天那一身、上一回那一身都在“照镜子”那一页里），只留底下三颗：照镜子、衣柜、成就
+//   （点了在这一层里弹出那一页，见 DeskPage 的 dressing；衣柜能加、删、改，见 dressing/closet.js）
 export const DRESS_GO = ["照镜子", "衣柜", "成就"];
-export function dressingCard(state, today, cat = undefined) {
-  if (!state || !state.initialized) return { note: "妆台我还没去过。", go: DRESS_GO };
-  const look = state.completedLook;
-  if (completedToday(state, today)) return { note: `今天这一身：${lookLine(look.appearance, undefined, cat)}。`, go: DRESS_GO };
-  if (look && look.appearance) return { note: `今天还没完成搭配。上一回（${dayCn(look.date)}）：${lookLine(look.appearance, undefined, cat)}。`, go: DRESS_GO };
-  return { note: "今天还没完成搭配。", go: DRESS_GO };
+export function dressingCard() {
+  return { note: "", go: DRESS_GO };
 }
 
 // 递给那一页的卡片（推近哪一样，卡片上写什么）：只有花盆、铜镜换；别的照那一页自己写的
-export function deskCards({ garden, dressing, today, closet = null }) {
-  return { 花盆: gardenCard(garden, today), 铜镜: dressingCard(dressing, today, closetCatalog(closet)) };
+export function deskCards({ garden, today }) {
+  return { 花盆: gardenCard(garden, today), 铜镜: dressingCard() };
 }

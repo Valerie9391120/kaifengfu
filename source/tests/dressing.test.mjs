@@ -12,7 +12,7 @@ import { DressingEngine } from "../vendor/dressing/dressing-engine.ts";
 import { ACHIEVEMENTS } from "../vendor/dressing/achievements.ts";
 import { dressingOf, runDressingCalls, DRESSING_KEY } from "../alarm/dressing.js";
 import { runRoomCalls, lookLine, dressingView, wardrobeView } from "../src/room.js";
-import { dressingCard, deskCards } from "../src/desk/parts.js";
+import { deskCards } from "../src/desk/parts.js";
 
 let pass = 0, failN = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); } };
@@ -221,7 +221,7 @@ ok(isEmptyCloset(readCloset(null)) && CLOSET_KEY === "kfs2:dressing:closet" && C
   const out2 = await runRoomCalls([{ id: "w2", name: "room_look", input: { what: "dressing" } }], io);
   ok(out2[0].out.includes("配饰：编的发簪"), "看妆台：今天那一身照这一份写名字");
   ok(lookLine(look, undefined, closetCatalog(r)) === "披发、素面、不熏香；配饰：编的发簪" && lookLine(look).includes(r.add[0].id), "那一行：照这一份写；不给就是一开始那一份（新加的只认得编号）");
-  ok(deskCards({ garden: null, dressing: JSON.parse(s.m.get(DRESSING_KEY)), today: DAY, closet: r }).铜镜.note === "今天这一身：披发、素面、不熏香；配饰：编的发簪。", "推近铜镜的卡片：照这一份写");
+  ok(deskCards({ garden: null, today: DAY }).铜镜.note === "", "推近铜镜的卡片：不写字（那一身在照镜子那一页里）");
 }
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);

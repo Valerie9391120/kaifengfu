@@ -70,7 +70,7 @@ export function dressingOf(store, { today = () => localDay() } = {}) {
   };
 }
 
-// 完成的那一身写成一行：挪到 src/room.js 了（推近铜镜的卡片上也写这一行，见 src/desk/parts.js），这里照旧递出去
+// 完成的那一身写成一行：挪到 src/room.js 了（聊天里回屋看一眼也用），这里照旧递出去
 export { lookLine };
 
 const sameLook = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);

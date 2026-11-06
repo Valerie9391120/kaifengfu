@@ -133,7 +133,7 @@ function lookText(a, heading, cat = DEFAULT_CATALOG) {
   ].join("\n");
 }
 
-// 完成的那一身写成一行（狐宇宙里完成搭配那一行小字、推近铜镜的卡片上用）：梳发、妆面、熏香，再是衣柜、下装、鞋履、配饰（空着的不写）。叠得太多，写到 max 个字为止，后面写一共几样
+// 完成的那一身写成一行（狐宇宙里完成搭配那一行小字用）：梳发、妆面、熏香，再是衣柜、下装、鞋履、配饰（空着的不写）。叠得太多，写到 max 个字为止，后面写一共几样
 const LOOK_MAX = 80;
 export function lookLine(a, max = LOOK_MAX, cat = DEFAULT_CATALOG) {
   if (!a) return "";

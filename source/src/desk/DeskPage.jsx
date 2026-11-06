@@ -138,8 +138,7 @@ export function DeskPage({ msgs, read, garden, dressing, closet = null, hidden =
 
   const rounds = useMemo(() => roundsOf(msgs, read), [msgs, read]);
   const today = localDay(now.getTime());
-  const closetRec = closet ? closet.rec : null;
-  const cards = useMemo(() => deskCards({ garden, dressing, today, closet: closetRec }), [garden, dressing, today, closetRec]);
+  const cards = useMemo(() => deskCards({ garden, today }), [garden, today]);
   // 信匣里摆的（翻开着才算）；几点那一行照着现在写（今天、昨天），过一分钟跟着换
   const minute = Math.floor(now.getTime() / 60000);
   const boxRows = useMemo(() => (boxOn ? boxOf(msgs, { read, recaps: kit.recaps || [], now }) : []), [boxOn, msgs, read, kit.recaps, minute]);
