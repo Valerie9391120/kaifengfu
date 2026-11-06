@@ -3,6 +3,8 @@
 #     刘海、底下那一条照手机量的递进去（画面铺满整屏，按钮、卡片让开）；顶上没有“案上”、底下没有两行提示、点了东西不冒名字、返回只有箭头；眼前那段对话不换；那一页画好以后左上角是它自己的“回开封府”，点了关上、回到原来那段对话；
 #   推近花盆、铜镜：卡片上写园子、妆台眼下的样子（还没去过照实说；闹钟替他浇了水、完成了搭配以后照存档写），没有按钮；
 #   锦盒：梦库、梦廊两颗点了在这一层里弹出那一页（那一页先不画），叉一点回到案上；
+#   铜镜：底下照镜子、衣柜、成就三颗，点了在这一层里弹出那一页（照屋里卡片的样子）；衣柜里加一件、改字、删一件、撤销、找；锁着的写为什么删不了；
+#     家里的闹钟照改过的衣柜替他办（他翻衣柜看得见新添的、改了的，删掉的不在）；
 #   信笺：推近点“写一张”展开；还空着写“纸上还空着。”；留信：放进狐宇宙那段对话（记着是便签），不叫他、眼前那段对话不换；
 #   他醒了一回（浇水、换了一身完成搭配、写了几句）：纸上多一轮——他的字转成繁体（刻本体）、后头几行小字、末尾日子；
 #   已阅：那一轮收起来（记在 kfs2:fox:read），撤回放回去；再叫醒他一回：寄给他的狐宇宙那段对话里没有收起来的那一轮、它回的那张便签；
@@ -40,6 +42,13 @@ def shot(pg, name):
     if SHOTS:
         os.makedirs(SHOTS, exist_ok=True)
         pg.screenshot(path=os.path.join(SHOTS, name + ".png"), timeout=300000)
+
+
+def shot_still(pg, name):
+    # 弹出来的那一页滑稳了再截（只在要截图的时候等）
+    if SHOTS:
+        time.sleep(1.2)
+        shot(pg, name)
 
 
 def poll(fn, timeout=8.0, step=0.2):
@@ -222,7 +231,7 @@ def run(browser):
         ok(c["title"] == "园子" and c["sub"] == "钧窑六方盆" and c["note"] == "园子我还没进去过。头一回进去，会得一盆魏紫。" and c["acts"] == [], f"花盆：园子还没进去过，照实说；没有按钮（{c}）")
         back_to_desk(fr)
         c = card_of(pg, fr, "铜镜")
-        ok(c["title"] == "妆台" and c["note"] == "妆台我还没去过。" and c["acts"] == [], f"铜镜：妆台还没去过；没有按钮（{c}）")
+        ok(c["title"] == "妆台" and c["note"] == "妆台我还没去过。" and c["acts"] == ["照镜子", "衣柜", "成就"], f"铜镜：妆台还没去过；底下照镜子、衣柜、成就三颗（{c}）")
         back_to_desk(fr)
         c = card_of(pg, fr, "锦盒")
         ok(c["title"] == "罗浮梦" and c["acts"] == ["梦库", "梦廊"], f"锦盒：罗浮梦，梦库、梦廊两颗（{c['acts']}）")
@@ -390,8 +399,85 @@ def run(browser):
         shot(pg, "desk_7_pot")
         back_to_desk(fr)
         c = card_of(pg, fr, "铜镜")
-        ok(c["note"] == "今天这一身：披发、素面、不熏香；衣柜：高领黑毛衣。", f"铜镜：今天完成的那一身（{c['note']}）")
+        ok(c["note"] == "今天这一身：披发、素面、不熏香；衣柜：高领黑毛衣。" and c["acts"] == ["照镜子", "衣柜", "成就"], f"铜镜：今天完成的那一身；底下照镜子、衣柜、成就三颗（{c['note']}，{c['acts']}）")
         shot(pg, "desk_8_mirror")
+
+        # ---- 铜镜那三颗：照镜子、衣柜（加、改、删、撤销、找）、成就 ----
+        act = lambda t: fr.evaluate(f"[...document.querySelectorAll('#k-acts button')].find((b) => b.textContent === {json.dumps(t)}).click()")
+        sheet_title = lambda: pg.evaluate("(document.querySelector('.kfs-desk .kfs-room-title') || {}).textContent || ''")
+        close_sheet = lambda: pg.locator(".kfs-desk .kfs-sheet-box").get_by_role("button", name="关闭").click()
+        act("照镜子")
+        ok(poll(lambda: sheet_title() == "照镜子", 4), "点照镜子：照屋里卡片的样子弹出来")
+        rows = pg.evaluate("[...document.querySelectorAll('.kfs-desk .kfs-dr-row')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim())")
+        ok(len(rows) == 7 and rows[0] == "梳发 披发" and rows[3] == "衣柜 高领黑毛衣" and "镜中今日" in pg.locator(".kfs-desk .kfs-sheet-box").inner_text(), f"镜中今日：七行，照今天完成的那一身（{rows}）")
+        shot_still(pg, "desk_8a_mirror")
+        close_sheet()
+        ok(poll(lambda: pg.locator(".kfs-desk .kfs-sheet-box").count() == 0, 4), "叉一点：回到案上")
+        act("衣柜")
+        ok(poll(lambda: sheet_title() == "衣柜", 4), "点衣柜：弹出衣柜那一页")
+        box_ = pg.locator(".kfs-desk .kfs-sheet-box")
+        def open_cat(cat):
+            for _ in range(4):
+                time.sleep(0.8)
+                if box_.locator(f".kfs-dr-open[data-cat={cat}][aria-expanded=true]").count():
+                    return True
+                box_.locator(f".kfs-dr-open[data-cat={cat}]").click()
+                if poll(lambda: box_.locator(f".kfs-dr-open[data-cat={cat}][aria-expanded=true]").count() == 1, 4):
+                    return True
+            return False
+        open_cat("outfit")
+        ok(poll(lambda: box_.locator(".kfs-dr-item[data-id=outfit_black_turtleneck] .kfs-dr-lock").count() == 1 and box_.locator(".kfs-dr-item[data-id=outfit_black_turtleneck] .kfs-dr-drop").count() == 0, 3),
+           "翻全部 · 衣柜：成就要用的那件写着“锁”，没有叉")
+        box_.locator(".kfs-dr-item[data-id=outfit_lightblue_roundrobe] button").first.click()
+        ok(poll(lambda: box_.locator(".kfs-dr-edit").count() == 1 and "删不了：《游侠儿》要用" in box_.locator(".kfs-dr-edit").inner_text(), 3), "点一件：底下摊开改字；锁着的写为什么删不了")
+        if SHOTS:
+            box_.locator(".kfs-dr-edit").scroll_into_view_if_needed()
+            shot_still(pg, "desk_8b0_edit")
+        box_.locator(".kfs-dr-edit-name").fill("编的改名圆领袍")
+        box_.locator(".kfs-dr-edit-desc").fill("编的描述，测试用")
+        box_.locator(".kfs-dr-save").click()
+        ok(poll(lambda: box_.locator(".kfs-dr-item[data-id=outfit_lightblue_roundrobe] .kfs-dr-name").inner_text().startswith("编的改名圆领袍") and box_.locator(".kfs-dr-edit").count() == 0, 3), "改了名字、描述：存上")
+        box_.locator(".kfs-dr-addcats button", has_text="鞋履").click()
+        box_.locator(".kfs-dr-new-name").fill("编的草鞋")
+        box_.locator(".kfs-dr-new-desc").fill("编的，草编的")
+        box_.locator(".kfs-dr-add").click()
+        ok(poll(lambda: box_.locator(".kfs-dr-msg").inner_text() == "加上了：鞋履 · 编的草鞋", 3), "加一件：挑鞋履、写名字描述，加上")
+        box_.locator(".kfs-dr-add").click()
+        ok(poll(lambda: box_.locator(".kfs-dr-msg").inner_text() == "名字还空着", 3), "名字空着：不加")
+        open_cat("shoes")
+        mine = box_.locator(".kfs-dr-item", has_text="编的草鞋")
+        ok(poll(lambda: mine.count() == 1 and "新添" in mine.inner_text(), 3), "翻全部 · 鞋履：新添的那一双在，标着“新添”")
+        shoe_id = mine.get_attribute("data-id")
+        free = box_.locator(".kfs-dr-list .kfs-dr-item:has(.kfs-dr-drop)").first
+        free_id = free.get_attribute("data-id")
+        free_name = free.locator(".kfs-dr-name").inner_text()
+        free.locator(".kfs-dr-drop").click()
+        ok(poll(lambda: box_.locator(f".kfs-dr-item[data-id={free_id}]").count() == 0 and f"删了「{free_name}」" in box_.locator(".kfs-dr-undo").inner_text(), 3), f"点叉删一件：没了，上头一行“删了「{free_name}」 撤销”")
+        box_.locator(".kfs-dr-undo-btn").click()
+        ok(poll(lambda: box_.locator(f".kfs-dr-item[data-id={free_id}]").count() == 1 and box_.locator(".kfs-dr-undo").count() == 0, 3), "撤销：放回去")
+        box_.locator(f".kfs-dr-item[data-id={free_id}] .kfs-dr-drop").click()
+        ok(poll(lambda: box_.locator(f".kfs-dr-item[data-id={free_id}]").count() == 0, 3), "再删一回，这回不撤")
+        box_.locator(".kfs-dr-search").fill("编的 草")
+        ok(poll(lambda: box_.locator(".kfs-dr-hits .kfs-dr-item").count() == 1 and "鞋履" in box_.locator(".kfs-dr-hits .kfs-dr-item").inner_text(), 3), "找一件：几个词都得有，写着是哪一样的")
+        shot_still(pg, "desk_8b_closet")
+        close_sheet()
+        act("成就")
+        ok(poll(lambda: sheet_title() == "成就", 4), "点成就：弹出成就那一页")
+        achs = pg.evaluate("[document.querySelectorAll('.kfs-desk .kfs-dr-ach').length, document.querySelectorAll('.kfs-desk .kfs-dr-ach.on').length, document.querySelector('.kfs-desk .kfs-dr-lit').textContent, document.querySelectorAll('.kfs-desk .kfs-dr-reward').length, !!document.querySelector('.kfs-desk .kfs-dr-ach.on[data-id=most_indecent_menswear]')]")
+        ok(achs[0] == 60 and achs[1] >= 2 and achs[2] == f"点亮了 {achs[1]} 个，一共 60 个。" and achs[3] == 12 and achs[4], f"六十个全列，点亮的亮着；攒成就换来的十二样（{achs}）")
+        shot_still(pg, "desk_8c_achv")
+        close_sheet()
+        time.sleep(3.0)  # 等衣柜那一条推上云端
+
+        # ---- 家里的闹钟照她改过的衣柜：他翻衣柜看得见新添的、改了的名字和描述，删掉的不在 ----
+        mock("/__debug/tool-queue?name=play_dressing_room&input=" + quote(json.dumps({"action": "catalog", "category": "shoes"})))
+        mock("/__debug/tool-queue?name=play_dressing_room&input=" + quote(json.dumps({"action": "catalog", "category": "outfit"})))
+        mock("/__debug/reply-queue?text=" + quote("翻了翻衣柜。"))
+        c2 = len(calls())
+        code, out = alarm(["wake"], home)
+        sent = json.dumps([x["body"]["messages"] for x in calls()[c2:]], ensure_ascii=False)
+        ok(code == 0 and f"编的草鞋 [{shoe_id}]——编的，草编的" in sent and "编的改名圆领袍 [outfit_lightblue_roundrobe]——编的描述，测试用" in sent and f"[{free_id}]" not in sent,
+           "闹钟替他翻衣柜：新添的那双、改了的名字和描述都在，删掉的那件不在")
         back_to_desk(fr)
         fr.evaluate("document.getElementById('back').click()")
         ok(poll(lambda: pg.locator(".kfs-desk").count() == 0, 5) and last_chat(pg) == here, "关上：回到原来那段对话（信匣就在信笺上，没翻到狐宇宙那段对话）")

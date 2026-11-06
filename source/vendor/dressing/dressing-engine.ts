@@ -1,5 +1,6 @@
 import { ACHIEVEMENTS } from "./achievements.js";
-import { BASE_IDS, CATEGORY_LABELS, DEFAULT_APPEARANCE, ITEMS, itemAvailable, itemName } from "./dressing-data.js";
+import { CATEGORY_LABELS, DEFAULT_APPEARANCE, DEFAULT_CATALOG } from "./dressing-data.js";
+import type { Catalog } from "./dressing-data.js";
 import { rewardUnlocks } from "./rewards.js";
 import type { AchievementUnlock, Appearance, Category, DressingClock, DressingCommand, DressingResult, DressingState, DressingStore, MultiCategory, SingleCategory } from "./types.js";
 
@@ -54,15 +55,17 @@ function signature(a:Appearance):string {
 }
 
 export class DressingEngine {
-  constructor(private store:DressingStore,private clock:DressingClock){}
+  /** cat：这一份衣柜（开封府 11 月 6 日加的，她在手机上改过的那一份；不给是一开始那一份） */
+  constructor(private store:DressingStore,private clock:DressingClock,private cat:Catalog=DEFAULT_CATALOG){}
 
   async execute(cmd:DressingCommand):Promise<DressingResult>{
     return this.store.update(async loaded=>{
       const state=loaded?structuredClone(loaded):cloneDefault();
       normalize(state);
+      this.dropGone(state);
       const today=this.clock.today();
       let text="";
-      const ctx:{justCompleted?:boolean;justMirrored?:boolean;selectedItemId?:string;selectedCategory?:string;today:string}={today};
+      const ctx:{justCompleted?:boolean;justMirrored?:boolean;selectedItemId?:string;selectedCategory?:string;today:string;cat:Catalog}={today,cat:this.cat};
 
       if(!state.initialized){
         state.initialized=true;
@@ -115,11 +118,18 @@ export class DressingEngine {
 
       // 成就只在完成搭配的时候判（按完成的那一身）；照镜子的时候只判照镜子那几个。换着玩的时候一个都不判
       const newAchievements=ctx.justCompleted?this.achievementSweep(state,ctx,"complete"):ctx.justMirrored?this.achievementSweep(state,ctx,"mirror"):[];
-      const newRewards=rewardUnlocks(state.unlockedAchievements.length,state.unlockedRewards);
+      const newRewards=rewardUnlocks(state.unlockedAchievements.length,state.unlockedRewards,this.cat);
       for(const r of newRewards) state.unlockedRewards.push(r.id);
 
       return [state,{ok:true,text,newAchievements,newRewards,state}];
     });
+  }
+
+  // 她在手机上删掉的那几件（gone）：身上穿着的取下来，梳发、妆面、熏香换回一开始那一样（开封府 11 月 6 日加的）
+  private dropGone(state:DressingState){
+    const a=state.appearance, gone=(id:string)=>Boolean(this.cat.ITEMS[id]?.gone);
+    for(const c of ["hair","makeup","scent"] as SingleCategory[]) if(gone(a[c])) { a[c]=singleDefault(c); state.touched[c]=false; }
+    a.outfits=a.outfits.filter(id=>!gone(id)); a.bottoms=a.bottoms.filter(id=>!gone(id)); a.shoes=a.shoes.filter(id=>!gone(id)); a.accessories=a.accessories.filter(id=>!gone(id));
   }
 
   private ensureCurrentDay(state:DressingState,today:string){
@@ -128,9 +138,9 @@ export class DressingEngine {
 
   private selectItem(state:DressingState,category:Category|"all"|undefined,itemId:string|undefined,ctx:{selectedItemId?:string;selectedCategory?:string}):string{
     if(!category||category==="all"||!itemId) return "请选择要调整的类别与单品。";
-    const item=ITEMS[itemId];
-    if(!item||item.category!==category) return "没有找到这个单品，或它不属于所选类别。";
-    if(!itemAvailable(itemId,state.unlockedRewards)) return "这件东西还没有解锁。";
+    const item=this.cat.ITEMS[itemId];
+    if(!item||item.gone||item.category!==category) return "没有找到这个单品，或它不属于所选类别。";
+    if(!this.cat.itemAvailable(itemId,state.unlockedRewards)) return "这件东西还没有解锁。";
     ctx.selectedItemId=itemId;ctx.selectedCategory=category;
     state.touched[category]=true;
 
@@ -146,15 +156,15 @@ export class DressingEngine {
   }
 
   private removeItem(state:DressingState,itemId:string|undefined):string{
-    if(!itemId||!ITEMS[itemId]) return "请选择要取下的单品。";
-    const item=ITEMS[itemId];
+    if(!itemId||!this.cat.ITEMS[itemId]) return "请选择要取下的单品。";
+    const item=this.cat.ITEMS[itemId]!;
     const c=item.category;
     if(c==="hair"||c==="makeup"||c==="scent"){
       if(state.appearance[c]!==itemId) return `${item.name}目前并不是当前${CATEGORY_LABELS[c]}。`;
       const def=singleDefault(c);
       state.appearance[c]=def;
       state.touched[c]=false;
-      return `${CATEGORY_LABELS[c]}已恢复为：${itemName(def)}。`;
+      return `${CATEGORY_LABELS[c]}已恢复为：${this.cat.itemName(def)}。`;
     }
     const arr=arrFor(state.appearance,c);
     const i=arr.indexOf(itemId);
@@ -209,7 +219,7 @@ export class DressingEngine {
     state.currentDay!.mirrorCount+=1;
   }
 
-  private achievementSweep(state:DressingState,ctx:{justCompleted?:boolean;justMirrored?:boolean;selectedItemId?:string;selectedCategory?:string;today:string},phase:"complete"|"mirror"):AchievementUnlock[]{
+  private achievementSweep(state:DressingState,ctx:{justCompleted?:boolean;justMirrored?:boolean;selectedItemId?:string;selectedCategory?:string;today:string;cat:Catalog},phase:"complete"|"mirror"):AchievementUnlock[]{
     const out:AchievementUnlock[]=[];
     for(const a of ACHIEVEMENTS){
       if(state.unlockedAchievements.includes(a.id)) continue;
@@ -231,12 +241,13 @@ export class DressingEngine {
   }
 
   private lookText(a:Appearance,heading:string):string{
-    const fmt=(ids:string[])=>ids.length?ids.map(itemName).join("、"):"无";
+    const name=(id:string)=>this.cat.itemName(id);
+    const fmt=(ids:string[])=>ids.length?ids.map(name).join("、"):"无";
     const lines=[
       heading,
-      `梳发：${itemName(a.hair)}`,
-      `妆面：${itemName(a.makeup)}`,
-      `熏香：${itemName(a.scent)}`,
+      `梳发：${name(a.hair)}`,
+      `妆面：${name(a.makeup)}`,
+      `熏香：${name(a.scent)}`,
       `衣柜：${fmt(a.outfits)}`,
       `下装：${fmt(a.bottoms)}`,
       `鞋履：${fmt(a.shoes)}`,
@@ -252,11 +263,12 @@ export class DressingEngine {
     const out:string[]=[];
     for(const c of categories){
       out.push(CATEGORY_LABELS[c]);
-      for(const item of Object.values(ITEMS).filter(x=>x.category===c&&(x.base||state.unlockedRewards.includes(x.id)))){
+      for(const item of Object.values(this.cat.ITEMS).filter(x=>x.category===c&&!x.gone&&(x.base||state.unlockedRewards.includes(x.id)))){
         const selected=c==="hair"||c==="makeup"||c==="scent"
           ? state.appearance[c]===item.id
           : arrFor(state.appearance,c).includes(item.id);
-        out.push(`${selected?"✓":"·"} ${item.name} [${item.id}]`);
+        // 她写了描述的，翻衣柜的时候一起看得见（开封府 11 月 6 日加的）
+        out.push(`${selected?"✓":"·"} ${item.name} [${item.id}]${item.description?`——${item.description}`:""}`);
       }
       out.push("");
     }
@@ -278,7 +290,7 @@ export class DressingEngine {
     if(!state.unlockedRewards.length) lines.push("尚未获得累计成就奖励。");
     else {
       lines.push("已获得奖励：");
-      for(const id of state.unlockedRewards){ const x=ITEMS[id]; lines.push(`· ${x.name}——${x.description??""}`); }
+      for(const id of state.unlockedRewards){ const x=this.cat.ITEMS[id]; if(x) lines.push(`· ${x.name}——${x.description??""}`); }
     }
     const milestones=[3,5,8,12,16,20,24,28,32,36,40,50];
     const next=milestones.find(x=>x>count);

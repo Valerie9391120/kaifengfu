@@ -1,4 +1,5 @@
-import { ITEMS } from "./dressing-data.js";
+import { DEFAULT_CATALOG } from "./dressing-data.js";
+import type { Catalog } from "./dressing-data.js";
 import type { Category, RewardUnlock } from "./types.js";
 
 export interface RewardDefinition {
@@ -21,11 +22,11 @@ export const REWARDS:RewardDefinition[]=[
   {milestone:50,itemId:"reward_supreme_gold_crocs"}
 ];
 
-export function rewardUnlocks(unlockedAchievementCount:number,already:string[]):RewardUnlock[] {
+export function rewardUnlocks(unlockedAchievementCount:number,already:string[],cat:Catalog=DEFAULT_CATALOG):RewardUnlock[] {
   const out:RewardUnlock[]=[];
   for (const r of REWARDS) {
     if (unlockedAchievementCount<r.milestone || already.includes(r.itemId)) continue;
-    const item=ITEMS[r.itemId];
+    const item=cat.ITEMS[r.itemId]!;
     out.push({id:item.id,name:item.name,category:item.category as Category,description:item.description??"",milestone:r.milestone});
   }
   return out;

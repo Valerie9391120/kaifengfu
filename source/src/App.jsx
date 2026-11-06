@@ -49,6 +49,7 @@ import { PindouRow } from "./pindou/PindouRow.jsx";
 import { PD_STATE, PD_WORK, PD_HIS, readState, packState, listWorks, packWork, readHis, fromCode, toCode, countBeads, PD_SUB } from "./pindou/parts.js";
 import { pngFor } from "./pindou/draw.js";
 import { LUOFU_POOL, LUOFU_STATE, emptyLuofuPool, readLuofuPool, packLuofuPool, readLuofuState, luofuSection, LUOFU_LOOK_TOOLS, LUOFU_LOOK_NAMES, isLuofuLookCall, runLookCalls, cutLuofuLook } from "./luofu/parts.js";
+import { CLOSET_KEY, emptyCloset, readCloset, packCloset } from "./dressing/closet.js";
 import { buildRows } from "./chat/rows.js";
 import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/overview.js";
 import { BubbleRow } from "./chat/Bubble.jsx";
@@ -493,6 +494,8 @@ export default function App({ account = {} }) {
   const qxHold = useRef({ on: false, owe: false });
   // 罗浮梦（见 luofu/）：梦库（kfs2:luofu:pool，只有这台手机上梦库那一页写）、进度和梦廊（kfs2:luofu:state，家里的闹钟写的，这里只读）
   const [lfPool, setLfPool] = useState(emptyLuofuPool);
+  // 他屋里妆台的衣柜（见 dressing/closet.js）：她在推近铜镜的“衣柜”那一页加的、删的、改了字的（kfs2:dressing:closet，只有这里写；家里的闹钟、回屋看一眼只读）
+  const [closet, setCloset] = useState(emptyCloset);
   const lfPoolRef = useRef(lfPool); // 名帖里那一段照它拼（requestReply、抄提要在回调里，拿最新的）
   lfPoolRef.current = lfPool;
   const [lfState, setLfState] = useState(() => readLuofuState(null));
@@ -701,6 +704,7 @@ export default function App({ account = {} }) {
       refreshQx();
       refreshPd();
       refreshLuofu();
+      setCloset(readCloset(store.peek(CLOSET_KEY)));
       setBooted(true);
     })();
   }, []);
@@ -779,6 +783,8 @@ export default function App({ account = {} }) {
       if (keys.includes(PD_STATE)) setPdIncoming(readState(store.peek(PD_STATE)));
       // 罗浮梦：别的设备导了、删了、加了梦；家里的闹钟替他睡了一觉（进度、梦廊）
       if (keys.includes(LUOFU_POOL) || keys.includes(LUOFU_STATE)) refreshLuofu();
+      // 妆台的衣柜：别的设备上加了、删了、改了
+      if (keys.includes(CLOSET_KEY)) setCloset(readCloset(store.peek(CLOSET_KEY)));
       // 狐宇宙那一页：闹钟放进来新的一轮、别的设备点了已阅、园子妆台变了
       if ([FOX_CHAT_KEY, DESK_READ, GARDEN_KEY, DRESSING_KEY, RECAP_KEY + FOX_CHAT].some((k) => keys.includes(k))) setDeskVer((v) => v + 1);
       // 别的设备念好的语音同步下来了（这台设备上要念的那一条就不用再念了）
@@ -1526,6 +1532,12 @@ export default function App({ account = {} }) {
     lfPoolRef.current = p;
     setLfPool(p);
     setLfState(readLuofuState(store.peek(LUOFU_STATE)));
+  };
+  const saveCloset = (rec) => {
+    setCloset(rec);
+    store.set(CLOSET_KEY, packCloset(rec)).then((ok) => {
+      if (!ok) markStorageFail();
+    });
   };
   const saveLuofu = (p) => {
     lfPoolRef.current = p;
@@ -6599,6 +6611,7 @@ export default function App({ account = {} }) {
           garden={deskGarden}
           dressing={deskDressing}
           luofu={{ pool: lfPool, state: lfState, onPool: saveLuofu }}
+          closet={{ rec: closet, onCloset: saveCloset }}
           now={now}
           box={deskKit}
           onRead={markRound}

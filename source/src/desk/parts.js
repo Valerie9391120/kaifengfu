@@ -19,6 +19,7 @@ import { buildRows } from "../chat/rows.js";
 import { pickRecap } from "../recap.js";
 import { lookLine } from "../room.js";
 import { completedToday } from "../../vendor/dressing/dressing-engine.ts";
+import { closetCatalog } from "../dressing/closet.js";
 import { PLANTS } from "../../vendor/garden/garden-data.ts";
 
 export const DESK_READ = "kfs2:fox:read"; // 收起来的那几轮：{ v: 1, ids: [那一轮的编号…] }
@@ -224,15 +225,17 @@ export function gardenCard(state, today) {
 }
 
 // 铜镜：今天完成的那一身；今天还没完成，写上一回完成的那一身（镜子里只照得出完成的那一身，眼下摆着、没完成的不写）
-export function dressingCard(state, today) {
-  if (!state || !state.initialized) return { note: "妆台我还没去过。", go: [] };
+// 底下三颗：照镜子、衣柜、成就（点了在这一层里弹出那一页，见 DeskPage 的 dressing；衣柜能加、删、改，见 dressing/closet.js）。cat：这一份衣柜
+export const DRESS_GO = ["照镜子", "衣柜", "成就"];
+export function dressingCard(state, today, cat = undefined) {
+  if (!state || !state.initialized) return { note: "妆台我还没去过。", go: DRESS_GO };
   const look = state.completedLook;
-  if (completedToday(state, today)) return { note: `今天这一身：${lookLine(look.appearance)}。`, go: [] };
-  if (look && look.appearance) return { note: `今天还没完成搭配。上一回（${dayCn(look.date)}）：${lookLine(look.appearance)}。`, go: [] };
-  return { note: "今天还没完成搭配。", go: [] };
+  if (completedToday(state, today)) return { note: `今天这一身：${lookLine(look.appearance, undefined, cat)}。`, go: DRESS_GO };
+  if (look && look.appearance) return { note: `今天还没完成搭配。上一回（${dayCn(look.date)}）：${lookLine(look.appearance, undefined, cat)}。`, go: DRESS_GO };
+  return { note: "今天还没完成搭配。", go: DRESS_GO };
 }
 
 // 递给那一页的卡片（推近哪一样，卡片上写什么）：只有花盆、铜镜换；别的照那一页自己写的
-export function deskCards({ garden, dressing, today }) {
-  return { 花盆: gardenCard(garden, today), 铜镜: dressingCard(dressing, today) };
+export function deskCards({ garden, dressing, today, closet = null }) {
+  return { 花盆: gardenCard(garden, today), 铜镜: dressingCard(dressing, today, closetCatalog(closet)) };
 }

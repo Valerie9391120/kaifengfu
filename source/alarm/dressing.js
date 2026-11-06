@@ -1,5 +1,5 @@
 // =====================================================
-// 光义屋里的妆台（狐宇宙，见 src/fox.js、开发说明“梳妆”）。引擎是恩师写的（vendor/dressing/，一个字没改），
+// 光义屋里的妆台（狐宇宙，见 src/fox.js、开发说明“梳妆”）。引擎是恩师写的（vendor/dressing/；衣柜从外头递进去那一处动过，见那儿的 SOURCE.md），
 // 文本、成就、每一件衣服都是卿卿写的（10 月 22 日她说的：“其实每一件衣服都是我写的”）。她 10 月 21 日定的几样：
 //   16:22 给他闲着玩的，和园艺一个思路：只在他屋里醒着的时候玩（家里的闹钟一处写，不会两边打架）
 //   18 点前后 这是一个游戏系统，不是他的实际状态：【醒来】里只说今天完成搭配没有，不说他“穿着”什么；
@@ -13,7 +13,8 @@
 // =====================================================
 import { DressingEngine, completedToday } from "../vendor/dressing/dressing-engine.ts";
 import { dressingToolSchema } from "../vendor/dressing/dressing-tool.ts";
-import { CATEGORY_LABELS } from "../vendor/dressing/dressing-data.ts";
+import { CATEGORY_LABELS, DEFAULT_CATALOG } from "../vendor/dressing/dressing-data.ts";
+import { CLOSET_KEY, readCloset, closetCatalog } from "../src/dressing/closet.js";
 import { ACHIEVEMENTS } from "../vendor/dressing/achievements.ts";
 import { localDay, storeOf } from "./garden.js";
 import { DRESSING_KEY, lookLine } from "../src/room.js";
@@ -46,9 +47,27 @@ const parse = (text) => {
   }
 };
 
-// 一张妆台（today 测试里换成假的）
+// 一张妆台（today 测试里换成假的）。衣柜照她在手机上改过的那一份（kfs2:dressing:closet，只读，见 src/dressing/closet.js）：
+// 每回 load 的时候取一遍，换了就照新的那一份另起一个引擎（他这一回醒着里先 load 再办，见 runDressingCalls）
 export function dressingOf(store, { today = () => localDay() } = {}) {
-  return { engine: new DressingEngine(storeOf(store, DRESSING_KEY), { today }), load: async () => parse(await store.get(DRESSING_KEY)), today };
+  const st = storeOf(store, DRESSING_KEY);
+  let cat = DEFAULT_CATALOG;
+  let engine = null;
+  return {
+    get engine() {
+      return engine || (engine = new DressingEngine(st, { today }, cat));
+    },
+    cat: () => cat,
+    load: async () => {
+      const c = closetCatalog(readCloset(await store.get(CLOSET_KEY)));
+      if (c !== cat) {
+        cat = c;
+        engine = null;
+      }
+      return parse(await store.get(DRESSING_KEY));
+    },
+    today,
+  };
 }
 
 // 完成的那一身写成一行：挪到 src/room.js 了（推近铜镜的卡片上也写这一行，见 src/desk/parts.js），这里照旧递出去
@@ -68,13 +87,13 @@ function kindOf(input, base, after, today) {
 //   照镜子：“照了照镜子”（今天还没完成，照出来是一只裸狐，照实写）
 //   换装：“在妆台前换了换行头”（这一步里完成了搭配就不写，那一行已经写了那一身）
 //   别的：“去妆台前看了看”（这一步里有别的小字就不写）
-function notesOf(kinds) {
+function notesOf(kinds, cat = DEFAULT_CATALOG) {
   const any = (k) => kinds.some((x) => x.kind === k);
   const said = new Set();
   return kinds.map((x) => {
     let note =
       x.kind === "complete"
-        ? `完成了今天的搭配：${lookLine(x.look)}`
+        ? `完成了今天的搭配：${lookLine(x.look, undefined, cat)}`
         : x.kind === "mirror"
         ? x.fox
           ? "照了照镜子，镜子里是一只裸狐"
@@ -129,7 +148,7 @@ export async function runDressingCalls(calls, dressing) {
       mine.push({ at: out.length - 1, kind: "fail" });
     }
   }
-  notesOf(mine).forEach((note, i) => {
+  notesOf(mine, dressing.cat ? dressing.cat() : DEFAULT_CATALOG).forEach((note, i) => {
     out[mine[i].at] = { ...out[mine[i].at], note };
   });
   return out;

@@ -90,14 +90,14 @@ c = gardenCard(g.st(), day(30));
 ok(c.note === "魏紫开了。《群芳谱》里收了一种。", `开了：写开了、《群芳谱》里收了几种（${c.note}）`);
 ok(cn(0) === "〇" && cn(9) === "九" && cn(10) === "十" && cn(12) === "十二" && cn(20) === "二十" && cn(29) === "二十九", "几天写成汉字");
 
-ok(eq(dressingCard(null, day(5)), { note: "妆台我还没去过。", go: [] }), "铜镜：妆台还没去过");
+ok(eq(dressingCard(null, day(5)), { note: "妆台我还没去过。", go: ["照镜子", "衣柜", "成就"] }), "铜镜：妆台还没去过；底下照镜子、衣柜、成就三颗");
 const dr = mem();
 await new DressingEngine(dr.store, { today: () => day(3) }).execute({ action: "select", category: "outfit", itemId: "outfit_black_turtleneck" });
 c = dressingCard(dr.st(), day(3));
 ok(c.note === "今天还没完成搭配。", `换了一身、没完成：只照得出完成的那一身，写今天还没完成搭配（${c.note}）`);
 await new DressingEngine(dr.store, { today: () => day(3) }).execute({ action: "complete" });
 c = dressingCard(dr.st(), day(3));
-ok(c.note === "今天这一身：披发、素面、不熏香；衣柜：高领黑毛衣。" && eq(c.go, []), `完成了：今天那一身（同狐宇宙里那一行），没有按钮（${c.note}）`);
+ok(c.note === "今天这一身：披发、素面、不熏香；衣柜：高领黑毛衣。" && eq(c.go, ["照镜子", "衣柜", "成就"]), `完成了：今天那一身（同狐宇宙里那一行），底下三颗（${c.note}）`);
 c = dressingCard(dr.st(), day(5));
 ok(c.note === "今天还没完成搭配。上一回（十一月三日）：披发、素面、不熏香；衣柜：高领黑毛衣。", `第二天：今天还没完成，写上一回那一身和哪天（${c.note}）`);
 await new DressingEngine(dr.store, { today: () => day(5) }).execute({ action: "select", category: "outfit", itemId: "outfit_black_turtleneck" });

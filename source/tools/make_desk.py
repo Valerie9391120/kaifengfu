@@ -183,6 +183,7 @@ BRIDGE = r"""
     card: function (name) { return Object.prototype.hasOwnProperty.call(cards, name) ? cards[name] : null; },
     go: function (name, label) {
       if (name === '锦盒' && (label === '梦库' || label === '梦廊')) { tell('luofu', { which: label === '梦库' ? 'pool' : 'gallery' }); return true; }
+      if (name === '铜镜' && (label === '照镜子' || label === '衣柜' || label === '成就')) { tell('dressing', { which: label === '衣柜' ? 'closet' : label === '成就' ? 'achv' : 'mirror' }); return true; }
       return false;
     },
     letters: letters,

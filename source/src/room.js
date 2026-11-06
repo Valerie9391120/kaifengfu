@@ -17,7 +17,8 @@ import { GardenEngine } from "../vendor/garden/garden-engine.ts";
 import { GARDEN_TOOL_SCHEMA } from "../vendor/garden/garden-tool.ts";
 import { DressingEngine, completedToday } from "../vendor/dressing/dressing-engine.ts";
 import { dressingToolSchema } from "../vendor/dressing/dressing-tool.ts";
-import { ITEMS, CATEGORY_LABELS, itemName } from "../vendor/dressing/dressing-data.ts";
+import { CATEGORY_LABELS, DEFAULT_CATALOG } from "../vendor/dressing/dressing-data.ts";
+import { CLOSET_KEY, readCloset, closetCatalog } from "./dressing/closet.js";
 import { HER_NAME } from "./names.js";
 import { PD_HIS, readHis, pindouView } from "./pindou/parts.js";
 
@@ -107,8 +108,8 @@ function readOnly(state) {
     update: async (fn) => (await fn(copy(state)))[1],
   };
 }
-async function engineText(Engine, state, today, cmd) {
-  const r = await new Engine(readOnly(state), { today: () => today }).execute(cmd);
+async function engineText(Engine, state, today, cmd, extra = undefined) {
+  const r = await new Engine(readOnly(state), { today: () => today }, extra).execute(cmd);
   return String((r && r.text) || "").trim();
 }
 
@@ -116,8 +117,9 @@ const dayText = (d) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d || ""));
   return m ? `${Number(m[2])} 月 ${Number(m[3])} 日` : String(d || "");
 };
-// 一身打扮写成几行（同引擎里照镜子那一段的写法）
-function lookText(a, heading) {
+// 一身打扮写成几行（同引擎里照镜子那一段的写法）。cat：这一份衣柜（她在手机上改过的，见 dressing/closet.js；名字照它写）
+function lookText(a, heading, cat = DEFAULT_CATALOG) {
+  const itemName = cat.itemName;
   const fmt = (ids) => (ids && ids.length ? ids.map(itemName).join("、") : "无");
   return [
     heading,
@@ -133,8 +135,9 @@ function lookText(a, heading) {
 
 // 完成的那一身写成一行（狐宇宙里完成搭配那一行小字、推近铜镜的卡片上用）：梳发、妆面、熏香，再是衣柜、下装、鞋履、配饰（空着的不写）。叠得太多，写到 max 个字为止，后面写一共几样
 const LOOK_MAX = 80;
-export function lookLine(a, max = LOOK_MAX) {
+export function lookLine(a, max = LOOK_MAX, cat = DEFAULT_CATALOG) {
   if (!a) return "";
+  const itemName = cat.itemName;
   const bits = [a.hair, a.makeup, a.scent].filter(Boolean).map((id, i) => (i ? "、" : "") + itemName(id));
   for (const [c, ids] of [["outfit", a.outfits], ["bottom", a.bottoms], ["shoes", a.shoes], ["accessory", a.accessories]]) {
     (ids || []).forEach((id, i) => bits.push((i ? "、" : `；${CATEGORY_LABELS[c]}：`) + itemName(id)));
@@ -163,28 +166,29 @@ export async function gardenView(state, today) {
 
 // 妆台：今天完成的那一身（同照镜子：只照得出完成的那一身；今天还没完成就照实说，再写上一回完成的那一身）、成就、攒到的怪东西、怎么玩。
 // 妆台前眼下摆着、还没完成的那一身不写（同镜子）
-export async function dressingView(state, today) {
+export async function dressingView(state, today, cat = DEFAULT_CATALOG) {
   const head = `【你屋里·妆台】（回屋看了一眼。${ONLY_DRESSING}）`;
   const rule = `怎么玩：${dressingToolSchema(true).description}`;
   if (!state || !state.initialized) return [head, "妆台你还没去过。", rule].join("\n\n");
   const look = state.completedLook;
   const now = completedToday(state, today)
-    ? lookText(look.appearance, "今天完成的那一身")
-    : "今天还没完成搭配。" + (look && look.appearance ? "\n\n" + lookText(look.appearance, `上一回完成的那一身（${dayText(look.date)}）`) : "");
+    ? lookText(look.appearance, "今天完成的那一身", cat)
+    : "今天还没完成搭配。" + (look && look.appearance ? "\n\n" + lookText(look.appearance, `上一回完成的那一身（${dayText(look.date)}）`, cat) : "");
   const parts = [head, now];
-  for (const action of ["achievements", "rewards"]) parts.push(await engineText(DressingEngine, state, today, { action }));
+  for (const action of ["achievements", "rewards"]) parts.push(await engineText(DressingEngine, state, today, { action }, cat));
   parts.push(rule);
   return parts.filter(Boolean).join("\n\n");
 }
 
 // 衣柜：一样一行，有哪些（一开始就有的，加上攒成就换来的）。不标哪件在身上（那是游戏里的事，眼下摆着的也不是完成的那一身）
 const CATS = ["hair", "makeup", "scent", "outfit", "bottom", "shoes", "accessory"];
-export function wardrobeView(state) {
+// 她在衣柜里写了描述的，名字后头带上（同他屋里翻衣柜）；删掉的不列
+export function wardrobeView(state, cat = DEFAULT_CATALOG) {
   const got = (state && state.unlockedRewards) || [];
   const lines = CATS.map((c) => {
-    const names = Object.values(ITEMS)
-      .filter((x) => x.category === c && (x.base || got.includes(x.id)))
-      .map((x) => x.name + (x.base ? "" : "（攒成就换来的）"));
+    const names = Object.values(cat.ITEMS)
+      .filter((x) => x.category === c && !x.gone && (x.base || got.includes(x.id)))
+      .map((x) => x.name + (x.base ? (x.description ? `（${x.description}）` : "") : "（攒成就换来的）"));
     return `${CATEGORY_LABELS[c]}：${names.join("、")}`;
   });
   return [
@@ -204,7 +208,8 @@ async function look(input, io) {
   // 拼豆板：桌上那块（拼到哪儿了，一格一个字母）、挂起来的那些（见 pindou/parts.js；她在拼豆作「他的」那一栏也看得见）
   if (what === "pindou") return { out: pindouView(readHis(await io.get(PD_HIS))), err: false, note: LOOK_NOTE.pindou };
   const st = parse(await io.get(DRESSING_KEY));
-  return { out: what === "dressing" ? await dressingView(st, today) : wardrobeView(st), err: false, note: LOOK_NOTE[what] };
+  const cat = closetCatalog(readCloset(await io.get(CLOSET_KEY))); // 衣柜：她在手机上改过的那一份
+  return { out: what === "dressing" ? await dressingView(st, today, cat) : wardrobeView(st, cat), err: false, note: LOOK_NOTE[what] };
 }
 
 // ---------- 换装便签 ----------

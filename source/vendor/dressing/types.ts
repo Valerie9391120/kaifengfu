@@ -17,6 +17,8 @@ export interface StyleItem {
   description?: string;
   /** 第几批添进来的：不写是一开始那一批（v1），2 是 0.3.0 添的。“全部基础鞋履／下装／配饰”几条成就只数 v1 那一批 */
   batch?: number;
+  /** 她在手机上删掉的（开封府 11 月 6 日加的）：名字留着给以前完成的那几身用，衣柜里不摆、穿不上、不算件数 */
+  gone?: boolean;
 }
 
 export interface Appearance {

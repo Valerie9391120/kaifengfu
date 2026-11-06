@@ -4,7 +4,13 @@
 
 - 从哪一版来：5b77e90e26cd6b8c0fd1557589e2cbc9b2339771（2026-10-23 03:43:53 +0100，0.3.0：她 10 月 23 日添的 35 件衣饰、10 个成就；《理发店VIP》停在 10 种，《行走的杂货铺》《裤子也是衣服》《履迹纷纷》只数 v1 那一批，《层层叠叠》改字，至尊黄金洞洞鞋改“满 50 成就纪念品”）
 - 再往前一版：3176da62c309fcf1b54e57beb94023b3885b4c3b（2026-10-21 19:22:19 +0100，0.2.0：完成搭配每天一次、镜子只照得出今天完成的那一套；成就的字只改了跟着规矩非改不可的那几处；“尝试过几种”只算完成过的，旧存档补上新添的数）
-- 原样拷来的：`types.ts`、`dressing-data.ts`、`dressing-engine.ts`、`achievements.ts`、`rewards.ts`、`date-utils.ts`、`dressing-tool.ts`，一个字没改
+- 原样拷来的：`date-utils.ts`、`dressing-tool.ts`，一个字没改
+- 动过的（11 月 6 日，衣柜挪到她手机上能增删改，同罗浮梦的梦库；拿她仓库那一版跑过 `npm run typecheck`、`npm test`，过）：
+  - `dressing-data.ts`：单品清单改叫 `BASE_ITEMS`（一个字没改）；添了 `makeCatalog(items)`，`ITEMS`、`BASE_IDS`、`V1_BASE_IDS` 和那几组都照递进来的那一份现算，`gone` 的（她删掉的）名字留着、不算件数、穿不上；原来那几个名字照旧导出（一开始那一份，`DEFAULT_CATALOG`）
+  - `types.ts`：`StyleItem` 多一个 `gone`
+  - `achievements.ts`：查条件的时候用 `ctx.cat`（这一份衣柜），不给照一开始那一份；《浓淡相宜，国色芳华》写的是“素面、淡妆、全妆三种”，改成只数一开始那三种（她往后加了妆面，条件不跟着变大；一开始那一份里一样）
+  - `rewards.ts`：`rewardUnlocks` 多一个 `cat`
+  - `dressing-engine.ts`：`new DressingEngine(store, clock, cat)`；每回先把身上 `gone` 的取下来（梳发、妆面、熏香换回一开始那一样）；`catalog` 那几行有描述的带上描述（她写的他翻衣柜看得见）
 - 没拷的：`index.ts`、`clock.ts`、`demo.ts`、`smoke-test.ts`、`node-shims.d.ts`、`stores/json-file-store.ts`（存档放在开封府的库房里，哪一天照笔记本的钟算，见 `alarm/dressing.js`）
 
-她那边改了：拿新的仓库把这七个文件原样再拷一遍，改上面那一行“从哪一版来”。
+她那边改了：拿新的仓库把这七个文件原样再拷一遍，改上面那一行“从哪一版来”；上面动过的那几处要是新版里没有，照着再改一遍。

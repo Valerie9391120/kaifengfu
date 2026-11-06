@@ -12,7 +12,8 @@ export const DEFAULT_APPEARANCE = {
   accessories: [] as string[]
 };
 
-export const ITEMS: Record<string,StyleItem> = Object.fromEntries(([
+/** 一开始就有的那一份。手机上衣柜那一页改过的（加的、删的、改了字的）另存，见 makeCatalog */
+export const BASE_ITEMS: StyleItem[] = ([
   // 梳发
   I({id:"hair_loose",name:"披发",category:"hair"}),
   I({id:"hair_crowned",name:"束发戴冠",category:"hair"}),
@@ -191,36 +192,57 @@ export const ITEMS: Record<string,StyleItem> = Object.fromEntries(([
   I({id:"reward_diamond_swim_ring",name:"镶钻泳圈",category:"accessory",base:false,reward:true,sourceTags:["costume"],description:"一个在理论上并不需要镶钻的泳圈。"}),
   I({id:"reward_fox_tail",name:"超大号毛绒狐狸尾巴",category:"accessory",base:false,reward:true,sourceTags:["costume"],description:"蓬松到足以单独占据半张椅子。"}),
   I({id:"reward_supreme_gold_crocs",name:"至尊黄金洞洞鞋",category:"shoes",base:false,reward:true,sourceTags:["costume","modern"],description:"满 50 成就纪念品。金光璀璨，洞依然很多。"})
-] as StyleItem[]).map(x=>[x.id,x]));
+] as StyleItem[]);
 
 export const CATEGORY_LABELS: Record<Category,string> = {
   hair:"梳发", makeup:"妆面", scent:"熏香", outfit:"衣柜", bottom:"下装", shoes:"鞋履", accessory:"配饰"
 };
 
-export const BASE_IDS: Record<Category,string[]> = {
-  hair:Object.values(ITEMS).filter(x=>x.base&&x.category==="hair").map(x=>x.id),
-  makeup:Object.values(ITEMS).filter(x=>x.base&&x.category==="makeup").map(x=>x.id),
-  scent:Object.values(ITEMS).filter(x=>x.base&&x.category==="scent").map(x=>x.id),
-  outfit:Object.values(ITEMS).filter(x=>x.base&&x.category==="outfit").map(x=>x.id),
-  bottom:Object.values(ITEMS).filter(x=>x.base&&x.category==="bottom").map(x=>x.id),
-  shoes:Object.values(ITEMS).filter(x=>x.base&&x.category==="shoes").map(x=>x.id),
-  accessory:Object.values(ITEMS).filter(x=>x.base&&x.category==="accessory").map(x=>x.id)
-};
-
-// 一开始那一批（v1）的基础单品：“全部基础鞋履／下装／配饰”几条只数这一批，后来添的不会把条件越撑越大
-const v1=(c:Category)=>BASE_IDS[c].filter(id=>!ITEMS[id]!.batch);
-export const V1_BASE_IDS: Record<Category,string[]> = {
-  hair:v1("hair"), makeup:v1("makeup"), scent:v1("scent"), outfit:v1("outfit"),
-  bottom:v1("bottom"), shoes:v1("shoes"), accessory:v1("accessory")
-};
-
-export const BOLD_OUTFIT_IDS = new Set(Object.values(ITEMS).filter(x=>x.base&&x.category==="outfit"&&x.bold).map(x=>x.id));
-export const MODERN_BOTTOM_IDS = new Set(Object.values(ITEMS).filter(x=>x.base&&x.category==="bottom"&&x.sourceTags?.includes("modern")).map(x=>x.id));
-export const MODERN_SHOES_IDS = new Set(Object.values(ITEMS).filter(x=>x.base&&x.category==="shoes"&&x.sourceTags?.includes("modern")).map(x=>x.id));
-export const HEAD_FACE_ACCESSORY_IDS = new Set(Object.values(ITEMS).filter(x=>x.category==="accessory"&&x.headFace).map(x=>x.id));
-
-export function itemName(id:string):string { return ITEMS[id]?.name ?? id; }
-export function itemAvailable(id:string, unlockedRewards:string[]):boolean {
-  const item=ITEMS[id];
-  return Boolean(item && (item.base || unlockedRewards.includes(id)));
+/**
+ * 一份衣柜（开封府 11 月 6 日加的：衣服从外头递进来，同罗浮梦的梦库）。items 是全部单品，gone 的是她在手机上删掉的：
+ * 名字还留着（他以前完成的那几身照旧写得出名字），衣柜里不摆、穿不上、不算件数。
+ * 底下那几组（BASE_IDS……）都照这一份现算；不给就是一开始那一份（DEFAULT_CATALOG）。
+ */
+export interface Catalog {
+  ITEMS: Record<string,StyleItem>;
+  BASE_IDS: Record<Category,string[]>;
+  V1_BASE_IDS: Record<Category,string[]>;
+  BOLD_OUTFIT_IDS: Set<string>;
+  MODERN_BOTTOM_IDS: Set<string>;
+  MODERN_SHOES_IDS: Set<string>;
+  HEAD_FACE_ACCESSORY_IDS: Set<string>;
+  itemName(id:string):string;
+  itemAvailable(id:string, unlockedRewards:string[]):boolean;
 }
+
+const CATS: Category[] = ["hair","makeup","scent","outfit","bottom","shoes","accessory"];
+
+export function makeCatalog(items:StyleItem[]):Catalog {
+  const ITEMS:Record<string,StyleItem> = Object.fromEntries(items.map(x=>[x.id,x]));
+  const live=items.filter(x=>!x.gone);
+  const BASE_IDS=Object.fromEntries(CATS.map(c=>[c,live.filter(x=>x.base&&x.category===c).map(x=>x.id)])) as Record<Category,string[]>;
+  // 一开始那一批（v1）的基础单品：“全部基础鞋履／下装／配饰”几条只数这一批，后来添的不会把条件越撑越大
+  const V1_BASE_IDS=Object.fromEntries(CATS.map(c=>[c,BASE_IDS[c].filter(id=>!ITEMS[id]!.batch)])) as Record<Category,string[]>;
+  return {
+    ITEMS, BASE_IDS, V1_BASE_IDS,
+    BOLD_OUTFIT_IDS:new Set(live.filter(x=>x.base&&x.category==="outfit"&&x.bold).map(x=>x.id)),
+    MODERN_BOTTOM_IDS:new Set(live.filter(x=>x.base&&x.category==="bottom"&&x.sourceTags?.includes("modern")).map(x=>x.id)),
+    MODERN_SHOES_IDS:new Set(live.filter(x=>x.base&&x.category==="shoes"&&x.sourceTags?.includes("modern")).map(x=>x.id)),
+    HEAD_FACE_ACCESSORY_IDS:new Set(live.filter(x=>x.category==="accessory"&&x.headFace).map(x=>x.id)),
+    itemName:(id:string)=>ITEMS[id]?.name ?? id,
+    itemAvailable:(id:string, unlockedRewards:string[])=>{ const item=ITEMS[id]; return Boolean(item && !item.gone && (item.base || unlockedRewards.includes(id))); }
+  };
+}
+
+export const DEFAULT_CATALOG = makeCatalog(BASE_ITEMS);
+export const ITEMS = DEFAULT_CATALOG.ITEMS;
+export const BASE_IDS = DEFAULT_CATALOG.BASE_IDS;
+export const V1_BASE_IDS = DEFAULT_CATALOG.V1_BASE_IDS;
+export const BOLD_OUTFIT_IDS = DEFAULT_CATALOG.BOLD_OUTFIT_IDS;
+export const MODERN_BOTTOM_IDS = DEFAULT_CATALOG.MODERN_BOTTOM_IDS;
+export const MODERN_SHOES_IDS = DEFAULT_CATALOG.MODERN_SHOES_IDS;
+export const HEAD_FACE_ACCESSORY_IDS = DEFAULT_CATALOG.HEAD_FACE_ACCESSORY_IDS;
+
+export function itemName(id:string):string { return DEFAULT_CATALOG.itemName(id); }
+export function itemAvailable(id:string, unlockedRewards:string[]):boolean { return DEFAULT_CATALOG.itemAvailable(id, unlockedRewards); }
+

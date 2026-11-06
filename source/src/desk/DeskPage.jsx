@@ -6,6 +6,7 @@ import { loadS2T } from "../cangyin/CangyinPage.jsx";
 import { localDay } from "../room.js";
 import { LuofuPoolSheet } from "../luofu/LuofuPoolSheet.jsx";
 import { LuofuGallery } from "../luofu/LuofuGallery.jsx";
+import { DressingMirror, DressingCloset, DressingAchievements } from "../dressing/DressingSheets.jsx";
 import { DOC_FMT } from "../docs.js";
 import { fmtChars } from "../util.js";
 import { sepLabel } from "../days.js";
@@ -21,7 +22,7 @@ import { roundsOf, deskCards, boxOf } from "./parts.js";
 //   它说 hello → 递 setup（刘海、底下那一条让开多高：框里的 env(safe-area-inset-*) 是 0）、data（信笺上的信、推近花盆铜镜的卡片上写什么）；
 //   它说 ready（画好了）、fail（画不出来；net 是有东西没取到）、lost（画好以后画布被收走了，框重建一回）；
 //   它说 read / unread（信笺上点了已阅、撤回）、leave（留信：放进狐宇宙那段对话，回它 left）、
-//   luofu（锦盒里的梦库、梦廊：这一层里弹出来那一页）、close（案上点左上角：关上）。
+//   luofu（锦盒里的梦库、梦廊：这一层里弹出来那一页）、dressing（铜镜那三颗：照镜子、衣柜、成就，同上）、close（案上点左上角：关上）。
 //   信匣（在信笺上翻开，摆的是狐宇宙那段对话，见 parts.js 的 boxOf）：它说 box（on：翻开了、合上了），翻开着的时候递 box（摆什么）、
 //   pics（表情包、照片、画，晚到的补上）、states（语音、画眼下的样子）、sounds（他念好的语音，那一页自己放）；它说 voice、draw（点了没念的语音、没画的画）、doc、recap（点开一份文档、提要，回它 show）、
 //   recapdrop（提要丢掉重抄，回它 tip）、save（文档存到手机）、copy（那一页里复制不成，这边替它复制，回它 copied）。
@@ -121,13 +122,14 @@ const KAI = '"Kaiti SC", "STKaiti", "KaiTi", "Songti SC", "Noto Serif SC", serif
 
 // msgs：狐宇宙那段对话；read：收起来的那几轮（Set）；garden、dressing：园子、妆台的存档（家里的闹钟写的，只读）；
 // hidden：先藏起来（这一层还在；眼下没人用：画不出来的那一回点“去信匣”，这一层是关上的）；luofu：{ pool, state, onPool }（锦盒里的梦库、梦廊）；
+// closet：{ rec, onCloset }（妆台的衣柜那一条，见 dressing/closet.js；推近铜镜那三颗：照镜子、衣柜、成就）；
 // box：信匣要的（App.jsx 的 deskKit：狐宇宙的提要、照片和文档、语音和画眼下的样子，再加取图、放语音、复制、存文档、丢提要那几样）
-export function DeskPage({ msgs, read, garden, dressing, hidden = false, luofu, box = null, now = new Date(), onRead, onLeave, onBox, onClose, onFail, onReady }) {
+export function DeskPage({ msgs, read, garden, dressing, closet = null, hidden = false, luofu, box = null, now = new Date(), onRead, onLeave, onBox, onClose, onFail, onReady }) {
   const frame = useRef(null);
   const token = useRef(newId() + newId());
   const [gen, setGen] = useState(0); // 框重建过几回（画布被收走以后）
   const [state, setState] = useState("loading"); // loading / slow / live / fail / net / gone
-  const [sheet, setSheet] = useState(null); // 弹着的那一页：pool 梦库 / gallery 梦廊
+  const [sheet, setSheet] = useState(null); // 弹着的那一页：pool 梦库 / gallery 梦廊 / mirror 照镜子 / closet 衣柜 / achv 成就（妆台那三页）
   const [trad, setTrad] = useState(readTrad); // 编号 → { s: 简体的指纹, t: 繁体 }
   const conv = useRef(null);
   const [convOk, setConvOk] = useState(false); // 转繁体的那一包取来了（信匣里我写的字用）
@@ -136,7 +138,8 @@ export function DeskPage({ msgs, read, garden, dressing, hidden = false, luofu, 
 
   const rounds = useMemo(() => roundsOf(msgs, read), [msgs, read]);
   const today = localDay(now.getTime());
-  const cards = useMemo(() => deskCards({ garden, dressing, today }), [garden, dressing, today]);
+  const closetRec = closet ? closet.rec : null;
+  const cards = useMemo(() => deskCards({ garden, dressing, today, closet: closetRec }), [garden, dressing, today, closetRec]);
   // 信匣里摆的（翻开着才算）；几点那一行照着现在写（今天、昨天），过一分钟跟着换
   const minute = Math.floor(now.getTime() / 60000);
   const boxRows = useMemo(() => (boxOn ? boxOf(msgs, { read, recaps: kit.recaps || [], now }) : []), [boxOn, msgs, read, kit.recaps, minute]);
@@ -159,7 +162,7 @@ export function DeskPage({ msgs, read, garden, dressing, hidden = false, luofu, 
     });
   }, [boxRows, convOk, kit.docs, kit.imgs]);
   const latest = useRef(null);
-  latest.current = { rounds, cards, trad, gen, onRead, onLeave, onBox, onClose, onFail, onReady, hidden, sheet, msgs, kit, boxRows };
+  latest.current = { rounds, cards, trad, gen, onRead, onLeave, onBox, onClose, onFail, onReady, hidden, sheet, msgs, kit, boxRows, closet };
   const sentPics = useRef({}); // 递过去的图（那一页记着，不再递第二遍；框重建了从头递）
   const sentSounds = useRef({}); // 递过去的声音（同上）
   const sentStates = useRef("");
@@ -269,6 +272,7 @@ export function DeskPage({ msgs, read, garden, dressing, hidden = false, luofu, 
       } else if (m.desk === "copy" && typeof m.text === "string" && L.kit.copy) {
         Promise.resolve(L.kit.copy(m.text)).then((ok) => post({ desk: "copied", ok: !!ok }), () => post({ desk: "copied", ok: false }));
       } else if (m.desk === "luofu") setSheet(m.which === "gallery" ? "gallery" : "pool");
+      else if (m.desk === "dressing" && L.closet) setSheet(m.which === "closet" ? "closet" : m.which === "achv" ? "achv" : "mirror");
       else if (m.desk === "close") L.onClose();
     };
     window.addEventListener("message", onMsg);
@@ -470,17 +474,28 @@ export function DeskPage({ msgs, read, garden, dressing, hidden = false, luofu, 
               去信匣
             </button>
           )}
-          {/* 画不出来的这台手机上，锦盒里的梦库、梦廊也够不着了（南衙里那一行拿掉了）：这里留两个口子 */}
-          {dead && luofu && (
-            <div className="flex justify-center" style={{ gap: 26, marginTop: 16 }}>
+          {/* 画不出来的这台手机上，锦盒里的梦库、梦廊、铜镜那三页也够不着了（南衙里那一行拿掉了）：这里留几个口子 */}
+          {dead && (luofu || closet) && (
+            <div className="flex justify-center flex-wrap" style={{ gap: "10px 26px", marginTop: 16, maxWidth: 300 }}>
               {[
-                ["pool", "梦库"],
-                ["gallery", "梦廊"],
+                ...(luofu
+                  ? [
+                      ["pool", "梦库"],
+                      ["gallery", "梦廊"],
+                    ]
+                  : []),
+                ...(closet
+                  ? [
+                      ["mirror", "照镜子"],
+                      ["closet", "衣柜"],
+                      ["achv", "成就"],
+                    ]
+                  : []),
               ].map(([k, name]) => (
                 <button
                   key={k}
                   onClick={() => setSheet(k)}
-                  className={`kfs-desk-lf-${k} kfs-tap`}
+                  className={`${k === "pool" || k === "gallery" ? "kfs-desk-lf-" : "kfs-desk-dr-"}${k} kfs-tap`}
                   style={{ padding: "4px 2px", borderBottom: "1px solid rgba(239,230,214,0.38)", color: "#efe6d6", fontFamily: KAI, fontSize: 14, letterSpacing: "0.16em" }}
                 >
                   {name}
@@ -499,6 +514,9 @@ export function DeskPage({ msgs, read, garden, dressing, hidden = false, luofu, 
         <LuofuPoolSheet look="room" pool={luofu.pool} taken={luofu.state.seen.concat(luofu.state.gallery.map((e) => e.id))} onPool={luofu.onPool} onClose={() => setSheet(null)} />
       )}
       {sheet === "gallery" && luofu && <LuofuGallery look="room" state={luofu.state} now={now} onClose={() => setSheet(null)} />}
+      {sheet === "mirror" && closet && <DressingMirror state={dressing} today={today} closet={closet.rec} onClose={() => setSheet(null)} />}
+      {sheet === "closet" && closet && <DressingCloset state={dressing} closet={closet.rec} onCloset={closet.onCloset} onClose={() => setSheet(null)} />}
+      {sheet === "achv" && closet && <DressingAchievements state={dressing} closet={closet.rec} onClose={() => setSheet(null)} />}
     </div>
   );
 }
