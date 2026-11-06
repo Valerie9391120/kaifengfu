@@ -1,7 +1,7 @@
 // 狐宇宙那一页（他屋里的一张书案，见 src/desk/parts.js）：信笺上摆哪几轮、一轮里写什么（他的字、几行小字），已阅存哪儿、怎么存，
 // 他醒来寄给他的狐宇宙那段对话里收起来的那几轮、它们回的便签不寄（前情提要抄过的那一截不动）；推近花盆、铜镜的卡片上写什么。
 // 闹钟那头醒在屋里那一回真的照这个寄（askRoom，假的那边）。话、存档都是编的。
-import { DESK_READ, readRead, packRead, roundsOf, wakeContext, gardenCard, dressingCard, deskCards, cn, boxOf, richOf } from "../src/desk/parts.js";
+import { DESK_READ, readRead, packRead, roundsOf, notesOf, wakeContext, gardenCard, dressingCard, deskCards, cn, boxOf, richOf } from "../src/desk/parts.js";
 import { buildMessages } from "../src/prompt/messages.js";
 import { askRoom, gather } from "../alarm/wake.js";
 import { GardenEngine } from "../vendor/garden/garden-engine.ts";
@@ -40,6 +40,13 @@ ok(rs[0].text === "布丁吃了，甜\n花也浇了" && eq(rs[0].lines, ["去园
 ok(rs[1].text === "出门找你" && eq(rs[1].lines, ["用了 tavily", "开了一段新对话《布丁》找你"]), `用了什么、去了哪段对话也是小字（${JSON.stringify(rs[1].lines)}）`);
 ok(rs[2].text === "" && eq(rs[2].lines, ["在妆台前换了换行头", "睡了一觉 · 做了个梦"]), `只干了事、没写字的那一回照摆，一样的小字只留一行（${JSON.stringify(rs[2])}）`);
 ok(rs.every((r) => r.read === false) && roundsOf(fox, new Set(["w3"]))[1].read === true, "收起来的那几轮带着 read");
+// 纸底下摆的她留的那几张：他最后醒来那一回以后的（他醒来看了就归进那一轮）
+ok(eq(notesOf(fox), [{ id: "n4", ts: T(20), text: "晚安" }]), `纸底下：他最后醒来以后她留的那一张（${JSON.stringify(notesOf(fox))}）`);
+ok(eq(notesOf(fox.slice(0, 2)).map((n) => n.text), ["冰箱里有布丁", "记得浇花"]) && eq(notesOf(fox.slice(0, 3)), []), "他醒来以前留的都摆；他一醒就收起来");
+ok(eq(notesOf(fox.concat([{ id: "wh", role: "event", who: "him", kind: "wake", ts: T(21), hidden: true }])).map((n) => n.id), ["n4"]) && eq(notesOf([]), []) && eq(notesOf(null), []),
+   "藏起来的醒了那一行不算醒（同一轮一轮）；空的不出错");
+ok(eq(notesOf([{ id: "r1", role: "him", ts: 1, items: [{ type: "text", text: "在" }] }, { id: "h1", role: "her", ts: 2, text: "  " }, { id: "h2", role: "her", ts: 3, text: "嗯" }]).map((n) => n.id), ["h2"]),
+   "早先手机要来的回话也算他回过了；空白的不摆");
 const legacy = [{ id: "h1", role: "her", ts: 1, text: "在吗" }, { id: "r1", role: "him", ts: 2, items: [{ type: "text", text: "在" }] }, { id: "r2", role: "him", ts: 3, items: [{ type: "text", text: "怎么了" }] }];
 ok(eq(roundsOf(legacy).map((r) => [r.id, r.text]), [["r1", "在\n怎么了"]]), "早先狐宇宙里还能聊天那会儿手机要来的回话（前面没有醒了那一行）：自己算一轮，编号是头一条的");
 ok(eq(roundsOf([{ id: "x", role: "event", who: "him", kind: "wake", ts: 5, go: { chat: "c1", title: "晚饭", how: "back" } }])[0].lines, ["去《晚饭》找你了"]) &&

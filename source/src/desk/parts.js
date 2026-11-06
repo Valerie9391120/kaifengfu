@@ -110,6 +110,20 @@ export function roundsOf(msgs, read = new Set()) {
     .filter((r) => r.text || r.lines.length);
 }
 
+// 纸底下摆的她留的那几张：他最后醒来那一回以后她留的（还没归到哪一轮的那几条，他醒来看了、回了，就归进那一轮，纸底下又是“到此一游！”）。
+// [{ id, ts, text }]，早的在前
+export function notesOf(msgs) {
+  let out = [];
+  for (const m of msgs || []) {
+    if (!m) continue;
+    if (isWakeMark(m)) {
+      if (!m.hidden) out = [];
+    } else if (m.role === "him") out = [];
+    else if (m.role === "her" && typeof m.text === "string" && m.text.trim()) out.push({ id: String(m.id), ts: m.ts || 0, text: m.text });
+  }
+  return out;
+}
+
 // 他醒来的时候寄给他的狐宇宙那段对话：收起来的那几轮、它们回的那几张便签不寄。
 // 前情提要抄过的那一截不动（那一截寄过去的是提要，不是原话；抄到的那一条也得在，不然认不出是哪一份）
 export function wakeContext(msgs, read, recaps = []) {

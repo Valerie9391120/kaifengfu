@@ -11,7 +11,7 @@ import { DOC_FMT } from "../docs.js";
 import { fmtChars } from "../util.js";
 import { sepLabel } from "../days.js";
 import { pickRecap } from "../recap.js";
-import { roundsOf, deskCards, boxOf } from "./parts.js";
+import { roundsOf, notesOf, deskCards, boxOf } from "./parts.js";
 
 /* global __KFS_DESK__, __KFS_WENKAI_CSS__ */
 // 狐宇宙那一层：他屋里的一张书案（那一页是 tools/make_desk.py 生成的，零件见 parts.js）。
@@ -19,7 +19,7 @@ import { roundsOf, deskCards, boxOf } from "./parts.js";
 // 框是隔开的（sandbox 只给 allow-scripts，来路是 null）：碰不到开封府的网页、存档、localStorage。认那一页靠暗号：
 // 每回打开现起一个，放在框的名字里，那一页读完就清掉，说话带着；不带暗号的一概不理，信也只递给带暗号来要的那一回。
 // 和那一页一问一答（postMessage）：
-//   它说 hello → 递 setup（刘海、底下那一条让开多高：框里的 env(safe-area-inset-*) 是 0）、data（信笺上的信、推近花盆铜镜的卡片上写什么）；
+//   它说 hello → 递 setup（刘海、底下那一条让开多高：框里的 env(safe-area-inset-*) 是 0）、data（信笺上的信、她留的还没被他看过的那几张、推近花盆铜镜的卡片上写什么）；
 //   它说 ready（画好了）、fail（画不出来；net 是有东西没取到）、lost（画好以后画布被收走了，框重建一回）；
 //   它说 read / unread（信笺上点了已阅、撤回）、leave（留信：放进狐宇宙那段对话，回它 left）、
 //   luofu（锦盒里的梦库、梦廊：这一层里弹出来那一页）、dressing（铜镜那三颗：照镜子、衣柜、成就，同上）、close（案上点左上角：关上）。
@@ -137,6 +137,7 @@ export function DeskPage({ msgs, read, garden, dressing, closet = null, hidden =
   const kit = box || {};
 
   const rounds = useMemo(() => roundsOf(msgs, read), [msgs, read]);
+  const notes = useMemo(() => notesOf(msgs), [msgs]); // 她留的、他还没醒来看的那几张：纸底下摆着
   const today = localDay(now.getTime());
   const cards = useMemo(() => deskCards({ garden, today }), [garden, today]);
   // 信匣里摆的（翻开着才算）；几点那一行照着现在写（今天、昨天），过一分钟跟着换
@@ -161,7 +162,7 @@ export function DeskPage({ msgs, read, garden, dressing, closet = null, hidden =
     });
   }, [boxRows, convOk, kit.docs, kit.imgs]);
   const latest = useRef(null);
-  latest.current = { rounds, cards, trad, gen, onRead, onLeave, onBox, onClose, onFail, onReady, hidden, sheet, msgs, kit, boxRows, closet };
+  latest.current = { rounds, notes, cards, trad, gen, onRead, onLeave, onBox, onClose, onFail, onReady, hidden, sheet, msgs, kit, boxRows, closet };
   const sentPics = useRef({}); // 递过去的图（那一页记着，不再递第二遍；框重建了从头递）
   const sentSounds = useRef({}); // 递过去的声音（同上）
   const sentStates = useRef("");
@@ -182,6 +183,7 @@ export function DeskPage({ msgs, read, garden, dressing, closet = null, hidden =
         return { ...r, trad: c && c.s === sig(r.text) ? c.t : "" };
       }),
       cards: L.cards,
+      notes: L.notes,
     });
   };
   const hold = () => post({ desk: "hold", on: !!(latest.current.hidden || latest.current.sheet) });
@@ -300,7 +302,7 @@ export function DeskPage({ msgs, read, garden, dressing, closet = null, hidden =
   // 信、卡片、繁体变了：递一份新的（那一页自己看纸上摆的变没变，没变不重摆）
   useEffect(() => {
     if (state === "live" || state === "loading" || state === "slow") data();
-  }, [rounds, cards, trad]);
+  }, [rounds, notes, cards, trad]);
   useEffect(() => {
     hold();
   }, [hidden, sheet]);

@@ -143,8 +143,14 @@ const wkCss = Buffer.from(
 );
 const wkCssName = `wenkai-${hash(wkCss)}.css`;
 fs.writeFileSync(`${OUT}/assets/${wkCssName}`, wkCss);
+// 信笺纸底下她留的信用龙藏体（那一页里截好的那一小份只有“到此一游”、红圈里那几个字）：用同页那一份字里的龙藏体（Long Cang 400，
+// 同一个 @fontsource/long-cang 包的原样文件，已经在 assets/tyfonts-<指纹>/ 里，不另放一份），那一页挂上它那一张样式表，用到哪些字取哪几块
+const tySrc = fs.readFileSync("vendor/tongye/app.html", "utf8");
+const tyFonts = makeTyFonts(tySrc);
+const lcCss = tyFonts.manifest.css["Long Cang|400"];
+if (!lcCss) throw new Error("同页的字里没有龙藏体（Long Cang 400）：狐宇宙纸底下她留的信要用它");
 let deskSrc = fs.readFileSync("static/desk/desk.html", "utf8");
-for (const k of ["__KFS_DESK_FILES__", 'href="./__KFS_WENKAI__"', 'href="./__KFS_JINHUI__"', '"__KFS_DESK_CSP__"'])
+for (const k of ["__KFS_DESK_FILES__", 'href="./__KFS_WENKAI__"', 'href="./__KFS_JINHUI__"', 'href="./__KFS_LONGCANG__"', '"__KFS_DESK_CSP__"'])
   if (!deskSrc.includes(k)) throw new Error(`static/desk/desk.html 里没找到 ${k}：用 tools/make_desk.py 重新生成`);
 deskSrc = deskSrc
   .replace("__KFS_DESK_FILES__", JSON.stringify(deskFiles))
@@ -153,7 +159,8 @@ deskSrc = deskSrc
     return deskFiles[f];
   })
   .replace('href="./__KFS_WENKAI__"', `href="./${wkCssName}"`)
-  .replace('href="./__KFS_JINHUI__"', `href="./${jinhuiCssName}"`);
+  .replace('href="./__KFS_JINHUI__"', `href="./${jinhuiCssName}"`)
+  .replace('href="./__KFS_LONGCANG__"', `href="./${tyFonts.dir}/${lcCss}"`);
 const deskScripts = [...deskSrc.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => `'sha256-${createHash("sha256").update(m[1]).digest("base64")}'`);
 if ((deskSrc.match(/<script\b/g) || []).length !== deskScripts.length) throw new Error("static/desk/desk.html 里有带属性的 <script>：安全规矩里记不上它的指纹");
 // 图：那一页自己的、递进去的（表情包、照片、他的画都是 data:；仓库里新加的表情包从表情包仓库取，同开封府）；声音：信匣里他念好的语音（递进去的 data:，就在那一页里放）
@@ -214,8 +221,6 @@ define.__KFS_S2T__ = JSON.stringify(`./${s2tName}`);
 // 开封府开门不碰它，闲笔集里点手帐的时候才用框装进来（TongyeFrame.jsx 的 TONGYE_URL）。
 // 它要的字（原来从 Google Fonts 现取，卿卿定的放到开封府自己这儿）：tools/tyfonts.mjs 照那一页里写的现算、从装好的 @fontsource 包里拿原样文件，
 // 放进 assets/tyfonts-<指纹>/（一千五百多块、三十几兆，页面上用到哪些字才取哪几块）；<head> 里那几张写进那一页，换风格要的清单交给开封府那一层
-const tySrc = fs.readFileSync("vendor/tongye/app.html", "utf8");
-const tyFonts = makeTyFonts(tySrc);
 for (const [p, buf] of tyFonts.files) {
   const out = `${OUT}/assets/${tyFonts.dir}/${p}`;
   fs.mkdirSync(out.slice(0, out.lastIndexOf("/")), { recursive: true });
@@ -433,5 +438,5 @@ console.log(`  ${s2tName}  ${size(`${OUT}/assets/${s2tName}`)}`);
 console.log(`  ${tyName}  ${size(`${OUT}/assets/${tyName}`)}（同页，${ty.scripts} 段脚本记了指纹）`);
 console.log(`  ${tyFonts.dir}/（同页的字：${tyFonts.fonts} 块，连样式表、授权一共 ${(tyFonts.bytes / 1048576).toFixed(1)} MB）`);
 console.log(`  ${jinhuiCssName} + ${jinhuiDir}/（${jinhui.slices.length} 块，${(jinhuiBufs.reduce((n, b) => n + b.length, 0) / 1024).toFixed(0)} KB）`);
-console.log(`  ${deskName} + desk/（狐宇宙：${Object.keys(deskFiles).length} 样）、${wkCssName} + ${wkDir}/（${wkFaces.length} 块）、${wkHostName}`);
+console.log(`  ${deskName} + desk/（狐宇宙：${Object.keys(deskFiles).length} 样）、${wkCssName} + ${wkDir}/（${wkFaces.length} 块）、${wkHostName}、龙藏体用 ${tyFonts.dir}/${lcCss}`);
 console.log(`  连接：${SUPABASE_URL}`);

@@ -134,7 +134,12 @@ def tap_item(pg, fr, name):
         poll(lambda: not fr.evaluate("window.__scene.moving()"), 10)
         time.sleep(0.5)
         x, y = fr.evaluate(f"(() => {{ const h = window.__scene.holders().find((x) => x[0] === {json.dumps(name)}); return window.__scene.screenOf(h[1], h[2], h[3]); }})()")
+        # 点的那一下先不画（同开封府盖着一层的时候 hold）：软着画一帧要好久，按下、抬起中间隔得太久，那一页不当是点（这台机器两个核的时候常碰上）
+        fr.evaluate("window.KFSROOM && (KFSROOM.hold = true)")
+        time.sleep(0.4)
         pg.touchscreen.tap(x, y)
+        time.sleep(0.3)
+        fr.evaluate("window.KFSROOM && (KFSROOM.hold = false)")
         if poll(lambda: fr.evaluate(CARD)["on"] and fr.evaluate(CARD)["title"] == TITLE[name], 8):
             return True
     return False
@@ -269,6 +274,9 @@ def run(browser):
         ok(poll(lambda: fr.evaluate("window.XJ && XJ.state() === 'open'"), 120), "点“写一张”：信笺展开")
         time.sleep(0.6)
         ok(fr.evaluate("document.querySelector('#xj .xj-empty').textContent") == "纸上还空着。" and fr.evaluate(PAPER) == [], "他还没在纸上写过字：纸上还空着")
+        DOOD = "[...document.querySelectorAll('#xj .xj-page:not([hidden]) .xj-doodle')].map((d) => [d.classList.contains('her'), d.textContent, getComputedStyle(d).fontFamily])"
+        d0 = fr.evaluate(DOOD)
+        ok(len(d0) == 1 and d0[0][0] is False and d0[0][1] == "到此一游！", f"她还没留过信：纸底下“到此一游！”（{d0}）")
         c0 = len(calls())
         fr.evaluate("document.querySelector('#xj .xj-btn[data-act=write]').click()"); time.sleep(0.8)
         fr.fill("#xj .xj-ta", "我来过啦，冰箱里有布丁")
@@ -278,6 +286,14 @@ def run(browser):
         ok(last.get("role") == "her" and last.get("note") is True and last_chat(pg) == here, "记着是便签（同原来便签纸上留的）；眼前那段对话没换")
         time.sleep(2.0)
         ok(len(calls()) == c0 and poll(lambda: "信留下了" in fr.evaluate("document.querySelector('#xj .xj-note').textContent"), 3), "不叫他、不等回话；纸上一句“信留下了，我醒来就看。”")
+        d1 = fr.evaluate(DOOD)
+        ok(len(d1) == 1 and d1[0][0] is True and d1[0][1] == "我来过啦，冰箱里有布丁" and d1[0][2].startswith('"XJ Doodle", "Long Cang"'), f"纸底下“到此一游！”换成她写的，同一个笔（龙藏体）（{d1}）")
+        fr.evaluate("document.querySelector('#xj .xj-btn[data-act=write]').click()"); time.sleep(0.8)
+        fr.fill("#xj .xj-ta", "第二张：记得喝水")
+        fr.evaluate("document.querySelector('#xj .xj-btn[data-act=send]').click()")
+        ok(poll(lambda: [x[1] for x in fr.evaluate(DOOD)] == ["我来过啦，冰箱里有布丁", "第二张：记得喝水"] and (chat_by(pg, "hyz") or [{}])[-1].get("text") == "第二张：记得喝水", 6),
+           f"再留一张：一张接一张摆着（{fr.evaluate(DOOD)}）")
+        time.sleep(3.0)  # 等这一张推上云端（不然闹钟拿到的那段对话里还没有它，两边一前一后写，后写的盖掉先写的）
         shot(pg, "desk_3_left")
 
         # ---- 他醒了一回 ----
@@ -288,6 +304,10 @@ def run(browser):
         code, out = alarm(["wake"], home)
         ok(code == 0 and "醒过了" in out, f"叫醒他一回（{out.strip().splitlines()[-1] if out.strip() else ''}）")
         ok(until(pg, lambda: len(fr.evaluate(PAPER)) == 1 and not fr.evaluate(PAPER)[0]["simp"], 40), "同步下来：纸上多一轮（开着的那一页跟着换，转好繁体）")
+        d2 = fr.evaluate(DOOD)
+        ok(len(d2) == 1 and d2[0][0] is False and d2[0][1] == "到此一游！", f"他醒来回了信：她那两张收起来，纸底下又是“到此一游！”（{d2}）")
+        ind = fr.evaluate("[...document.querySelectorAll('#xj .xj-round .xj-body p')].map((p) => getComputedStyle(p).textIndent)")
+        ok(ind and all(x == "0px" for x in ind), f"他写的字不缩进（同信匣里）（{ind}）")
         p1 = fr.evaluate(PAPER)[0]
         ok(p1["body"] == "布丁喫了，園子裏的花也澆過了。\n\n今天風大，記得關窗。" and "KFS Jinhui" in p1["font"], f"他写的字：转成繁体（OpenCC 标准繁体，同藏音匣：吃写成喫）、刻本体，一段一段（{p1['body']}，{p1['font'][:40]}）")
         ok(p1["lines"] == ["去园子里浇了水", "在妆台前换了换行头", "完成了今天的搭配：披发、素面、不熏香；衣柜：高领黑毛衣"], f"后头几行小字（{p1['lines']}）")
@@ -358,8 +378,12 @@ def run(browser):
         fr.evaluate("(() => { window.__played = []; const op = HTMLMediaElement.prototype.play; HTMLMediaElement.prototype.play = function () { window.__played.push(String(this.src).slice(0, 16)); return op.call(this); }; })()")
         fr.evaluate(vb + ".scrollIntoView({ block: 'center' })"); time.sleep(0.4)
         px, py = fr.evaluate("(() => { const r = " + vb + ".getBoundingClientRect(); return [r.left + 12, r.top + r.height / 2]; })()")
-        pg.touchscreen.tap(px, py)
-        ok(poll(lambda: fr.evaluate("window.__played.length") >= 1, 4) and fr.evaluate("window.__played[0]").startswith("data:audio/"), f"再点：就在纸上放（声音是开封府递进来的，iPhone 上只认点在框里的那一下）（{fr.evaluate('window.__played')}）")
+        for _ in range(3):  # 软着画慢，手指那一下有时候没认上：没放就再点一回
+            pg.touchscreen.tap(px, py)
+            if poll(lambda: fr.evaluate("window.__played.length") >= 1, 4):
+                break
+            time.sleep(0.6)
+        ok(fr.evaluate("window.__played.length") >= 1 and fr.evaluate("window.__played[0]").startswith("data:audio/"), f"再点：就在纸上放（声音是开封府递进来的，iPhone 上只认点在框里的那一下）（{fr.evaluate('window.__played')}）")
         # 点开一份文档：在纸上看，左上角回信匣
         fr.evaluate("document.querySelector('#xj .xj-b-doc button').click()")
         ok(poll(lambda: fr.evaluate("XJ.view()") == "R" and fr.evaluate("document.querySelector('#xj .xj-r-title').textContent") == "清单.md" and "布丁" in fr.evaluate("document.querySelector('#xj .xj-r-body').innerText"), 5),

@@ -10,7 +10,8 @@
 #      案上点左上角回开封府，都告诉开封府（postMessage；这一页关在隔开的框里，每一句带着开封府给的暗号）
 #   4  字：页面上写死的那些字，从霞鹜文楷里截一份（files/wenkai-ui.woff2）；递进来的字（几行小字、园子妆台的样子）不在里面的，
 #      用开封府 assets 里切好的那一份（__KFS_WENKAI__，打包时换成真名字）；光义写的那几封用藏音匣的刻本体（__KFS_JINHUI__，同一份）；
-#      红圈里的字用龙藏体（那一页里截好的那一小份，拆出来）
+#      红圈里的字用龙藏体（那一页里截好的那一小份，拆出来）；纸底下她留的信也用龙藏体，截好的那一小份里没有的字，用同页那一份字里的
+#      龙藏体（__KFS_LONGCANG__，assets/tyfonts-<指纹>/ 里 Long Cang 400 那一张样式表，打包时换成真名字）
 #   5  刘海、底下那一条：框里的 env(safe-area-inset-*) 是 0，开封府量好了递进来（--safe-top 这几个）
 #   6  安全规矩：只许跑页面里自己写的脚本，只取同一个目录里的东西，不连别处
 #   7  整页不许捏（同并蒂莲、秘戏钱匣）
@@ -169,10 +170,11 @@ BRIDGE = r"""
       window.parent.postMessage(m, '*');
     } catch (e) {}
   }
-  var rounds = [], cards = {}, readied = false, failed = false, seq = 0, leaving = {};
+  var rounds = [], notes = [], cards = {}, readied = false, failed = false, seq = 0, leaving = {};
   var TW = ['深夜', '清晨', '上午', '午間', '午後', '傍晚', '夜裏'];
   function letters() {
-    return rounds.map(function (r) { return { id: String(r.id), who: 'me', t: Number(r.ts) || 0, text: String(r.text || ''), trad: r.trad ? String(r.trad) : '', lines: Array.isArray(r.lines) ? r.lines.map(String) : [], read: !!r.read }; });
+    return rounds.map(function (r) { return { id: String(r.id), who: 'me', t: Number(r.ts) || 0, text: String(r.text || ''), trad: r.trad ? String(r.trad) : '', lines: Array.isArray(r.lines) ? r.lines.map(String) : [], read: !!r.read }; })
+      .concat(notes.map(function (n) { return { id: String(n.id), who: 'her', t: Number(n.ts) || 0, text: String(n.text || '') }; }));   // 她留的、他还没醒来看的那几张：摆在纸底下
   }
   var K = window.KFSROOM = {
     hold: false,
@@ -214,6 +216,7 @@ BRIDGE = r"""
       try { window.dispatchEvent(new Event('resize')); } catch (er) {}
     } else if (m.desk === 'data') {
       if (Array.isArray(m.rounds)) rounds = m.rounds;
+      if (Array.isArray(m.notes)) notes = m.notes;
       if (m.cards && typeof m.cards === 'object') cards = m.cards;
       if (window.XJ && XJ.setData) XJ.setData(letters());
       if (window.__kfsCard) window.__kfsCard();
@@ -421,7 +424,7 @@ def ranges(cps):
 
 
 FONTS = (
-    '<link rel="stylesheet" href="./__KFS_WENKAI__">\n<link rel="stylesheet" href="./__KFS_JINHUI__">\n'
+    '<link rel="stylesheet" href="./__KFS_WENKAI__">\n<link rel="stylesheet" href="./__KFS_JINHUI__">\n<link rel="stylesheet" href="./__KFS_LONGCANG__">\n'
     "<style>"
     f'@font-face{{font-family:"KFS WenKai";src:url("__KFS_DESK_FILE__wenkai-ui.woff2") format("woff2");font-weight:300 700;font-display:block;unicode-range:{ranges(got)}}}'
     '@font-face{font-family:"XJ Doodle";src:url("__KFS_DESK_FILE__doodle.woff2") format("woff2");font-display:block}'
