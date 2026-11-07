@@ -1,7 +1,9 @@
 # 狐宇宙那一页：他屋里的一张书案（见 src/desk/、tools/make_desk.py）。手机这头走一遍，家里的闹钟用真的那一份（测试包）：
 #   南衙里点“狐宇宙”：菜单、侧栏收起，盖一层全屏（层高 60），框里装着案上那一页（点的时候才下载）；框是隔开的、名字里带着暗号，不带暗号的话不理；
 #     刘海、底下那一条照手机量的递进去（画面铺满整屏，按钮、卡片让开）；顶上没有“案上”、底下没有两行提示、点了东西不冒名字、返回只有箭头；眼前那段对话不换；那一页画好以后左上角是它自己的“回开封府”，点了关上、回到原来那段对话；
-#   推近花盆：卡片上写园子眼下的样子（还没去过照实说；闹钟替他浇了水以后照存档写），没有按钮；推近铜镜：卡片上不写字，底下照镜子、衣柜、成就三颗；
+#   推近花盆：卡片上不写字，副标题写种的是哪株，底下看看园子、群芳谱、成就三颗；推近铜镜：卡片上不写字，底下照镜子、衣柜、成就三颗；
+#   花盆：那三颗点了在这一层里弹出那一页（照屋里卡片的样子，只看不改）：看看园子（这一盆、照料的账，闹钟替他浇了水以后照存档写）、
+#     群芳谱（十二种全列，名字和配的那段字都写，没收的灰着）、成就（三十个全列）；
 #   锦盒：梦库、梦廊两颗点了在这一层里弹出那一页（那一页先不画），叉一点回到案上；
 #   铜镜：底下照镜子、衣柜、成就三颗，点了在这一层里弹出那一页（照屋里卡片的样子）；衣柜里加一件、改字、删一件、撤销、找；锁着的写为什么删不了；
 #     家里的闹钟照改过的衣柜替他办（他翻衣柜看得见新添的、改了的，删掉的不在）；
@@ -11,7 +13,7 @@
 #   信匣：就在信笺上翻开（摆的是狐宇宙那段对话）：他在左（刻本体、繁体）、她在右，不带气泡；收进信匣的那一轮醒了那一行盖“阅”；
 #     心里话收着、点开看；表情包画在纸上；小字照摆；点开文档在纸上看，左上角回信匣；长按一句出“复制”，复制的是原文；左上角回信笺；
 #     这一层不藏、眼前那段对话不换；
-#   画不出来的手机（没有 WebGL）：一句话、一颗“去信匣”、梦库梦廊两个口子，信匣底下摆回便签纸。
+#   画不出来的手机（没有 WebGL）：一句话、一颗“去信匣”、梦库梦廊、花盆那三页的口子，信匣底下摆回便签纸。
 # 真的浏览器、假 Supabase、假的 Anthropic。账号和话都是编的。那一页要 WebGL，这台机器没有显卡，用 SwiftShader 软着画（慢）。
 # 先在 source/ 里 npm run build:test、KFS_TEST_URL=http://127.0.0.1:8787 node alarm/build.mjs，起好两个服务（见开发说明），再：python3 tests/e2e_desk.py
 # 要截图给人看：KFS_SHOTS=某个文件夹 python3 tests/e2e_desk.py
@@ -306,7 +308,7 @@ def run(browser):
 
         # ---- 推近花盆、铜镜、锦盒 ----
         c = card_of(pg, fr, "花盆")
-        ok(c["title"] == "园子" and c["sub"] == "钧窑六方盆" and c["note"] == "园子我还没进去过。头一回进去，会得一盆魏紫。" and c["acts"] == [], f"花盆：园子还没进去过，照实说；没有按钮（{c}）")
+        ok(c["title"] == "园子" and c["sub"] == "钧窑六方盆" and c["note"] == "" and c["acts"] == ["看看园子", "群芳谱", "成就"], f"花盆：园子还没进去过：不写字，底下看看园子、群芳谱、成就三颗（{c}）")
         back_to_desk(fr)
         c = card_of(pg, fr, "铜镜")
         ok(c["title"] == "妆台" and c["note"] == "" and c["acts"] == ["照镜子", "衣柜", "成就"], f"铜镜：妆台还没去过：不写字，底下照镜子、衣柜、成就三颗（{c}）")
@@ -496,8 +498,43 @@ def run(browser):
 
         # ---- 卡片照存档写 ----
         c = card_of(pg, fr, "花盆")
-        ok(c["sub"] == "钧窑六方盆 · 魏紫" and c["note"].startswith("魏紫，萌动，照料了一天（满三十天开花）。今天浇过水了。"), f"花盆：闹钟替他浇了水以后，照存档写（{c['note']}）")
+        ok(c["sub"] == "钧窑六方盆 · 魏紫" and c["note"] == "" and fr.evaluate("document.getElementById('k-note').getBoundingClientRect().height") == 0 and c["acts"] == ["看看园子", "群芳谱", "成就"],
+           f"花盆：闹钟替他浇了水以后，副标题写魏紫；卡片上不写字，底下三颗（{c}）")
         shot(pg, "desk_7_pot")
+
+        # ---- 花盆那三颗：看看园子、群芳谱、成就（只看不改） ----
+        act = lambda t: fr.evaluate(f"[...document.querySelectorAll('#k-acts button')].find((b) => b.textContent === {json.dumps(t)}).click()")
+        sheet_title = lambda: pg.evaluate("(document.querySelector('.kfs-desk .kfs-room-title') || {}).textContent || ''")
+        close_sheet = lambda: pg.locator(".kfs-desk .kfs-sheet-box").get_by_role("button", name="关闭").click()
+        act("看看园子")
+        ok(poll(lambda: sheet_title() == "看看园子", 4), "点看看园子：照屋里卡片的样子弹出来")
+        box_ = pg.locator(".kfs-desk .kfs-sheet-box")
+        rows = pg.evaluate("[...document.querySelectorAll('.kfs-desk .kfs-gd-row')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim())")
+        ok(box_.locator(".kfs-gd-name").inner_text() == "牡丹 · 魏紫" and box_.locator(".kfs-gd-now").inner_text() == "萌动，照料了一天（满三十天开花）。今天浇过水了。",
+           f"看看园子：这一盆（卡片上原来那一句挪进来了）（{box_.locator('.kfs-gd-now').inner_text()}）")
+        ok(len(rows) == 8 and rows[0] == "浇水 一回" and rows[1] == "松土 还没有" and rows[4] == "连着 眼下连着照料了一天，最长连着一天" and rows[6] == "开过 还没开过" and rows[7].startswith("进园 "),
+           f"照料的账：浇水一回、连着一天、还没开过、哪天头一回进园子（{rows}）")
+        ok(box_.locator("input, textarea").count() == 0 and box_.get_by_role("button").count() == 1, "只看不改：没有能填的、没有别的按钮（只有叉）")
+        shot_still(pg, "desk_7a_look")
+        close_sheet()
+        ok(poll(lambda: pg.locator(".kfs-desk .kfs-sheet-box").count() == 0, 4), "叉一点：回到案上")
+        act("群芳谱")
+        ok(poll(lambda: sheet_title() == "群芳谱", 4), "点群芳谱：弹出群芳谱那一页")
+        fl = pg.evaluate("[...document.querySelectorAll('.kfs-desk .kfs-gd-flower')].map((f) => ({ on: f.classList.contains('on'), name: f.querySelector('.kfs-gd-fname').textContent, text: f.querySelector('.kfs-gd-ftext').textContent, op: getComputedStyle(f).opacity, all: f.innerText }))")
+        ok(box_.locator(".kfs-gd-got").inner_text() == "一种都还没收，一共十二种。" and len(fl) == 12 and not any(f["on"] for f in fl), f"群芳谱：十二种全列，一种都还没收（{len(fl)}）")
+        ok(fl[0]["name"] == "牡丹 · 魏紫" and fl[0]["text"].startswith("人人都云，魏紫占尽人间好物华") and "在种，照料了一天" in fl[0]["all"] and fl[2]["name"] == "白梅" and fl[2]["text"].startswith("冰雪林中著此身"),
+           f"群芳谱：名字、配的那段字都写着（没收的也写）；魏紫写着在种（{fl[0]['all'][:40]}）")
+        ok(all(float(f["op"]) < 0.5 for f in fl), f"群芳谱：没收的整条灰着（{[f['op'] for f in fl][:3]}）")
+        shot_still(pg, "desk_7b_book")
+        close_sheet()
+        ok(poll(lambda: pg.locator(".kfs-desk .kfs-sheet-box").count() == 0, 4), "叉一点：回到案上")
+        act("成就")
+        ok(poll(lambda: sheet_title() == "成就" and pg.locator(".kfs-desk .kfs-gd-ach").count() == 30, 4), "点成就（花盆那一颗）：弹出园子的成就，三十个全列")
+        ok(re.fullmatch(r"点亮了 \d+ 个，一共 30 个。", box_.locator(".kfs-gd-lit").inner_text()) is not None and pg.locator(".kfs-desk .kfs-dr-ach").count() == 0,
+           f"成就：顶上写点亮了几个、一共三十个；不是妆台那一页（{box_.locator('.kfs-gd-lit').inner_text()}）")
+        shot_still(pg, "desk_7c_achv")
+        close_sheet()
+        ok(poll(lambda: pg.locator(".kfs-desk .kfs-sheet-box").count() == 0, 4), "叉一点：回到案上")
         back_to_desk(fr)
         c = card_of(pg, fr, "铜镜")
         ok(c["note"] == "" and fr.evaluate("document.getElementById('k-note').getBoundingClientRect().height") == 0 and c["acts"] == ["照镜子", "衣柜", "成就"],
@@ -505,9 +542,6 @@ def run(browser):
         shot(pg, "desk_8_mirror")
 
         # ---- 铜镜那三颗：照镜子、衣柜（加、改、删、撤销、找）、成就 ----
-        act = lambda t: fr.evaluate(f"[...document.querySelectorAll('#k-acts button')].find((b) => b.textContent === {json.dumps(t)}).click()")
-        sheet_title = lambda: pg.evaluate("(document.querySelector('.kfs-desk .kfs-room-title') || {}).textContent || ''")
-        close_sheet = lambda: pg.locator(".kfs-desk .kfs-sheet-box").get_by_role("button", name="关闭").click()
         act("照镜子")
         ok(poll(lambda: sheet_title() == "照镜子", 4), "点照镜子：照屋里卡片的样子弹出来")
         rows = pg.evaluate("[...document.querySelectorAll('.kfs-desk .kfs-dr-row')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim())")
@@ -615,6 +649,13 @@ def no_gl(browser):
     ok(pg.locator(".kfs-desk-lf-pool").count() == 1 and pg.locator(".kfs-desk-lf-gallery").count() == 1, "梦库、梦廊两个口子（南衙里那一行拿掉了，锦盒在画不出来的那一页上）")
     pg.locator(".kfs-desk-lf-pool").click()
     ok(poll(lambda: pg.locator(".kfs-desk .kfs-room .kfs-sheet-box").count() == 1 and pg.locator(".kfs-desk .kfs-room-title").inner_text() == "梦库", 4), "点梦库：照屋里卡片的样子弹出来")
+    pg.locator(".kfs-desk .kfs-sheet-box").get_by_role("button", name="关闭").click()
+    ok(poll(lambda: pg.locator(".kfs-desk .kfs-sheet-box").count() == 0 and pg.locator(".kfs-desk-box").count() == 1, 4), "叉一点：回到那一句话")
+    ok(all(pg.locator(".kfs-desk-gd-" + k).count() == 1 for k in ("glook", "gbook", "gachv")), "花盆那三页的口子：看看园子、群芳谱、成就")
+    pg.locator(".kfs-desk-gd-gbook").click()
+    ok(poll(lambda: pg.locator(".kfs-desk .kfs-room .kfs-sheet-box").count() == 1 and pg.locator(".kfs-desk .kfs-room-title").inner_text() == "群芳谱" and pg.locator(".kfs-desk .kfs-gd-flower").count() == 12, 4),
+       "点群芳谱：照屋里卡片的样子弹出来，十二种")
+    shot(pg, "desk_9b_nogl_book")
     pg.locator(".kfs-desk .kfs-sheet-box").get_by_role("button", name="关闭").click()
     ok(poll(lambda: pg.locator(".kfs-desk .kfs-sheet-box").count() == 0 and pg.locator(".kfs-desk-box").count() == 1, 4), "叉一点：回到那一句话")
     shot(pg, "desk_9_nogl")

@@ -7,7 +7,7 @@
 //   他下回醒来，寄给他的狐宇宙那段对话里也没有那一轮了；那一轮回的她那几张便签（排在上一轮和这一轮中间的）跟着不寄。
 //   狐宇宙那段对话本身一个字不删：信匣里照样一条一条排着，前情提要照样抄。
 // 信匣：原来狐宇宙那一页上摆的（聊天记录那一套，chat/rows.js），一样一样搬到信笺上（他在左、她在右，不带气泡），见 boxOf。
-// 卡片：推近花盆，卡片上写园子眼下的样子（照家里的闹钟写的存档，只读）；推近铜镜，卡片上只有照镜子、衣柜、成就三颗。
+// 卡片：推近花盆，卡片上只有看看园子、群芳谱、成就三颗（园子的样子在那三页里，照家里的闹钟写的存档，只读）；推近铜镜，只有照镜子、衣柜、成就三颗。
 // =====================================================
 import { isWakeMark } from "../fox.js";
 import { plainOf, richBlocks } from "../rich.js";
@@ -215,20 +215,12 @@ export function cn(n) {
   if (n < 100) return NUM[Math.floor(n / 10)] + "十" + (n % 10 ? NUM[n % 10] : "");
   return String(n);
 }
-const CARED = { water: "浇过水了", loosen: "松过土了", prune: "修剪过了" };
-const STAGE = (n) => (n >= 21 ? "孕蕾" : n >= 11 ? "抽枝展叶" : "萌动");
-
-// 花盆：在种哪株、照料了几天、今天照料过没有
-export function gardenCard(state, today) {
-  const sub = (p) => `钧窑六方盆${p ? " · " + p.shortName : ""}`;
-  if (!state || !state.initialized) return { sub: sub(null), note: "园子我还没进去过。头一回进去，会得一盆魏紫。", go: [] };
-  const done = (state.completedPlants || []).length;
-  const book = done ? `《群芳谱》里收了${cn(done)}种。` : "";
-  const p = state.currentPlant && PLANTS[state.currentPlant];
-  if (!p) return { sub: sub(null), note: `眼下没在种。${book}`, go: [] };
-  if (state.careDays >= 30) return { sub: sub(p), note: `${p.shortName}开了。${book}`, go: [] };
-  const cared = state.todayCareDate === today && CARED[state.todayCareAction] ? CARED[state.todayCareAction] : "还没照料";
-  return { sub: sub(p), note: `${p.shortName}，${STAGE(state.careDays)}，照料了${cn(state.careDays)}天（满三十天开花）。今天${cared}。${book}`, go: [] };
+// 花盆：同铜镜，卡片上不写字了（在种哪株、到哪一步、照料了几天、今天照料过没有，挪进“看看园子”那一页），
+//   副标题照旧写种的是哪株，底下三颗：看看园子、群芳谱、成就（点了在这一层里弹出那一页，见 DeskPage 的 garden、garden/GardenSheets.jsx；只看不改）
+export const GARDEN_GO = ["看看园子", "群芳谱", "成就"];
+export function gardenCard(state) {
+  const p = state && state.initialized && state.currentPlant && PLANTS[state.currentPlant];
+  return { sub: `钧窑六方盆${p ? " · " + p.shortName : ""}`, note: "", go: GARDEN_GO };
 }
 
 // 铜镜：卡片上不写字了（今天那一身、上一回那一身都在“照镜子”那一页里），只留底下三颗：照镜子、衣柜、成就
@@ -239,6 +231,6 @@ export function dressingCard() {
 }
 
 // 递给那一页的卡片（推近哪一样，卡片上写什么）：只有花盆、铜镜换；别的照那一页自己写的
-export function deskCards({ garden, today }) {
-  return { 花盆: gardenCard(garden, today), 铜镜: dressingCard() };
+export function deskCards({ garden }) {
+  return { 花盆: gardenCard(garden), 铜镜: dressingCard() };
 }

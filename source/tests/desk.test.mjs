@@ -85,16 +85,14 @@ const mem = () => {
   let st = null;
   return { st: () => st, store: { load: async () => (st ? JSON.parse(JSON.stringify(st)) : null), update: async (fn) => { const [n, r] = await fn(st ? JSON.parse(JSON.stringify(st)) : null); st = n; return r; } } };
 };
-ok(eq(gardenCard(null, day(5)), { sub: "钧窑六方盆", note: "园子我还没进去过。头一回进去，会得一盆魏紫。", go: [] }), "花盆：园子还没进去过");
+// 花盆：同铜镜，卡片上不写字（园子的样子挪进“看看园子”那一页，见 garden.test.mjs），副标题写种的是哪株，底下看看园子、群芳谱、成就三颗
+const pot = (sub) => ({ sub, note: "", go: ["看看园子", "群芳谱", "成就"] });
+ok(eq(gardenCard(null), pot("钧窑六方盆")), "花盆：园子还没进去过：不写字，底下看看园子、群芳谱、成就三颗");
 const g = mem();
 for (let d = 1; d <= 12; d++) await new GardenEngine(g.store, { today: () => day(d) }, () => 0.5).execute({ action: d % 2 ? "water" : "loosen" });
-let c = gardenCard(g.st(), day(12));
-ok(c.sub === "钧窑六方盆 · 魏紫" && c.note === "魏紫，抽枝展叶，照料了十二天（满三十天开花）。今天松过土了。" && eq(c.go, []), `花盆：在种哪株、到哪一步、照料了几天、今天照料过没有；没有按钮（${c.note}）`);
-c = gardenCard(g.st(), day(13));
-ok(c.note.endsWith("今天还没照料。"), `第二天还没照料：写还没照料（不照存档里昨天那一笔）（${c.note}）`);
+ok(eq(gardenCard(g.st()), pot("钧窑六方盆 · 魏紫")), `花盆：在种魏紫：副标题写魏紫，卡片上不写字（${JSON.stringify(gardenCard(g.st()))}）`);
 for (let d = 13; d <= 30; d++) await new GardenEngine(g.store, { today: () => day(d) }, () => 0.5).execute({ action: "water" });
-c = gardenCard(g.st(), day(30));
-ok(c.note === "魏紫开了。《群芳谱》里收了一种。", `开了：写开了、《群芳谱》里收了几种（${c.note}）`);
+ok(eq(gardenCard(g.st()), pot("钧窑六方盆 · 魏紫")), "开了也一样：副标题写魏紫，底下三颗");
 ok(cn(0) === "〇" && cn(9) === "九" && cn(10) === "十" && cn(12) === "十二" && cn(20) === "二十" && cn(29) === "二十九", "几天写成汉字");
 
 // 铜镜：卡片上不写字（今天那一身、上一回那一身都在“照镜子”那一页里），没去过、完成了、没完成都一样，只有底下三颗
