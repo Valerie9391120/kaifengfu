@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { store } from "./store.js";
-import { callClaude, callReply, callVoice, callDraw, mailbox, freshToken } from "./cloud.js";
+import { callClaude, callReply, callVoice, callDraw, mailbox, freshToken, pingDoor } from "./cloud.js";
 import { VOICE_KEY, HOLD_MS, WANT_KEY, HEARD_KEY, HEARD_MAX, VOICE_SAMPLE, voiceKeyOf, voicesIn, heardOf, shownOf, stabOf, secondsOf, readHeard, readVoice, packVoice, collectHisIds, voiceWhere, silentMp3 } from "./voice.js";
 import { createSpeaker } from "./speaker.js";
 import { DRAW_JOB_KEY, WANT_KEY as DRAW_WANT_KEY, DRAW_SAMPLE, drawsIn, drawOf, drawKeyOf, drawImgOf, collectDrawKeys, drawWhere } from "./draw.js";
@@ -55,6 +55,7 @@ import { makeTitle, makePreview, collectImgIds, collectDocIds } from "./chat/ove
 import { BubbleRow } from "./chat/Bubble.jsx";
 import { CtrlRow, ThinkingRow, NoticeRow, TypingRow, RecapRow } from "./chat/Lines.jsx";
 import { AskCard, AskRow } from "./chat/AskCard.jsx";
+import { LapAsk, LapConfirm } from "./chat/LapAsk.jsx";
 import { answerText } from "./ask.js";
 import { MsgMenu } from "./chat/MsgMenu.jsx";
 import { SplashByTheme } from "./Splash.jsx";
@@ -319,6 +320,12 @@ export default function App({ account = {} }) {
   const flagsRef = useRef({ noCacheAt: -Infinity }); // 上一回记下“先不带缓存记号”是什么时候（见 NO_CACHE_MS）
   const [reveal, setReveal] = useState(null);
   const [errorNote, setErrorNote] = useState("");
+  // 底下那句没送到、走的是她笔记本上的 Claude Code：先问她（卿卿 11 月 8 日定的：走不了先问她，每句都问）。
+  // { kind: "send", note } 这一句走不走 API；{ kind: "regen", msgId, note } 这一回重新回答走不走 API。
+  // note 是它配的那句底下的话：底下换成别的话（或者收了），这一问就不作数了（见底下摆的那一处）
+  const [lapAsk, setLapAsk] = useState(null);
+  // 日记、手帐那几样走笔记本走不了的时候，弹出来问的那一下：{ why, what, answer(yes) }（见 claudeAsk）
+  const [lapConfirm, setLapConfirm] = useState(null);
   const [storageOk, setStorageOk] = useState(true);
   const [storageBanner, setStorageBanner] = useState(false);
   const [openThinking, setOpenThinking] = useState({});
@@ -1072,17 +1079,28 @@ export default function App({ account = {} }) {
   };
 
   // recap：这一回是抄前情提要的。钱照样记进本月；API 面板里“上一条”那几行不让它顶掉（那是她看上一句话寄了多厚用的），另记一行
+  // 走笔记本上的 Claude Code 的（回话上带着 via: "claude-code"）：用的是订阅的额度，不算钱，本月另记几句（cc）
   const recordUsage = (data, recap = false) => {
     const u = data && data.usage;
     if (!u) return;
-    const cost = costOf(data.model, u);
-    if (recap) setRecapUsage({ model: data.model, cost });
-    else setUsage({ model: data.model, ...u, cost });
-    if (cost == null) return;
+    const cc = data.via === "claude-code";
+    const cost = cc ? null : costOf(data.model, u);
+    if (recap) setRecapUsage({ model: data.model, cost, cc });
+    else setUsage({ model: data.model, ...u, cost, cc });
     const key = usageKey();
+    if (cc) {
+      setMonthUsage((prev) => {
+        const base = prev && prev.month === key ? prev : { month: key, cost: 0, replies: 0 };
+        const next = { ...base, month: key, cc: (base.cc || 0) + 1 };
+        store.set(key, JSON.stringify(next));
+        return next;
+      });
+      return;
+    }
+    if (cost == null) return;
     setMonthUsage((prev) => {
       const base = prev && prev.month === key ? prev : { month: key, cost: 0, replies: 0 };
-      const next = { month: key, cost: base.cost + cost, replies: base.replies + 1 };
+      const next = { ...base, month: key, cost: base.cost + cost, replies: base.replies + 1 };
       store.set(key, JSON.stringify(next));
       return next;
     });
@@ -2132,6 +2150,40 @@ export default function App({ account = {} }) {
   // opts.signal 是她按停的时候要拉的那根线：拉了，这里抛 code 是 stopped 的错，而且保证不再把回话整理出来
   // （整理回话的那一下会换头像、改名字、记用量：按了停的那一回，这些都不能发生）。
   // 这个保证是下面两头给的：新路 mail.js 的 guarded，老路 cloud.js 的 callClaude，按了停都只抛 stopped、不交回话
+  // ---- 传话走哪儿（API 面板里的开关，卿卿 11 月 8 日定的：开了全走笔记本上的 Claude Code，关了全走 API；见 cloud.js 的那扇门） ----
+  // 走笔记本的话回 { door, key }，走 API 回 null。opts.viaApi：她点了“这句走 API”；正在打的那通电话她点过走 API 的，也走 API
+  const laptopRoute = (opts = {}) => {
+    const st = settingsRef.current;
+    if (st.route !== "laptop" || opts.viaApi) return null;
+    const c = callRef.current;
+    if (c && c.viaApi && opts.chat && c.chat === opts.chat) return null;
+    return { door: st.door || "", key: st.doorKey || "" };
+  };
+  // 走笔记本没走成的那句话怎么写（底下那张卡、弹出来问的那一下都写这个）
+  const lapWhy = (e) => String((e && e.message) || e || "不知道为什么").slice(0, 90);
+  // 底下那张卡上的那句：敲不到的那种本身就说清了是笔记本（“敲不到笔记本：…”），别的前面写一句笔记本那头走不了
+  const lapNote = (e, regen = false) => {
+    const why = lapWhy(e);
+    const own = !!e && e.code === "laptop_down";
+    return regen ? `重新回答没成功（${own ? why : "笔记本那头走不了：" + why}）` : own ? why : `笔记本那头走不了（${why}）`;
+  };
+  // 日记、手帐这几样（她点了才有的）：走笔记本的先敲门、再交给 Claude Code；走不了弹出来问她这一回走不走 API，
+  // 她点了走 API 才走（不点就当没成，抛原来的错）。what：问的时候写“这篇日记”“这页手帐”
+  const claudeAsk = async (body, beta, signal, what) => {
+    const route = laptopRoute();
+    if (!route) return callClaude(body, beta, signal);
+    try {
+      await pingDoor(route);
+      return await callClaude(body, beta, signal, route);
+    } catch (e) {
+      if (e && e.code === "stopped") throw e;
+      const yes = await new Promise((answer) => setLapConfirm({ why: lapWhy(e), what, answer }));
+      setLapConfirm(null);
+      if (!yes) throw e;
+      return callClaude(body, beta, signal);
+    }
+  };
+
   // 回来的是要开封府替他办的一步（翻日记、下棋），可那一回不是这台发的（见 ownJob）
   const notMine = (info, data) => !!info && !ownJob(info) && !!data && data.stop_reason === "tool_use" && toolCallsOf(data.content, CALL_NAMES).length > 0;
   const requestReply = async (msgs, opts = {}) => {
@@ -2144,6 +2196,22 @@ export default function App({ account = {} }) {
       if (notMine(got.info || opts.resume.info, got.data)) throw Object.assign(new Error("发的那台替他办"), { code: "elsewhere" });
       return { him: digestReply(got.data, got.used, (got.info && got.info.extra) || null, got.job, got.at ? Math.min(Date.now(), got.at) : 0), settle: got.settle };
     }
+    // 走笔记本：先敲一下门（敲不到就当场照实说，不把话交出去干等）；没走成的错都带着 lap，外头照这个问她走不走 API
+    const route = laptopRoute(opts);
+    if (!route) return await askFor(msgs, opts, signal, null);
+    try {
+      await pingDoor(route);
+      return await askFor(msgs, opts, signal, route);
+    } catch (e) {
+      const code = (e && e.code) || "";
+      if (["stopped", "answered", "elsewhere", "later"].includes(code)) throw e;
+      // 切走的那一下抢着交出去的，笔记本那头却没接上：等她回来再发（回来了还不行，再问她）
+      if (opts.flushed && document.visibilityState !== "visible") throw Object.assign(new Error("等她回来再发"), { code: "later" });
+      throw Object.assign(e instanceof Error ? e : new Error(String(e)), { lap: true });
+    }
+  };
+  // requestReply 的正身：照下面拼好话交出去。route：走她笔记本上的那扇门（见 laptopRoute）；null 走 API
+  const askFor = async (msgs, opts, signal, route) => {
     const st = settingsRef.current;
     const model = st.model || DEFAULT_MODEL;
     const mcps = (st.mcps || []).filter((m) => m.enabled && m.url);
@@ -2239,9 +2307,10 @@ export default function App({ account = {} }) {
           title: namesRef.current.him || HIS_NAME,
           // 条子里记上是哪台设备发的（回来的要是一步棋、翻日记的一步，先让这台替他调，见 applyMail）。
           // 江湖棋局那段另写 dev（原来就有：别的设备照它不守这一回，见 checkMail）；from 每一回都写，只管谁来替他调
-          extra: { ...(ctx || {}), from: DEVICE_ID, ...(game && !game.off ? { dev: DEVICE_ID } : {}) },
+          extra: { ...(ctx || {}), from: DEVICE_ID, ...(game && !game.off ? { dev: DEVICE_ID } : {}), ...(route ? { lap: 1 } : {}) },
           recheck: !!opts.recheck,
           signal,
+          route, // 走笔记本：交给那扇门去等（见 cloud.js 的 replyViaDoor）
         });
         // 和老路上的记性一样：只有“不带缓存、别的照旧”才通的那种，才记下回别带缓存记号。
         // 是工具连不上、摘了工具才通的，不算缓存的毛病；是 Anthropic 一时出岔子、小后端才换的写法（shaky），也不算：
@@ -2261,16 +2330,17 @@ export default function App({ account = {} }) {
       }
     }
 
-    // 老路：网页自己等着
+    // 老路：网页自己等着。走笔记本的只试一回（缓存、工具的那几种写法 Claude Code 那头自己管，再换着试也一样），错原样抛（带着 code）
     let data = null;
     let used = null;
     let lastErr = "";
     for (const at of attempts) {
       try {
-        data = await callClaude(bodyFor(at), betaFor(at), signal);
+        data = await callClaude(bodyFor(at), betaFor(at), signal, route);
         used = at;
         break;
       } catch (e) {
+        if (route) throw e;
         lastErr = String((e && e.message) || e);
         if (/登录过期|连不上开封府/.test(lastErr)) break;
       }
@@ -2295,7 +2365,7 @@ export default function App({ account = {} }) {
     try {
       // 回话到手以前她按停：这一句当场以 stopped 收场（作废）。到手以后再按，这里已经过去了，就是“掐断”（见 stopReply）
       const { him, settle } = await unlessStopped(
-        requestReply(msgs, { chat: id, resume, recheck: !!(how && how.recheck), flushed: !!(how && how.flushed), signal: req.ctl.signal }),
+        requestReply(msgs, { chat: id, resume, recheck: !!(how && how.recheck), flushed: !!(how && how.flushed), viaApi: !!(how && how.viaApi), signal: req.ctl.signal }),
         req.ctl.signal
       );
       // 回复插在这次请求的最后一条后面；等回复时她又发的几条排在后面
@@ -2376,6 +2446,15 @@ export default function App({ account = {} }) {
         // 是这台设备自己发的那一回：等她回到眼前再发。那一回还记着：到时候先去信箱里找（万一其实送到了），没有才重发。
         // 是守着的那一回（别处发的、上次打开时发的）：她回来的时候看信箱那一遍会再认出它，接着守
         if (!resume) backResend.current.add(id);
+      } else if (e && e.lap) {
+        // 走笔记本没走成：底下那张卡问她这句走不走 API（每句都问）
+        if (chatIdRef.current === id) {
+          const note = lapNote(e);
+          setErrorNote(note);
+          setLapAsk({ kind: "send", note });
+        }
+        clearTimeout(mailTimer.current);
+        mailTimer.current = setTimeout(() => latest.current.checkMail(), 4000);
       } else {
         if (chatIdRef.current === id) setErrorNote(`消息没送到（${String(e.message || e).slice(0, 90)}）。点这里重发`);
         // 这一回也许其实已经交给小后端了（只是这头没连上）：过几秒自己去信箱里看一眼，回话在就取出来，不用她点
@@ -2413,7 +2492,8 @@ export default function App({ account = {} }) {
   };
 
   // ---- 重新回答：在这条开新分支，旧的回答留着能翻回去 ----
-  const retryAt = async (msgId) => {
+  // how.viaApi：她在底下那张卡上点了“这次走 API”（见 lapAsk）
+  const retryAt = async (msgId, how = null) => {
     if (loadingRef.current) return;
     const id = chatIdRef.current;
     const full = messagesRef.current;
@@ -2439,7 +2519,7 @@ export default function App({ account = {} }) {
       return now.filter((m) => !had.has(m.id));
     };
     try {
-      const { him, settle } = await unlessStopped(requestReply(base, { chat: id, fork: msgId, signal: req.ctl.signal }), req.ctl.signal);
+      const { him, settle } = await unlessStopped(requestReply(base, { chat: id, fork: msgId, viaApi: !!(how && how.viaApi), signal: req.ctl.signal }), req.ctl.signal);
       // 江湖棋局：重新回答的这一步，棋盘从它原来前面的那几条接着下（等于退回那一步之前，见 settleCalls）；翻日记的照常翻
       await settleCalls(him, base, false, id);
       if (req.stopped && midTurn(him)) him.stopped = true;
@@ -2493,7 +2573,12 @@ export default function App({ account = {} }) {
         if (chatIdRef.current === id) {
           messagesRef.current = back;
           setMessages(back);
-          if (!halted) setErrorNote(`重新回答没成功（${String(e.message || e).slice(0, 90)}）`);
+          if (!halted && e && e.lap) {
+            // 走笔记本没走成：问她这一回重新回答走不走 API
+            const note = lapNote(e, true);
+            setErrorNote(note);
+            setLapAsk({ kind: "regen", msgId, note });
+          } else if (!halted) setErrorNote(`重新回答没成功（${String(e.message || e).slice(0, 90)}）`);
         }
         if (extra.length) await saveChat(id, back);
         // 这一回也许其实已经交给小后端了（只是这头没连上）：过几秒自己去信箱里看一眼，新回答在就取出来
@@ -2983,7 +3068,8 @@ export default function App({ account = {} }) {
   // 他在电话里的规矩附在【此刻】后面（prompt/system.js 的 CALL_NOTE），名帖一个字不动。
   // 挂断（点挂断、锁屏、切走都算）：聊天里记一行“通话 12 分钟”；一句话没说就挂了，“通话开始”那行也不留。
   // subs：字幕（她 10 月 14 日 11:40 定的两个人共用的那一块，见 call/subs.js）
-  const callView = (c) => ({ phase: c.phase, subs: c.subs, note: c.note, start: c.start, muted: c.muted });
+  // ask：走笔记本、接通前敲门没敲到，问她这通电话走不走 API（见 startCall）
+  const callView = (c) => ({ phase: c.phase, subs: c.subs, note: c.note, start: c.start, muted: c.muted, ask: c.ask || "" });
   const callUi = (patch) => {
     const c = callRef.current;
     if (!c) return;
@@ -3468,6 +3554,11 @@ export default function App({ account = {} }) {
           callUi({ phase: "speaking" });
         } else if (st === "done") {
           c.said = [];
+          // 笔记本那头断了、那一句说完了：挂（见 lapDrop）
+          if (c.dropping) {
+            setTimeout(() => callRef.current === c && hangUp(), 300);
+            return;
+          }
           // 正认着她是不是要打断他、他说完了：开着的听写接着听她说（见 bargeDone）
           if (!bargeDone(c)) callListen();
         }
@@ -3493,11 +3584,53 @@ export default function App({ account = {} }) {
     } catch (e) {}
     // 准备听（ElevenLabs 的通行证、麦克风），同时把他先说的那一句准备好（听的那头好了才放，见上面 earsReady）；说完了接着听。
     // 他打来的那一通：先说的是打电话那一条里写的（没写的话，接通了就听她说）
-    setupEars(c);
-    const first = him ? him.segs || [] : [hi];
-    first.forEach((text) => c.said.push({ msgId: null, item: -1, text })); // 接起来那一句不在聊天里：被打断了也不用截
-    c.sayer.add(first);
+    const go = () => {
+      if (callRef.current !== c) return;
+      setupEars(c);
+      const first = him ? him.segs || [] : [hi];
+      first.forEach((text) => c.said.push({ msgId: null, item: -1, text })); // 接起来那一句不在聊天里：被打断了也不用截
+      c.sayer.add(first);
+      c.sayer.end();
+    };
+    // 传话走笔记本（卿卿 11 月 8 日定的：接通前问，打到一半断了就挂）：接通前先敲一下门，敲到了照常接通；
+    // 敲不到，问她这通电话走不走 API（点了走 API，这一通从头到尾都走 API；点挂断就挂）。他先说的那一句等问完了才说
+    const route = laptopRoute({ chat: id });
+    if (!route) return go();
+    callUi({ note: "正在敲笔记本…" });
+    pingDoor(route).then(
+      () => {
+        if (callRef.current !== c) return;
+        callUi({ note: "" });
+        go();
+      },
+      (e) => {
+        if (callRef.current !== c) return;
+        c.lapGo = go;
+        callUi({ note: "", ask: lapWhy(e) });
+      }
+    );
+  };
+  // 接通前问的那一下，她点了“走 API”
+  const callViaApi = () => {
+    const c = callRef.current;
+    if (!c || !c.ask || !c.lapGo) return;
+    c.viaApi = true;
+    callUi({ ask: "" });
+    c.lapGo();
+  };
+  // 打到一半笔记本那头断了（卿卿定的：断了就挂）：他说一句“笔记本那头断了”，挂掉。
+  // 那一句不在聊天里（跟接起来那一句一样）；念不出来、她打断了，过一会儿照样挂
+  const LAP_DROP = "笔记本那头断了";
+  const lapDrop = (c) => {
+    if (!c || c.dropping) return;
+    c.dropping = true;
+    hintOff(c);
+    earsStop(c);
+    callUi({ note: LAP_DROP });
+    c.said.push({ msgId: null, item: -1, text: LAP_DROP });
+    c.sayer.add([LAP_DROP]);
     c.sayer.end();
+    c.dropTimer = setTimeout(() => callRef.current === c && hangUp(), 7000);
   };
   const hangUp = () => {
     const c = callRef.current;
@@ -3505,6 +3638,7 @@ export default function App({ account = {} }) {
     callRef.current = null;
     setCall(null);
     clearTimeout(c.hintTimer);
+    clearTimeout(c.dropTimer);
     // 正认着她是不是要打断他的那一下：不认了（声音跟着整个收掉）；不再听她是不是要打断
     if (c.barging) clearTimeout(c.barging.timer);
     c.barging = null;
@@ -3760,13 +3894,15 @@ export default function App({ account = {} }) {
       c.sayer.end(); // 一条回话是整条到的：没有可念的（只有表情包之类），马上接着听
     }
   }, [messages, chatId]);
-  // 电话里这一句没送到（底下那行红字出来了）：说一声，接着听她说（那一句还在，下一句一起寄过去）
+  // 电话里这一句没送到（底下那行红字出来了）：说一声，接着听她说（那一句还在，下一句一起寄过去）。
+  // 走笔记本没走成的：笔记本那头断了，他说一句就挂（见 lapDrop）
   useEffect(() => {
     const c = callRef.current;
     if (!c || !errorNote || c.phase !== "thinking") return;
+    if (lapAsk && lapAsk.note === errorNote) return lapDrop(c);
     callUi({ note: "刚才那句没送到，接着说就行" });
     callListen();
-  }, [errorNote]);
+  }, [errorNote, lapAsk]);
   // 锁屏、切到别的 app：网页 app 到了后台听不了也念不了，挂断（见开发说明“通话”那一节）。
   // 藏起来一眨眼就回来的不算（系统弹个框之类）：藏了一秒多才挂。锁了屏定时器会停，所以回来的时候再按钟点算一遍
   useEffect(() => {
@@ -3818,11 +3954,22 @@ export default function App({ account = {} }) {
       // 没回成。她正对着这段对话：照老样子给一句“点这里重发”。
       // 眼前是别的对话：信先留着，等她翻到这段对话再说（横幅上写着“回开封府点一下重发”，翻过来得有得点）
       if (!here()) return "keep";
+      // 走笔记本的那一回（条子里记着 lap）：跟当场没走成一样，问她走不走 API
+      const lap = !!(info.extra && info.extra.lap);
+      const why = explainResult(result).slice(0, 90);
       if (info.fork) {
         // 没成的是“重新回答”：旧回答还在，说一声就行（想要就再点一次重新回答）
-        if (!loadingRef.current) setErrorNote(`重新回答没成功（${explainResult(result).slice(0, 90)}）`);
+        if (!loadingRef.current && lap) {
+          const note = `重新回答没成功（笔记本那头走不了：${why}）`;
+          setErrorNote(note);
+          setLapAsk({ kind: "regen", msgId: info.fork, note });
+        } else if (!loadingRef.current) setErrorNote(`重新回答没成功（${why}）`);
       } else if (!loadingRef.current && !timerRef.current && needsReply(messagesRef.current)) {
-        setErrorNote(`消息没送到（${explainResult(result).slice(0, 90)}）。点这里重发`);
+        if (lap) {
+          const note = `笔记本那头走不了（${why}）`;
+          setErrorNote(note);
+          setLapAsk({ kind: "send", note });
+        } else setErrorNote(`消息没送到（${why}）。点这里重发`);
       }
       return "failed";
     }
@@ -3915,7 +4062,14 @@ export default function App({ account = {} }) {
           // 所以过几秒再看一遍：留下了就取出来（下面那句“没送到”跟着收掉）
           await relay.discard(m.job, true);
           again = true;
-          if (mine && mailFit(messagesRef.current, m.info, m.job) === "ok" && needsReply(messagesRef.current)) setErrorNote("消息没送到（那边断了，这一条没回成）。点这里重发");
+          if (mine && mailFit(messagesRef.current, m.info, m.job) === "ok" && needsReply(messagesRef.current)) {
+            if (m.info.extra && m.info.extra.lap && !m.info.fork) {
+              // 走笔记本的那一回断了（多半是笔记本半路睡着了）：问她这句走不走 API
+              const note = "笔记本那头走不了（那边断了，这一条没回成）";
+              setErrorNote(note);
+              setLapAsk({ kind: "send", note });
+            } else setErrorNote("消息没送到（那边断了，这一条没回成）。点这里重发");
+          }
           continue;
         }
         if (m.state === "working") {
@@ -4158,9 +4312,12 @@ export default function App({ account = {} }) {
       ctl.abort();
     }, RECAP_PATIENCE);
     try {
+      // 传话走笔记本：先敲一下门（敲不到就照实记“敲不到笔记本”，这一趟不抄，等笔记本回来；不问她、不走 API）
+      const route = laptopRoute();
+      if (route) await pingDoor(route);
       // 两道：到点把线掐了；连换登录凭证都悬着、掐不着的时候，过三秒照样不等了
       return await Promise.race([
-        callClaude(body, "", ctl.signal),
+        callClaude(body, "", ctl.signal, route),
         new Promise((_, no) => {
           late = setTimeout(() => no(Object.assign(new Error("等太久"), { code: "slow" })), RECAP_PATIENCE + 3000);
         }),
@@ -4560,6 +4717,18 @@ export default function App({ account = {} }) {
     const msgs = messagesRef.current;
     if (!loadingRef.current && needsReply(msgs)) askGuangyi(chatIdRef.current, msgs, null, { recheck: true });
   };
+  // 底下那张卡（走笔记本没走成，见 lapAsk）：api 为真是她点了“这句走 API”（“这次走 API”），不然是“再敲笔记本”。
+  // 只管这一句（这一回）：下一句照旧先走笔记本
+  const lapGo = (api) => {
+    const a = lapAsk;
+    if (!a || loadingRef.current || timerRef.current) return;
+    if (a.kind === "regen") {
+      if (a.msgId) retryAt(a.msgId, { viaApi: api });
+      return;
+    }
+    const msgs = messagesRef.current;
+    if (needsReply(msgs)) askGuangyi(chatIdRef.current, msgs, null, { recheck: true, viaApi: api });
+  };
 
   // 翻到（开了）一局江湖棋局：引擎那一包先取着（他头一回掷骰子的时候就不用再等它下）。取不到不要紧，要用的时候再取
   useEffect(() => {
@@ -4941,15 +5110,21 @@ export default function App({ account = {} }) {
 根据下面这天你们的聊天${herPart ? "和她这天的日记" : ""}，用你自己的口吻写一篇日记：第一人称，写这天发生了什么、你在想什么、你对她的感受。像真的日记，是写给自己的，不是写给她看的信，也不用讨好谁。一百到两百五十字。
 格式：第一行写「心情：」，从 开心、甜、平静、累、焦虑、难过、生气、不舒服 里挑一到两个，用顿号隔开。第二行开始写正文。
 不要写<thinking>，不要[SPLIT]、[MEME]、[AVATAR]、[NAME]、[DOC]、[VOICE]，不要动作描写的星号，不用破折号。`;
-    const data = await callClaude({
-      model: st.model || DEFAULT_MODEL,
-      max_tokens: Math.max(1024, st.maxTokens || 2048),
-      system: [
-        { type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } },
-        { type: "text", text: rule },
-      ],
-      messages: [{ role: "user", content: `这天的聊天记录：\n${transcript}${herPart}\n\n${nowNote}\n\n写吧。` }],
-    });
+    // 传话走笔记本的：走不了问她这篇走不走 API（见 claudeAsk）
+    const data = await claudeAsk(
+      {
+        model: st.model || DEFAULT_MODEL,
+        max_tokens: Math.max(1024, st.maxTokens || 2048),
+        system: [
+          { type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } },
+          { type: "text", text: rule },
+        ],
+        messages: [{ role: "user", content: `这天的聊天记录：\n${transcript}${herPart}\n\n${nowNote}\n\n写吧。` }],
+      },
+      undefined,
+      undefined,
+      "这篇日记"
+    );
     recordUsage(data);
     const text = (data.content || [])
       .filter((b) => b.type === "text")
@@ -5127,7 +5302,8 @@ export default function App({ account = {} }) {
         ac.abort();
       }, TY_WAIT);
       try {
-        data = await callClaude(
+        // 传话走笔记本的：走不了问她这页走不走 API（见 claudeAsk）
+        data = await claudeAsk(
           {
             model,
             max_tokens: thinksFirst(model) ? 8000 : 3000,
@@ -5138,10 +5314,13 @@ export default function App({ account = {} }) {
             messages: [{ role: "user", content: [{ type: "text", text: `${q.text}\n\n${nowNote}` }].concat(blocks) }],
           },
           undefined,
-          ac.signal
+          ac.signal,
+          "这页手帐"
         );
       } catch (e) {
-        throw Object.assign(new Error(String((e && e.message) || e)), { why: late ? "等了好久没回来，再交给我一回试试" : "没连上，等一会儿再交给我一回" });
+        // 走笔记本没走成、她没点走 API 的：照实写笔记本那头走不了
+        const why = late ? "等了好久没回来，再交给我一回试试" : e && /^laptop/.test(e.code || "") ? `笔记本那头走不了（${lapWhy(e)}）` : "没连上，等一会儿再交给我一回";
+        throw Object.assign(new Error(String((e && e.message) || e)), { why });
       } finally {
         clearTimeout(timer);
       }
@@ -5299,6 +5478,27 @@ export default function App({ account = {} }) {
   const testApi = async () => {
     setTesting(true);
     setTestNote("");
+    // 传话走笔记本：敲门（头一回 Tailscale 要领证书，等得久一点），再让笔记本上的 Claude Code 用眼下这个模型回一个字
+    const route = laptopRoute();
+    if (route) {
+      try {
+        const p = await pingDoor(route, 40000);
+        const d = await callClaude({ model: settingsRef.current.model || DEFAULT_MODEL, max_tokens: 64, messages: [{ role: "user", content: "回一个字：在" }] }, "", null, route);
+        recordUsage(d);
+        const text = (d.content || [])
+          .filter((b) => b.type === "text")
+          .map((b) => b.text)
+          .join("")
+          .replace(/<thinking>[\s\S]*?<\/thinking>/g, "")
+          .trim();
+        const cc = String(p.claude || "").replace(/\s*\(Claude Code\)\s*$/i, "");
+        setTestNote(`连上了：笔记本上的 Claude Code${cc ? ` ${cc}` : ""}，${modelLabel(d.model || "")} 回了一个“${text.slice(0, 6) || "在"}”`);
+      } catch (e) {
+        setTestNote(`没连上：${String((e && e.message) || e).slice(0, 160)}`);
+      }
+      setTesting(false);
+      return;
+    }
     try {
       const d = await callClaude({ ping: true });
       const text = (d.content || [])
@@ -5943,7 +6143,7 @@ export default function App({ account = {} }) {
                 都比手绘的那一套大一号、跟着主题色走（ui/Icon.jsx 最上面）。换的只是图标：方块上的字、底下的小字、点开是哪个面板都没动 */}
             <Tile icon="hall" label="万岁殿" sub={memFiles.length ? `带着 ${enabledDocs} 份文档` : "放文档"} onClick={() => setSheet("memory")} />
             <Tile icon="crow" label="MCP" sub={enabledMcp ? `开着 ${enabledMcp} 个` : `装了 ${(settings.mcps || []).length} 个`} onClick={() => setSheet("mcp")} />
-            <Tile icon="moon" label="API" sub={monthUsage && monthUsage.month === usageKey() && monthUsage.replies ? `本月约 ${money(monthUsage.cost)}` : "连接与用量"} onClick={() => setSheet("api")} />
+            <Tile icon="moon" label="API" sub={settings.route === "laptop" ? "走笔记本" : monthUsage && monthUsage.month === usageKey() && monthUsage.replies ? `本月约 ${money(monthUsage.cost)}` : "连接与用量"} onClick={() => setSheet("api")} />
             {/* 第四个方块是“南衙”（卿卿 2026 年 10 月 11 日定的）：原来写“日记本”、点了直接进日记，现在点了从底下冒出一张菜单
                 （见 renderSheet 里的 nanya），日记是里面的头一行“闲笔集”。图标是恩师画的牡丹。
                 底下那行小字没动，还是今天的日记写了没 */}
@@ -6229,13 +6429,15 @@ export default function App({ account = {} }) {
             );
           })}
           {typing && <TypingRow avatars={avatars} />}
-          {errorNote && !loading && (
+          {errorNote && !loading && lapAsk && lapAsk.note === errorNote ? (
+            <LapAsk note={errorNote} regen={lapAsk.kind === "regen"} onApi={() => lapGo(true)} onAgain={() => lapGo(false)} />
+          ) : errorNote && !loading ? (
             <div className="flex justify-center" style={{ marginTop: 14 }}>
               <button onClick={retry} className="kfs-tap" style={{ ...glass(0.62, 18), borderRadius: 18, padding: "8px 16px", fontSize: 12.5, color: T.red, maxWidth: "88%" }}>
                 {errorNote}
               </button>
             </div>
-          )}
+          ) : null}
           </div>
         </div>
 
@@ -6644,7 +6846,8 @@ export default function App({ account = {} }) {
       )}
 
       {/* 通话页：盖在最上面（见 call/CallPage.jsx）。她点屏幕那一下（iPhone 不让自己接着听的时候）接着听 */}
-      {call && <CallPage call={call} avatar={avatars.him} name={names.him || HIS_NAME} onMute={toggleMute} onHangUp={hangUp} onTap={callTap} />}
+      {call && <CallPage call={call} avatar={avatars.him} name={names.him || HIS_NAME} onMute={toggleMute} onHangUp={hangUp} onTap={callTap} onViaApi={callViaApi} />}
+      {lapConfirm && <LapConfirm ask={lapConfirm} />}
       {echo && <EchoProbe echo={echo} levelOf={echoLevel} onClose={closeEcho} onAgain={againEcho} />}
       {ring && <IncomingCall avatar={avatars.him} name={names.him || HIS_NAME} onAnswer={answerRing} onDecline={declineRing} />}
 

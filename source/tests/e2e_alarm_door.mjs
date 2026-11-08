@@ -14,7 +14,8 @@ import os from "node:os";
 import path from "node:path";
 import net from "node:net";
 import http from "node:http";
-import { deriveVault, seal, toB64 } from "../src/vault.js";
+import { deriveVault, seal, unseal, rowKeyFor, toB64 } from "../src/vault.js";
+import { usageKey } from "../src/models.js";
 
 const BASE = "http://127.0.0.1:8787";
 const BUNDLE = path.resolve("alarm/dist/kfs-alarm-test.mjs");
@@ -36,6 +37,30 @@ const H = { apikey: "sb_publishable_test", Authorization: "Bearer " + login.acce
 const salt = crypto.getRandomValues(new Uint8Array(16));
 const vault = await deriveVault(PASS, salt, ITER);
 await fetch(`${BASE}/rest/v1/kv`, { method: "POST", headers: H, body: JSON.stringify([{ key: "m_kdf", value: JSON.stringify({ v: 1, salt: toB64(salt), iter: ITER }) }, { key: "m_check", value: await seal(vault, "开封府") }]) });
+// 手机那头的设置：传话拨到了笔记本（狐宇宙醒来也走这台电脑上的 Claude Code）
+const put = async (pairs) => {
+  const rows = [];
+  for (const [k, v] of Object.entries(pairs)) rows.push({ key: await rowKeyFor(vault, k), value: await seal(vault, JSON.stringify({ k, v })) });
+  await fetch(`${BASE}/rest/v1/kv`, { method: "POST", headers: H, body: JSON.stringify(rows) });
+};
+const read = async (k) => {
+  const rk = await rowKeyFor(vault, k);
+  const row = (await get("/__debug/rows")).find((r) => r.key === rk);
+  if (!row) return null;
+  const p = JSON.parse(await unseal(vault, row.value));
+  return p.d ? null : p.v;
+};
+const t0 = Date.now();
+await put({
+  "kfs2:settings": JSON.stringify({ model: "claude-haiku-4-5-20251001", maxTokens: 1024, wake: true, route: "laptop", door: "https://laptop.tail1234.ts.net:8443", doorKey: "XXXXX-XXXXX-XXXXX-XXXXX" }),
+  "kfs2:memindex": JSON.stringify([{ id: "m1", name: "名帖.md", enabled: true, size: 10 }]),
+  "kfs2:mem:m1": "你是光义，她是卿卿。（测试名帖）",
+  "kfs2:index": JSON.stringify([{ id: "c1", title: "周末去哪", preview: "去睡", updatedAt: t0 - 3 * 3600 * 1000 }]),
+  "kfs2:chat:c1": JSON.stringify([
+    { id: "h1", role: "her", ts: t0 - 3 * 3600 * 1000 - 60000, text: "困了，先睡" },
+    { id: "g1", role: "him", ts: t0 - 3 * 3600 * 1000, raw: "去睡", items: [{ type: "text", text: "去睡" }] },
+  ]),
+});
 
 // ---------- 假的 Anthropic（后台那一个里的 Claude Code 敲它）：“你好”回 400；别的照“记住这个词：X”回 X ----------
 const seen = []; // 它收到的每一包
@@ -82,6 +107,7 @@ const env = {
   KFS_ALARM_PASSWORD: PASSWORD,
   KFS_ALARM_PASS: PASS,
   KFS_DOOR_PORT: String(DOOR),
+  KFS_ALARM_MANUAL_GAP: "0",
   KFS_TAILSCALE: path.join(HOME, "no-tailscale"),
   ...(CLAUDE ? { KFS_CLAUDE: CLAUDE } : {}),
   HOME: CCHOME,
@@ -211,6 +237,18 @@ if (CLAUDE) {
     got && got.messages.length >= 3 && got.messages.map(textOf).join(" ").includes("记住了") && textOf(got.messages[got.messages.length - 1]).includes("刚才让你记的词") && (got.tools || []).some((t) => /kfs_ping/.test(t.name)) && JSON.stringify(got.system || "").includes("自检"),
     "试的那一句：前面两句接上了、开封府那样的工具挂上了、名帖是自检那一段"
   );
+
+  // 传话拨到笔记本：狐宇宙醒来也交给这台电脑上的 Claude Code（不走 claude 函数），用量另记、不算钱
+  const apiBefore = (await get("/__debug/claude")).length;
+  const seenBefore = seen.length;
+  r = await alarmAsync(["wake"]);
+  const woke = seen.slice(seenBefore).find((j) => j.messages.map(textOf).join(" ").includes("【醒来】"));
+  const fox = JSON.parse((await read("kfs2:chat:hyz")) || "[]");
+  const hisWords = fox.filter((m) => m.role === "him").map((m) => m.raw || "").join(" ");
+  ok(r.code === 0 && r.out.includes("醒过了") && woke && (woke.tools || []).some((t) => /diary_read/.test(t.name)) && hisWords.includes("不记得"), `传话走笔记本：狐宇宙醒来交给这台电脑上的 Claude Code（带着翻日记那几样），他说的放进了狐宇宙（${r.out.trim().split("\n").pop()}｜${hisWords.slice(0, 20)}）`);
+  ok((await get("/__debug/claude")).length === apiBefore, "没走 claude 函数（API）");
+  const month = JSON.parse((await read(usageKey())) || "null");
+  ok(month && month.cc >= 1 && !month.cost, `用量：走笔记本的另记几步，不算钱（${JSON.stringify(month)}）`);
 }
 const logText = fs.readFileSync(path.join(HOME, "alarm.log"), "utf8");
 ok(/\[门\] 开了/.test(logText) && !logText.includes("你好") && !logText.includes(token2), "日志里记着门开了；没有对话里的字、没有暗记");

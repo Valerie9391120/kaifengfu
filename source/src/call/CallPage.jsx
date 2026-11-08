@@ -28,7 +28,8 @@ const STATUS = {
   tap: "点一下屏幕，接着说",
 };
 
-export function CallPage({ call, avatar, name, onMute, onHangUp, onTap }) {
+// onViaApi：传话走笔记本、接通前敲门没敲到，她点了“走 API”（call.ask 是没敲到的缘故，见 App.jsx 的 startCall）
+export function CallPage({ call, avatar, name, onMute, onHangUp, onTap, onViaApi }) {
   const [, setTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTick((n) => n + 1), 1000);
@@ -100,7 +101,27 @@ export function CallPage({ call, avatar, name, onMute, onHangUp, onTap }) {
         </div>
         {/* 字幕区：两个人共用（见 Subtitles.jsx）。宽照原来那行小字（最宽 320），高 225 上下 */}
         <div className="relative w-full" style={{ maxWidth: 320, marginTop: 22, flex: "0 1 225px", minHeight: 110 }}>
-          <Subtitles subs={call.subs} />
+          {call.ask ? (
+            // 接通前问她：这通电话走不走 API（卿卿 11 月 8 日定的：接通前问）；不打了就点底下的挂断
+            <div className="kfs-call-ask text-center" style={{ paddingTop: 4 }}>
+              <p style={{ fontSize: 15, lineHeight: 1.6 }}>笔记本那头走不了</p>
+              <p style={{ fontSize: 12.5, lineHeight: 1.55, color: "rgba(255,190,180,0.85)", marginTop: 4 }}>{call.ask}</p>
+              <p style={{ fontSize: 14, lineHeight: 1.6, marginTop: 12, color: "rgba(255,255,255,0.8)" }}>这通电话走 API 吗？</p>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onViaApi && onViaApi();
+                }}
+                className="kfs-tap kfs-call-api"
+                style={{ marginTop: 14, padding: "9px 24px", borderRadius: 999, background: "rgba(255,255,255,0.9)", color: "#000", fontSize: 14 }}
+              >
+                走 API
+              </button>
+              <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 10 }}>不打了就点挂断</p>
+            </div>
+          ) : (
+            <Subtitles subs={call.subs} />
+          )}
           {/* 出了岔子的那一句：摆在字幕区底下，不占字幕的地方 */}
           {call.note ? (
             <div

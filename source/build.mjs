@@ -352,7 +352,9 @@ const csp = [
   // 打电话的实时听写（ElevenLabs 的 WebSocket，见 src/call/hear.js）：不写这一句连不上，电话退回手机自带的听写。
   // 测试的时候连的是假 Supabase 上的假的（同一个地址，ws:// 开头）
   // 手帐上的天气（Open-Meteo，见 src/jz/weather.js）：找城市、取那一天的天气，只寄城市的经纬度和日子
-  `connect-src 'self' ${SUPABASE_URL} ${TEST_URL ? TEST_URL.replace(/^http/, "ws") : "wss://api.elevenlabs.io"} https://raw.githubusercontent.com https://geocoding-api.open-meteo.com https://api.open-meteo.com https://archive-api.open-meteo.com`,
+  // 传话走她笔记本上的 Claude Code（见 src/cloud.js 的那扇门）：门只在 Tailscale 里开，门牌是 https://<电脑>.<tailnet>.ts.net:8443。
+  // 测试的时候是假 Supabase 旁边那扇假门（端口 +1，见 tests/mock-supabase.mjs）
+  `connect-src 'self' ${SUPABASE_URL} ${TEST_URL ? TEST_URL.replace(/^http/, "ws") : "wss://api.elevenlabs.io"} https://raw.githubusercontent.com https://geocoding-api.open-meteo.com https://api.open-meteo.com https://archive-api.open-meteo.com https://*.ts.net:8443${TEST_URL ? " " + TEST_URL.replace(/:(\d+)$/, (m, n) => ":" + (Number(n) + 1)) : ""}`,
   "font-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",

@@ -688,6 +688,62 @@ function pushReset() {
 }
 pushReset();
 
+// ---- 她的笔记本（传话走笔记本上的 Claude Code，见 alarm/door.js、src/cloud.js 的那扇门） ----
+// 起一扇真的门（alarm/door.js），里面的 Claude Code 换成假的：照上面那个假的 Anthropic 回（同 claude 函数），回话上带 via: "claude-code"。
+// 门替她等回话的时候读写信箱、敲手机，用的是闹钟真的 cloud.js（拿她的账号登录，连回这里）。
+// 网页那头的门牌写 http://127.0.0.1:8788（MOCK_DOOR_PORT），暗记 DOOR_TOKEN；CORS 只认测试网页（http://127.0.0.1:8080）。
+//   /__debug/door?down=1    门关了（笔记本睡着了：敲不到）；down=0 再开
+//   /__debug/door?fail=x    往后每一回 Claude Code 都出这个岔子（cc_auth 没登录、cc_quota 额度用完、cc 别的）；fail= 清掉
+//   /__debug/door           看门这会儿什么样、Claude Code 收到过几回（seen）
+const DOOR_PORT = Number(process.env.MOCK_DOOR_PORT || PORT + 1);
+const DOOR_TOKEN = "KFSDO-ORTES-TKEY2-34567";
+globalThis.__KFS_SUPABASE_URL__ = `http://127.0.0.1:${PORT}`;
+globalThis.__KFS_SUPABASE_KEY__ = "sb_publishable_test";
+const { createCloud: alarmCloudOf } = await import("../alarm/cloud.js");
+const { createDoor } = await import("../alarm/door.js");
+const DOOR_FAILS = {
+  cc_auth: { status: 401, message: "这台电脑上的 Claude Code 没登录（或者登录过期了）" },
+  cc_quota: { status: 429, message: "订阅的额度用完了" },
+  cc: { status: 500, message: "Claude Code 那一条停了" },
+};
+const doorState = { down: false, fail: "", seen: 0 };
+const fakeLaptop = {
+  async handle(body, { signal } = {}) {
+    doorState.seen++;
+    const f = DOOR_FAILS[doorState.fail];
+    if (f) throw Object.assign(new Error(f.message), { status: f.status });
+    const out = await heldAnthropic(body, "", "door", signal);
+    if (out.status !== 200) throw Object.assign(new Error((out.json && out.json.error && out.json.error.message) || `出错了（${out.status}）`), { status: out.status });
+    return { ...out.json, via: "claude-code" };
+  },
+  runs: () => 0,
+  spawned: () => 0,
+  close() {},
+  async mcp() {
+    return null;
+  },
+};
+let laptop = null;
+async function laptopUp() {
+  if (laptop) return;
+  laptop = createDoor({
+    token: DOOR_TOKEN,
+    cloud: alarmCloudOf({ email: "qing@example.com", password: USERS["qing@example.com"].password }),
+    origin: "http://127.0.0.1:8080",
+    port: DOOR_PORT,
+    bridge: fakeLaptop,
+    version: "test",
+    timing: { beat: 2000, grace: 1500 },
+  });
+  await laptop.listen();
+  laptop.setClaudeVersion("2.1.319 (Claude Code)");
+}
+function laptopDown() {
+  if (!laptop) return;
+  laptop.close();
+  laptop = null;
+}
+
 const b64url = (s) => Buffer.from(s).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 function jwt(user) {
   const now = Math.floor(Date.now() / 1000);
@@ -920,7 +976,22 @@ const server = http.createServer(async (req, res) => {
       }
       return send(res, 200, { ok: true, aged: n });
     }
+    if (url.pathname === "/__debug/door") {
+      if (url.searchParams.has("down")) {
+        doorState.down = url.searchParams.get("down") === "1";
+        if (doorState.down) laptopDown();
+        else await laptopUp();
+      }
+      if (url.searchParams.has("fail")) doorState.fail = url.searchParams.get("fail") || "";
+      return send(res, 200, { down: doorState.down, fail: doorState.fail, seen: doorState.seen, port: DOOR_PORT, token: DOOR_TOKEN });
+    }
     if (url.pathname === "/__debug/reset") {
+      doorState.fail = "";
+      doorState.seen = 0;
+      if (doorState.down || !laptop) {
+        doorState.down = false;
+        await laptopUp();
+      }
       rows.clear();
       claudeLog.length = 0;
       claudeFail = null;
@@ -1161,3 +1232,5 @@ server.on("upgrade", (req, socket) => {
   else socket.destroy();
 });
 server.listen(PORT, () => console.log("假 Supabase 在 " + PORT));
+await laptopUp();
+console.log("假的笔记本那扇门在 " + DOOR_PORT);

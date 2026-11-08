@@ -7,6 +7,8 @@ export function explainError(status, err) {
   const type = String((err && err.type) || "");
   const msg = String((err && err.message) || "");
   const m = msg.toLowerCase();
+  // 开封府自己的后端（claude、push 函数，笔记本那扇门）说的：本来就是人话，照原样
+  if (type === "kaifengfu" && msg) return msg;
   // 新版 Console 建 key 时没选工作区，这种 key 每次都得带上工作区 ID
   if (m.includes("not scoped to a workspace") || m.includes("anthropic-workspace-id")) {
     return "这把 key 没绑定工作区。去 Claude Console 新建一把，建的时候选一个工作区，再换进 Supabase 的密钥柜";

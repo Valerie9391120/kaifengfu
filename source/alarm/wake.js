@@ -340,6 +340,13 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   const attempts = [{ cache: true, mcp: mcps.length > 0 }, { cache: false, mcp: mcps.length > 0 }];
   if (mcps.length) attempts.push({ cache: false, mcp: false });
   const askHim = async (list, final = false, thought = false) => {
+    // 传话走笔记本（开封府 API 面板里拨的，卿卿 11 月 8 日定的：开了全走 Claude Code）：交给这台电脑上的 Claude Code（跟门是同一个，见 door.js、bridge.js）。
+    // 走不了这一回就不醒（不走 API，也问不了她），照闹钟原来的规矩过一会儿再试
+    if (st.route === "laptop") {
+      if (!cloud.laptop) throw Object.assign(new Error("传话拨到了笔记本，可这台电脑上的门没开（node kfs-alarm.mjs door）"), { code: "laptop" });
+      const data = await cloud.laptop(bodyFor(list, attempts[0], final, thought));
+      return { data, used: attempts[0] };
+    }
     let lastErr = null;
     for (const at of attempts) {
       try {
@@ -363,8 +370,10 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   let newAvatar = null;
   let newName = null;
   let cost = null;
+  let cc = 0; // 走笔记本上的 Claude Code 的那几步：用的是订阅的额度，不算钱，另记几步
   const digest = (data, used, text = null) => {
-    if (text == null) {
+    if (text == null && data && data.via === "claude-code") cc++;
+    else if (text == null) {
       const u = data && data.usage;
       const c = u ? costOf(data.model, u) : null;
       if (c != null) cost = (cost || 0) + c;
@@ -469,6 +478,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   return {
     steps,
     cost,
+    cc,
     get newAvatar() {
       return newAvatar;
     },
@@ -673,6 +683,7 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     newAvatar: r.newAvatar,
     newName: r.newName,
     cost: r.cost,
+    cc: r.cc,
     steps: r.steps.length,
     wake: roomWake == null ? null : roomWake,
   };
@@ -709,6 +720,7 @@ export async function askTask({ store, cloud, ctx, now = Date.now(), log = () =>
     newAvatar: r.newAvatar,
     newName: r.newName,
     cost: r.cost,
+    cc: r.cc,
     steps: r.steps.length,
     wake: said == null ? null : said,
   };
@@ -778,12 +790,14 @@ export async function commitWake({ store, cloud, bundle, log = () => {}, beforeP
   };
   if (b.newAvatar) await soft("换头像", "avatar", () => store.set("kfs2:avatar:guangyi", JSON.stringify(b.newAvatar)));
   if (b.newName) await soft("改名字", "name", () => (b.newName === HIS_NAME ? store.del(NAME_KEYS.him) : store.set(NAME_KEYS.him, b.newName)));
-  if (b.cost != null) {
+  // 用量：花了钱的记钱和几回；走笔记本的那几步另记（cc，同手机那头的 recordUsage）
+  if (b.cost != null || b.cc) {
     await soft("记用量", "usage", async () => {
       const key = usageKey(new Date(b.at));
       const prev = parse(await store.get(key), null);
       const was = prev && prev.month === key ? prev : { month: key, cost: 0, replies: 0 };
-      await store.set(key, JSON.stringify({ month: key, cost: was.cost + b.cost, replies: was.replies + b.steps }));
+      const paid = b.cost != null ? { cost: was.cost + b.cost, replies: was.replies + Math.max(0, b.steps - (b.cc || 0)) } : {};
+      await store.set(key, JSON.stringify({ ...was, month: key, ...paid, ...(b.cc ? { cc: (was.cc || 0) + b.cc } : {}) }));
     });
   }
   // 敲她的手机：落在哪段对话就敲那段（点了回到那段），他每一步写的一回（一个气泡一条横幅，push 函数自己拆）。敲过几回记着，再放一遍的时候接着敲没敲的

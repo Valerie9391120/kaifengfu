@@ -130,7 +130,7 @@ const NEVER = stopOf(null);
 // ---------- 一回传话 ----------
 //
 // d（从外面递进来的）：
-//   callReply(payload, { signal })   把话交给 push 函数（cloud.js）
+//   callReply(payload, { signal, route })   把话交给 push 函数（cloud.js）；带着 route 的交给她笔记本上的那扇门（ask 的 args.route）
 //   box { list, get, remove }        信箱（cloud.js 的 mailbox）
 //   seal / unseal / nameFor          借存档的钥匙：封条子、拆条子、把名字打乱（store.js）
 //   visible()                        开封府这会儿是不是开在眼前
@@ -406,10 +406,11 @@ export function createRelay(d) {
   }
 
   // 直接等小后端回话，同时留一只眼睛看信箱（切走又回来的时候、等得久了的时候）
-  async function race(job, info, payload, stop = NEVER) {
+  // route：交给她笔记本上的那扇门去等（见 cloud.js 的 replyViaDoor；没有就是 push 函数）
+  async function race(job, info, payload, stop = NEVER, route = null) {
     let started = d.now();
     const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
-    const direct = d.callReply(payload, { signal: ctl ? ctl.signal : undefined }).then(
+    const direct = d.callReply(payload, { signal: ctl ? ctl.signal : undefined, ...(route ? { route } : {}) }).then(
       (r) => ({ got: r.result }),
       (e) => ({ err: e })
     );
@@ -519,7 +520,7 @@ export function createRelay(d) {
   }
 
   // tried：为这句话发出去过的编号，发一回往里记一个（话真要出手机了才记）
-  async function once({ body, beta, chat, last, fork, title, extra }, tried, stop = NEVER) {
+  async function once({ body, beta, chat, last, fork, title, extra, route }, tried, stop = NEVER) {
     try {
       await stop.or(Promise.race([d.freshToken(TOKEN_SECONDS), d.sleep(TOKEN_MS)]));
     } catch (e) {}
@@ -547,7 +548,7 @@ export function createRelay(d) {
       try {
         knock = (d.knock ? d.knock() : []) || [];
       } catch (e) {}
-      return await race(job, info, { op: "reply", job, key, note, tag, title: title || "", beta: beta || "", knock, request: body }, stop);
+      return await race(job, info, { op: "reply", job, key, note, tag, title: title || "", beta: beta || "", knock, request: body }, stop, route || null);
     } finally {
       live.delete(job);
     }
@@ -608,7 +609,7 @@ export function createRelay(d) {
     }
   }
 
-  // 要一条回话（args.recheck：是她点“重发”要的）。成了回 { data, used, job, info, via, settle }：
+  // 要一条回话（args.recheck：是她点“重发”要的；args.route：走她笔记本上的那扇门，见 cloud.js）。成了回 { data, used, job, info, via, settle }：
   //   data 是 Anthropic 回的那一整段；used 是最后用的哪种写法（带没带缓存、带没带工具）；
   //   settle() 等回话落进对话、存好以后叫。
   // 抛的错：code 是 oldpath：新路不通，请走老路；code 是 answered：别的设备已经把回话放进对话了；

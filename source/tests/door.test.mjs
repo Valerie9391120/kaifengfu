@@ -33,6 +33,10 @@ const api = http.createServer((req, res) => {
     }
     const j = JSON.parse(body);
     const text = said(j.messages[j.messages.length - 1]);
+    if (text.includes("坏")) {
+      res.writeHead(400, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "假的：这一句不让过" } }));
+    }
     res.writeHead(200, { "content-type": "text/event-stream" });
     const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
     ev("message_start", { message: { id: "m", type: "message", role: "assistant", model: j.model, content: [], stop_reason: null, usage: { input_tokens: 10, output_tokens: 1 } } });
@@ -172,6 +176,19 @@ try {
   ok(box.get(j) && box.get(j).state === "done" && open(key, box.get(j).sealed).data.content[0].text === "收到：慢慢说", "网页断了照样等完、放进信箱");
   const knocked = pushed.find((p) => p.job === j);
   ok(knocked && knocked.op === "notify" && knocked.tag === "tag12345" && knocked.title === "光义" && knocked.reply === "收到：慢慢说" && knocked.knock[0] === "https://push.example/1", `信没人取：借 push 函数敲她的手机，写的是他回的话（${JSON.stringify(knocked)}）`);
+
+  // ---------- 她切走了、Claude Code 那头又没回成：也敲一条，说笔记本那头没回上（她回来点“这句走不走 API”） ----------
+  key = randomBytes(32);
+  j = job();
+  const gone2 = new AbortController();
+  post("/kfs/reply", { job: j, key: b64u(key), note: "条子", tag: "tag12345", title: "光义", knock: ["https://push.example/1"], request: REQ("坏了") }, H(), gone2.signal).catch(() => {});
+  await sleep(600);
+  gone2.abort();
+  for (let i = 0; i < 40 && !pushed.some((p) => p.job === j); i++) await sleep(250);
+  const sorry = pushed.find((p) => p.job === j);
+  const stored = box.get(j) && box.get(j).state === "done" ? open(key, box.get(j).sealed) : null;
+  ok(stored && stored.status >= 400 && /^cc/.test(stored.data.error.code || ""), `没回成的也放进信箱（${stored && stored.status} ${stored && stored.data.error.code}）`);
+  ok(sorry && sorry.title === "开封府" && /^笔记本那头没回上/.test(sorry.reply) && sorry.reply.includes("回开封府看一眼"), `信没人取、又没回成：敲一条“笔记本那头没回上”（${sorry && sorry.reply}）`);
 
   // ---------- 她按了停：网页把那一格收了 ----------
   key = randomBytes(32);

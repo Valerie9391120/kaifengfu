@@ -71,22 +71,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //   log      (line) => 记一笔
 //   version  闹钟是哪一版（ping 回）
 //   timing   测试拨快：{ beat, grace }
+//   bridge   测试用：换一个假的 Claude Code（开封府的端到端测试里，假 Supabase 起一扇真的门、里面换成假的）
 // 回 { listen() → Promise, close(), bridge, port() }
 // =====================================================
-export function createDoor({ token, cloud, claude, cwd, configDir, origin = HOME_ORIGIN, port = DOOR_PORT, env = {}, log = () => {}, version = "", timing = {} } = {}) {
+export function createDoor({ token, cloud, claude, cwd, configDir, origin = HOME_ORIGIN, port = DOOR_PORT, env = {}, log = () => {}, version = "", timing = {}, bridge: given = null } = {}) {
   const want = normToken(token);
   if (want.length < 16) throw new Error("暗记不对");
   const beatMs = timing.beat || BEAT;
   const graceMs = timing.grace ?? GRACE;
   let listening = 0;
-  const bridge = createBridge({
-    claude,
-    cwd,
-    configDir,
-    env,
-    log,
-    mcpUrl: (id) => `http://127.0.0.1:${listening}/mcp/${id}`,
-  });
+  const bridge =
+    given ||
+    createBridge({
+      claude,
+      cwd,
+      configDir,
+      env,
+      log,
+      mcpUrl: (id) => `http://127.0.0.1:${listening}/mcp/${id}`,
+    });
   let ccVersion = "";
 
   const tokenOk = (t) => {
@@ -189,11 +192,14 @@ export function createDoor({ token, cloud, claude, cwd, configDir, origin = HOME
     clearInterval(beats);
     if (put === "gone") return; // 网页已经直接拿到、把那一格收了（或者她按了停）：没信可敲
     if (put !== "stored") return log("[门] 回话没放进信箱");
-    // 从交出去算起等够那几秒再看：信被取走了，她就在开封府里，不敲；还在，就敲她的手机（一个气泡一条，同狐宇宙那样）
+    // 从交出去算起等够那几秒再看：信被取走了，她就在开封府里，不敲；还在，就敲她的手机（一个气泡一条，同狐宇宙那样）。
+    // 没回成的也敲一条（同 push 函数“这条消息没送到”）：她回来要点“这句走不走 API”
     await sleep(Math.max(0, handed + graceMs - Date.now()));
-    if (!knock.length || result.status !== 200 || (await cloud.mailbox.waiting(job)) === false) return;
+    if (!knock.length || (await cloud.mailbox.waiting(job)) === false) return;
+    const fine = result.status === 200;
+    const why = String((result.data && result.data.error && result.data.error.message) || "").slice(0, 60);
     try {
-      await cloud.push({ op: "notify", job, tag, title, knock, reply: textOf(result.data) });
+      await cloud.push({ op: "notify", job, tag, title: fine ? title : "开封府", knock, reply: fine ? textOf(result.data) : `笔记本那头没回上${why ? "：" + why : ""}。回开封府看一眼。` });
       log("[门] 敲了她的手机");
     } catch (e) {
       log("[门] 敲手机没成：" + String(e.message || e).slice(0, 120));
@@ -280,6 +286,7 @@ export function createDoor({ token, cloud, claude, cwd, configDir, origin = HOME
     close: () => {
       bridge.close();
       server.close();
+      if (server.closeAllConnections) server.closeAllConnections(); // 开着的连接一起断（不然手机那头还挂着的那一条一直等）
     },
   };
 }

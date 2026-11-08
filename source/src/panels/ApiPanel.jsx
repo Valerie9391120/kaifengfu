@@ -5,8 +5,9 @@ import { VOICE_STAB, DEFAULT_STAB } from "../voice.js";
 import { PAUSES, pauseOf } from "../call/listen.js";
 import { fmtChars } from "../util.js";
 import { sepLabel } from "../days.js";
-import { T, glass, chip } from "../ui/style.js";
+import { T, glass, chip, field } from "../ui/style.js";
 import { Toggle } from "../ui/parts.jsx";
+import { normDoor, normKey } from "../laptop.js";
 
 // 念语音的小后端接上没有，说成一句话（voiceCheck 见 App.jsx 的 checkVoice）
 function voiceLine(c) {
@@ -167,6 +168,60 @@ function RecapCheck({ chat, gauge, retry, log, trying, onNow, onView }) {
   );
 }
 
+// 传话走笔记本（卿卿 11 月 8 日定的）：门牌、暗记两格。闹钟里跑 node kfs-alarm.mjs door 写出来的那两样，她手动输一回。
+// 打字的时候不存（存一回同步一回），点别处、按回车才存；存之前收拾一下（见 laptop.js）
+function DoorFields({ door, doorKey, onChange }) {
+  const [d, setD] = useState(door || "");
+  const [k, setK] = useState(doorKey || "");
+  useEffect(() => setD(door || ""), [door]);
+  useEffect(() => setK(doorKey || ""), [doorKey]);
+  const commit = (name, raw, was, norm, set) => {
+    const v = norm(raw);
+    set(v);
+    if (v !== (was || "")) onChange({ [name]: v });
+  };
+  const done = (e) => e.key === "Enter" && e.currentTarget.blur();
+  const label = { fontSize: 13, color: T.inkSoft, flexShrink: 0, width: 34 };
+  const input = { ...field, flex: 1, minWidth: 0, padding: "9px 12px", fontSize: 15 };
+  return (
+    <div className="kfs-door-fields" style={{ ...glass(0.45, 14), borderRadius: 18, padding: "12px 14px", marginTop: 10 }}>
+      <label className="flex items-center" style={{ gap: 10 }}>
+        <span style={label}>门牌</span>
+        <input
+          className="kfs-door-url"
+          value={d}
+          onChange={(e) => setD(e.target.value)}
+          onBlur={() => commit("door", d, door, normDoor, setD)}
+          onKeyDown={done}
+          placeholder="https://….ts.net:8443"
+          inputMode="url"
+          autoCapitalize="none"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
+          style={input}
+        />
+      </label>
+      <label className="flex items-center" style={{ gap: 10, marginTop: 8 }}>
+        <span style={label}>暗记</span>
+        <input
+          className="kfs-door-key"
+          value={k}
+          onChange={(e) => setK(e.target.value)}
+          onBlur={() => commit("doorKey", k, doorKey, normKey, setK)}
+          onKeyDown={done}
+          placeholder="XXXXX-XXXXX-XXXXX-XXXXX"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
+          style={{ ...input, fontVariantNumeric: "tabular-nums", letterSpacing: "0.02em" }}
+        />
+      </label>
+    </div>
+  );
+}
+
 // 三选一的那种滑块（“回复最长多少”“他记多长”都是它；账户面板里“他自己醒”的两道闸也借它，见 FoxSection.jsx）
 export function Pick({ options, value, onPick, label }) {
   return (
@@ -215,7 +270,8 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
   // 缩过的数不是整的：不到一万字的凑成整百再写
   const about = (n) => fmtChars(n < 10000 ? Math.round(n / 100) * 100 : n);
   // 上一条寄得不薄、却一点没走缓存：全按原价算的。偶尔一回不要紧（十分钟后会再带上缓存记号试），回回这样就不对了
-  const noCache = !!usage && (usage.input_tokens || 0) > 20000 && !(usage.cache_read_input_tokens || 0) && !(usage.cache_creation_input_tokens || 0);
+  // 走笔记本的那一条不算（Claude Code 那头自己管缓存，也不按 API 的价算）
+  const noCache = !!usage && !usage.cc && (usage.input_tokens || 0) > 20000 && !(usage.cache_read_input_tokens || 0) && !(usage.cache_creation_input_tokens || 0);
   const row = (k, v) => (
     <div key={k} className="flex items-center justify-between" style={{ fontSize: 13, color: T.ink, padding: "5px 0", gap: 12 }}>
       <span style={{ color: T.inkSoft, flexShrink: 0 }}>{k}</span>
@@ -223,10 +279,27 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
     </div>
   );
   const month = monthUsage && monthUsage.month === usageKey() ? monthUsage : null;
+  // 传话走哪儿（卿卿 11 月 8 日定的）：API 是原来那条路（claude 函数）；笔记本是她笔记本上的 Claude Code（闹钟里开的门）。开了全走那一条
+  const route = settings.route === "laptop" ? "laptop" : "api";
   return (
     <div>
-      <p style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.6, marginBottom: 14 }}>
-        你的 key 锁在 Supabase 的保险柜里，手机上没有。开封府每次说话，都是先在门口核对是你，再替你转给 Anthropic。
+      <div style={{ fontSize: 12, color: T.inkSoft, margin: "0 0 8px" }}>传话走哪儿</div>
+      <div className="kfs-route" data-route={route}>
+        <Pick
+          options={[
+            { v: "api", t: "API" },
+            { v: "laptop", t: "笔记本" },
+          ]}
+          value={route}
+          onPick={(v) => onChange({ route: v })}
+          label="传话走哪儿"
+        />
+      </div>
+      {route === "laptop" && <DoorFields door={settings.door} doorKey={settings.doorKey} onChange={onChange} />}
+      <p style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.6, margin: "10px 0 14px" }}>
+        {route === "laptop"
+          ? "走你笔记本上的 Claude Code。走不了的时候，每句先问你走不走 API。"
+          : "你的 key 锁在 Supabase 的保险柜里，手机上没有。开封府每次说话，都是先在门口核对是你，再替你转给 Anthropic。"}
       </p>
       <div className="flex items-center flex-wrap" style={{ gap: 10 }}>
         <button onClick={onTest} disabled={testing} className="kfs-tap" style={{ ...chip, opacity: testing ? 0.5 : 1 }}>
@@ -297,9 +370,11 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
       <div style={{ fontSize: 12, color: T.inkSoft, margin: "22px 0 8px" }}>用量</div>
       <div style={{ ...glass(0.45, 14), borderRadius: 18, padding: "10px 14px" }}>
         {row("本月", month && month.replies ? `约 ${money(month.cost)}，${month.replies} 次` : "还没花钱")}
+        {/* 走笔记本的另记：用的是订阅的额度，不算钱 */}
+        {month && month.cc ? row("本月走笔记本", `${month.cc} 次，不算钱`) : null}
         {usage
           ? [
-              row("上一条", `约 ${money(usage.cost)}，${modelLabel(usage.model)}`),
+              row("上一条", usage.cc ? `走的笔记本，${modelLabel(usage.model)}` : `约 ${money(usage.cost)}，${modelLabel(usage.model)}`),
               row("从缓存读", (usage.cache_read_input_tokens || 0).toLocaleString()),
               row("写进缓存", (usage.cache_creation_input_tokens || 0).toLocaleString()),
               row("新读", (usage.input_tokens || 0).toLocaleString()),
@@ -309,6 +384,7 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
         {(() => {
           // 这次打开还没抄过的：照流水账里最近一回花了钱的写（流水账记在这台手机上，重开了也在）
           const last = recapUsage || ((recapCheck && recapCheck.log) || []).find((x) => x.cost != null) || null;
+          if (recapUsage && recapUsage.cc) return row("上一回抄提要", `走的笔记本，${modelLabel(recapUsage.model)}`);
           return last ? row("上一回抄提要", `约 ${money(last.cost)}，${modelLabel(last.model)}`) : null;
         })()}
       </div>

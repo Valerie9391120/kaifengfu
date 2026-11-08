@@ -45,11 +45,99 @@ export const remote = {
   },
 };
 
+// ---------- 笔记本那扇门：传话走她笔记本上的 Claude Code（闹钟里开的门，见 alarm/door.js） ----------
+// route：{ door: "https://<电脑>.<tailnet>.ts.net:8443", key: 暗记 }。API 面板里“传话走哪儿”拨到笔记本才有（见 App.jsx 的 laptopRoute）。
+// 门只在 Tailscale 里开：手机上 Tailscale 没开、笔记本睡着了、闹钟没在跑，都敲不到。
+// 出了岔子抛带 code 的错（message 是给她看的话）：
+//   laptop_down  敲不到、敲到了没应：什么都没送出去
+//   laptop_key   暗记不对
+//   laptop_cc    笔记本上的 Claude Code 出了岔子（ecode 是门给的：cc_auth 没登录、cc_quota 额度用完、cc_busy 太挤、cc 别的）
+export const DOOR_WAIT = 8000; // 敲一下门最多等这么久（笔记本睡着了的时候，请求会一直悬着，不等到它自己报错）
+const doorUrl = (route, path) => String(route.door || "").replace(/\/+$/, "") + path;
+const lapErr = (code, message, extra) => Object.assign(new Error(message), { code }, extra || {});
+// 等一个请求最多 ms 毫秒；外头的 signal 拉了也掐掉。回 { signal, done(), late() }
+function limited(ms, outer) {
+  const ctl = new AbortController();
+  let late = false;
+  const t = ms ? setTimeout(() => ((late = true), ctl.abort()), ms) : null;
+  const pass = () => ctl.abort();
+  if (outer) {
+    if (outer.aborted) ctl.abort();
+    else outer.addEventListener("abort", pass, { once: true });
+  }
+  return {
+    signal: ctl.signal,
+    late: () => late,
+    done: () => {
+      clearTimeout(t);
+      if (outer) outer.removeEventListener("abort", pass);
+    },
+  };
+}
+// 门那头回的错：暗记不对的、Claude Code 出岔子的，说成人话
+function doorProblem(status, error) {
+  const ecode = String((error && error.code) || "");
+  if (ecode === "door" || status === 401) return lapErr("laptop_key", "笔记本那扇门的暗记不对（API 面板里对一下）", { status });
+  return lapErr("laptop_cc", explainError(status, error), { status, ecode });
+}
+
+// 敲一下门：门开着、暗记对，回门那头说的 { ok, door, version, claude, runs }（闹钟哪一版、Claude Code 哪一版、开着几条）
+export async function pingDoor(route, ms = DOOR_WAIT) {
+  if (!route || !route.door || !route.key) throw lapErr("laptop_down", "门牌、暗记还没填（API 面板里）");
+  const lim = limited(ms);
+  let res;
+  try {
+    res = await fetch(doorUrl(route, "/kfs/ping"), { headers: { "x-kfs-door": route.key }, cache: "no-store", signal: lim.signal });
+  } catch (e) {
+    throw lapErr("laptop_down", "敲不到笔记本：手机上的 Tailscale 开着吗？笔记本醒着吗？");
+  } finally {
+    lim.done();
+  }
+  let d = null;
+  try {
+    d = await res.json();
+  } catch (e) {}
+  if (d && d.error) throw doorProblem(res.status, d.error);
+  if (!res.ok || !d || !d.ok) throw lapErr("laptop_down", `笔记本那扇门没应（${res.status}）`);
+  return d;
+}
+
+// 一包进、一个回话出（同 claude 函数，门那头交给 Claude Code）。回话上带着 via: "claude-code"
+async function claudeViaDoor(body, beta, signal, route) {
+  const lim = limited(0, signal);
+  let res;
+  try {
+    res = await fetch(doorUrl(route, "/kfs/claude"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-kfs-door": route.key, ...(beta ? { "x-kfs-beta": beta } : {}) },
+      body: JSON.stringify(body),
+      signal: lim.signal,
+    });
+  } catch (e) {
+    if (signal && signal.aborted) throw lapErr("stopped", "停了");
+    throw lapErr("laptop_down", "连不上笔记本，或者半路断了线");
+  } finally {
+    lim.done();
+  }
+  let d = null;
+  try {
+    d = await res.json();
+  } catch (e) {
+    throw lapErr("laptop_down", `笔记本那头没回话（${res.status}）`, { status: res.status });
+  }
+  if (signal && signal.aborted) throw lapErr("stopped", "停了");
+  if (d && d.error) throw doorProblem(res.status, d.error);
+  if (!res.ok) throw lapErr("laptop_down", `笔记本那头出错了（${res.status}）`, { status: res.status });
+  return d;
+}
+
 // 传话：拿着登录凭证去敲 claude 函数的门。
 // signal：她一按停就 abort（AbortSignal，聊天那一处才递；写日记、测试连接不递）。按了：这头的连接掐掉；
 // 外头那时候已经当“停了”收场（见 App.jsx 的 unlessStopped），这里后来抛什么错都没人看。
 // 只有一样要守住：按了停以后不能再把回话交出去，交了会被拿去整理（换头像、改名字、记用量）
-export async function callClaude(body, beta, signal) {
+// route：走她笔记本上的 Claude Code（见上面那一节）；没有就走 claude 函数
+export async function callClaude(body, beta, signal, route) {
+  if (route) return claudeViaDoor(body, beta, signal, route);
   const { data } = await supabase.auth.getSession();
   const token = data && data.session && data.session.access_token;
   if (!token) throw new Error("登录过期了，重新登录一下");
@@ -171,7 +259,8 @@ export async function freshToken(seconds) {
 //   refused      小后端没接（message 是它的原话，reason 是它给的缘故）：这一回根本没开始办
 //   unreachable  没连上，或者连到一半断了：办没办不知道，得去信箱里看
 //   gateway      回来的东西读不懂（函数那头崩了、超时了）：办没办也不知道
-export async function callReply(payload, { signal } = {}) {
+export async function callReply(payload, { signal, route } = {}) {
+  if (route) return replyViaDoor(payload, signal, route);
   // 取登录凭证也限时：凭证快到期的时候它要先去换一张，那一下要是悬着不应（刚解锁、网络还没醒），
   // 这里就跟着一直等：话没交出去，她对着“正在输入”干等一分多钟。八秒等不到就算没连上，照实说（什么都没发出去，不花钱）
   let data = null;
@@ -211,6 +300,36 @@ export async function callReply(payload, { signal } = {}) {
   if (res.status === 404 || (res.ok && read)) throw Object.assign(coded("refused", "push 函数还接不了回话"), { reason: "nofn" });
   if (res.ok) throw coded("unreachable", "回话读到一半断了");
   throw coded("gateway", `小后端出错了（${res.status}）`);
+}
+
+// 同上，交给笔记本那扇门去等（门那头照 push 函数的样子办：开信箱那一格、心跳、封好放进去、没人取就敲手机，见 alarm/door.js）。
+// 抛的错跟上面一个样子（mail.js 照同一套办）；门说暗记不对的，reason 是 door
+async function replyViaDoor(payload, signal, route) {
+  let res;
+  try {
+    res = await fetch(doorUrl(route, "/kfs/reply"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-kfs-door": route.key },
+      body: JSON.stringify(payload),
+      signal,
+    });
+  } catch (e) {
+    throw coded("unreachable", "连不上笔记本，或者半路断了线");
+  }
+  let d = null;
+  let read = true;
+  try {
+    d = await res.json();
+  } catch (e) {
+    read = false;
+  }
+  if (res.ok && d && d.type === "reply" && d.result && typeof d.result === "object") return d;
+  if (d && d.type === "error" && d.error && d.error.type === "kaifengfu") {
+    const reason = res.status === 401 ? "door" : d.error.code || "old";
+    throw Object.assign(coded("refused", d.error.message || `笔记本那扇门说不行（${res.status}）`), { reason });
+  }
+  if (res.ok && !read) throw coded("unreachable", "回话读到一半断了");
+  throw coded("gateway", `笔记本那扇门出错了（${res.status}）`);
 }
 
 // 信箱（mailbox 表）：小后端把封好的回话放在这儿，手机来取，取走就删。只读写得到自己的行

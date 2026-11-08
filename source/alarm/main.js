@@ -816,6 +816,8 @@ async function run() {
   if (!entered) return quit(0, "停下了");
   const { cloud, store, vault } = entered;
   door = await openDoor(cloud); // 门先开：后面拉东西慢，开封府那头别干等
+  // 开封府那头传话拨到笔记本的时候，狐宇宙醒来也交给这台电脑上的 Claude Code（跟门是同一个，见 wake.js 的 askHim）
+  cloud.laptop = door ? (body) => door.bridge.handle(body) : null;
   const st = readState();
   log(`闹钟起来了（${VERSION}）`);
   st.extras = await fetchExtraMemes(st.extras || []);
@@ -1059,7 +1061,7 @@ async function sayDoorTry(token) {
   say("");
   say("试一句（走这台电脑上的 Claude Code，问他刚才记的词）……");
   const t = await doorTry(token);
-  if (t.ok) say(`他回：“${t.text.slice(0, 80)}”。${t.text.includes("月亮") ? "通了。" : "回了话，门是通的。"}`);
+  if (t.ok) say(`他回：“${t.text.replace(/[。.!！\s]+$/, "").slice(0, 80)}”。${t.text.includes("月亮") ? "通了。" : "回了话，门是通的。"}`);
   else if (t.code === "cc_auth") say(`没成：这台电脑上的 Claude Code 没登录，或者登录过期了（${t.message}）。PowerShell 里跑 claude，用订阅的账号登录，再跑 node kfs-alarm.mjs door test。`);
   else if (t.code === "cc_quota") say(`没成：额度用完了（${t.message}）。门是通的，额度回来就能用。`);
   else say(`没成：${t.message}`);
