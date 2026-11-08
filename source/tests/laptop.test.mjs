@@ -1,5 +1,5 @@
 // 传话走笔记本（src/laptop.js）：API 面板里门牌、暗记怎么收拾；errors.js 照原样说开封府自己的后端（门）说的话
-import { normDoor, normKey, laptopOn, laptopReady } from "../src/laptop.js";
+import { normDoor, normKey, laptopOn, laptopReady, lapWebOn, withLapWeb, LAP_WEB_NOTE } from "../src/laptop.js";
 import { explainError } from "../src/errors.js";
 
 let pass = 0, failN = 0;
@@ -34,6 +34,15 @@ ok(normKey("") === "", "暗记：空的还是空的");
 // ---------- 开关 ----------
 ok(!laptopOn({}) && !laptopOn({ route: "api" }) && laptopOn({ route: "laptop" }), "传话走哪儿：没拨过是 API");
 ok(!laptopReady({ route: "laptop" }) && !laptopReady({ route: "laptop", door: "https://x" }) && laptopReady({ route: "laptop", door: "https://x", doorKey: "K" }), "拨到笔记本、门牌暗记都填了才算齐");
+
+// ---------- 上网查 ----------
+ok(lapWebOn({}) && lapWebOn({ lapWeb: true }) && !lapWebOn({ lapWeb: false }), "上网查：没拨过是开着的，关了才关");
+const w1 = withLapWeb({ model: "m", system: [{ type: "text", text: "名帖", cache_control: { type: "ephemeral" } }], messages: [] });
+ok(w1.kfs_web === true && w1.system.length === 2 && w1.system[0].text === "名帖" && w1.system[1].text === LAP_WEB_NOTE && LAP_WEB_NOTE.startsWith("【上网】"), "名帖是一串块的：后面接一块【上网】，带上记号");
+const w2 = withLapWeb({ model: "m", system: "名帖", messages: [] });
+ok(Array.isArray(w2.system) && w2.system.map((b) => b.text).join("|") === "名帖|" + LAP_WEB_NOTE, "名帖是一段字的：换成一串，后面接【上网】");
+const w3 = withLapWeb({ model: "m", messages: [] });
+ok(w3.system.length === 1 && w3.system[0].text === LAP_WEB_NOTE, "没名帖的：名帖就是【上网】那一段");
 
 // ---------- 门说的话 ----------
 ok(explainError(429, { type: "kaifengfu", message: "订阅的额度用完了", code: "cc_quota" }) === "订阅的额度用完了", "门说额度用完了：照原样（不说成“说得太快，Anthropic 让歇一会儿”）");

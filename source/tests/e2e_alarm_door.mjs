@@ -247,6 +247,7 @@ if (CLAUDE) {
   const hisWords = fox.filter((m) => m.role === "him").map((m) => m.raw || "").join(" ");
   ok(r.code === 0 && r.out.includes("醒过了") && woke && (woke.tools || []).some((t) => /diary_read/.test(t.name)) && hisWords.includes("不记得"), `传话走笔记本：狐宇宙醒来交给这台电脑上的 Claude Code（带着翻日记那几样），他说的放进了狐宇宙（${r.out.trim().split("\n").pop()}｜${hisWords.slice(0, 20)}）`);
   ok((await get("/__debug/claude")).length === apiBefore, "没走 claude 函数（API）");
+  ok((woke.tools || []).some((t) => t.name === "WebSearch") && (woke.tools || []).some((t) => t.name === "WebFetch") && JSON.stringify(woke.system || "").includes("【上网】"), "上网查默认开着：醒来那一回 Claude Code 带着它自带的搜索、读网页，名帖后面有【上网】");
   const month = JSON.parse((await read(usageKey())) || "null");
   ok(month && month.cc >= 1 && !month.cost, `用量：走笔记本的另记几步，不算钱（${JSON.stringify(month)}）`);
 }

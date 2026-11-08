@@ -15,6 +15,8 @@
 //     Claude Code 调的时候带着 tool_use 的编号（_meta 里的 claudecode/toolUseId），结果对得上号。
 //   - 她接的 MCP（mcp_servers，tavily 这些）：原样挂到 Claude Code 上，他自己调；回话里照 Anthropic 的样子写成
 //     mcp_tool_use、mcp_tool_result（手机那头照这个写“用了 tavily”）。
+//   - 上网查（这一包带着 kfs_web: true）：再给 Claude Code 它自带的 WebSearch、WebFetch，他自己调；回话里也写成
+//     mcp_tool_use、mcp_tool_result（server_name 是“上网查”）。
 //   - 同一段对话接着说：上一回的那条进程还开着、这一包正好是接着上一回往下说的（前面每一句都对得上），就接着用那一条
 //     （Claude Code 手里记着的跟 Anthropic 那头缓存着的是同一份，省额度、也快）；对不上（重新回答、改了话、抄了提要、
 //     换了一支）就另起一条，照这一包从头接。
@@ -48,6 +50,10 @@ export function sessionDir(cwd, configDir) {
 
 // ---------- 一包里的东西 ----------
 
+// 上网查（开封府 API 面板里的开关，走笔记本的时候才有；手机寄来的那一包带着 kfs_web: true）：给 Claude Code 它自带的搜索、读网页。
+// 他用了的那一下照她接的 MCP 那样写成 mcp_tool_use、mcp_tool_result（server_name 是 WEB_SERVER），手机那头写“用了 上网查”
+const WEB_TOOLS = ["WebSearch", "WebFetch"];
+const WEB_SERVER = "上网查";
 // 没带名帖的时候名帖那个临时文件里写的（见 run）
 const NO_SYSTEM = "（这一回没有名帖。）";
 // system：字或者一串 { type: "text", text }，拼成一份
@@ -119,14 +125,15 @@ function remoteServers(body) {
   return out;
 }
 
-// 这一包要的 Claude Code 是哪一种：名帖、模型、回话多长、有哪些工具、接了哪些 MCP 一样，才能接着用同一条进程
+// 这一包要的 Claude Code 是哪一种：名帖、模型、回话多长、有哪些工具、接了哪些 MCP、上不上网一样，才能接着用同一条进程
 function shapeOf(body) {
   const tools = (body.tools || []).filter((t) => t && t.name && t.input_schema && !t.type);
   const servers = remoteServers(body);
+  const web = body.kfs_web === true;
   const key = createHash("sha256")
-    .update(JSON.stringify([systemText(body.system), body.model, body.max_tokens || 0, tools.map((t) => [t.name, t.description || "", t.input_schema]), servers]))
+    .update(JSON.stringify([systemText(body.system), body.model, body.max_tokens || 0, tools.map((t) => [t.name, t.description || "", t.input_schema]), servers, web]))
     .digest("hex");
-  return { key, tools, servers, own: new Set(tools.map((t) => t.name)) };
+  return { key, tools, servers, web, own: new Set(tools.map((t) => t.name)) };
 }
 
 // ---------- 会话记录（Claude Code 自己的样子，2.1.319 认得的最少那几样） ----------
@@ -232,7 +239,7 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = 
       temp.push(writeSession(sessionDir(realCwd, configDir), realCwd, sid, history, body.model));
     }
     const mcp = { mcpServers: { [KFS]: { type: "http", url: mcpUrl(id) }, ...shape.servers } };
-    const allowed = [`mcp__${KFS}`, ...Object.keys(shape.servers).map((n) => `mcp__${n}`)];
+    const allowed = [`mcp__${KFS}`, ...Object.keys(shape.servers).map((n) => `mcp__${n}`), ...(shape.web ? WEB_TOOLS : [])];
     const args = [
       "--print",
       "--input-format", "stream-json",
@@ -241,7 +248,7 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = 
       "--include-partial-messages",
       "--model", body.model,
       "--system-prompt-file", sysFile,
-      "--tools", "", // Claude Code 自己的那些（读写文件、跑命令）一样都不给
+      "--tools", shape.web ? WEB_TOOLS.join(",") : "", // Claude Code 自己的那些（读写文件、跑命令）一样都不给；上网查开着只给搜索、读网页
       "--mcp-config", JSON.stringify(mcp),
       "--strict-mcp-config", // 这台电脑上别处配的 MCP 不挂
       "--allowedTools", allowed.join(","),
@@ -401,6 +408,7 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = 
         if (b.type === "text" && b.text) seg.blocks.push({ type: "text", text: b.text });
         // 这一回不许调（tool_choice: none）：他还是调了的那一下不交给手机（MCP 那头直接回“不许调”，他接着说）
         else if (b.type === "tool_use" && b.name.startsWith(PREFIX)) !run.noTools && seg.blocks.push({ type: "tool_use", id: b.id, name: b.name.slice(PREFIX.length), input: b.input || {} });
+        else if (b.type === "tool_use" && run.shape.web && WEB_TOOLS.includes(b.name)) seg.blocks.push({ type: "mcp_tool_use", id: b.id, name: b.name, server_name: WEB_SERVER, input: b.input || {} });
         else if (b.type === "tool_use") {
           const r = remoteOf(run, b.name);
           if (r) seg.blocks.push({ type: "mcp_tool_use", id: b.id, name: r.name, server_name: r.server_name, input: b.input || {} });

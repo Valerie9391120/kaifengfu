@@ -56,6 +56,7 @@ import { BubbleRow } from "./chat/Bubble.jsx";
 import { CtrlRow, ThinkingRow, NoticeRow, TypingRow, RecapRow } from "./chat/Lines.jsx";
 import { AskCard, AskRow } from "./chat/AskCard.jsx";
 import { LapAsk, LapConfirm } from "./chat/LapAsk.jsx";
+import { lapWebOn, withLapWeb } from "./laptop.js";
 import { answerText } from "./ask.js";
 import { MsgMenu } from "./chat/MsgMenu.jsx";
 import { SplashByTheme } from "./Splash.jsx";
@@ -2283,7 +2284,8 @@ export default function App({ account = {} }) {
       // 打电话的时候不下棋（卿卿 10 月 15 日定的）、不翻日记（10 月 18 日定的）：工具照带（对话里有他调过的），只是这一回不许调。
       // 收了棋的原来也是这样不许调；10 月 18 日起照许（平常对话能翻日记），他真调了棋局那几样，settleCalls 递回去“棋盘收着”
       if (inCall) body.tool_choice = { type: "none" };
-      return body;
+      // 走笔记本、上网查开着（卿卿 11 月 8 日要的；打电话的时候也给）：Claude Code 带上它自带的搜索、读网页，名帖后面添一段【上网】
+      return route && lapWebOn(st) ? withLapWeb(body) : body;
     };
     const betaFor = (at) => (at.mcp ? "mcp-client-2025-11-20" : "");
     const slugs = {};

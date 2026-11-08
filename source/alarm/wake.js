@@ -28,6 +28,7 @@ import { HIS_NAME, NAME_KEYS } from "../src/names.js";
 import { makePreview } from "../src/chat/overview.js";
 import { chatTag } from "../src/mail.js";
 import { newId } from "../src/util.js";
+import { lapWebOn, withLapWeb } from "../src/laptop.js";
 import { needsReply, stoppedAt } from "../src/thread.js";
 import { FOX_CHAT, FOX_TITLE, FOX_DOORS, FOX_TASK, TASK_MAX_ROUNDS, isWakeMark, gapOf, maxOf, wakeOn } from "../src/fox.js";
 import { lastMark, parseWake, nextChase, infoOf, splitWake, OWED_MS } from "./plan.js";
@@ -344,7 +345,9 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     // 走不了这一回就不醒（不走 API，也问不了她），照闹钟原来的规矩过一会儿再试
     if (st.route === "laptop") {
       if (!cloud.laptop) throw Object.assign(new Error("传话拨到了笔记本，可这台电脑上的门没开（node kfs-alarm.mjs door）"), { code: "laptop" });
-      const data = await cloud.laptop(bodyFor(list, attempts[0], final, thought));
+      // 上网查开着（卿卿 11 月 8 日要的：醒来也让查）：Claude Code 带上它自带的搜索、读网页，名帖后面添一段【上网】
+      const body = bodyFor(list, attempts[0], final, thought);
+      const data = await cloud.laptop(lapWebOn(st) ? withLapWeb(body) : body);
       return { data, used: attempts[0] };
     }
     let lastErr = null;

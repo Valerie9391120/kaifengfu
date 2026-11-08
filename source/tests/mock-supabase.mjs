@@ -706,15 +706,26 @@ const DOOR_FAILS = {
   cc_quota: { status: 429, message: "订阅的额度用完了" },
   cc: { status: 500, message: "Claude Code 那一条停了" },
 };
-const doorState = { down: false, fail: "", seen: 0 };
+const doorState = { down: false, fail: "", seen: 0, last: null };
 const fakeLaptop = {
   async handle(body, { signal } = {}) {
     doorState.seen++;
+    // 最近那一包：带没带上网查（kfs_web、名帖后面那段【上网】）、是不是电话里不许调工具的那种
+    doorState.last = { web: body.kfs_web === true, note: JSON.stringify(body.system || "").includes("【上网】"), call: !!(body.tool_choice && body.tool_choice.type === "none") };
     const f = DOOR_FAILS[doorState.fail];
     if (f) throw Object.assign(new Error(f.message), { status: f.status });
-    const out = await heldAnthropic(body, "", "door", signal);
+    const { kfs_web, ...ask } = body;
+    const out = await heldAnthropic(ask, "", "door", signal);
     if (out.status !== 200) throw Object.assign(new Error((out.json && out.json.error && out.json.error.message) || `出错了（${out.status}）`), { status: out.status });
-    return { ...out.json, via: "claude-code" };
+    // 上网查开着、她叫他“上网查一下”：Claude Code 自带的搜索用了一下（真的门照 MCP 那样写，见 alarm/bridge.js）
+    const lastText = JSON.stringify((ask.messages || []).slice(-1));
+    const searched = kfs_web && lastText.includes("上网查一下")
+      ? [
+          { type: "mcp_tool_use", id: "srvtoolu_web1", name: "WebSearch", server_name: "上网查", input: { query: "明天天气" } },
+          { type: "mcp_tool_result", tool_use_id: "srvtoolu_web1", is_error: false, content: [{ type: "text", text: "明天多云" }] },
+        ]
+      : [];
+    return { ...out.json, content: [...searched, ...(out.json.content || [])], via: "claude-code" };
   },
   runs: () => 0,
   spawned: () => 0,
@@ -983,11 +994,12 @@ const server = http.createServer(async (req, res) => {
         else await laptopUp();
       }
       if (url.searchParams.has("fail")) doorState.fail = url.searchParams.get("fail") || "";
-      return send(res, 200, { down: doorState.down, fail: doorState.fail, seen: doorState.seen, port: DOOR_PORT, token: DOOR_TOKEN });
+      return send(res, 200, { down: doorState.down, fail: doorState.fail, seen: doorState.seen, last: doorState.last, port: DOOR_PORT, token: DOOR_TOKEN });
     }
     if (url.pathname === "/__debug/reset") {
       doorState.fail = "";
       doorState.seen = 0;
+      doorState.last = null;
       if (doorState.down || !laptop) {
         doorState.down = false;
         await laptopUp();

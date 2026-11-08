@@ -1,7 +1,8 @@
 # 传话走她笔记本上的 Claude Code（卿卿 11 月 8 日定的，见开发说明“传话走笔记本上的 Claude Code”那节）的端到端测试：
 # 真的浏览器；假 Supabase 里起了一扇真的门（alarm/door.js），门里的 Claude Code 换成假的（照假的 Anthropic 回，回话带 via: "claude-code"），
 # 门替她等回话的时候读写信箱、敲手机走闹钟真的 cloud.js（见 tests/mock-supabase.mjs 的“她的笔记本”那一段）。
-#   API 面板：传话走哪儿（API / 笔记本）、门牌暗记两格（存之前收拾一下）、测试连接敲门、侧栏那一格写“走笔记本”
+#   API 面板：传话走哪儿（API / 笔记本）、门牌暗记两格（存之前收拾一下）、上网查（默认开着）、测试连接敲门、侧栏那一格写“走笔记本”
+#   上网查：那一包带着记号、名帖后面添【上网】；他查了写“用了 上网查”；关了就不带；电话里也带
 #   走笔记本：回话从门那头来；用量另记、不算钱
 #   走不了（敲不到、Claude Code 出岔子）：底下那张卡问她“这句走 API”“再敲笔记本”；只管这一句，下一句照旧先走笔记本、再问
 #   重新回答没走成：一样问（“这次走 API”）
@@ -82,6 +83,9 @@ with sync_playwright() as p:
         pa.get_by_role("button", name="笔记本", exact=True).click(); time.sleep(0.5)
         ok(pa.locator(".kfs-route").get_attribute("data-route") == "laptop" and pa.locator(".kfs-door-fields").count() == 1 and "走你笔记本上的 Claude Code" in pa.locator(".kfs-sheet").inner_text(),
            "拨到笔记本：底下出来门牌、暗记两格，说明换成一句走笔记本的")
+        web = pa.get_by_role("switch", name="上网查")
+        ok(web.count() == 1 and web.get_attribute("aria-checked") == "true" and "让他用 Claude Code 自带的搜索、读网页，走订阅额度" in pa.locator(".kfs-lap-web").inner_text(),
+           "两格底下还有“上网查”（字照 Moonlight），默认开着")
         url = pa.locator(".kfs-door-url")
         url.fill(f"  {DOOR}/kfs/ping "); url.press("Enter"); time.sleep(0.3)
         key = pa.locator(".kfs-door-key")
@@ -103,6 +107,7 @@ with sync_playwright() as p:
         n0 = len(calls())
         chat(pa, "笔记本在吗")
         ok(vias(n0) == ["door"] and not lap_card(pa), "说一句：交给笔记本那扇门（Claude Code 回的），底下没有那张卡")
+        ok(door()["last"] == {"web": True, "note": True, "call": False}, f"上网查开着：那一包带着记号，名帖后面添了【上网】那一段（{door()['last']}）")
         cid, msgs = chat_of(pa)
         him = [m for m in msgs if m["role"] == "him"][-1]
         ok(him.get("job") and [it["text"] for it in him["items"]] == ["收到：笔记本在吗", "第二条"], "回话落进对话，跟走 API 一个样子（新路：这一回记着编号）")
@@ -111,6 +116,20 @@ with sync_playwright() as p:
         ok("本月走笔记本" in rows and "2 次，不算钱" in rows and any(r.startswith("走的笔记本") for r in rows), f"用量：走笔记本的另记、不算钱；上一条写走的笔记本（{[r for r in rows if '笔记本' in r]}）")
         pa.get_by_text("本月走笔记本").scroll_into_view_if_needed()
         shot(pa, "2b-usage")
+        close_api(pa)
+
+        # ================= 上网查 =================
+        chat(pa, "上网查一下明天天气")
+        ok(wait_js(pa, "document.body.innerText.includes('用了 上网查')", 8000), "他用 Claude Code 自带的搜索查了：对话里写“用了 上网查”（同 tavily 那样）")
+        open_api(pa)
+        pa.get_by_role("switch", name="上网查").click(); time.sleep(0.5)
+        ok(json.loads(pa.evaluate(KV, "kfs2:settings") or "{}").get("lapWeb") is False, "关掉上网查：存进设置")
+        close_api(pa)
+        chat(pa, "这回不上网")
+        ok(door()["last"] == {"web": False, "note": False, "call": False}, f"关了：那一包不带记号、名帖后面没有【上网】（{door()['last']}）")
+        open_api(pa)
+        pa.get_by_role("switch", name="上网查").click(); time.sleep(0.5)
+        shot(pa, "7-web")
         close_api(pa)
 
         # ================= 笔记本睡着了：每句都问 =================
@@ -227,6 +246,11 @@ with sync_playwright() as p:
         door(down=0)
         pa.locator(".kfs-composer button[aria-label='打电话']").click()
         ok(wait_phase(pa, "listening", 15000) and not pa.locator(".kfs-call-ask").count(), "笔记本醒着：接通前敲到了，不问，照常接通")
+        n8 = door()["seen"]
+        wait_mock(stt_open, 6)
+        mock("/__debug/stt-say?text=" + urllib.parse.quote("电话里查一下"))
+        ok(wait_mock(lambda: door()["seen"] > n8, 20) and door()["last"] == {"web": True, "note": True, "call": True}, f"电话里走笔记本：也带着上网查（工具照旧不许调，上网那两样照给；{door()['last']}）")
+        wait_phase(pa, "listening", 20000)
         door(down=1)
         e1 = len(eleven())
         wait_mock(stt_open, 6)

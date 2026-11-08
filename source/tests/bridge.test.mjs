@@ -56,6 +56,7 @@ const api = http.createServer((req, res) => {
     else if (text.includes("两样")) blocks = [{ type: "tool_use", name: "mcp__kfs__jianghu_roll", input: { who: "him" } }, { type: "tool_use", name: "mcp__kfs__qx_draw", input: { n: 1 } }];
     else if (text.includes("不许")) blocks = [{ type: "tool_use", name: "mcp__kfs__qx_draw", input: { n: 1 } }];
     else if (text.includes("查")) blocks = [{ type: "tool_use", name: "mcp__tavily__search", input: { query: "明天天气" } }];
+    else if (text.includes("上网")) blocks = [{ type: "text", text: "我上网看看" }, { type: "tool_use", name: "WebFetch", input: { url: "https://example.com/", prompt: "这一页写了什么" } }];
     else blocks = [{ type: "text", text: "收到：" + text }];
     res.writeHead(200, { "content-type": "text/event-stream" });
     const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
@@ -260,6 +261,18 @@ try {
   ok(r.content && r.content.some((b) => b.type === "text" && b.text.includes("收到：没名帖")), `没带名帖的一包也走得通（${JSON.stringify((r.content || []).map((b) => b.text))}）`);
   // 这台测试机上的 Claude Code 会在名帖后头自己续几段（她电脑上的不续），只写个空格的那一块在这儿撞不上 400：直接看名帖那一块写的是什么
   ok(JSON.stringify(seen[seen.length - 1].system || "").includes("（这一回没有名帖。）"), "没带名帖：名帖那个临时文件写的是一句“这一回没有名帖”，不是空白");
+  // 上网查（开封府 API 面板里的开关，这一包带着 kfs_web）：Claude Code 拿到它自带的搜索、读网页，他自己调；
+  // 回话里照她接的 MCP 那样写成 mcp_tool_use、mcp_tool_result（server_name 是“上网查”，手机那头写“用了 上网查”）。没带的那几包不给
+  ok(seen.slice(0, 3).every((x) => !x.tools.includes("WebSearch") && !x.tools.includes("WebFetch")), "没带上网查的：Claude Code 自带的搜索、读网页一样不给");
+  const seenWeb = seen.length;
+  r = await bridge.handle(body([u("上网看看", [now("14:40")])], { kfs_web: true }));
+  const webAsk = seen[seenWeb];
+  const used = (r.content || []).find((b) => b.type === "mcp_tool_use");
+  const back = (r.content || []).find((b) => b.type === "mcp_tool_result");
+  ok(webAsk && webAsk.tools.includes("WebSearch") && webAsk.tools.includes("WebFetch") && webAsk.tools.some((t) => t.startsWith("mcp__kfs__")), `带着上网查：Claude Code 拿到 WebSearch、WebFetch，开封府的工具照旧在（${webAsk && webAsk.tools.filter((t) => !t.startsWith("mcp__")).join(",")}）`);
+  // （这台测试机连不上外头，读网页那一下是失败的结果：照样接着说完）
+  ok(used && used.server_name === "上网查" && used.name === "WebFetch" && used.input.url === "https://example.com/" && back && back.tool_use_id === used.id && r.stop_reason === "end_turn" && r.content[r.content.length - 1].type === "text",
+     `他调了读网页：Claude Code 自己办，回话里写成 mcp_tool_use、mcp_tool_result（上网查），他接着说完（${JSON.stringify((r.content || []).map((b) => b.type + (b.server_name ? ":" + b.server_name : "")))}）`);
   ok((await bridge.mcp("0".repeat(32), { jsonrpc: "2.0", id: 1, method: "tools/list" })).error, "关了的、没有的那一条：MCP 不认");
   const live = bridge.runs()[0];
   ok(live && (await bridge.mcp(live.id, { jsonrpc: "2.0", id: 2, method: "nope" })).error.code === -32601 && (await bridge.mcp(live.id, { jsonrpc: "2.0", method: "notifications/initialized" })) === null, "不认的方法回 -32601；通知不用回");

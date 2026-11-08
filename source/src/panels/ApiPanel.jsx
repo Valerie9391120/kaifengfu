@@ -301,6 +301,16 @@ export function ApiPanel({ settings, onChange, onTest, testNote, testing, usage,
           ? "走你笔记本上的 Claude Code。走不了的时候，每句先问你走不走 API。"
           : "你的 key 锁在 Supabase 的保险柜里，手机上没有。开封府每次说话，都是先在门口核对是你，再替你转给 Anthropic。"}
       </p>
+      {/* 上网查（卿卿 11 月 8 日要的，字照 Moonlight，默认开着）：走笔记本的时候给他 Claude Code 自带的搜索、读网页（见 laptop.js 的 lapWebOn） */}
+      {route === "laptop" && (
+        <div className="kfs-lap-web flex items-center justify-between" style={{ gap: 12, margin: "4px 0 18px" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14, color: T.ink }}>上网查</div>
+            <div style={{ fontSize: 12, color: T.inkSoft, lineHeight: 1.55, marginTop: 2 }}>让他用 Claude Code 自带的搜索、读网页，走订阅额度</div>
+          </div>
+          <Toggle on={settings.lapWeb !== false} onChange={(v) => onChange({ lapWeb: v })} label="上网查" />
+        </div>
+      )}
       <div className="flex items-center flex-wrap" style={{ gap: 10 }}>
         <button onClick={onTest} disabled={testing} className="kfs-tap" style={{ ...chip, opacity: testing ? 0.5 : 1 }}>
           {testing ? "正在测试…" : "测试连接"}
