@@ -8,6 +8,7 @@
 #   重新回答没走成：一样问（“这次走 API”）
 #   她切走了：门照样等完、放进信箱、敲她的手机；没回成的也敲一条“笔记本那头没回上”，她回来底下那张卡照样问
 #   写日记：走不了弹出来问这篇走不走 API
+#   做网页：他做的一页一张卡（存进开封府、加密），点开在隔开的框里玩（脚本跑得起来、碰不到开封府）；改过的一版、太大的；电话里不做
 #   打电话：接通前敲门，敲不到问这通电话走不走 API；打到一半断了，他说一句“笔记本那头断了”，挂掉
 # 先在 source/ 里 npm run build:test，起好假 Supabase（8787，门在 8788）和测试网页（8080），再：python3 tests/e2e_laptop.py
 # KFS_SHOTS=目录：顺手截几张给她看的图
@@ -26,6 +27,9 @@ def shot(page, name):
         time.sleep(0.4)
         page.screenshot(path=os.path.join(SHOTS, name + ".png"))
 def door(**q): return mock("/__debug/door?" + urllib.parse.urlencode(q))
+def last_is(**want):
+    got = door()["last"] or {}
+    return all(got.get(k) == v for k, v in want.items())
 def vias(since=0): return [c.get("via") for c in calls()[since:]]
 def side(page):
     page.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
@@ -107,7 +111,8 @@ with sync_playwright() as p:
         n0 = len(calls())
         chat(pa, "笔记本在吗")
         ok(vias(n0) == ["door"] and not lap_card(pa), "说一句：交给笔记本那扇门（Claude Code 回的），底下没有那张卡")
-        ok(door()["last"] == {"web": True, "note": True, "call": False}, f"上网查开着：那一包带着记号，名帖后面添了【上网】那一段（{door()['last']}）")
+        ok(last_is(web=True, note=True, call=False), f"上网查开着：那一包带着记号，名帖后面添了【上网】那一段（{door()['last']}）")
+        ok(last_is(pages=True), "走笔记本：那一包带着这段对话的网页文件夹记号，名帖后面添了【做网页】")
         cid, msgs = chat_of(pa)
         him = [m for m in msgs if m["role"] == "him"][-1]
         ok(him.get("job") and [it["text"] for it in him["items"]] == ["收到：笔记本在吗", "第二条"], "回话落进对话，跟走 API 一个样子（新路：这一回记着编号）")
@@ -126,7 +131,7 @@ with sync_playwright() as p:
         ok(json.loads(pa.evaluate(KV, "kfs2:settings") or "{}").get("lapWeb") is False, "关掉上网查：存进设置")
         close_api(pa)
         chat(pa, "这回不上网")
-        ok(door()["last"] == {"web": False, "note": False, "call": False}, f"关了：那一包不带记号、名帖后面没有【上网】（{door()['last']}）")
+        ok(last_is(web=False, note=False, call=False), f"关了：那一包不带记号、名帖后面没有【上网】（{door()['last']}）")
         open_api(pa)
         pa.get_by_role("switch", name="上网查").click(); time.sleep(0.5)
         shot(pa, "7-web")
@@ -207,6 +212,49 @@ with sync_playwright() as p:
         time.sleep(1.5)
         ok(not lap_card(pa), "她登好了点“再敲笔记本”：回上了")
 
+        # ================= 做网页 =================
+        chat(pa, "做个网页给我玩")
+        card = pa.locator(".kfs-page-card").last
+        ok(card.count() == 1 and "小月亮" in card.inner_text() and "他做的网页 · 点开玩" in card.inner_text(), f"他做了一个网页：话后面一张卡，写着那一页的名字（{card.inner_text() if card.count() else ''}）")
+        cid, msgs = chat_of(pa)
+        pg = [it for m in msgs if m["role"] == "him" for it in m.get("items", []) if it.get("type") == "page"][-1]
+        saved = json.loads(pa.evaluate(KV, "kfs2:page:" + pg["page"]) or "null")
+        ok(saved and "转起来了" in saved["html"] and saved["file"] == "moon.html" and "html" not in pg, "整页存进开封府（单独一样，不塞在对话里）")
+        ok(not any("转起来了" in str(r.get("value", "")) for r in mock("/__debug/rows")), "云端只有乱码（存的那一页是加密的）")
+        shot(pa, "8-page-card")
+        card.click()
+        pa.locator(".kfs-page-view iframe").wait_for(timeout=10000)
+        frame = None
+        for _ in range(40):
+            frame = next((f for f in pa.frames if f != pa.main_frame and f.url.endswith(".html") and "pagebox" in f.url), None)
+            if frame:
+                try:
+                    if frame.evaluate("document.getElementById('m') && document.getElementById('m').textContent") == "🌕 转起来了": break
+                except Exception:
+                    pass
+            time.sleep(0.25)
+        ok(frame and frame.evaluate("document.getElementById('m').textContent") == "🌕 转起来了", "点开：全屏框里是那一页，他写的脚本跑起来了")
+        ok(pa.locator(".kfs-page-view iframe").get_attribute("sandbox") == "allow-scripts allow-modals allow-forms allow-pointer-lock" and frame.evaluate("[document.body.dataset.ls, document.body.dataset.top]") == ["不行", "碰不到"],
+           "框是隔开的：那一页用不了存东西的地方、碰不到开封府这一页")
+        ok(frame.evaluate("window.name") == "", "暗号读完就清掉了（那一页里读不到）")
+        shot(pa, "9-page-open")
+        pa.get_by_role("button", name="关掉网页").click(); time.sleep(0.5)
+        ok(not pa.locator(".kfs-page-view").count(), "点叉：整层拆掉")
+        # （下一句前面跟着“你做的网页放进对话里了”那一句，假的那边连它一起回“收到：…”：等卡出来，不等字）
+        def more_cards(text):
+            n = pa.locator(".kfs-page-card").count()
+            say(pa, text)
+            got = wait_js(pa, f"document.querySelectorAll('.kfs-page-card').length > {n} && !document.querySelector('.kfs-typing')", 20000)
+            time.sleep(1.2)
+            return got
+        ok(more_cards("改一下网页") and last_is(told=True), "下一句寄过去的对话里跟他说了：他做的那一页放进对话里了")
+        ok("他改过的一版 · 点开玩" in pa.locator(".kfs-page-card").last.inner_text(), "他改过的那一版：又一张卡，写着改过的一版")
+        ok(more_cards("做个大网页"), "做个大网页：也是一张卡")
+        big = pa.locator(".kfs-page-card").last
+        ok("太大了（3.0 兆），没存下" in big.inner_text(), "太大了没存下的：卡上照实写")
+        big.click(); time.sleep(0.5)
+        ok(not pa.locator(".kfs-page-view").count(), "没存下的那张点不开")
+
         # ================= 写日记：走不了弹出来问 =================
         door(down=1)
         side(pa)
@@ -249,7 +297,7 @@ with sync_playwright() as p:
         n8 = door()["seen"]
         wait_mock(stt_open, 6)
         mock("/__debug/stt-say?text=" + urllib.parse.quote("电话里查一下"))
-        ok(wait_mock(lambda: door()["seen"] > n8, 20) and door()["last"] == {"web": True, "note": True, "call": True}, f"电话里走笔记本：也带着上网查（工具照旧不许调，上网那两样照给；{door()['last']}）")
+        ok(wait_mock(lambda: door()["seen"] > n8, 20) and last_is(web=True, note=True, call=True, pages=False), f"电话里走笔记本：也带着上网查（工具照旧不许调，上网那两样照给）；不做网页（{door()['last']}）")
         wait_phase(pa, "listening", 20000)
         door(down=1)
         e1 = len(eleven())

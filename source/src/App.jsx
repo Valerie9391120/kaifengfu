@@ -56,7 +56,8 @@ import { BubbleRow } from "./chat/Bubble.jsx";
 import { CtrlRow, ThinkingRow, NoticeRow, TypingRow, RecapRow } from "./chat/Lines.jsx";
 import { AskCard, AskRow } from "./chat/AskCard.jsx";
 import { LapAsk, LapConfirm } from "./chat/LapAsk.jsx";
-import { lapWebOn, withLapWeb } from "./laptop.js";
+import { lapWebOn, withLapWeb, withLapPages, pagesOf as lapPagesOf, PAGE_KEY } from "./laptop.js";
+import { PageView } from "./chat/PageView.jsx";
 import { answerText } from "./ask.js";
 import { MsgMenu } from "./chat/MsgMenu.jsx";
 import { SplashByTheme } from "./Splash.jsx";
@@ -343,6 +344,8 @@ export default function App({ account = {} }) {
   const [docs, setDocs] = useState({});
   const docsRef = useRef({});
   const [docView, setDocView] = useState(null); // 点开看的那一份
+  // 点开玩的那一页（他做的网页，见 chat/PageView.jsx）：{ it, html }；取不到的 html 是 null
+  const [pageView, setPageView] = useState(null);
   // 前情提要（见 recap.js）：眼前这段对话抄过的那几份（聊天记录里那行小字照它画）、点开看的那一份
   const [recaps, setRecaps] = useState([]);
   const [recapView, setRecapView] = useState(null);
@@ -2046,6 +2049,13 @@ export default function App({ account = {} }) {
             : { ...c, out: CUT_CALL, err: true, card: [] }
         );
     }
+    // 他在笔记本上做的网页（走笔记本的时候，见 laptop.js、alarm/bridge.js）：整页存进开封府（kfs2:page:<id>，加密了跟着云端走），
+    // 对话里跟在他的话后面摆一张卡。太大的没带整页，卡上照实写
+    const made = lapPagesOf(data.content, him.id);
+    if (made.items.length) {
+      made.saves.forEach((x) => store.set(x.key, x.value));
+      him.items = [...him.items, ...made.items];
+    }
     if (settled.avatarFile) changeHisAvatar({ type: "meme", file: settled.avatarFile });
     // 他给自己改了名字：顶栏马上换；回复上记一笔，对话里留一行提示（和现在一样的不算改）
     if (parsed.rename && parsed.rename !== (namesRef.current.him || HIS_NAME)) {
@@ -2261,6 +2271,8 @@ export default function App({ account = {} }) {
     if (sinceNoCache >= NO_CACHE_MS || sinceNoCache < 0) attempts.push({ cache: true, mcp: withMcp });
     attempts.push({ cache: false, mcp: withMcp });
     if (withMcp) attempts.push({ cache: false, mcp: false });
+    // 做网页那一段对话的记号（门那头一段对话一个网页文件夹，见 alarm/bridge.js）：走笔记本、不在打电话才有
+    const pageTag = route && !inCall && opts.chat ? await chatTag((name) => store.nameFor(name), opts.chat) : "";
     const bodyFor = (at) => {
       const body = {
         model,
@@ -2285,7 +2297,10 @@ export default function App({ account = {} }) {
       // 收了棋的原来也是这样不许调；10 月 18 日起照许（平常对话能翻日记），他真调了棋局那几样，settleCalls 递回去“棋盘收着”
       if (inCall) body.tool_choice = { type: "none" };
       // 走笔记本、上网查开着（卿卿 11 月 8 日要的；打电话的时候也给）：Claude Code 带上它自带的搜索、读网页，名帖后面添一段【上网】
-      return route && lapWebOn(st) ? withLapWeb(body) : body;
+      let b = route && lapWebOn(st) ? withLapWeb(body) : body;
+      // 走笔记本：他能做网页（同 Moonlight，见 laptop.js）；打电话的时候不做
+      if (pageTag) b = withLapPages(b, pageTag);
+      return b;
     };
     const betaFor = (at) => (at.mcp ? "mcp-client-2025-11-20" : "");
     const slugs = {};
@@ -4715,6 +4730,17 @@ export default function App({ account = {} }) {
   };
 
   // 她点“点这里重发”。recheck：这台设备不记得为这句话发过哪一回的话，先同步看一眼别处回上了没有（见 mail.js 的 ask）
+  // 他做的网页点开：从存档里取那一页（加密的，见 laptop.js 的 PAGE_KEY），盖一层全屏玩
+  const openPage = async (it) => {
+    if (!it || !it.page || it.toobig) return;
+    setPageView({ it, html: "" });
+    let html = null;
+    try {
+      const v = JSON.parse((await store.get(PAGE_KEY + it.page)) || "null");
+      html = v && typeof v.html === "string" ? v.html : null;
+    } catch (e) {}
+    setPageView((cur) => (cur && cur.it === it ? { it, html } : cur));
+  };
   const retry = () => {
     const msgs = messagesRef.current;
     if (!loadingRef.current && needsReply(msgs)) askGuangyi(chatIdRef.current, msgs, null, { recheck: true });
@@ -5746,7 +5772,7 @@ export default function App({ account = {} }) {
   // 对话页（或侧栏）在最上面时，底边自己接得上那条色块，告诉 main.jsx 别再盖淡出
   // 并蒂莲那一层不算在里头：那层淡出（main.jsx 的 BottomMist）在外壳外头、层高 60，会盖到并蒂莲上面；
   // 那一层开着的时候网页底色是黑的，本来也不该淡进浅色（见 panels/LotusPage.jsx）
-  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !boxOpen && !thOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming && !docView && !recapView;
+  const chatOnTop = !splash && !sheet && !historyOpen && !diaryOpen && !boxOpen && !thOpen && !menu && !viewer && !copySheet && !chatMenu && !renaming && !docView && !recapView && !pageView;
   useEffect(() => {
     const r = document.documentElement;
     if (chatOnTop) r.setAttribute("data-kfs-chat", "");
@@ -6427,6 +6453,7 @@ export default function App({ account = {} }) {
                 onDrawAgain={(r) => getPainter().again(chatIdRef.current, drawKeyOf(r.msg.id, r.idx), drawOf(r.item).prompt, r.item.ratio || "")}
                 onOpenPhoto={setViewer}
                 onOpenDoc={setDocView}
+                onOpenPage={openPage}
                 onLongPress={(r, rect) => setMenu({ row: r, rect })}
               />
             );
@@ -6906,6 +6933,8 @@ export default function App({ account = {} }) {
         </Sheet>
       )}
 
+      {/* 他做的网页点开玩（见 chat/PageView.jsx） */}
+      {pageView && <PageView it={pageView.it} html={pageView.html} onClose={() => setPageView(null)} />}
       {docView && (
         <Sheet
           title={

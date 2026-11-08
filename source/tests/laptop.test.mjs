@@ -1,5 +1,5 @@
 // 传话走笔记本（src/laptop.js）：API 面板里门牌、暗记怎么收拾；errors.js 照原样说开封府自己的后端（门）说的话
-import { normDoor, normKey, laptopOn, laptopReady, lapWebOn, withLapWeb, LAP_WEB_NOTE } from "../src/laptop.js";
+import { normDoor, normKey, laptopOn, laptopReady, lapWebOn, withLapWeb, LAP_WEB_NOTE, withLapPages, LAP_PAGE_NOTE, pagesOf, pageNote, PAGE_KEY } from "../src/laptop.js";
 import { explainError } from "../src/errors.js";
 
 let pass = 0, failN = 0;
@@ -43,6 +43,24 @@ const w2 = withLapWeb({ model: "m", system: "名帖", messages: [] });
 ok(Array.isArray(w2.system) && w2.system.map((b) => b.text).join("|") === "名帖|" + LAP_WEB_NOTE, "名帖是一段字的：换成一串，后面接【上网】");
 const w3 = withLapWeb({ model: "m", messages: [] });
 ok(w3.system.length === 1 && w3.system[0].text === LAP_WEB_NOTE, "没名帖的：名帖就是【上网】那一段");
+
+// ---------- 做网页 ----------
+const p1 = withLapPages({ model: "m", system: [{ type: "text", text: "名帖" }], messages: [] }, "tag12345");
+ok(p1.kfs_pages === "tag12345" && p1.system.length === 2 && p1.system[1].text === LAP_PAGE_NOTE && LAP_PAGE_NOTE.includes("{{KFS_PAGES}}") && LAP_PAGE_NOTE.startsWith("【做网页】"), "做网页：带上那段对话的记号，名帖后面接【做网页】（文件夹那儿留着 {{KFS_PAGES}}，门那头换）");
+const both = withLapPages(withLapWeb({ model: "m", system: "名帖", messages: [] }), "t");
+ok(both.kfs_web === true && both.kfs_pages === "t" && both.system.map((x) => x.text.slice(0, 4)).join("|") === "名帖|【上网】|【做网页", "上网查、做网页两样一起：两段都接上");
+const got = pagesOf(
+  [
+    { type: "text", text: "做好了" },
+    { type: "kfs_page", file: "moon.html", title: "小月亮", html: "<title>小月亮</title>🌕", edited: false },
+    { type: "kfs_page", file: "big.html", title: "大网页", toobig: 3 * 1048576, edited: false },
+    { type: "kfs_page", file: "moon.html", title: "小月亮", html: "<title>小月亮</title>🌖", edited: true },
+  ],
+  "rjob1"
+);
+ok(got.items.length === 3 && got.items[0].page === "rjob1.0" && got.items[2].page === "rjob1.2" && got.items[2].edited && got.items[1].toobig === 3 * 1048576 && got.items.every((it) => it.type === "page" && !("html" in it)), "回话里带回来的几页：一页一样（名字是这一条加第几页，两台设备取到的一样），对话里不放整页");
+ok(got.saves.length === 2 && got.saves[0].key === PAGE_KEY + "rjob1.0" && JSON.parse(got.saves[1].value).html.includes("🌖"), "要存的：有整页的那几页（太大的没有）");
+ok(pageNote(got.items[0]).includes("你做的网页《小月亮》（moon.html）放进对话里了") && pageNote(got.items[2]).includes("你改过的那一页") && pageNote(got.items[1]).includes("太大了（3.0 兆）"), "跟他说的那一句：做的、改过的、太大的各说各的");
 
 // ---------- 门说的话 ----------
 ok(explainError(429, { type: "kaifengfu", message: "订阅的额度用完了", code: "cc_quota" }) === "订阅的额度用完了", "门说额度用完了：照原样（不说成“说得太快，Anthropic 让歇一会儿”）");

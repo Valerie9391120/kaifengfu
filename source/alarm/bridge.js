@@ -17,6 +17,9 @@
 //     mcp_tool_use、mcp_tool_result（手机那头照这个写“用了 tavily”）。
 //   - 上网查（这一包带着 kfs_web: true）：再给 Claude Code 它自带的 WebSearch、WebFetch，他自己调；回话里也写成
 //     mcp_tool_use、mcp_tool_result（server_name 是“上网查”）。
+//   - 做网页（这一包带着 kfs_pages: 那段对话的记号）：再给 Read、Write、Edit，只许写那段对话的网页文件夹（pagesDir/<记号>，
+//     名帖里的 {{KFS_PAGES}} 换成它）；这一回写成、改成的 .html 整页读出来，回话最后添一块 kfs_page（见 pagesOf）。
+//     网页留在这台电脑上（他下回要改得找得着），手机那头另存一份进开封府。
 //   - 同一段对话接着说：上一回的那条进程还开着、这一包正好是接着上一回往下说的（前面每一句都对得上），就接着用那一条
 //     （Claude Code 手里记着的跟 Anthropic 那头缓存着的是同一份，省额度、也快）；对不上（重新回答、改了话、抄了提要、
 //     换了一支）就另起一条，照这一包从头接。
@@ -54,6 +57,13 @@ export function sessionDir(cwd, configDir) {
 // 他用了的那一下照她接的 MCP 那样写成 mcp_tool_use、mcp_tool_result（server_name 是 WEB_SERVER），手机那头写“用了 上网查”
 const WEB_TOOLS = ["WebSearch", "WebFetch"];
 const WEB_SERVER = "上网查";
+// 做网页（开封府走笔记本的时候，同 Moonlight；这一包带着 kfs_pages: 那段对话的记号）：给 Claude Code 读、写、改文件，
+// 只许写在那段对话自己的网页文件夹里（pagesDir/<记号>，--add-dir、--permission-mode acceptEdits；别处的没人点“允许”，自动不许）。
+// 名帖里的 {{KFS_PAGES}} 换成那个文件夹。这一回写了、改了的 .html，回话最后添一块 kfs_page（文件名、<title>、整页），手机那头存进开封府
+const PAGE_TOOLS = ["Read", "Write", "Edit"];
+const PAGE_TAG = /^[A-Za-z0-9_-]{4,64}$/;
+export const PAGE_MAX = 1024 * 1024; // 一页最多一兆（开封府存一样东西一行，再大存不下）
+export const PAGES_AT = "{{KFS_PAGES}}";
 // 没带名帖的时候名帖那个临时文件里写的（见 run）
 const NO_SYSTEM = "（这一回没有名帖。）";
 // system：字或者一串 { type: "text", text }，拼成一份
@@ -130,10 +140,41 @@ function shapeOf(body) {
   const tools = (body.tools || []).filter((t) => t && t.name && t.input_schema && !t.type);
   const servers = remoteServers(body);
   const web = body.kfs_web === true;
+  const pages = PAGE_TAG.test(String(body.kfs_pages || "")) ? String(body.kfs_pages) : "";
   const key = createHash("sha256")
-    .update(JSON.stringify([systemText(body.system), body.model, body.max_tokens || 0, tools.map((t) => [t.name, t.description || "", t.input_schema]), servers, web]))
+    .update(JSON.stringify([systemText(body.system), body.model, body.max_tokens || 0, tools.map((t) => [t.name, t.description || "", t.input_schema]), servers, web, pages]))
     .digest("hex");
-  return { key, tools, servers, web, own: new Set(tools.map((t) => t.name)) };
+  return { key, tools, servers, web, pages, own: new Set(tools.map((t) => t.name)) };
+}
+
+// 这一回写成、改成的网页：那段对话的网页文件夹里的 .html（别处的、别的文件不收），整页读出来交给手机。
+// 一块 { type: "kfs_page", file, title, html, edited }；太大的不带整页，写 toobig（多少字节），手机那头照实说
+function pagesOf(run, wrote) {
+  if (!run.pageDir || !wrote.size) return [];
+  const out = [];
+  for (const [file, existed] of wrote) {
+    let real = "";
+    try {
+      real = fs.realpathSync.native(path.resolve(run.pageDir, file));
+    } catch {
+      continue;
+    }
+    const rel = path.relative(run.pageDir, real);
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel) || !/\.html?$/i.test(real)) continue;
+    let buf;
+    try {
+      buf = fs.readFileSync(real);
+    } catch {
+      continue;
+    }
+    if (!buf.length) continue;
+    const html = buf.toString("utf8");
+    const t = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+    const title = ((t && t[1]) || "").replace(/\s+/g, " ").trim().slice(0, 80) || path.basename(real).replace(/\.html?$/i, "");
+    const name = rel.split(path.sep).join("/");
+    out.push(buf.length > PAGE_MAX ? { type: "kfs_page", file: name, title, toobig: buf.length, edited: !!existed } : { type: "kfs_page", file: name, title, html, edited: !!existed });
+  }
+  return out;
 }
 
 // ---------- 会话记录（Claude Code 自己的样子，2.1.319 认得的最少那几样） ----------
@@ -193,7 +234,8 @@ function errorOf(text, stderr, status) {
 //   log      (line) => 记一笔（不记对话里的字）
 // 回 { handle(body, { signal }) → 回话, mcp(runId, 一条 JSON-RPC) → 回的那一条（null 是不用回）, runs(), close() }
 // =====================================================
-export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = {}, log = () => {}, idleMs = IDLE_MS, waitMs = WAIT_MS, maxRuns = MAX_RUNS } = {}) {
+// pagesDir：做网页的文件夹放在哪（一段对话一个子文件夹；不给就不许做网页）
+export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, pagesDir = "", env = {}, log = () => {}, idleMs = IDLE_MS, waitMs = WAIT_MS, maxRuns = MAX_RUNS } = {}) {
   if (!cwd || !mcpUrl) throw new Error("createBridge 要 cwd、mcpUrl");
   fs.mkdirSync(cwd, { recursive: true });
   const realCwd = fs.realpathSync.native(cwd);
@@ -230,7 +272,13 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = 
     const sysFile = path.join(realCwd, `system-${id}.md`);
     // 没带名帖的一包（开封府的测试连接）：写一句话占着。不能只写空白：Claude Code 原样当一块字寄出去，Anthropic 回 400
     // “system: text content blocks must contain non-whitespace text”（开封府的测试连接撞上过）
-    const sys = systemText(body.system);
+    // 做网页：那段对话的网页文件夹（没有就建），名帖里的 {{KFS_PAGES}} 换成它
+    let pageDir = "";
+    if (shape.pages && pagesDir) {
+      fs.mkdirSync(path.join(pagesDir, shape.pages), { recursive: true });
+      pageDir = fs.realpathSync.native(path.join(pagesDir, shape.pages));
+    }
+    const sys = systemText(body.system).split(PAGES_AT).join(pageDir || "（这一回不能做网页）");
     fs.writeFileSync(sysFile, sys.trim() ? sys : NO_SYSTEM);
     temp.push(sysFile);
     let sid = null;
@@ -240,6 +288,7 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = 
     }
     const mcp = { mcpServers: { [KFS]: { type: "http", url: mcpUrl(id) }, ...shape.servers } };
     const allowed = [`mcp__${KFS}`, ...Object.keys(shape.servers).map((n) => `mcp__${n}`), ...(shape.web ? WEB_TOOLS : [])];
+    const own = [...(shape.web ? WEB_TOOLS : []), ...(pageDir ? PAGE_TOOLS : [])]; // Claude Code 自己的那几样，给哪几样
     const args = [
       "--print",
       "--input-format", "stream-json",
@@ -248,12 +297,14 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = 
       "--include-partial-messages",
       "--model", body.model,
       "--system-prompt-file", sysFile,
-      "--tools", shape.web ? WEB_TOOLS.join(",") : "", // Claude Code 自己的那些（读写文件、跑命令）一样都不给；上网查开着只给搜索、读网页
+      "--tools", own.join(","), // Claude Code 自己的那些（跑命令这些）一样都不给；上网查开着给搜索、读网页，做网页给读、写、改
       "--mcp-config", JSON.stringify(mcp),
       "--strict-mcp-config", // 这台电脑上别处配的 MCP 不挂
       "--allowedTools", allowed.join(","),
       "--no-session-persistence", // 不往磁盘写会话记录
     ];
+    // 做网页：只许写那段对话的网页文件夹（工作目录里写了也不收），写、改不用人点“允许”；别处的自动不许（同 Moonlight）
+    if (pageDir) args.push("--permission-mode", "acceptEdits", "--add-dir", pageDir);
     for (const [flag, ...value] of OPTIONAL) if (!unsupported.has(flag)) args.push(flag, ...value);
     if (sid) args.push("--resume", sid);
     // 环境里的 ANTHROPIC_API_KEY 拿掉（不然 Claude Code 走 API 按量计费）；env 里明着给的照给（测试连假的 API 用）
@@ -277,6 +328,8 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = 
       pending: [], // 停在工具上的时候，等哪几个编号的结果
       noTools: false, // 这一回不许调（tool_choice: none）
       segment: null, // 眼下这一回要交出去的回话（见 Segment）
+      pageDir, // 做网页的文件夹（不许做网页的是空的）
+      writing: new Map(), // 他调了写、改的那一下：tool_use 编号 → { file, existed }（结果回来才算写成）
       stderr: "",
       dead: false,
       timer: null,
@@ -333,10 +386,12 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = 
       msgId: null,
       done: false,
       retry: false,
+      wrote: new Map(), // 这一回写成、改成的文件 → 头一下动它的时候它在不在（在就是改过的一版）
       finish(stop) {
         if (this.done) return;
         this.done = true;
         run.segment = null;
+        this.blocks.push(...pagesOf(run, this.wrote));
         resolve({
           id: "msg_cc_" + randomBytes(8).toString("hex"),
           type: "message",
@@ -409,6 +464,11 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = 
         // 这一回不许调（tool_choice: none）：他还是调了的那一下不交给手机（MCP 那头直接回“不许调”，他接着说）
         else if (b.type === "tool_use" && b.name.startsWith(PREFIX)) !run.noTools && seg.blocks.push({ type: "tool_use", id: b.id, name: b.name.slice(PREFIX.length), input: b.input || {} });
         else if (b.type === "tool_use" && run.shape.web && WEB_TOOLS.includes(b.name)) seg.blocks.push({ type: "mcp_tool_use", id: b.id, name: b.name, server_name: WEB_SERVER, input: b.input || {} });
+        else if (b.type === "tool_use" && run.pageDir && (b.name === "Write" || b.name === "Edit")) {
+          // 他要写、改一个文件：记下是哪个、这会儿在不在（结果回来没出错才算，见下面 user 那一段）
+          const file = String((b.input && b.input.file_path) || "");
+          if (file) run.writing.set(b.id, { file, existed: fs.existsSync(file) });
+        }
         else if (b.type === "tool_use") {
           const r = remoteOf(run, b.name);
           if (r) seg.blocks.push({ type: "mcp_tool_use", id: b.id, name: r.name, server_name: r.server_name, input: b.input || {} });
@@ -417,6 +477,13 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = 
       return;
     }
     if (ev.type === "user") {
+      // 写、改文件的结果：没出错就记下这一回动过它（交出去的时候看是不是网页，见 pagesOf）
+      for (const b of (ev.message && ev.message.content) || []) {
+        const w = b && b.type === "tool_result" && run.writing.get(b.tool_use_id);
+        if (!w) continue;
+        run.writing.delete(b.tool_use_id);
+        if (!b.is_error && !seg.wrote.has(w.file)) seg.wrote.set(w.file, w.existed);
+      }
       // 她接的 MCP 回来的结果：照 Anthropic 的样子写成 mcp_tool_result
       for (const b of (ev.message && ev.message.content) || []) {
         if (b.type !== "tool_result" || !seg.blocks.some((x) => x.type === "mcp_tool_use" && x.id === b.tool_use_id)) continue;

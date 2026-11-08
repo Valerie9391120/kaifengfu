@@ -1006,7 +1006,7 @@ async function openDoor(cloud) {
   if (!fs.existsSync(P.door())) return null;
   try {
     const token = await doorToken();
-    const d = createDoor({ token, cloud, claude: claudeBin(), cwd: path.join(home(), "cc"), log, version: VERSION, port: doorPort() });
+    const d = createDoor({ token, cloud, claude: claudeBin(), cwd: path.join(home(), "cc"), pagesDir: path.join(home(), "pages"), log, version: VERSION, port: doorPort() });
     await d.listen();
     quietly(claudeBin(), ["--version"]).then((r) => d.setClaudeVersion(r.ok ? r.out : ""));
     return d;

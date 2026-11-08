@@ -102,6 +102,11 @@ const qianxia = Buffer.from(qxSrc.replace('href="./__KFS_JINHUI__"', `href="./${
 const qianxiaName = `qianxia-${hash(qianxia)}.html`;
 fs.writeFileSync(`${OUT}/assets/${qianxiaName}`, qianxia);
 define.__KFS_QIANXIA__ = JSON.stringify(`./assets/${qianxiaName}`);
+// 他做的网页在框里跑的那一页（走笔记本的时候他做的，见 src/chat/PageView.jsx）：一页小 HTML，名字带指纹。它自己的安全规矩许那一页的脚本跑
+const pagebox = fs.readFileSync("static/pagebox.html");
+const pageboxName = `pagebox-${hash(pagebox)}.html`;
+fs.writeFileSync(`${OUT}/assets/${pageboxName}`, pagebox);
+define.__KFS_PAGEBOX__ = JSON.stringify(`./assets/${pageboxName}`);
 // 狐宇宙那一页（他屋里的一张书案，tools/make_desk.py 生成的，见 src/desk/DeskPage.jsx）：页面一个 HTML，图、几何、两份截出来的小字体在 static/desk/files/ 里，
 // 一样一个带指纹的名字放进 assets/desk/（哪一样变了只换那一样，别的照旧读缓存）；页面里的 __KFS_DESK_FILES__ 换成 { 名字: 网址 }，
 // __KFS_DESK_FILE__名字 换成那一样的网址。字：页面上写死的那些字截好了一份（wenkai-ui.woff2）；递进来的字不在里面的，用霞鹜文楷切好的那一份

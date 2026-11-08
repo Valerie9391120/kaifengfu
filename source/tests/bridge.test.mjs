@@ -57,6 +57,14 @@ const api = http.createServer((req, res) => {
     else if (text.includes("不许")) blocks = [{ type: "tool_use", name: "mcp__kfs__qx_draw", input: { n: 1 } }];
     else if (text.includes("查")) blocks = [{ type: "tool_use", name: "mcp__tavily__search", input: { query: "明天天气" } }];
     else if (text.includes("上网")) blocks = [{ type: "text", text: "我上网看看" }, { type: "tool_use", name: "WebFetch", input: { url: "https://example.com/", prompt: "这一页写了什么" } }];
+    // 做网页：照名帖里写的文件夹写（{{KFS_PAGES}} 换成的那个）
+    else if (/做个网页|改一下网页|往别处写/.test(text)) {
+      const sysText = (Array.isArray(j.system) ? j.system : [{ text: String(j.system || "") }]).map((b) => b.text || "").join("\n");
+      const dir = (/放进这个文件夹：(\S+)/.exec(sysText) || [])[1] || "/nowhere";
+      if (text.includes("做个网页")) blocks = [{ type: "tool_use", name: "Write", input: { file_path: path.join(dir, "moon.html"), content: "<!doctype html><html><head><title>小月亮</title></head><body><p id=m>🌕</p></body></html>" } }];
+      else if (text.includes("改一下网页")) blocks = [{ type: "tool_use", name: "Read", input: { file_path: path.join(dir, "moon.html") } }, { type: "tool_use", name: "Edit", input: { file_path: path.join(dir, "moon.html"), old_string: "🌕", new_string: "🌖" } }];
+      else blocks = [{ type: "tool_use", name: "Write", input: { file_path: path.join(dir, "..", "..", "evil.html"), content: "<title>别处</title>" } }];
+    }
     else blocks = [{ type: "text", text: "收到：" + text }];
     res.writeHead(200, { "content-type": "text/event-stream" });
     const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
@@ -124,6 +132,7 @@ bridge = createBridge({
   claude: CLAUDE,
   cwd,
   configDir: path.join(home, ".claude"),
+  pagesDir: path.join(tmp, "pages"),
   mcpUrl: (id) => `http://127.0.0.1:${doorPort}/mcp/${id}`,
   log: (l) => logs.push(l),
   env: { HOME: home, USERPROFILE: home, ANTHROPIC_BASE_URL: `http://127.0.0.1:${apiPort}`, ANTHROPIC_API_KEY: "sk-ant-test", HTTPS_PROXY: "", HTTP_PROXY: "", https_proxy: "", http_proxy: "", NO_PROXY: "127.0.0.1,localhost", DISABLE_TELEMETRY: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_AUTOUPDATER: "1" },
@@ -273,6 +282,26 @@ try {
   // （这台测试机连不上外头，读网页那一下是失败的结果：照样接着说完）
   ok(used && used.server_name === "上网查" && used.name === "WebFetch" && used.input.url === "https://example.com/" && back && back.tool_use_id === used.id && r.stop_reason === "end_turn" && r.content[r.content.length - 1].type === "text",
      `他调了读网页：Claude Code 自己办，回话里写成 mcp_tool_use、mcp_tool_result（上网查），他接着说完（${JSON.stringify((r.content || []).map((b) => b.type + (b.server_name ? ":" + b.server_name : "")))}）`);
+  // 做网页（这一包带着 kfs_pages：那段对话的记号）：给 Claude Code 读、写、改，只许写那段对话的网页文件夹；
+  // 名帖里的 {{KFS_PAGES}} 换成那个文件夹；写成的 .html 整页带回来（kfs_page），改过的一版也带回来，标着改过
+  const PAGE_SYS = [...SYSTEM, { type: "text", text: "【做网页】用 Write 写一个 .html 文件，放进这个文件夹：{{KFS_PAGES}}" }];
+  ok(seen.every((x) => !x.tools.includes("Write")), "没带做网页的：Claude Code 拿不到写文件的本事");
+  const seenPage = seen.length;
+  r = await bridge.handle(body([u("做个网页", [now("14:50")])], { kfs_pages: "tag12345", system: PAGE_SYS }));
+  const pageDir = fs.realpathSync(path.join(tmp, "pages", "tag12345"));
+  const pageAsk = seen[seenPage];
+  let pg = (r.content || []).find((b) => b.type === "kfs_page");
+  ok(pageAsk && ["Read", "Write", "Edit"].every((t) => pageAsk.tools.includes(t)) && !pageAsk.tools.includes("Bash") && JSON.stringify(pageAsk.system).includes(pageDir) && !JSON.stringify(pageAsk.system).includes("{{KFS_PAGES}}"),
+     `带着做网页：给读、写、改（不给跑命令），名帖里写着那段对话的网页文件夹（${pageAsk && pageAsk.tools.filter((t) => !t.startsWith("mcp__")).join(",")}）`);
+  ok(pg && pg.file === "moon.html" && pg.title === "小月亮" && pg.html.includes("🌕") && pg.edited === false && fs.existsSync(path.join(pageDir, "moon.html")) && r.content[r.content.length - 1] === pg,
+     `他写了一个网页：文件留在这台电脑上，整页带回来、在回话最后（${pg && pg.file}《${pg && pg.title}》）`);
+  r = await bridge.handle(body([u("做个网页"), a("结果：…"), u("改一下网页", [now("14:51")])], { kfs_pages: "tag12345", system: PAGE_SYS }));
+  pg = (r.content || []).filter((b) => b.type === "kfs_page");
+  ok(pg.length === 1 && pg[0].file === "moon.html" && pg[0].html.includes("🌖") && !pg[0].html.includes("🌕") && pg[0].edited === true, `他改了那一页（先读再改）：改过的一版带回来、标着改过（${pg.map((x) => x.file + (x.edited ? "·改过" : "")).join(",")}）`);
+  r = await bridge.handle(body([u("往别处写", [now("14:52")])], { kfs_pages: "tag12345", system: PAGE_SYS }));
+  ok(!(r.content || []).some((b) => b.type === "kfs_page") && !fs.existsSync(path.join(tmp, "evil.html")) && !fs.existsSync(path.join(pageDir, "..", "..", "evil.html")), "往那个文件夹外头写：不许（没人点“允许”），什么都不带回来");
+  r = await bridge.handle(body([u("做个网页", [now("14:53")])], { kfs_pages: "../../etc", system: PAGE_SYS }));
+  ok(!(r.content || []).some((b) => b.type === "kfs_page") && !seen[seen.length - 1].tools.includes("Write"), "记号不像样的（../ 那种）：当没带，不给写文件");
   ok((await bridge.mcp("0".repeat(32), { jsonrpc: "2.0", id: 1, method: "tools/list" })).error, "关了的、没有的那一条：MCP 不认");
   const live = bridge.runs()[0];
   ok(live && (await bridge.mcp(live.id, { jsonrpc: "2.0", id: 2, method: "nope" })).error.code === -32601 && (await bridge.mcp(live.id, { jsonrpc: "2.0", method: "notifications/initialized" })) === null, "不认的方法回 -32601；通知不用回");

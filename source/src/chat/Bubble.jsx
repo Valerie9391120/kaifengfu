@@ -283,9 +283,36 @@ function DocCard({ name, sub, onOpen }) {
   );
 }
 
+// 他做的网页（走笔记本的时候他做的，见 laptop.js）：一张卡，写那一页的名字，“他做的网页 / 他改过的一版 · 点开玩”（同 Moonlight），
+// 点开全屏玩（见 PageView.jsx）。太大了没存下的：照实写，点不开
+function PageCard({ it, onOpen }) {
+  const big = !!it.toobig;
+  const sub = big ? `太大了（${(it.toobig / 1048576).toFixed(1)} 兆），没存下` : `${it.edited ? "他改过的一版" : "他做的网页"} · 点开玩`;
+  return (
+    <button
+      onClick={() => !big && onOpen && onOpen(it)}
+      aria-label={`网页 ${it.title || ""}`}
+      className="kfs-page-card kfs-tap flex items-center text-left"
+      style={{ ...BUBBLE_GLASS, borderRadius: 20, padding: "9px 14px 9px 9px", gap: 10, maxWidth: 232 }}
+    >
+      <span className="flex items-center justify-center flex-shrink-0" style={{ width: 38, height: 38, borderRadius: 13, background: fill(0.7), color: T.dai }}>
+        <Icon name="dice" size={20} />
+      </span>
+      <span className="block min-w-0">
+        <span className="block truncate" style={{ fontSize: 14.5, color: T.ink }}>
+          {it.title || "网页"}
+        </span>
+        <span className="block truncate" style={{ fontSize: 11.5, color: big ? T.red : T.inkSoft, marginTop: 1 }}>
+          {sub}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 // voices、heard、playing：他的语音条眼下的样子、转过文字的那几条、正在放的那一条（名字见 voice.js 的 voiceKeyOf）
 // draws：他画的画眼下的样子（名字见 draw.js 的 drawKeyOf）
-export function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, voices = {}, heard = null, playing = "", draws = {}, onVoice, onVoiceAgain, onDrawAgain, onOpenPhoto, onOpenDoc, onLongPress }) {
+export function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, voices = {}, heard = null, playing = "", draws = {}, onVoice, onVoiceAgain, onDrawAgain, onOpenPhoto, onOpenDoc, onOpenPage, onLongPress }) {
   const press = useRef(null);
   const fired = useRef(false);
   const startPress = (e) => {
@@ -364,6 +391,8 @@ export function BubbleRow({ row, avatars, animate, imgs = {}, docs = {}, voices 
           <MemeImg file={it.file} />
         ) : it.type === "photo" ? (
           <PhotoImg data={imgs[it.imgId]} onOpen={onOpenPhoto} />
+        ) : it.type === "page" ? (
+          <PageCard it={it} onOpen={onOpenPage} />
         ) : it.type === "doc" ? (
           <DocCard
             name={it.name || "文档"}

@@ -71,10 +71,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //   log      (line) => 记一笔
 //   version  闹钟是哪一版（ping 回）
 //   timing   测试拨快：{ beat, grace }
+//   pagesDir 他做的网页放在哪（见 bridge.js 的做网页那一段）
 //   bridge   测试用：换一个假的 Claude Code（开封府的端到端测试里，假 Supabase 起一扇真的门、里面换成假的）
 // 回 { listen() → Promise, close(), bridge, port() }
 // =====================================================
-export function createDoor({ token, cloud, claude, cwd, configDir, origin = HOME_ORIGIN, port = DOOR_PORT, env = {}, log = () => {}, version = "", timing = {}, bridge: given = null } = {}) {
+export function createDoor({ token, cloud, claude, cwd, configDir, pagesDir = "", origin = HOME_ORIGIN, port = DOOR_PORT, env = {}, log = () => {}, version = "", timing = {}, bridge: given = null } = {}) {
   const want = normToken(token);
   if (want.length < 16) throw new Error("暗记不对");
   const beatMs = timing.beat || BEAT;
@@ -86,6 +87,7 @@ export function createDoor({ token, cloud, claude, cwd, configDir, origin = HOME
       claude,
       cwd,
       configDir,
+      pagesDir,
       env,
       log,
       mcpUrl: (id) => `http://127.0.0.1:${listening}/mcp/${id}`,

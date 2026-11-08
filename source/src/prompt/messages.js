@@ -7,6 +7,7 @@ import { apiBlocks } from "../game/jianghu.js";
 import { isWakeMark, wakeNote } from "../fox.js";
 import { lotText } from "../qx/pool.js";
 import { pdText } from "../pindou/parts.js";
+import { pageNote } from "../laptop.js";
 
 function avatarBlock(av, thumbLookup = () => null) {
   if (!av) return null;
@@ -262,6 +263,9 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
     if (steps) content.push(...steps.uses);
     arr.push({ role: "assistant", content });
     if (steps) arr.push({ role: "user", content: steps.results });
+    // 他做的网页（走笔记本的时候，见 ../laptop.js）：跟他说放进对话里了（太大没存下的照实说），他记得自己做过、做的是哪个文件
+    const pages = (m.items || []).filter((it) => it.type === "page");
+    if (pages.length) arr.push({ role: "user", content: [{ type: "text", text: pages.map(pageNote).join("\n") }] });
     // 光义自己换了头像：下一轮让他亲眼看到新头像的样子
     const av = (m.items || []).filter((it) => it.type === "avatar").pop();
     // 他画的画（见 ../draw.js）：下一轮让他亲眼看到画成了什么样。最近那几十条（rowFloor 以后，永远寄原话的那一截）里画好的带图，

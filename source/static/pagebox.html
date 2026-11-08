@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- 他做的网页在这一页里跑（见 src/chat/PageView.jsx）：这一页装在隔开的框里（来路是 null，碰不到开封府），
+     它自己的安全规矩许那一页的脚本、样式、画布、取外头的东西（同 Moonlight 给他做的网页的那一套），开封府自己的规矩不许 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https: blob: data:; style-src 'unsafe-inline' https: data:; img-src https: data: blob:; font-src https: data:; media-src https: data: blob:; connect-src https: data: blob:; worker-src blob: data:; frame-src https: data: blob:">
+<title>他做的网页</title>
+<style>html,body{margin:0;height:100%;background:#fff}</style>
+</head>
+<body>
+<script>
+(function () {
+  // 暗号在框的名字里：读了就清掉（那一页里读不到）；只认外头那一页递来的、带着这个暗号的那一句
+  var k = window.name;
+  window.name = "";
+  if (!k) return;
+  window.addEventListener("message", function (e) {
+    if (e.source !== window.parent) return;
+    var m = e.data || {};
+    if (m.t !== "page" || m.k !== k || typeof m.html !== "string") return;
+    document.open();
+    document.write(m.html);
+    document.close();
+  });
+  window.parent.postMessage({ t: "ready", k: k }, "*");
+})();
+</script>
+</body>
+</html>

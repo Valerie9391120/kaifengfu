@@ -56,6 +56,9 @@ export function makePreview(msgs) {
   if ((last.items || []).some((it) => it.type === "voice")) return "[语音]";
   if ((last.items || []).some((it) => it.type === "call")) return "[来电]";
   if ((last.items || []).some((it) => it.type === "draw")) return "[画]";
+  // 他做的网页（走笔记本的时候，见 laptop.js）：写那一页的名字
+  const page = (last.items || []).find((it) => it.type === "page");
+  if (page) return `[网页] ${page.title || ""}`.trim();
   // 他弹给她的选项卡（见 ask.js）：写头一题，跟横幅一样
   const ask = (last.items || []).find((it) => it.type === "ask");
   if (ask) return askBanner(ask.qs);

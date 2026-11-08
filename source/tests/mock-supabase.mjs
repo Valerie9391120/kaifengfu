@@ -711,10 +711,16 @@ const fakeLaptop = {
   async handle(body, { signal } = {}) {
     doorState.seen++;
     // 最近那一包：带没带上网查（kfs_web、名帖后面那段【上网】）、是不是电话里不许调工具的那种
-    doorState.last = { web: body.kfs_web === true, note: JSON.stringify(body.system || "").includes("【上网】"), call: !!(body.tool_choice && body.tool_choice.type === "none") };
+    doorState.last = {
+      web: body.kfs_web === true,
+      note: JSON.stringify(body.system || "").includes("【上网】"),
+      call: !!(body.tool_choice && body.tool_choice.type === "none"),
+      pages: typeof body.kfs_pages === "string" && body.kfs_pages.length > 3 && JSON.stringify(body.system || "").includes("【做网页】"),
+      told: JSON.stringify(body.messages || "").includes("[开封府提示：你做的网页"),
+    };
     const f = DOOR_FAILS[doorState.fail];
     if (f) throw Object.assign(new Error(f.message), { status: f.status });
-    const { kfs_web, ...ask } = body;
+    const { kfs_web, kfs_pages, ...ask } = body;
     const out = await heldAnthropic(ask, "", "door", signal);
     if (out.status !== 200) throw Object.assign(new Error((out.json && out.json.error && out.json.error.message) || `出错了（${out.status}）`), { status: out.status });
     // 上网查开着、她叫他“上网查一下”：Claude Code 自带的搜索用了一下（真的门照 MCP 那样写，见 alarm/bridge.js）
@@ -725,7 +731,17 @@ const fakeLaptop = {
           { type: "mcp_tool_result", tool_use_id: "srvtoolu_web1", is_error: false, content: [{ type: "text", text: "明天多云" }] },
         ]
       : [];
-    return { ...out.json, content: [...searched, ...(out.json.content || [])], via: "claude-code" };
+    // 做网页（真的门照 alarm/bridge.js 的 pagesOf 带回来）：她说“做个网页”写一页（脚本把字换掉：看得出脚本在框里跑了），“改一下网页”改过的一版，“做个大网页”太大了
+    const made = !kfs_pages
+      ? []
+      : lastText.includes("做个大网页")
+      ? [{ type: "kfs_page", file: "big.html", title: "大网页", toobig: 3 * 1024 * 1024, edited: false }]
+      : lastText.includes("做个网页")
+      ? [{ type: "kfs_page", file: "moon.html", title: "小月亮", edited: false, html: '<!doctype html><html><head><title>小月亮</title></head><body><p id="m">🌕</p><script>document.getElementById("m").textContent = "🌕 转起来了"; try { localStorage.setItem("x", "1"); document.body.dataset.ls = "可以"; } catch (e) { document.body.dataset.ls = "不行"; } try { document.body.dataset.top = String(window.top.location.href); } catch (e) { document.body.dataset.top = "碰不到"; }</script></body></html>' }]
+      : lastText.includes("改一下网页")
+      ? [{ type: "kfs_page", file: "moon.html", title: "小月亮", edited: true, html: '<!doctype html><html><head><title>小月亮</title></head><body><p id="m">🌖</p></body></html>' }]
+      : [];
+    return { ...out.json, content: [...searched, ...(out.json.content || []), ...made], via: "claude-code" };
   },
   runs: () => 0,
   spawned: () => 0,
