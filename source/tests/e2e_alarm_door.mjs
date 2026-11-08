@@ -4,7 +4,8 @@
 //   Tailscale 的各种样子（假的 tailscale）：没在跑、断开着、https 没开（它给的链接原样写出来、指管理页）、
 //     头一回叫她在网页上打开 https 然后开好了（门牌写出来；叫它的那一句对不对）；
 //   后台跑起来门就开着：status 里写着开着；带着暗记敲 ping 回闹钟的版本；
-//     这台电脑上的 Claude Code 连不上 Anthropic：直接回话照实报（code 是 cc 开头的，开封府看了问她走不走 API）；
+//     Anthropic 那头回错（假的）：直接回话照实报（code 是 cc 开头的，开封府看了问她走不走 API）；
+//     door test：走这台电脑上的 Claude Code 试一句（前面两句接上、工具挂上），后台没在跑、门关了各说各的；
 //   door off：门关了、暗记删了；后台再起来门不开。
 // 先起假 Supabase（npm run mock &）。跑：npm run test:alarm-door
 import { execFileSync, spawn } from "node:child_process";
@@ -12,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import net from "node:net";
+import http from "node:http";
 import { deriveVault, seal, toB64 } from "../src/vault.js";
 
 const BASE = "http://127.0.0.1:8787";
@@ -35,6 +37,38 @@ const salt = crypto.getRandomValues(new Uint8Array(16));
 const vault = await deriveVault(PASS, salt, ITER);
 await fetch(`${BASE}/rest/v1/kv`, { method: "POST", headers: H, body: JSON.stringify([{ key: "m_kdf", value: JSON.stringify({ v: 1, salt: toB64(salt), iter: ITER }) }, { key: "m_check", value: await seal(vault, "开封府") }]) });
 
+// ---------- 假的 Anthropic（后台那一个里的 Claude Code 敲它）：“你好”回 400；别的照“记住这个词：X”回 X ----------
+const seen = []; // 它收到的每一包
+const textOf = (m) => (Array.isArray(m.content) ? m.content : [{ type: "text", text: m.content }]).filter((b) => b.type === "text" && !b.text.startsWith("<system-reminder>")).map((b) => b.text).join(" ");
+const api = http.createServer((req, res) => {
+  let body = "";
+  req.on("data", (c) => (body += c));
+  req.on("end", () => {
+    if (!req.url.startsWith("/v1/messages") || req.url.includes("count_tokens")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end('{"input_tokens":10}');
+    }
+    const j = JSON.parse(body);
+    seen.push(j);
+    const last = textOf(j.messages[j.messages.length - 1]);
+    if (last.includes("你好")) {
+      res.writeHead(400, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "假的：这一句不让过" } }));
+    }
+    const word = (/记住这个词：([^。\s]+)/.exec(j.messages.map(textOf).join(" ")) || [])[1] || "不记得";
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+    ev("message_start", { message: { id: "m", type: "message", role: "assistant", model: j.model, content: [], stop_reason: null, usage: { input_tokens: 10, output_tokens: 1 } } });
+    ev("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
+    ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: word } });
+    ev("content_block_stop", { index: 0 });
+    ev("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } });
+    ev("message_stop", {});
+    res.end();
+  });
+});
+await new Promise((r) => api.listen(0, "127.0.0.1", r));
+
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "kfs-alarm-door-"));
 const CCHOME = path.join(HOME, "cc-home"); // Claude Code 的家：空的，没登录过
 fs.mkdirSync(CCHOME);
@@ -52,7 +86,7 @@ const env = {
   ...(CLAUDE ? { KFS_CLAUDE: CLAUDE } : {}),
   HOME: CCHOME,
   USERPROFILE: CCHOME,
-  ANTHROPIC_BASE_URL: "http://127.0.0.1:9", // 万一它去敲：敲不到
+  ANTHROPIC_BASE_URL: `http://127.0.0.1:${api.address().port}`, // Claude Code 敲的是上面那个假的
   ANTHROPIC_API_KEY: "sk-should-be-removed",
   CLAUDE_CODE_OAUTH_TOKEN: "",
 };
@@ -63,6 +97,15 @@ const alarm = (args, extra = {}) => {
     return { code: e.status || 1, out: String(e.stdout || "") + String(e.stderr || "") };
   }
 };
+// 后台那一个里的 Claude Code 要敲这个进程里的假 Anthropic：这时候不能用 execFileSync 堵着
+const alarmAsync = (args, extra = {}) =>
+  new Promise((resolve) => {
+    const c = spawn(process.execPath, [BUNDLE, ...args], { env: { ...env, ...extra } });
+    let out = "";
+    c.stdout.on("data", (d) => (out += d));
+    c.stderr.on("data", (d) => (out += d));
+    c.on("close", (code) => resolve({ code, out }));
+  });
 const tokenIn = (out) => (/暗记：([A-Z0-9]{5}(?:-[A-Z0-9]{5}){3})/.exec(out) || [])[1] || "";
 
 // ---------- door 之前得先装 ----------
@@ -83,6 +126,8 @@ ok(tokenIn(r.out) === token, "再敲一遍 door：暗记不变");
 r = alarm(["door", "new"]);
 const token2 = tokenIn(r.out);
 ok(token2 && token2 !== token, "door new：换一串新的");
+r = alarm(["door", "test"]);
+ok(r.code === 1 && r.out.includes("门没开着"), "后台没在跑：door test 照实说、叫她看 status");
 
 // ---------- Tailscale 的各种样子（假的 tailscale：FAKE_TS 说怎么演，每一次叫它都记一笔） ----------
 const FAKE = path.join(HOME, "fake-tailscale.mjs");
@@ -153,9 +198,19 @@ ok((await fetch(`http://127.0.0.1:${DOOR}/kfs/ping`, { headers: { "x-kfs-door": 
 if (CLAUDE) {
   res = await fetch(`http://127.0.0.1:${DOOR}/kfs/claude`, { method: "POST", headers: { "content-type": "application/json", "x-kfs-door": token2 }, body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 100, messages: [{ role: "user", content: "你好" }] }) });
   d = await res.json();
-  // 这台机器上的 Claude Code 连不上 Anthropic（没登录、地址敲不到）：照实报，带着 cc 开头的 code（开封府看了问她走不走 API）。
-  // “没登录”翻成 401、cc_auth 的那一下在 tests/bridge.test.mjs 里对着假的 Anthropic 测（这台测试机上的 Claude Code 另有登录，装不成没登录）
+  // Anthropic 那头回了错（假的：“你好”回 400）：照实报，带着 cc 开头的 code（开封府看了问她走不走 API）。
+  // “没登录”翻成 401、cc_auth 的那一下在 tests/bridge.test.mjs 里测（这台测试机上的 Claude Code 另有登录，装不成没登录）
   ok(res.status >= 400 && d.error && /^cc/.test(d.error.code || "") && d.error.message, `Claude Code 那头出了岔子：照实报（${res.status} ${d.error && d.error.code} ${d.error && d.error.message}）`);
+  // door test：敲本机的门，前面带两句、带一样工具，问他刚才记的词
+  const before = seen.length;
+  r = await alarmAsync(["door", "test"]);
+  const said = r.out.split("\n").filter((l) => /他回|没成/.test(l)).join(" ");
+  ok(r.code === 0 && r.out.includes("他回：“月亮”。通了。"), `door test：走这台电脑上的 Claude Code 试一句，他回了记的那个词（${said}）`);
+  const got = seen.slice(before).find((j) => j.messages.map(textOf).join(" ").includes("记住这个词：月亮"));
+  ok(
+    got && got.messages.length >= 3 && got.messages.map(textOf).join(" ").includes("记住了") && textOf(got.messages[got.messages.length - 1]).includes("刚才让你记的词") && (got.tools || []).some((t) => /kfs_ping/.test(t.name)) && JSON.stringify(got.system || "").includes("自检"),
+    "试的那一句：前面两句接上了、开封府那样的工具挂上了、名帖是自检那一段"
+  );
 }
 const logText = fs.readFileSync(path.join(HOME, "alarm.log"), "utf8");
 ok(/\[门\] 开了/.test(logText) && !logText.includes("你好") && !logText.includes(token2), "日志里记着门开了；没有对话里的字、没有暗记");
@@ -164,6 +219,8 @@ ok(/\[门\] 开了/.test(logText) && !logText.includes("你好") && !logText.inc
 r = alarm(["door", "off"], ts("ok"));
 ok(r.out.includes("门关了") && !fs.existsSync(path.join(HOME, "door.txt")), "door off：门关了、暗记删了");
 ok(tsCalls().some((a) => JSON.stringify(a) === JSON.stringify(["serve", "--https=8443", "off"])), "door off：Tailscale 那头 8443 也关了");
+r = alarm(["door", "test"]);
+ok(r.code === 1 && r.out.includes("门还没开过"), "关了门：door test 叫她先跑 door");
 alarm(["stop"]);
 await new Promise((resolve) => { if (child.exitCode !== null) return resolve(); child.on("exit", resolve); setTimeout(resolve, 15000); });
 const child2 = spawn(process.execPath, [BUNDLE, "run"], { env: { ...env, KFS_ALARM_TICK: "500", KFS_ALARM_PULL: "500" }, stdio: "ignore" });

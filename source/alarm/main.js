@@ -9,7 +9,7 @@
 //   node kfs-alarm.mjs wake       现在就叫醒他一回（不看钟点；“他自己醒”得开着）。后台那一个在跑，就交给它叫
 //   node kfs-alarm.mjs stop       停下后台那一个（它正在叫他就等它叫完；下回开机还会起来）
 //   node kfs-alarm.mjs door       开封府走这台电脑上的 Claude Code 的那扇门：生成暗记、开 Tailscale 的 https、写出门牌和暗记
-//                                 （door new 换一串暗记；door off 关门。见 door.js、开发说明“传话走笔记本上的 Claude Code”）
+//                                 （door new 换一串暗记；door test 试一句；door off 关门。见 door.js、开发说明“传话走笔记本上的 Claude Code”）
 //   node kfs-alarm.mjs uninstall  卸：停下、开机不再起来、这台电脑上的凭据和存档都删掉
 //   node kfs-alarm.mjs run        后台跑的就是这一个（开机的时候自己起；一般用不着手敲）
 //
@@ -1027,6 +1027,44 @@ function doorUp() {
     });
   });
 }
+// 试一句：敲本机的门，走这台电脑上的 Claude Code 问他一个词。前面带两句、带一样工具：
+// 会话接上（--resume）、MCP 挂上（--mcp-config）、订阅的登录都试到。用最便宜的那一支，花一句的额度
+async function doorTry(token) {
+  const body = {
+    model: "claude-haiku-4-5-20251001", // 开封府模型单子里“最快最省”的那一支
+    max_tokens: 64,
+    system: "这是开封府笔记本那扇门的自检。照着说的做，只回一个词。",
+    tools: [{ name: "kfs_ping", description: "自检用的，不用调", input_schema: { type: "object", properties: {} } }],
+    messages: [
+      { role: "user", content: "记住这个词：月亮。" },
+      { role: "assistant", content: "记住了。" },
+      { role: "user", content: "刚才让你记的词是什么？只回那个词。" },
+    ],
+  };
+  try {
+    const res = await fetch(`http://127.0.0.1:${doorPort()}/kfs/claude`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-kfs-door": token },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(3 * 60 * 1000),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (res.ok) return { ok: true, text: (d.content || []).filter((b) => b && b.type === "text").map((b) => b.text).join("").trim() };
+    return { ok: false, code: (d.error && d.error.code) || "", message: (d.error && d.error.message) || `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, code: "door", message: errText(e) };
+  }
+}
+async function sayDoorTry(token) {
+  say("");
+  say("试一句（走这台电脑上的 Claude Code，问他刚才记的词）……");
+  const t = await doorTry(token);
+  if (t.ok) say(`他回：“${t.text.slice(0, 80)}”。${t.text.includes("月亮") ? "通了。" : "回了话，门是通的。"}`);
+  else if (t.code === "cc_auth") say(`没成：这台电脑上的 Claude Code 没登录，或者登录过期了（${t.message}）。PowerShell 里跑 claude，用订阅的账号登录，再跑 node kfs-alarm.mjs door test。`);
+  else if (t.code === "cc_quota") say(`没成：额度用完了（${t.message}）。门是通的，额度回来就能用。`);
+  else say(`没成：${t.message}`);
+  return t.ok;
+}
 // 换了暗记、关了门：后台那一个停下再起来，才换成新的（同 setup）
 async function restartBackground() {
   const old = await stopBackground();
@@ -1039,12 +1077,23 @@ async function restartBackground() {
   return true;
 }
 
-// node kfs-alarm.mjs door [new|off]：生成暗记（封在 door.txt）、开 Tailscale 的 https（8443 转到这台电脑的 3458）、
-// 后台那一个重起（门跟着它开）、写出门牌和暗记（她在开封府 API 面板里输一次）
+// node kfs-alarm.mjs door [new|test|off]：生成暗记（封在 door.txt）、开 Tailscale 的 https（8443 转到这台电脑的 3458）、
+// 后台那一个重起（门跟着它开）、试一句、写出门牌和暗记（她在开封府 API 面板里输一次）
 async function doorCmd() {
   const sub = process.argv[3] || "";
   if (!fs.existsSync(P.secret())) {
     say("还没装闹钟：先跑 node kfs-alarm.mjs setup。");
+    process.exitCode = 1;
+    return;
+  }
+  if (sub === "test") {
+    let token = "";
+    try {
+      token = await doorToken();
+    } catch (e) {}
+    if (!token) say("门还没开过：先跑 node kfs-alarm.mjs door。");
+    else if (!(await doorUp())) say("门没开着（后台那一个没在跑？）：跑 node kfs-alarm.mjs status 看看。");
+    else if (await sayDoorTry(token)) return;
     process.exitCode = 1;
     return;
   }
@@ -1109,6 +1158,7 @@ async function doorCmd() {
   }
   if (up) say(fresh ? "暗记是新生成的；后台那一个重起了，门开着。" : "后台那一个重起了，门开着。");
   else say("后台那一个重起了，门还没应声（它刚起来，要先连上云端）：过一会儿跑 node kfs-alarm.mjs status，写着“笔记本那扇门：开着”就好；不是的话，alarm.log 里 [门] 那几行写着为什么。");
+  if (up && cc.ok && !process.env.KFS_ALARM_NOSTART) await sayDoorTry(token);
   say("");
   say("在开封府的 API 面板里输这两样：");
   say(`  门牌：${name ? `https://${name}:${DOOR_HTTPS}` : "（Tailscale 的 https 开好以后再跑一遍 door，这里会写）"}`);
