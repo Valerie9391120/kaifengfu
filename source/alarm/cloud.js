@@ -1,5 +1,6 @@
 // =====================================================
-// 闹钟连云端：登录、库房（kv 表）、claude 函数、push 函数、通知的登记簿（只读门牌号）。
+// 闹钟连云端：登录、库房（kv 表）、claude 函数、push 函数、通知的登记簿（只读门牌号）、
+// 信箱（mailbox 表；笔记本那扇门替她等回话的时候用，同 push 函数的 mailbox()）。
 // 网页那头用的是 Supabase 的那一包（src/cloud.js）；这里只用得着几样，直接照 Supabase 的规矩敲门，不带那一包
 // （少一样东西，在她电脑上就少一样会出岔子的）。网址和公开钥匙跟网页是同一份（src/config.js）。
 // =====================================================
@@ -146,6 +147,60 @@ export function createCloud(creds) {
     return (Array.isArray(r.data) ? r.data : []).map((x) => x && x.endpoint).filter((x) => typeof x === "string" && x);
   }
 
+  // 信箱（mailbox 表）：笔记本那扇门替她等回话（door.js 的 /kfs/reply）。写法、回什么，跟 push 函数的 mailbox() 一个样子，
+  // 只是拿的是闹钟自己的登录（等多久都不过期；她手机那张凭证只保得住四分钟）。库房只给她看她自己的那几行
+  const BOX = `${SUPABASE_URL}/rest/v1/mailbox`;
+  const DB_WAIT = 6000; // 读写信箱最多等多少毫秒（库房一时不应，不能把回话压在手里不交）
+  const at = (job) => `${BOX}?job=eq.${encodeURIComponent(job)}`;
+  const mailbox = {
+    // 开一格，写上“在等”。ok 开好了；missing 那张表还没建；duplicate 这个编号已经有一格了；error 别的岔子
+    async open(job, note) {
+      try {
+        const r = await ask(BOX, { method: "POST", headers: await headers({ "Content-Type": "application/json", Prefer: "return=minimal" }), body: JSON.stringify({ job, note, state: "working" }), wait: DB_WAIT });
+        if (r.status === 201 || r.status === 200 || r.status === 204) return "ok";
+        if (r.status === 404) return "missing";
+        if (r.status === 409) return "duplicate";
+        return "error";
+      } catch (e) {
+        return "error";
+      }
+    },
+    // 这一格还在不在（她取走就删了）：在回 true，不在回 false，问不到回 null
+    async waiting(job) {
+      try {
+        const r = await ask(`${at(job)}&select=job`, { headers: await headers(), wait: DB_WAIT });
+        if (!r.ok) return null;
+        return Array.isArray(r.data) && r.data.length > 0;
+      } catch (e) {
+        return null;
+      }
+    },
+    // 还在等：摸一下。顺带报那一格还在不在（还写着“在等”的那一格）：在回 true；没了回 false（她按了停，网页把它收了）；问不成回 null
+    async beat(job) {
+      try {
+        const r = await ask(`${at(job)}&state=eq.working&select=job`, { method: "PATCH", headers: await headers({ "Content-Type": "application/json", Prefer: "return=representation" }), body: JSON.stringify({ beat_at: new Date().toISOString() }), wait: DB_WAIT });
+        if (!r.ok) return null;
+        return Array.isArray(r.data) ? r.data.length > 0 : null;
+      } catch (e) {
+        return null;
+      }
+    },
+    // 回话封好了，放进去。stored 放进去了；gone 那一格没了，没处放；failed 没放成，可以再放
+    async finish(job, sealed) {
+      try {
+        const now = new Date().toISOString();
+        const r = await ask(`${at(job)}&state=eq.working&select=job`, { method: "PATCH", headers: await headers({ "Content-Type": "application/json", Prefer: "return=representation" }), body: JSON.stringify({ state: "done", sealed, done_at: now, beat_at: now }), wait: DB_WAIT });
+        if (!r.ok) return "failed";
+        if (Array.isArray(r.data) && r.data.length > 0) return "stored";
+        // 一行都没改到：要么那一格没了，要么上一回其实放进去了、只是这头没听见回音：看一眼
+        const there = await mailbox.waiting(job);
+        return there === true ? "stored" : there === false ? "gone" : "failed";
+      } catch (e) {
+        return "failed";
+      }
+    },
+  };
+
   return {
     login,
     token,
@@ -155,6 +210,7 @@ export function createCloud(creds) {
     callClaude,
     push,
     endpoints,
+    mailbox,
     userId: () => (session && session.user && session.user.id) || "",
   };
 }

@@ -1,0 +1,180 @@
+// 闹钟里的那扇门（alarm/main.js 的 door、run 里开门；门本身见 tests/door.test.mjs），对着假 Supabase：
+//   没装闹钟先敲 door：叫她先 setup；装好以后 door：生成暗记（封着存，测试的机器上是明文）、写出暗记，
+//     找不到 Tailscale 照实说、门牌那一行等 Tailscale 开好再写；再敲一遍 door 暗记不变，door new 换一串；
+//   Tailscale 的各种样子（假的 tailscale）：没在跑、断开着、https 没开（它给的链接原样写出来、指管理页）、
+//     头一回叫她在网页上打开 https 然后开好了（门牌写出来；叫它的那一句对不对）；
+//   后台跑起来门就开着：status 里写着开着；带着暗记敲 ping 回闹钟的版本；
+//     这台电脑上的 Claude Code 连不上 Anthropic：直接回话照实报（code 是 cc 开头的，开封府看了问她走不走 API）；
+//   door off：门关了、暗记删了；后台再起来门不开。
+// 先起假 Supabase（npm run mock &）。跑：npm run test:alarm-door
+import { execFileSync, spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import net from "node:net";
+import { deriveVault, seal, toB64 } from "../src/vault.js";
+
+const BASE = "http://127.0.0.1:8787";
+const BUNDLE = path.resolve("alarm/dist/kfs-alarm-test.mjs");
+const EMAIL = "qing@example.com";
+const PASSWORD = "correct-horse";
+const PASS = "月亮与六便士";
+const ITER = 2000;
+const CLAUDE = process.env.KFS_CLAUDE || ["/opt/claude-code/bin/claude"].find((f) => fs.existsSync(f)) || "";
+let pass = 0, failN = 0;
+const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); } };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const get = async (p) => (await fetch(BASE + p)).json();
+const freePort = () => new Promise((r) => { const s = net.createServer().listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => r(p)); }); });
+
+// ---------- 她手机上已经有的：暗号、设置 ----------
+await get("/__debug/reset");
+const login = await (await fetch(`${BASE}/auth/v1/token?grant_type=password`, { method: "POST", headers: { "Content-Type": "application/json", apikey: "sb_publishable_test" }, body: JSON.stringify({ email: EMAIL, password: PASSWORD }) })).json();
+const H = { apikey: "sb_publishable_test", Authorization: "Bearer " + login.access_token, "Content-Type": "application/json" };
+const salt = crypto.getRandomValues(new Uint8Array(16));
+const vault = await deriveVault(PASS, salt, ITER);
+await fetch(`${BASE}/rest/v1/kv`, { method: "POST", headers: H, body: JSON.stringify([{ key: "m_kdf", value: JSON.stringify({ v: 1, salt: toB64(salt), iter: ITER }) }, { key: "m_check", value: await seal(vault, "开封府") }]) });
+
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "kfs-alarm-door-"));
+const CCHOME = path.join(HOME, "cc-home"); // Claude Code 的家：空的，没登录过
+fs.mkdirSync(CCHOME);
+const DOOR = await freePort();
+const env = {
+  ...process.env,
+  KFS_ALARM_HOME: HOME,
+  KFS_ALARM_PLAIN: "1",
+  KFS_ALARM_NOSTART: "1",
+  KFS_ALARM_EMAIL: EMAIL,
+  KFS_ALARM_PASSWORD: PASSWORD,
+  KFS_ALARM_PASS: PASS,
+  KFS_DOOR_PORT: String(DOOR),
+  KFS_TAILSCALE: path.join(HOME, "no-tailscale"),
+  ...(CLAUDE ? { KFS_CLAUDE: CLAUDE } : {}),
+  HOME: CCHOME,
+  USERPROFILE: CCHOME,
+  ANTHROPIC_BASE_URL: "http://127.0.0.1:9", // 万一它去敲：敲不到
+  ANTHROPIC_API_KEY: "sk-should-be-removed",
+  CLAUDE_CODE_OAUTH_TOKEN: "",
+};
+const alarm = (args, extra = {}) => {
+  try {
+    return { code: 0, out: execFileSync(process.execPath, [BUNDLE, ...args], { env: { ...env, ...extra }, encoding: "utf8", timeout: 120000 }) };
+  } catch (e) {
+    return { code: e.status || 1, out: String(e.stdout || "") + String(e.stderr || "") };
+  }
+};
+const tokenIn = (out) => (/暗记：([A-Z0-9]{5}(?:-[A-Z0-9]{5}){3})/.exec(out) || [])[1] || "";
+
+// ---------- door 之前得先装 ----------
+let r = alarm(["door"]);
+ok(r.code === 1 && r.out.includes("先跑 node kfs-alarm.mjs setup") && !fs.existsSync(path.join(HOME, "door.txt")), "还没装闹钟：door 叫她先 setup");
+r = alarm(["setup"]);
+ok(r.code === 0 && r.out.includes("暗号对上了"), "装好了");
+
+// ---------- door ----------
+r = alarm(["door"]);
+const token = tokenIn(r.out);
+const sealed = fs.readFileSync(path.join(HOME, "door.txt"), "utf8");
+ok(r.code === 0 && token && sealed.startsWith("plain:") && !sealed.includes(token), `door：生成暗记、封着存（这台机器上是明文那种），写出来（${token}）`);
+ok(r.out.includes("没找到 Tailscale") && r.out.includes("Tailscale 的 https 开好以后再跑一遍 door"), "找不到 Tailscale：照实说，门牌等开好了再写");
+ok(!CLAUDE || /Claude Code：\d/.test(r.out), "写着这台电脑上 Claude Code 是哪一版");
+r = alarm(["door"]);
+ok(tokenIn(r.out) === token, "再敲一遍 door：暗记不变");
+r = alarm(["door", "new"]);
+const token2 = tokenIn(r.out);
+ok(token2 && token2 !== token, "door new：换一串新的");
+
+// ---------- Tailscale 的各种样子（假的 tailscale：FAKE_TS 说怎么演，每一次叫它都记一笔） ----------
+const FAKE = path.join(HOME, "fake-tailscale.mjs");
+const TSLOG = path.join(HOME, "ts-calls.txt");
+fs.writeFileSync(
+  FAKE,
+  `import fs from "node:fs";
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.FAKE_TS_LOG, JSON.stringify(args) + "\\n");
+const mode = process.env.FAKE_TS;
+const link = "\\nServe is not enabled on your tailnet.\\nTo enable, visit:\\n\\n         https://login.tailscale.com/f/serve?node=abc123\\n";
+if (args[0] === "status") {
+  if (mode === "down") {
+    console.error("failed to connect to local tailscaled; it doesn't appear to be running (sudo systemctl start tailscaled ?)");
+    process.exit(1);
+  }
+  console.log(JSON.stringify({ BackendState: mode === "stopped" ? "Stopped" : "Running", Self: { DNSName: "laptop.tail1234.ts.net." } }));
+} else if (args[0] === "serve" && args.includes("off")) {
+  process.exit(0);
+} else if (args[0] === "serve" && mode === "nohttps") {
+  console.log(link);
+  console.error("error enabling https feature: tailnet does not have HTTPS enabled");
+  process.exit(1);
+} else if (args[0] === "serve") {
+  console.log(link);
+  setTimeout(() => {
+    console.log("Success.\\nAvailable within your tailnet:\\n\\nhttps://laptop.tail1234.ts.net:8443/\\n|-- proxy http://127.0.0.1:" + args[3].split(":").pop() + "\\n\\nServe started and running in the background.");
+  }, 300);
+}
+`
+);
+const ts = (mode) => ({ KFS_TAILSCALE: FAKE, FAKE_TS: mode, FAKE_TS_LOG: TSLOG });
+const tsCalls = () => (fs.existsSync(TSLOG) ? fs.readFileSync(TSLOG, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
+const PLACE = "Tailscale 的 https 开好以后再跑一遍 door";
+r = alarm(["door"], ts("down"));
+ok(r.out.includes("Tailscale 没应声（它说：failed to connect to local tailscaled") && r.out.includes(PLACE) && !tsCalls().some((a) => a[0] === "serve"), "Tailscale 没在跑：照实说它的原话，不去开 https，门牌等开好了再写");
+r = alarm(["door"], ts("stopped"));
+ok(r.out.includes("Tailscale 没连着（它说 Stopped）") && r.out.includes(PLACE) && !tsCalls().some((a) => a[0] === "serve"), "Tailscale 断开着：叫她连上");
+r = alarm(["door"], ts("nohttps"));
+ok(
+  r.out.includes("https://login.tailscale.com/f/serve?node=abc123") && r.out.includes("没开成（上面是它的原话）") && r.out.includes("login.tailscale.com/admin/dns") && r.out.includes(PLACE),
+  "https 没开成：它给的链接原样写出来，再指管理页，门牌先不写"
+);
+r = alarm(["door"], ts("ok"));
+const serveCall = tsCalls().filter((a) => a[0] === "serve").pop() || [];
+ok(
+  r.out.includes("https://login.tailscale.com/f/serve?node=abc123") && r.out.includes("Tailscale 的 https：开好了") && r.out.includes("门牌：https://laptop.tail1234.ts.net:8443") && tokenIn(r.out) === token2,
+  "头一回：链接写给她、等她在网页上打开、开好了写门牌（暗记还是那一串）"
+);
+ok(JSON.stringify(serveCall) === JSON.stringify(["serve", "--bg", "--https=8443", `http://127.0.0.1:${DOOR}`]), `叫 Tailscale 的那一句：${serveCall.join(" ")}`);
+
+// ---------- 后台跑起来，门开着 ----------
+const child = spawn(process.execPath, [BUNDLE, "run"], { env: { ...env, KFS_ALARM_TICK: "500", KFS_ALARM_PULL: "500" }, stdio: "ignore" });
+let up = false;
+for (let i = 0; i < 60 && !up; i++) {
+  await sleep(500);
+  try {
+    up = (await fetch(`http://127.0.0.1:${DOOR}/kfs/ping`)).status === 401;
+  } catch (e) {}
+}
+ok(up, "后台跑起来：门开着（不带暗记敲，回 401）");
+r = alarm(["status"]);
+ok(r.out.includes("笔记本那扇门：开着"), "status 里写着门开着");
+let res = await fetch(`http://127.0.0.1:${DOOR}/kfs/ping`, { headers: { "x-kfs-door": token2 } });
+let d = await res.json();
+ok(res.status === 200 && d.ok && d.version === "2026-11-08", `带着新暗记敲 ping：回闹钟的版本（${d.version}）`);
+ok((await fetch(`http://127.0.0.1:${DOOR}/kfs/ping`, { headers: { "x-kfs-door": token } })).status === 401, "换掉的那一串暗记不管用了");
+if (CLAUDE) {
+  res = await fetch(`http://127.0.0.1:${DOOR}/kfs/claude`, { method: "POST", headers: { "content-type": "application/json", "x-kfs-door": token2 }, body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 100, messages: [{ role: "user", content: "你好" }] }) });
+  d = await res.json();
+  // 这台机器上的 Claude Code 连不上 Anthropic（没登录、地址敲不到）：照实报，带着 cc 开头的 code（开封府看了问她走不走 API）。
+  // “没登录”翻成 401、cc_auth 的那一下在 tests/bridge.test.mjs 里对着假的 Anthropic 测（这台测试机上的 Claude Code 另有登录，装不成没登录）
+  ok(res.status >= 400 && d.error && /^cc/.test(d.error.code || "") && d.error.message, `Claude Code 那头出了岔子：照实报（${res.status} ${d.error && d.error.code} ${d.error && d.error.message}）`);
+}
+const logText = fs.readFileSync(path.join(HOME, "alarm.log"), "utf8");
+ok(/\[门\] 开了/.test(logText) && !logText.includes("你好") && !logText.includes(token2), "日志里记着门开了；没有对话里的字、没有暗记");
+
+// ---------- door off ----------
+r = alarm(["door", "off"], ts("ok"));
+ok(r.out.includes("门关了") && !fs.existsSync(path.join(HOME, "door.txt")), "door off：门关了、暗记删了");
+ok(tsCalls().some((a) => JSON.stringify(a) === JSON.stringify(["serve", "--https=8443", "off"])), "door off：Tailscale 那头 8443 也关了");
+alarm(["stop"]);
+await new Promise((resolve) => { if (child.exitCode !== null) return resolve(); child.on("exit", resolve); setTimeout(resolve, 15000); });
+const child2 = spawn(process.execPath, [BUNDLE, "run"], { env: { ...env, KFS_ALARM_TICK: "500", KFS_ALARM_PULL: "500" }, stdio: "ignore" });
+await sleep(4000);
+let open = false;
+try {
+  open = !!(await fetch(`http://127.0.0.1:${DOOR}/kfs/ping`));
+} catch (e) {}
+ok(!open && !alarm(["status"]).out.includes("笔记本那扇门"), "关了门再起来：门不开，status 里也不提");
+alarm(["stop"]);
+await new Promise((resolve) => { if (child2.exitCode !== null) return resolve(); child2.on("exit", resolve); setTimeout(resolve, 15000); });
+fs.rmSync(HOME, { recursive: true, force: true });
+console.log(`\n通过 ${pass}  失败 ${failN}`);
+process.exit(failN ? 1 : 0);

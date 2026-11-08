@@ -8,6 +8,8 @@
 //   node kfs-alarm.mjs status     看看：在不在跑、上回几点醒、下回打算几点
 //   node kfs-alarm.mjs wake       现在就叫醒他一回（不看钟点；“他自己醒”得开着）。后台那一个在跑，就交给它叫
 //   node kfs-alarm.mjs stop       停下后台那一个（它正在叫他就等它叫完；下回开机还会起来）
+//   node kfs-alarm.mjs door       开封府走这台电脑上的 Claude Code 的那扇门：生成暗记、开 Tailscale 的 https、写出门牌和暗记
+//                                 （door new 换一串暗记；door off 关门。见 door.js、开发说明“传话走笔记本上的 Claude Code”）
 //   node kfs-alarm.mjs uninstall  卸：停下、开机不再起来、这台电脑上的凭据和存档都删掉
 //   node kfs-alarm.mjs run        后台跑的就是这一个（开机的时候自己起；一般用不着手敲）
 //
@@ -29,19 +31,21 @@
 import fs from "node:fs";
 import path from "node:path";
 import net from "node:net";
+import http from "node:http";
 import readline from "node:readline";
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { unseal, CHECK_TEXT } from "../src/vault.js";
 import { FOX_CHAT, FOX_STATE, BEAT_MS, TASK_MAX_ROUNDS, wakeOn, gapOf, maxOf } from "../src/fox.js";
 import { createCloud } from "./cloud.js";
 import { createStore, writeAtomic } from "./store.js";
-import { saveSecret, loadSecret } from "./secret.js";
+import { saveSecret, loadSecret, unprotect } from "./secret.js";
 import { planNext, planTasks, parseWake, splitWake, DAY_MS, OWED_MS, RETRY_MS } from "./plan.js";
 import { gather, askRoom, askTask, commitWake, fetchExtraMemes, putBlocks, toRescue, owedOf, chatInfo, tasksOf, normBundle } from "./wake.js";
+import { createDoor, newToken, DOOR_PORT, DOOR_HTTPS } from "./door.js";
 
-export const VERSION = "2026-10-20";
+export const VERSION = "2026-11-08";
 // 测试的时候（tests/e2e_alarm.mjs）可以拨快：KFS_ALARM_TICK、KFS_ALARM_PULL、KFS_ALARM_MANUAL_GAP（毫秒）
 const TICK = Number(process.env.KFS_ALARM_TICK) || 60 * 1000; // 一分钟看一眼
 const PULL_EVERY = Number(process.env.KFS_ALARM_PULL) || 5 * 60 * 1000; // 五分钟从云端拉一回（她说了话、改了设置、他在手机上定了几点醒，都靠这个知道）
@@ -59,6 +63,7 @@ const home = () =>
   path.join(process.env.LOCALAPPDATA || path.join(process.env.HOME || process.cwd(), ".local", "share"), "kaifengfu-alarm");
 const P = {
   secret: () => path.join(home(), "secret.txt"),
+  door: () => path.join(home(), "door.txt"), // 笔记本那扇门的暗记（DPAPI 封着，同 secret.txt）
   state: () => path.join(home(), "state.json"),
   log: () => path.join(home(), "alarm.log"),
   startup: () => path.join(process.env.APPDATA || home(), "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "kaifengfu-alarm.vbs"),
@@ -786,9 +791,11 @@ async function run() {
     await sleep(5000); // 手敲的 wake、前一个正在停、占着却一时没应声的：等一会儿再看
   }
   // 停下：排着的先回一句，管子关了（回过的话送到了再关），歇一下再退
+  let door = null; // 笔记本那扇门（开过 door 才有）
   const quit = async (code, why) => {
     for (const x of requests.splice(0)) x.reply({ ok: false, text: "后台那一个停了，没叫成。" });
     log(why);
+    if (door) door.close();
     server.close();
     await sleep(300);
     process.exit(code);
@@ -808,6 +815,7 @@ async function run() {
   }
   if (!entered) return quit(0, "停下了");
   const { cloud, store, vault } = entered;
+  door = await openDoor(cloud); // 门先开：后面拉东西慢，开封府那头别干等
   const st = readState();
   log(`闹钟起来了（${VERSION}）`);
   st.extras = await fetchExtraMemes(st.extras || []);
@@ -932,6 +940,183 @@ async function run() {
 // ---------- 装 ----------
 const here = () => fileURLToPath(import.meta.url);
 
+// ---------- 笔记本那扇门（开封府走这台电脑上的 Claude Code；见 door.js、bridge.js） ----------
+// claude 在哪：KFS_CLAUDE 点了名的；官方装法放在 ~/.local/bin 里的（Moonlight 也是这么找）；不然交给 PATH
+function claudeBin() {
+  if (process.env.KFS_CLAUDE) return process.env.KFS_CLAUDE;
+  const local = path.join(process.env.USERPROFILE || process.env.HOME || "", ".local", "bin", process.platform === "win32" ? "claude.exe" : "claude");
+  return fs.existsSync(local) ? local : "claude";
+}
+// tailscale 在哪：KFS_TAILSCALE 点了名的；Windows 上装在 Program Files 里；不然交给 PATH
+function tailscaleBin() {
+  if (process.env.KFS_TAILSCALE) return process.env.KFS_TAILSCALE;
+  const pf = path.join(process.env.ProgramFiles || "C:\\Program Files", "Tailscale", "tailscale.exe");
+  return process.platform === "win32" && fs.existsSync(pf) ? pf : "tailscale";
+}
+// 跑一个小命令，回 { ok, out, err }（不抛）
+function quietly(cmd, args, timeout = 20000) {
+  return new Promise((resolve) => {
+    const [c, a] = /\.m?js$/.test(cmd) ? [process.execPath, [cmd, ...args]] : [cmd, args];
+    execFile(c, a, { timeout, windowsHide: true, encoding: "utf8" }, (err, stdout, stderr) =>
+      resolve({ ok: !err, out: String(stdout || "").trim(), err: String(stderr || (err && err.message) || "").trim() })
+    );
+  });
+}
+// 开 Tailscale 的 https。头一回它会写一个链接、叫她在网页上把 https 打开，然后就等着，打开了它自己接着往下走：
+// 所以它说的话原样写给她看（链接在里面），等得也久（十分钟）。回 { ok, said, slow }
+function tailscaleServe(ts, args, timeout = 10 * 60 * 1000) {
+  return new Promise((resolve) => {
+    const [c, a] = /\.m?js$/.test(ts) ? [process.execPath, [ts, ...args]] : [ts, args];
+    let said = "", done = false, timer = null;
+    const end = (ok, slow = false) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ ok, said, slow });
+    };
+    const child = spawn(c, a, { windowsHide: true, stdio: ["inherit", "pipe", "pipe"] });
+    const pass = (d) => {
+      said += String(d);
+      process.stdout.write(d);
+    };
+    child.stdout.on("data", pass);
+    child.stderr.on("data", pass);
+    child.on("error", (e) => {
+      said += String((e && e.message) || e);
+      end(false);
+    });
+    child.on("close", (code) => end(code === 0));
+    timer = setTimeout(() => {
+      child.kill();
+      end(false, true);
+    }, timeout);
+  });
+}
+const doorPort = () => Number(process.env.KFS_DOOR_PORT) || DOOR_PORT;
+// door.txt 里封着的暗记（封法同 secret.txt；loadSecret 只认登录的那一份，这里另读）
+async function doorToken() {
+  const v = JSON.parse(await unprotect(fs.readFileSync(P.door(), "utf8")));
+  if (!v || typeof v.token !== "string" || v.token.replace(/[^A-Z0-9]/gi, "").length < 16) throw Object.assign(new Error("暗记坏了：node kfs-alarm.mjs door new"), { code: "secret" });
+  return v.token;
+}
+// 后台那一个起来的时候开门（开过 door、暗记封在 door.txt 里才开）。开不成记一笔，闹钟照常
+async function openDoor(cloud) {
+  if (!fs.existsSync(P.door())) return null;
+  try {
+    const token = await doorToken();
+    const d = createDoor({ token, cloud, claude: claudeBin(), cwd: path.join(home(), "cc"), log, version: VERSION, port: doorPort() });
+    await d.listen();
+    quietly(claudeBin(), ["--version"]).then((r) => d.setClaudeVersion(r.ok ? r.out : ""));
+    return d;
+  } catch (e) {
+    log("[门] 没开成：" + errText(e) + (e && e.code === "EADDRINUSE" ? `（${doorPort()} 这个端口被别的占着）` : ""));
+    return null;
+  }
+}
+// 门开着没有：敲一下 ping（不带暗记，回 401 也算开着）
+function doorUp() {
+  return new Promise((resolve) => {
+    const req = http.get({ host: "127.0.0.1", port: doorPort(), path: "/kfs/ping", timeout: 2000 }, (res) => {
+      res.resume();
+      resolve(res.statusCode === 401 || res.statusCode === 200);
+    });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+// 换了暗记、关了门：后台那一个停下再起来，才换成新的（同 setup）
+async function restartBackground() {
+  const old = await stopBackground();
+  if (old && !old.stopped) {
+    say(old.unknown ? "后台那一个一直没应声：过一会儿再跑一遍这一句。" : `后台那一个（进程 ${old.pid}）没停下来：过一会儿再跑一遍这一句。`);
+    process.exitCode = 1;
+    return false;
+  }
+  if (!process.env.KFS_ALARM_NOSTART && fs.existsSync(P.script())) startBackground();
+  return true;
+}
+
+// node kfs-alarm.mjs door [new|off]：生成暗记（封在 door.txt）、开 Tailscale 的 https（8443 转到这台电脑的 3458）、
+// 后台那一个重起（门跟着它开）、写出门牌和暗记（她在开封府 API 面板里输一次）
+async function doorCmd() {
+  const sub = process.argv[3] || "";
+  if (!fs.existsSync(P.secret())) {
+    say("还没装闹钟：先跑 node kfs-alarm.mjs setup。");
+    process.exitCode = 1;
+    return;
+  }
+  const ts = tailscaleBin();
+  if (sub === "off") {
+    fs.rmSync(P.door(), { force: true });
+    await quietly(ts, ["serve", `--https=${DOOR_HTTPS}`, "off"], 30000);
+    if (await restartBackground()) say("门关了：开封府走不了这台电脑了（开封府里把开关拨回 API）。想再开：node kfs-alarm.mjs door");
+    return;
+  }
+  let token = "";
+  if (sub !== "new") {
+    try {
+      token = await doorToken();
+    } catch (e) {}
+  }
+  const fresh = !token;
+  if (fresh) {
+    token = newToken();
+    saveSecret(P.door(), { token });
+  }
+  say("开封府走这台电脑上的 Claude Code：笔记本这头的门。");
+  say("");
+  const cc = await quietly(claudeBin(), ["--version"]);
+  say(cc.ok ? `Claude Code：${cc.out}` : "这台电脑上找不到 Claude Code：PowerShell 里跑 irm https://claude.ai/install.ps1 | iex 装上，再跑 claude 登录（用订阅的账号），然后再跑一遍 door。");
+  let name = "", state = "";
+  const st = await quietly(ts, ["status", "--json"]);
+  if (st.ok) {
+    try {
+      const j = JSON.parse(st.out);
+      state = String(j.BackendState || "");
+      name = String((j.Self && j.Self.DNSName) || "").replace(/\.$/, "");
+    } catch (e) {}
+  }
+  if (!st.ok && !/^\s*\{/.test(st.out)) {
+    if (/ENOENT|not recognized|not found/i.test(st.err)) say("没找到 Tailscale：装上、登录，再跑一遍 door。");
+    else say(`Tailscale 没应声（它说：${(st.err.split("\n")[0] || "").slice(0, 160)}）：把 Tailscale 打开、连上，再跑一遍 door。`);
+  } else if (state && state !== "Running") {
+    say(`Tailscale 没连着（它说 ${state}）：把 Tailscale 打开、连上，再跑一遍 door。`);
+    name = "";
+  } else if (!name) say("Tailscale 好像没登录：登录好，再跑一遍 door。");
+  else {
+    say("");
+    say(`开 Tailscale 的 https（https://${name}:${DOOR_HTTPS} 转到这台电脑的 ${doorPort()}）。`);
+    say("头一回它可能会写一个链接、叫你在网页上把 https 打开：点开、打开，它会自己接着往下走。");
+    say("");
+    const serve = await tailscaleServe(ts, ["serve", "--bg", `--https=${DOOR_HTTPS}`, `http://127.0.0.1:${doorPort()}`]);
+    say("");
+    if (serve.ok) say("Tailscale 的 https：开好了。");
+    else {
+      say(serve.slow ? "等了十分钟，Tailscale 那头还没开好：" : "Tailscale 的 https 没开成（上面是它的原话）：");
+      if (/access|denied|permission|administrator|operator|elevat/i.test(serve.said)) say("用管理员身份开一个 PowerShell，再跑一遍 door。");
+      else say("在 Tailscale 的管理页（https://login.tailscale.com/admin/dns）把 MagicDNS、HTTPS Certificates 都打开，再跑一遍 door。");
+      name = "";
+    }
+  }
+  if (!(await restartBackground())) return;
+  let up = !!process.env.KFS_ALARM_NOSTART; // 测试的时候后台不起
+  for (let i = 0; i < 40 && !up; i++) {
+    await sleep(500);
+    up = await doorUp();
+  }
+  if (up) say(fresh ? "暗记是新生成的；后台那一个重起了，门开着。" : "后台那一个重起了，门开着。");
+  else say("后台那一个重起了，门还没应声（它刚起来，要先连上云端）：过一会儿跑 node kfs-alarm.mjs status，写着“笔记本那扇门：开着”就好；不是的话，alarm.log 里 [门] 那几行写着为什么。");
+  say("");
+  say("在开封府的 API 面板里输这两样：");
+  say(`  门牌：${name ? `https://${name}:${DOOR_HTTPS}` : "（Tailscale 的 https 开好以后再跑一遍 door，这里会写）"}`);
+  say(`  暗记：${token}`);
+  say("");
+  say("暗记只给你自己看：拿到它、又在你 Tailscale 里的设备，就能借这台电脑上的 Claude Code 说话。想换一串：node kfs-alarm.mjs door new");
+}
+
 function installStartup() {
   const vbs = `' kaifengfu alarm: starts in the background after Windows sign-in (no window).\r\n' To stop it starting, delete this file or run: node "${P.script()}" uninstall\r\nCreateObject("WScript.Shell").Run """${process.execPath}"" ""${P.script()}"" run", 0, False\r\n`;
   const file = P.startup();
@@ -1029,6 +1214,7 @@ async function setup() {
   say("");
   say("装好了。在手机上：账户面板里把“他自己醒”打开（这一下也告诉闹钟以后敲哪台手机）。");
   say("想看它在干什么：node \"" + P.script() + "\" status");
+  if (fs.existsSync(P.door())) say("笔记本那扇门（开封府走这台电脑上的 Claude Code）照旧开着。");
 }
 
 // ---------- 看看 ----------
@@ -1057,6 +1243,7 @@ async function status() {
         : "“他自己醒”关着"
     );
   if (st.fails && st.fails.length) say(`最近连着 ${st.fails.length} 回没醒成：${st.lastErr || ""}`);
+  if (fs.existsSync(P.door())) say((await doorUp()) ? `笔记本那扇门：开着（门牌、暗记：node kfs-alarm.mjs door）` : "笔记本那扇门：开过，这会儿没开着（后台那一个没在跑？日志里看一眼）");
   try {
     const lines = fs.readFileSync(P.log(), "utf8").trim().split("\n").slice(-12);
     say("\n最近的日志：\n" + lines.join("\n"));
@@ -1137,9 +1324,9 @@ async function uninstall() {
 }
 
 const cmd = process.argv[2] || "status";
-const table = { setup, run, status, wake: wakeNow, stop, uninstall };
+const table = { setup, run, status, wake: wakeNow, stop, uninstall, door: doorCmd };
 if (!table[cmd]) {
-  say("用法：node kfs-alarm.mjs setup | status | wake | stop | uninstall");
+  say("用法：node kfs-alarm.mjs setup | status | wake | stop | door | uninstall");
   process.exitCode = 1;
 } else {
   Promise.resolve(table[cmd]()).catch((e) => {
