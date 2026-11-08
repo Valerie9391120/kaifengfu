@@ -48,6 +48,8 @@ export function sessionDir(cwd, configDir) {
 
 // ---------- 一包里的东西 ----------
 
+// 没带名帖的时候名帖那个临时文件里写的（见 run）
+const NO_SYSTEM = "（这一回没有名帖。）";
 // system：字或者一串 { type: "text", text }，拼成一份
 const systemText = (s) => (typeof s === "string" ? s : Array.isArray(s) ? s.filter((b) => b && b.type === "text").map((b) => b.text).join("\n\n") : "");
 const asBlocks = (c) => (typeof c === "string" ? [{ type: "text", text: c }] : Array.isArray(c) ? c : []);
@@ -219,7 +221,10 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, env = 
     const id = randomBytes(16).toString("hex"); // MCP 网址里的那一截：猜不到，别的进程冒充不了这一条
     const temp = [];
     const sysFile = path.join(realCwd, `system-${id}.md`);
-    fs.writeFileSync(sysFile, systemText(body.system) || " ");
+    // 没带名帖的一包（开封府的测试连接）：写一句话占着。不能只写空白：Claude Code 原样当一块字寄出去，Anthropic 回 400
+    // “system: text content blocks must contain non-whitespace text”（开封府的测试连接撞上过）
+    const sys = systemText(body.system);
+    fs.writeFileSync(sysFile, sys.trim() ? sys : NO_SYSTEM);
     temp.push(sysFile);
     let sid = null;
     if (history.length) {

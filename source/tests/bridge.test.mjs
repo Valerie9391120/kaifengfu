@@ -37,6 +37,11 @@ const api = http.createServer((req, res) => {
     }
     const j = JSON.parse(body);
     seen.push({ system: j.system, messages: j.messages, tools: (j.tools || []).map((t) => t.name), thinking: j.thinking, max_tokens: j.max_tokens });
+    // 同真的 Anthropic：名帖里有一块只有空白的字就不收（开封府测试连接那一包没带名帖，撞过这个）
+    if (Array.isArray(j.system) && j.system.some((b) => b && b.type === "text" && !String(b.text || "").trim())) {
+      res.writeHead(400, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "system: text content blocks must contain non-whitespace text" } }));
+    }
     const last = j.messages[j.messages.length - 1];
     const results = (Array.isArray(last.content) ? last.content : []).filter((b) => b.type === "tool_result");
     const text = said(last);
@@ -250,6 +255,11 @@ try {
   ok(err && err.status === 400, "最后一句不是她的：不收");
 
   // ---------- 这里那个 MCP ----------
+  // 没带名帖的一包（开封府测试连接那种）：照样走得通（名帖那个临时文件不能只写个空格，Anthropic 不收）
+  r = await bridge.handle({ model: "claude-haiku-4-5-20251001", max_tokens: 64, messages: [u("没名帖")] });
+  ok(r.content && r.content.some((b) => b.type === "text" && b.text.includes("收到：没名帖")), `没带名帖的一包也走得通（${JSON.stringify((r.content || []).map((b) => b.text))}）`);
+  // 这台测试机上的 Claude Code 会在名帖后头自己续几段（她电脑上的不续），只写个空格的那一块在这儿撞不上 400：直接看名帖那一块写的是什么
+  ok(JSON.stringify(seen[seen.length - 1].system || "").includes("（这一回没有名帖。）"), "没带名帖：名帖那个临时文件写的是一句“这一回没有名帖”，不是空白");
   ok((await bridge.mcp("0".repeat(32), { jsonrpc: "2.0", id: 1, method: "tools/list" })).error, "关了的、没有的那一条：MCP 不认");
   const live = bridge.runs()[0];
   ok(live && (await bridge.mcp(live.id, { jsonrpc: "2.0", id: 2, method: "nope" })).error.code === -32601 && (await bridge.mcp(live.id, { jsonrpc: "2.0", method: "notifications/initialized" })) === null, "不认的方法回 -32601；通知不用回");

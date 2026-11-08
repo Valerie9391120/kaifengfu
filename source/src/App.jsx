@@ -5483,7 +5483,8 @@ export default function App({ account = {} }) {
     if (route) {
       try {
         const p = await pingDoor(route, 40000);
-        const d = await callClaude({ model: settingsRef.current.model || DEFAULT_MODEL, max_tokens: 64, messages: [{ role: "user", content: "回一个字：在" }] }, "", null, route);
+        // 带一句名帖：笔记本上那一版闹钟遇到没名帖的一包，会把空白当名帖寄出去，Anthropic 不收（400）
+        const d = await callClaude({ model: settingsRef.current.model || DEFAULT_MODEL, max_tokens: 64, system: "这是开封府的测试连接。照着说的做。", messages: [{ role: "user", content: "回一个字：在" }] }, "", null, route);
         recordUsage(d);
         const text = (d.content || [])
           .filter((b) => b.type === "text")
