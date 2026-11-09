@@ -878,7 +878,7 @@ function NotesSheet({ notes, shown, part, onAdd, onDrop, onClose }) {
                   {armed === n.id ? "再点一次删掉" : "删掉"}
                 </button>
               </div>
-              <div style={{ fontSize: 14, lineHeight: 1.6, color: T.ink, whiteSpace: "pre-wrap" }}>{n.text}</div>
+              <div className="break-words" style={{ fontSize: 14, lineHeight: 1.6, color: T.ink, whiteSpace: "pre-wrap" }}>{n.text}</div>
             </div>
           ))}
         </div>

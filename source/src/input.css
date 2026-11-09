@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* break-words 在这里一律按 anywhere 断：Tailwind 自带的是 overflow-wrap: break-word，一长串没空格的（网址这些）断是断得开，
+   可量宽的时候还按整串算，气泡（还有日记、提要、记忆那几页的字）就被撑得比屏幕还宽，整页能左右滑（他上网查回来末尾列的来源网址撞上过）。
+   anywhere 量宽的时候也许在串中间断，就撑不宽了。认不得 anywhere 的老浏览器丢掉这一句，照旧是 break-word */
+.break-words {
+  overflow-wrap: anywhere;
+}
+
 /* 跟主题走的颜色，写成“红,绿,蓝”三个数，用的时候 rgb(var(--k-ink))、rgba(var(--k-soft),0.5)。
    默认是青绿；丁香在 <html data-kfs-theme="dingxiang"> 时换一套，黑夜在 data-kfs-theme="heiye" 时换一套（见 src/theme.js）。
    --k-base 是聊天背景最底边的颜色，也是网页底色；

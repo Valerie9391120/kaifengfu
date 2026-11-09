@@ -26,18 +26,18 @@ export function GardenLook({ state, today, onClose }) {
               <div className="kfs-gd-name" style={{ fontFamily: SERIF, fontSize: 17, color: T.ink, letterSpacing: "0.1em", margin: "2px 2px 6px" }}>
                 {v.plant.name}
               </div>
-              <p className="kfs-gd-now" style={{ fontSize: 14.5, color: T.ink, lineHeight: 1.8, margin: "0 2px" }}>
+              <p className="kfs-gd-now break-words" style={{ fontSize: 14.5, color: T.ink, lineHeight: 1.8, margin: "0 2px" }}>
                 {v.plant.text}
               </p>
               {v.plant.bloom && (
-                <p className="kfs-gd-bloom" style={{ fontFamily: SERIF, fontSize: 14, color: T.ink, lineHeight: 1.9, margin: "8px 2px 0", letterSpacing: "0.04em", whiteSpace: "pre-line" }}>
+                <p className="kfs-gd-bloom break-words" style={{ fontFamily: SERIF, fontSize: 14, color: T.ink, lineHeight: 1.9, margin: "8px 2px 0", letterSpacing: "0.04em", whiteSpace: "pre-line" }}>
                   {v.plant.bloom}
                 </p>
               )}
               {v.plant.since && <p style={{ ...SMALL, margin: "6px 2px 0" }}>{v.plant.since}</p>}
             </div>
           ) : (
-            <p className="kfs-gd-now" style={{ fontSize: 14.5, color: T.ink, lineHeight: 1.8, margin: "2px 2px 0" }}>
+            <p className="kfs-gd-now break-words" style={{ fontSize: 14.5, color: T.ink, lineHeight: 1.8, margin: "2px 2px 0" }}>
               {v.empty}
             </p>
           )}
@@ -79,7 +79,7 @@ export function GardenBook({ state, onClose }) {
                 {f.name}
               </span>
             </div>
-            <div className="kfs-gd-ftext" style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.85, marginTop: 4, paddingLeft: 36, whiteSpace: "pre-line" }}>
+            <div className="kfs-gd-ftext break-words" style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.85, marginTop: 4, paddingLeft: 36, whiteSpace: "pre-line" }}>
               {f.text}
             </div>
             {f.meta && <div style={{ ...SMALL, marginTop: 3, paddingLeft: 36 }}>{f.meta}</div>}

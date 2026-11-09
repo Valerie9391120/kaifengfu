@@ -731,6 +731,10 @@ const fakeLaptop = {
           { type: "mcp_tool_result", tool_use_id: "srvtoolu_web1", is_error: false, content: [{ type: "text", text: "明天多云" }] },
         ]
       : [];
+    // 查完了末尾列一串来源（真的 Claude Code 照它那个搜索工具的规矩写：[名字](网址)，网址一长串没空格；手机上撑破过屏幕）
+    const sources = searched.length
+      ? [{ type: "text", text: "来源：[某某指南](https://www.example.com/tripcanvas/restaurant/some-very-long-restaurant-name-AA12642?page=9&utm_source=search_results_listing_page) [另一家](https://another-example-site.example.org/restaurant/some-very-long-restaurant-name/85468?page=9)" }]
+      : [];
     // 做网页（真的门照 alarm/bridge.js 的 pagesOf 带回来）：她说“做个网页”写一页（脚本把字换掉：看得出脚本在框里跑了），“改一下网页”改过的一版，“做个大网页”太大了
     const made = !kfs_pages
       ? []
@@ -741,7 +745,7 @@ const fakeLaptop = {
       : lastText.includes("改一下网页")
       ? [{ type: "kfs_page", file: "moon.html", title: "小月亮", edited: true, html: '<!doctype html><html><head><title>小月亮</title></head><body><p id="m">🌖</p></body></html>' }]
       : [];
-    return { ...out.json, content: [...searched, ...(out.json.content || []), ...made], via: "claude-code" };
+    return { ...out.json, content: [...searched, ...(out.json.content || []), ...sources, ...made], via: "claude-code" };
   },
   runs: () => 0,
   spawned: () => 0,

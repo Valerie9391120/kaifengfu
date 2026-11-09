@@ -32,10 +32,10 @@ export function LuofuGallery({ state, now = new Date(), onClose, look = "" }) {
           <div className="kfs-lf-rtitle" style={{ fontFamily: SERIF, fontSize: 18, color: T.ink, letterSpacing: "0.08em", lineHeight: 1.5, margin: "0 2px" }}>
             {one.title}
           </div>
-          <div className="kfs-lf-rmeta" style={{ fontSize: 12, color: T.inkSoft, margin: "4px 2px 14px" }}>
+          <div className="kfs-lf-rmeta break-words" style={{ fontSize: 12, color: T.inkSoft, margin: "4px 2px 14px" }}>
             {[one.source, dayOf(one.at, year)].filter(Boolean).join(" · ")}
           </div>
-          <div className="kfs-lf-rtext" style={{ ...flat(0.5), borderRadius: 16, padding: "14px 16px", fontSize: 14.5, color: T.ink, lineHeight: 1.85, whiteSpace: "pre-wrap" }}>
+          <div className="kfs-lf-rtext break-words" style={{ ...flat(0.5), borderRadius: 16, padding: "14px 16px", fontSize: 14.5, color: T.ink, lineHeight: 1.85, whiteSpace: "pre-wrap" }}>
             {one.text}
           </div>
         </div>

@@ -340,7 +340,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                 </>
               ) : her.text ? (
                 <>
-                  <div className="whitespace-pre-wrap" style={{ fontSize: 14.5, lineHeight: 1.75, color: T.ink }}>{her.text}</div>
+                  <div className="whitespace-pre-wrap break-words" style={{ fontSize: 14.5, lineHeight: 1.75, color: T.ink }}>{her.text}</div>
                   <div className="flex" style={{ gap: 8, marginTop: 10 }}>
                     <button onClick={() => setDraft(her.text)} className="kfs-tap" style={chip}>
                       编辑
@@ -377,7 +377,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                     <MoodChips value={him.moods} readOnly />
                   </div>
                 ) : null}
-                <div className="whitespace-pre-wrap" style={{ fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.85, color: T.ink }}>{him.text}</div>
+                <div className="whitespace-pre-wrap break-words" style={{ fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.85, color: T.ink }}>{him.text}</div>
                 <div className="flex" style={{ gap: 8, marginTop: 12 }}>
                   <button onClick={askHim} disabled={writing} className="kfs-tap" style={{ ...chip, opacity: writing ? 0.5 : 1 }}>
                     {writing ? "光义在写……" : "重写"}

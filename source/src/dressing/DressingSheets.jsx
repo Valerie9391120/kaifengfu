@@ -93,7 +93,7 @@ function Item({ x, label, editing, armed, onEdit, onArm, onDrop }) {
           {x.name}
           {x.mine && <span style={{ fontSize: 11.5, color: T.inkFaint, marginLeft: 6 }}>新添</span>}
         </span>
-        {x.description && <span className="kfs-dr-desc block" style={{ fontSize: 12.5, color: T.inkSoft, whiteSpace: "pre-wrap" }}>{x.description}</span>}
+        {x.description && <span className="kfs-dr-desc block break-words" style={{ fontSize: 12.5, color: T.inkSoft, whiteSpace: "pre-wrap" }}>{x.description}</span>}
       </button>
       {x.reward ? (
         <span className="kfs-dr-tag flex-shrink-0" style={{ fontSize: 11.5, color: T.inkFaint, padding: "4px 8px" }}>

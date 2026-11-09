@@ -33,11 +33,11 @@ function Dream({ card, d, open, onToggle, onDrop, kind }) {
         {card ? (
           <>
             <span className="kfs-lf-title block" style={{ fontFamily: SERIF, letterSpacing: "0.04em" }}>{d.title}</span>
-            {d.source && <span className="kfs-lf-source block" style={{ fontSize: 12, color: T.inkSoft }}>{d.source}</span>}
-            {open && <span className="kfs-lf-text block" style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{d.text}</span>}
+            {d.source && <span className="kfs-lf-source block break-words" style={{ fontSize: 12, color: T.inkSoft }}>{d.source}</span>}
+            {open && <span className="kfs-lf-text block break-words" style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{d.text}</span>}
           </>
         ) : (
-          <span className="kfs-lf-text block" style={{ whiteSpace: "pre-wrap", ...(open ? {} : CLAMP) }}>{d.text}</span>
+          <span className="kfs-lf-text block break-words" style={{ whiteSpace: "pre-wrap", ...(open ? {} : CLAMP) }}>{d.text}</span>
         )}
       </button>
       <button onClick={onDrop} aria-label={`删掉 ${dreamLabel(d)}`} className="kfs-lf-drop flex items-center justify-center flex-shrink-0" style={{ width: 28, height: 28, borderRadius: 999, color: T.inkFaint }}>

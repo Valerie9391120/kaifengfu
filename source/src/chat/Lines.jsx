@@ -58,7 +58,7 @@ export function ThinkingRow({ msg, open, onToggle }) {
       </button>
       {open && (
         <div
-          className="kfs-in whitespace-pre-wrap"
+          className="kfs-in whitespace-pre-wrap break-words"
           style={{
             marginTop: 8,
             maxWidth: "80%",

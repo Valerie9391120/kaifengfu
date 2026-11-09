@@ -6282,14 +6282,14 @@ export default function App({ account = {} }) {
         )}
 
         {/* 消息 */}
-        {/* 消息区：表情包面板开着时，点这里的空白处就收起来 */}
+        {/* 消息区：表情包面板开着时，点这里的空白处就收起来。只许上下滑：万一有什么撑得比它宽，也不让整片左右晃（字撑宽的那条见 input.css 的 break-words） */}
         <div
           ref={scrollRef}
           onClick={() => memePanel && setMemePanel(false)}
           onScroll={() => follow.scrolled()}
           onTouchStart={() => follow.touch()}
           onWheel={() => follow.touch()}
-          className="kfs-chat-scroll relative z-10 flex-1 overflow-y-auto"
+          className="kfs-chat-scroll relative z-10 flex-1 overflow-y-auto overflow-x-hidden"
           style={{ padding: "8px 14px 12px" }}
         >
           {/* 江湖棋局那一段还空着：中间写“江湖棋局”（底下原来有一句怎么开局的提示，卿卿 10 月 16 日说连同气泡拿掉） */}
@@ -6503,7 +6503,7 @@ export default function App({ account = {} }) {
 
         {voiceNote && (
           <div
-            className="relative z-10 flex-shrink-0 kfs-in"
+            className="relative z-10 flex-shrink-0 kfs-in break-words"
             style={{ ...glass(0.62, 18), borderRadius: 16, margin: "0 12px 8px", padding: "9px 14px", fontSize: 12.5, color: T.inkSoft, lineHeight: 1.5, whiteSpace: "pre-line" }}
           >
             {voiceNote}
