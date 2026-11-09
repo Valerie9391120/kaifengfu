@@ -1,5 +1,5 @@
 // 气泡里的字：标题行、加粗、淡斜体（src/rich.js）
-import { richInline, richBlocks, plainOf } from "../src/rich.js";
+import { richInline, richBlocks, plainOf, richLinks } from "../src/rich.js";
 
 let pass = 0, failN = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); } };
@@ -226,6 +226,41 @@ ok(plainOf("") === "" && plainOf(null) === "" && plainOf("平常的话") === "�
     if (plainOf(s) !== richInline(s).map((p) => p.s).join("")) bad = s;
   }
   ok(!bad, `预览：没有标题行的两万句随便拼的话，和气泡里摆出来的字一样${bad ? "（对不上的：" + J(bad) + "）" : ""}`);
+}
+
+// ---------- 链接（richLinks）：[名字](网址) 只露名字，光网址照原样露，都点得开 ----------
+const L = (s, href) => ({ s, href });
+const W = (s) => ({ s }); // 不是链接的那一截
+ok(same(richLinks("来源：[某某指南](https://www.example.com/guide-AA12642?page=9) [另一家](https://b.example.org/r/85468?page=9)"),
+  [W("来源："), L("某某指南", "https://www.example.com/guide-AA12642?page=9"), W(" "), L("另一家", "https://b.example.org/r/85468?page=9")]),
+  "他查完列的来源：只露名字，网址在链接里");
+ok(same(richLinks("看看这个 https://example.com/a-b?x=1。还有（https://a.com/x）"),
+  [W("看看这个 "), L("https://example.com/a-b?x=1", "https://example.com/a-b?x=1"), W("。还有（"), L("https://a.com/x", "https://a.com/x"), W("）")]),
+  "光网址：照原样露；到中文、全角标点为止");
+ok(same(richLinks("见 https://a.com/x. 还有 https://a.com/y, 和 (https://a.com/z) 跟 \"https://a.com/q\"!"),
+  [W("见 "), L("https://a.com/x", "https://a.com/x"), W(". 还有 "), L("https://a.com/y", "https://a.com/y"), W(", 和 ("), L("https://a.com/z", "https://a.com/z"), W(") 跟 \""), L("https://a.com/q", "https://a.com/q"), W("\"!")]),
+  "光网址末尾挂着的英文标点、没配上对的右括号不算网址里的");
+ok(same(richLinks("[词条](https://en.wikipedia.org/wiki/Foo_(bar)) 和 https://en.wikipedia.org/wiki/Foo_(bar)."),
+  [L("词条", "https://en.wikipedia.org/wiki/Foo_(bar)"), W(" 和 "), L("https://en.wikipedia.org/wiki/Foo_(bar)", "https://en.wikipedia.org/wiki/Foo_(bar)"), W(".")]),
+  "网址里配对的圆括号（维基那种）照算网址里的");
+ok(same(richLinks("[坏](javascript:alert(1)) 和 https:// 和 ftp://x.com 和 [没网址]() 和 mailto:a@b.c"), [W("[坏](javascript:alert(1)) 和 https:// 和 ftp://x.com 和 [没网址]() 和 mailto:a@b.c")]),
+  "不是 http、https 的不做成链接（javascript: 那些），只有一个 https:// 的也不算");
+ok(same(richLinks("[名字\n跨行](https://a.com)"), [W("[名字\n跨行]("), L("https://a.com", "https://a.com"), W(")")]),
+  "名字跨了行的不算 [名字](网址)，里头的网址照光网址算");
+ok(same(richLinks("平常的话"), [W("平常的话")]) && same(richLinks(""), [W("")]) && same(richLinks(null), [W("")]), "没有链接的：原样一截；空的还是空的");
+ok(plainOf("来源：[某某指南](https://a.com/x) 和 https://b.com") === "来源：[某某指南](https://a.com/x) 和 https://b.com", "预览、对话的名字、横幅（plainOf）照旧露整串");
+{
+  const rnd = dice(11);
+  const bits = ["https://a.com/x", "http://b.cn/(y)", "字", "。", " ", "\n", "(", ")", ".", ",", "[", "]", "?", "*", "https://", "%E4"];
+  let bad = "";
+  for (let k = 0; k < 20000 && !bad; k++) {
+    const s = pick(rnd, bits, 12);
+    if (/\]\(https?:\/\//.test(s)) continue; // 拼出了 [名字](网址) 的不算（那种只露名字，本来就拼不回去）
+    const segs = richLinks(s);
+    if (segs.map((x) => x.s).join("") !== s) bad = "拼回去不一样：" + J(s);
+    else if (segs.some((x) => x.href && (!/^https?:\/\/\S+$/.test(x.href) || x.href !== x.s))) bad = "链接不像样：" + J(s);
+  }
+  ok(!bad, `两万句随便拼的话（没有 [名字](网址) 的）：拼回去和原来一样，链接都是 http、https 开头、不带空白的${bad ? "（" + bad + "）" : ""}`);
 }
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);

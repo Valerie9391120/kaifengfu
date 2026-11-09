@@ -3,7 +3,8 @@
 //   一行开头是一到六个井号、后面跟空格、再跟字：标题，加大加粗。井号后面不跟空格的（#标签）不算。
 //   **加粗**：加粗（原来被认成“两边各多一个星号的斜体”）。
 //   *动作*：淡斜体，原来就有，不动。***两样都要***：又粗又淡斜。
-//   别的 Markdown（列表、引用、代码、链接）在气泡里不认，照原样摆：那是聊天，不是文档（文档那一页另有一套，见 MdView）。
+//   别的 Markdown（列表、引用、代码）在气泡里不认，照原样摆：那是聊天，不是文档（文档那一页另有一套，见 MdView）。
+//   链接另算（见下面 richLinks）：[名字](网址) 只露名字、光网址照原样露，都点得开；只在气泡里画的时候认，预览、横幅照旧露整串。
 // “不动”说的是：一段话里没有两个星号连着的、也没有标题行，拆出来的和原来线上那个画法一模一样（测试里拿原来的画法对着验）。
 
 // 标题行：前头最多让三个空格（再多就是他特意缩进去的，不算）；井号后面至少一个空格（半角的、全角的、制表符都算）；
@@ -102,6 +103,50 @@ export function richBlocks(text) {
   }
   flush(false);
   return out;
+}
+
+// 气泡里的链接，两种，都只认 http、https 开头的（别的，像 javascript: 那些，照原样摆，不做成链接）：
+//   [名字](https://…)：只露名字，点得开（他上网查完在末尾列的来源就是这么写的）。网址里可以夹一层配对的圆括号（维基那种）。
+//   光秃秃的 https://…：照原样露那串网址，也点得开。网址到空白、中文、全角标点为止；
+//   末尾挂着的英文标点（. , ; : ! ? ' "）不算网址里的，没配上对的右圆括号、右方括号也不算（“（见 https://a.com/x）”）。
+// 加粗、淡斜体先拆（richInline），拆出来的每一截再过这一道（chat/Bubble.jsx 的 renderRich）：
+// 这里不动 richInline、plainOf，预览、对话的名字、横幅（小后端照着 plainOf 另写的那一份）照旧露整串。
+// 回 [{ s: 露出来的字, href?: 网址 }]，照原来的次序；一个链接都没有的，回 [{ s: 原样 }]
+const MD_LINK = /\[([^\[\]\n]+)\]\((https?:\/\/[^\s()<>]+(?:\([^\s()<>]*\)[^\s()<>]*)*)\)/g;
+const BARE = /https?:\/\/[A-Za-z0-9][A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]*/g;
+const count = (s, c) => s.split(c).length - 1;
+// 光网址末尾那些不算网址里的：挂着的英文标点、多出来的右括号
+function trimUrl(u) {
+  for (;;) {
+    const c = u[u.length - 1];
+    if (".,;:!?'\"".includes(c)) u = u.slice(0, -1);
+    else if (c === ")" && count(u, ")") > count(u, "(")) u = u.slice(0, -1);
+    else if (c === "]" && count(u, "]") > count(u, "[")) u = u.slice(0, -1);
+    else return u;
+  }
+}
+function bareLinks(text, out) {
+  let last = 0;
+  for (const m of text.matchAll(BARE)) {
+    const url = trimUrl(m[0]);
+    if (url.length <= m[0].indexOf("//") + 2) continue; // 只剩一个 https:// 的不算
+    if (m.index > last) out.push({ s: text.slice(last, m.index) });
+    out.push({ s: url, href: url });
+    last = m.index + url.length;
+  }
+  if (last < text.length) out.push({ s: text.slice(last) });
+}
+export function richLinks(text) {
+  const src = String(text || "");
+  const out = [];
+  let last = 0;
+  for (const m of src.matchAll(MD_LINK)) {
+    if (m.index > last) bareLinks(src.slice(last, m.index), out);
+    out.push({ s: m[1], href: m[2] });
+    last = m.index + m[0].length;
+  }
+  if (last < src.length) bareLinks(src.slice(last), out);
+  return out.length ? out : [{ s: src }];
 }
 
 // 只要字的地方（历史对话里那一行预览、对话的名字）：就是气泡里摆出来的那些字，一块一行。

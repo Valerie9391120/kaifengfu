@@ -2,7 +2,7 @@
 # 真的浏览器；假 Supabase 里起了一扇真的门（alarm/door.js），门里的 Claude Code 换成假的（照假的 Anthropic 回，回话带 via: "claude-code"），
 # 门替她等回话的时候读写信箱、敲手机走闹钟真的 cloud.js（见 tests/mock-supabase.mjs 的“她的笔记本”那一段）。
 #   API 面板：传话走哪儿（API / 笔记本）、门牌暗记两格（存之前收拾一下）、上网查（默认开着）、测试连接敲门、侧栏那一格写“走笔记本”
-#   上网查：那一包带着记号、名帖后面添【上网】；他查了写“用了 上网查”；末尾列的来源网址再长也撑不宽气泡、不能左右滑；关了就不带；电话里也带
+#   上网查：那一包带着记号、名帖后面添【上网】；他查了写“用了 上网查”；末尾列的来源只露名字、点得开，撑不宽气泡、不能左右滑；关了就不带；电话里也带
 #   走笔记本：回话从门那头来；用量另记、不算钱
 #   走不了（敲不到、Claude Code 出岔子）：底下那张卡问她“这句走 API”“再敲笔记本”；只管这一句，下一句照旧先走笔记本、再问
 #   重新回答没走成：一样问（“这次走 API”）
@@ -58,17 +58,20 @@ def stt_open():
     c = stt()
     return bool(c) and not c[-1]["closed"]
 def eleven(): return mock("/__debug/eleven")["log"]
-# 量一量横着宽不宽：聊天那一片（scrollWidth 比 clientWidth 大就是能左右滑）、整页、带网址的那几个气泡（外框、里面那块字）
+# 量一量横着宽不宽：聊天那一片（scrollWidth 比 clientWidth 大就是能左右滑）、整页、带来源的那个气泡（外框、里面那块字、里头的链接）
 WIDE = """() => {
   const sc = document.querySelector('.kfs-chat-scroll');
   const out = { cw: sc.clientWidth, sw: sc.scrollWidth, ox: getComputedStyle(sc).overflowX, doc: document.documentElement.scrollWidth, vw: window.innerWidth, bubbles: [] };
   for (const t of sc.querySelectorAll('[data-kfs-bubble] .break-words')) {
-    if (!t.innerText.includes('example.com')) continue;
+    if (!t.innerText.includes('来源：')) continue;
     const box = t.closest('[data-kfs-bubble]');
-    out.bubbles.push({ box: Math.round(box.getBoundingClientRect().width), row: Math.round(box.parentElement.getBoundingClientRect().width), text: Math.round(t.getBoundingClientRect().width) });
+    out.bubbles.push({ box: Math.round(box.getBoundingClientRect().width), row: Math.round(box.parentElement.getBoundingClientRect().width), text: Math.round(t.getBoundingClientRect().width),
+      shown: t.innerText, links: [...t.querySelectorAll('a.kfs-link')].map((a) => [a.textContent, a.getAttribute('href')]) });
   }
   return out;
 }"""
+SOURCES = [["某某指南", "https://www.example.com/tripcanvas/restaurant/some-very-long-restaurant-name-AA12642?page=9&utm_source=search_results_listing_page"],
+           ["另一家", "https://another-example-site.example.org/restaurant/some-very-long-restaurant-name/85468?page=9"]]
 SILENCE = os.path.join(HERE, "..", ".cache", "silence-16k.wav")
 os.makedirs(os.path.dirname(SILENCE), exist_ok=True)
 with wave.open(SILENCE, "wb") as w:
@@ -137,11 +140,12 @@ with sync_playwright() as p:
         # ================= 上网查 =================
         chat(pa, "上网查一下明天天气")
         ok(wait_js(pa, "document.body.innerText.includes('用了 上网查')", 8000), "他用 Claude Code 自带的搜索查了：对话里写“用了 上网查”（同 tavily 那样）")
-        # 他查完在末尾列的来源，网址一长串没空格：气泡照样不宽过一行的七成四，聊天那一片、整页都不能左右滑
-        ok(wait_js(pa, "document.body.innerText.includes('来源：[某某指南]')", 8000), "查完末尾那串来源落进了气泡")
+        # 他查完在末尾列的来源（[名字](很长的网址)）：只露名字、点得开；气泡照样不宽过一行的七成四，聊天那一片、整页都不能左右滑
+        ok(wait_js(pa, "document.body.innerText.includes('来源：某某指南')", 8000), "查完末尾那串来源落进了气泡，只露名字")
         wide = pa.evaluate(WIDE)
+        ok(len(wide["bubbles"]) == 1 and wide["bubbles"][0]["links"] == SOURCES and "https://" not in wide["bubbles"][0]["shown"], f"来源只露名字，网址在链接里（{wide['bubbles']}）")
         ok(wide["bubbles"] and all(b["box"] <= b["row"] * 0.74 + 1 and b["text"] <= b["box"] + 1 for b in wide["bubbles"]) and wide["sw"] <= wide["cw"] and wide["doc"] <= wide["vw"] and wide["ox"] == "hidden",
-           f"来源里一长串的网址在气泡里断开：气泡不超过七成四，聊天那一片和整页都没有横着多出来的（{wide}）")
+           f"气泡不超过七成四，聊天那一片和整页都没有横着多出来的（{wide}）")
         shot(pa, "7a-sources")
         open_api(pa)
         pa.get_by_role("switch", name="上网查").click(); time.sleep(0.5)

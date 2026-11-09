@@ -1,4 +1,4 @@
-# 气泡里的字：标题行加大加粗、**加粗**、*动作* 淡斜体。真的浏览器里看画出来的样子。
+# 气泡里的字：标题行加大加粗、**加粗**、*动作* 淡斜体、链接（[名字](网址) 只露名字、光网址照原样露，都点得开）。真的浏览器里看画出来的样子。
 # 先在 source/ 里 npm run build:test，起好两个服务（见开发说明），再：python3 tests/e2e_rich.py
 import json, re, sys, time
 from playwright.sync_api import sync_playwright
@@ -114,6 +114,36 @@ with sync_playwright() as p:
     got = reply(pa, "*走过去\n把窗关上*", "把窗关上")
     b = his(pa)
     ok(got and [(k["tag"], k["text"]) for k in b["kids"]] == [("em", "走过去\n把窗关上")] and b["kids"][0]["italic"] and abs(b["kids"][0]["opacity"] - 0.72) < 0.01, "一对星号围着两行的动作：整段淡斜体（和原来一样）")
+
+    # ---- 链接：[名字](网址) 只露名字、光网址照原样露，都点得开（另开一页）；长串网址断开排，不撑宽；长按照旧是气泡的菜单 ----
+    LONG = "https://www.example.com/tripcanvas/restaurant/some-very-long-restaurant-name-AA12642?page=9&utm_source=search_results_listing_page"
+    GUIDE = "https://www.example.com/guide-AA12642?page=9"
+    ctx.route("https://www.example.com/**", lambda r: r.fulfill(status=200, content_type="text/html", body="<title>ok</title>ok"))
+    got = reply(pa, f"来源：[某某指南]({GUIDE}) 看这个 {LONG}。", "看这个")
+    links = pa.evaluate("""() => { const all = [...document.querySelectorAll('.kfs-chat-rows .whitespace-pre-wrap')].filter((b) => !b.closest('.flex-row-reverse')); const b = all[all.length - 1];
+      return { shown: b.textContent, links: [...b.querySelectorAll('a.kfs-link')].map((a) => [a.textContent, a.getAttribute('href'), a.target, a.rel, getComputedStyle(a).textDecorationLine]) }; }""")
+    ok(got and links["links"] == [["某某指南", GUIDE, "_blank", "noopener noreferrer", "underline"], [LONG, LONG, "_blank", "noopener noreferrer", "underline"]] and "](" not in links["shown"] and links["shown"].endswith(LONG + "。"),
+       f"他回的话里：[名字](网址) 只露名字、光网址照原样露，都是另开一页的链接、底下一道线；句号不算网址里的（{links}）")
+    mine = pa.evaluate("""() => { const all = [...document.querySelectorAll('.kfs-chat-rows .flex-row-reverse .whitespace-pre-wrap')]; const b = all[all.length - 1]; return b ? [...b.querySelectorAll('a.kfs-link')].map((a) => a.textContent) : null; }""")
+    ok(mine == ["某某指南", LONG], f"她自己发的话里的链接也一样（{mine}）")
+    wide = pa.evaluate("""() => { const sc = document.querySelector('.kfs-chat-scroll'); return [sc.scrollWidth, sc.clientWidth, document.documentElement.scrollWidth, window.innerWidth]; }""")
+    ok(wide[0] <= wide[1] and wide[2] <= wide[3], f"光网址一长串：在气泡里断开排，聊天那一片、整页都不横着多出来（{wide}）")
+    with pa.expect_popup() as pop:
+        pa.locator(".kfs-chat-rows [data-kfs-bubble='him'] a.kfs-link", has_text="某某指南").last.tap()
+    page2 = pop.value
+    page2.wait_for_load_state()
+    ok(page2.url == GUIDE and pa.url.startswith(BASE), f"点名字：另开一页去那个网址，开封府这一页不动（{page2.url}）")
+    page2.close()
+    opened = []
+    ctx.on("page", lambda p_: opened.append(p_.url))
+    long_press(pa, pa.locator(".kfs-chat-rows [data-kfs-bubble='him'] a.kfs-link", has_text="某某指南").last)
+    if not pa.get_by_text("复制", exact=True).count():   # 松手时测试工具补的那一下点击落在遮罩上把菜单关掉了（电脑上的浏览器才这样，见 e2e_gesture.py）：右键再叫一次
+        pa.locator(".kfs-chat-rows [data-kfs-bubble='him'] a.kfs-link", has_text="某某指南").last.click(button="right"); pa.wait_for_timeout(500)
+    pa.wait_for_timeout(500)
+    ok(pa.get_by_text("复制", exact=True).count() > 0 and not opened, f"长按链接：出来的是气泡的菜单（复制那些），不另开网页（{opened}）")
+    pa.locator(".absolute.inset-0.z-50").first.click(position={"x": 12, "y": 160}); pa.wait_for_timeout(400)
+    row = [c for c in json.loads(pa.evaluate(KV, "kfs2:index") or "[]") if c["id"] == last_chat(pa)][0]
+    ok(f"[某某指南]({GUIDE})" in (row.get("preview") or ""), f"历史对话里那一行预览照旧露整串（这一回只改气泡）（{json.dumps(row.get('preview'), ensure_ascii=False)[:80]}）")
 
     # ---- 她自己发的话也一样认 ----
     n2 = count_text(pa, "第二条")

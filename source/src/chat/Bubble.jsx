@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, Fragment } from "react";
 import { DOC_FMT } from "../docs.js";
-import { richBlocks } from "../rich.js";
+import { richBlocks, richLinks } from "../rich.js";
 import { fmtChars } from "../util.js";
 import { memeSrc } from "../memes.js";
 import { T, flat, BUBBLE_GLASS, fill, HAIRLINE } from "../ui/style.js";
@@ -10,22 +10,39 @@ import { twoFingers } from "../ui/press.js";
 import { voiceKeyOf, heardOf, shownOf, voiceWidth, secondsOf } from "../voice.js";
 import { drawKeyOf, drawImgOf } from "../draw.js";
 
-// 气泡里的字：标题行加大加粗、**加粗**、*动作* 淡斜体（怎么拆见 rich.js）
+// 气泡里的字：标题行加大加粗、**加粗**、*动作* 淡斜体、链接（怎么拆见 rich.js）
 const RICH_H = [0, 20, 18, 16.5, 16.5, 16.5, 16.5]; // 一到六个井号的标题各多大（气泡里平常的字是 15.5；三级往下一样大，再小就和正文分不出来了）
+// 链接：主题色、底下一道线。点了另开一页（iPhone 上从主屏幕打开的开封府，是交给 Safari 开），开封府这一页不动。
+// 点链接只管开链接，不往外传（外头点一下另有用处的，不跟着动）。长按照旧是气泡的菜单：
+// 气泡外框写着 WebkitTouchCallout: none，链接跟着不出系统那个预览；长按以后那一下点，外框照旧拦下（onClickCapture）
+const LINK = { color: "rgb(var(--k-dai))", textDecoration: "underline", textDecorationThickness: 1, textUnderlineOffset: 3 };
+function linked(s, key) {
+  const segs = richLinks(s);
+  if (segs.length === 1 && !segs[0].href) return s;
+  return segs.map((l, j) =>
+    l.href ? (
+      <a key={key + "-" + j} href={l.href} target="_blank" rel="noopener noreferrer" className="kfs-link" draggable={false} onClick={(e) => e.stopPropagation()} style={LINK}>
+        {l.s}
+      </a>
+    ) : (
+      l.s
+    )
+  );
+}
 function renderRich(text) {
   const blocks = richBlocks(text);
   const inline = (parts, n) =>
     parts.map((p, i) =>
       p.i ? (
         <em key={n + "-" + i} style={{ fontStyle: "italic", opacity: 0.72, ...(p.b ? { fontWeight: 600 } : {}) }}>
-          {p.s}
+          {linked(p.s, n + "-" + i)}
         </em>
       ) : p.b ? (
         <strong key={n + "-" + i} style={{ fontWeight: 600 }}>
-          {p.s}
+          {linked(p.s, n + "-" + i)}
         </strong>
       ) : (
-        <span key={n + "-" + i}>{p.s}</span>
+        <span key={n + "-" + i}>{linked(p.s, n + "-" + i)}</span>
       )
     );
   return blocks.map((b, n) =>
