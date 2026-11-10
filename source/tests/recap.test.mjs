@@ -113,17 +113,17 @@ ok(small > 20000 && small < 30000 && tight.room === small && tight.hard === Math
 ok(smallSure > 120000 && tight.most === smallSure && smallSure > small * 4, `同一间屋子往少里算放得下 ${smallSure} 字：照这个数都放不下，才去动最后那二三十条`);
 ok(tierOf("mid", -5000).room === 16000 && tierOf("mid", -5000).hard === 12800 && tierOf("mid", 0).room === 16000 && tierOf("mid", 3000, 2000).most === 16000 && roomFor(0, 0, 0) === roomFor(200000, 0, 0),
   "屋子算出来太小、是负的（记忆库比屋子还大）：当它放得下一万六千字；没说屋子多大按二十万算");
-ok(MODELS.every((m) => windowOf(m.id) >= 200000) && windowOf("claude-haiku-4-5-20251001") === 200000 && windowOf("claude-opus-4-6") === 1000000 && windowOf("claude-sonnet-4-6") === 1000000 && windowOf("claude-opus-5-5") === 1000000 && windowOf("claude-不认识") === 200000 && windowOf("") === 200000,
-  "各模型的屋子：Haiku 4.5 二十万，别的五个一百万；不认识的按二十万");
+ok(MODELS.every((m) => windowOf(m.id) >= 200000) && windowOf("claude-haiku-4-5-20251001") === 200000 && windowOf("claude-opus-4-6") === 1000000 && windowOf("claude-sonnet-4-6") === 1000000 && windowOf("claude-opus-5-5") === 1000000 && windowOf("claude-fable-5-2") === 1000000 && windowOf("claude-fable-5-1") === 1000000 && windowOf("claude-opus-4-5-20251101") === 200000 && windowOf("claude-opus-4-5") === 200000 && windowOf("claude-不认识") === 200000 && windowOf("") === 200000,
+  "各模型的屋子：Haiku 4.5、Opus 4.5 二十万，别的五个一百万（拿掉了的 Fable 5.1 也还认得）；不认识的按二十万");
 
 // 价目：现在每句话大半是从缓存读的，读缓存的价错了，估出来的钱就跟着错。照官方价目页（2026年10月）对一遍
 const M = 1000000;
 const price = (id) => [costOf(id, { input_tokens: M }), costOf(id, { cache_creation_input_tokens: M }), costOf(id, { cache_creation_input_tokens: M, cache_creation: { ephemeral_1h_input_tokens: M } }), costOf(id, { cache_read_input_tokens: M }), costOf(id, { output_tokens: M })].join("/");
-ok(price("claude-fable-5-1") === "10/12.5/20/0.25/50" && price("claude-opus-5-5") === "4/5/8/0.2/20" && price("claude-sonnet-5-5") === "2/2.5/4/0.1/10" && price("claude-opus-4-6") === "5/6.25/10/0.5/25" && price("claude-sonnet-4-6") === "3/3.75/6/0.3/15" && price("claude-haiku-4-5-20251001") === "1/1.25/2/0.1/5" && costOf("claude-不认识", { input_tokens: M }) === null,
-  "各模型的价（每百万 token：新读、写五分钟的缓存、写一小时的缓存、读缓存、写出）和官方价目页一样；读缓存是原价的一成，5.5 那两个是半成，Fable 是四十分之一");
-ok(thinksFirst("claude-fable-5-1") && thinksFirst("claude-opus-5-5") && thinksFirst("claude-sonnet-5-5") && !thinksFirst("claude-opus-4-6") && !thinksFirst("claude-sonnet-4-6") && !thinksFirst("claude-haiku-4-5-20251001") && !thinksFirst("claude-haiku-4-5")
-  && thinksFirst("claude-不认识") && thinksFirst("") && thinksFirst(undefined) && MODELS.filter((m) => thinksFirst(m.id)).map((m) => m.label).join("、") === "Fable 5.1、Opus 5.5、Sonnet 5.5",
-  "哪些模型自己会先想一阵再写：5 字头的那三个会（关不掉）；上一代的三个不会；不认识的当它会（上限往宽里放）");
+ok(price("claude-fable-5-2") === "8/10/16/0.2/40" && price("claude-opus-4-5-20251101") === "5/6.25/10/0.5/25" && price("claude-fable-5-1") === "10/12.5/20/0.25/50" && price("claude-opus-5-5") === "4/5/8/0.2/20" && price("claude-sonnet-5-5") === "2/2.5/4/0.1/10" && price("claude-opus-4-6") === "5/6.25/10/0.5/25" && price("claude-sonnet-4-6") === "3/3.75/6/0.3/15" && price("claude-haiku-4-5-20251001") === "1/1.25/2/0.1/5" && costOf("claude-不认识", { input_tokens: M }) === null,
+  "各模型的价（每百万 token：新读、写五分钟的缓存、写一小时的缓存、读缓存、写出）和官方价目页一样；读缓存是原价的一成，5.5 那两个是半成，Fable 是四十分之一（Fable 5.2、Opus 4.5 是 2026年11月10日照价目页添的；单子上拿掉的 Fable 5.1 照旧算得出账）");
+ok(thinksFirst("claude-fable-5-2") && thinksFirst("claude-fable-5-1") && thinksFirst("claude-opus-5-5") && thinksFirst("claude-sonnet-5-5") && !thinksFirst("claude-opus-4-6") && !thinksFirst("claude-opus-4-5-20251101") && !thinksFirst("claude-sonnet-4-6") && !thinksFirst("claude-haiku-4-5-20251001") && !thinksFirst("claude-haiku-4-5")
+  && thinksFirst("claude-不认识") && thinksFirst("") && thinksFirst(undefined) && MODELS.filter((m) => thinksFirst(m.id)).map((m) => m.label).join("、") === "Fable 5.2、Opus 5.5、Sonnet 5.5" && MODELS.map((m) => m.label).join("、") === "Sonnet 4.6、Opus 4.6、Opus 4.5、Fable 5.2、Opus 5.5、Sonnet 5.5、Haiku 4.5",
+  "哪些模型自己会先想一阵再写：5 字头的那三个会（关不掉）；上一代的四个不会；单子上是这七个、照这个次序；不认识的当它会（上限往宽里放）");
 
 // =====================================================
 // 提要的字、单子
