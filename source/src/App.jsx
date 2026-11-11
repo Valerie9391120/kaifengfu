@@ -6154,7 +6154,7 @@ export default function App({ account = {} }) {
         {/* 这三个字是画出来的：固定用秘戏钱匣卷轴上那款刻本体（齊伋體），不跟着系统的字体走。
             刻本里只有繁体的“開”，所以是“開封府”。见 ui/art/title.js（tools/make_title.py 生成的）。这一行的高还是 34 */}
         <div className="kfs-side-title flex items-center" role="img" aria-label="开封府" style={{ padding: "calc(22px + env(safe-area-inset-top)) 22px 12px", height: "calc(68px + env(safe-area-inset-top))", boxSizing: "border-box", color: T.ink }}>
-          <svg viewBox={SIDE_TITLE.BOX.join(" ")} height={25} fill="currentColor" aria-hidden="true" style={{ display: "block", flexShrink: 0 }}>
+          <svg viewBox={SIDE_TITLE.BOX.join(" ")} height={30} fill="currentColor" aria-hidden="true" style={{ display: "block", flexShrink: 0 }}>
             <path d={SIDE_TITLE.PATH} />
           </svg>
         </div>
