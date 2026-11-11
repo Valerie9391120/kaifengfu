@@ -6224,11 +6224,17 @@ export default function App({ account = {} }) {
           style={{ top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 100%" }}
         />
 
-        {/* 顶栏 */}
+        {/* 顶栏。原来是一块圆角的玻璃托盘，换成了 Moonlight 黑银那一版顶栏的样子：
+            不要那块玻璃，头像、名字、两个键直接落在画上，底下划一道极细的线。
+            线的颜色跟着字走（--k-ink 淡两成）：浅色主题上是淡的深色线，黑夜上是淡银线；
+            --k-hair 那一根在浅色主题上是白的，画上看不见，所以不用它。
+            头像、名字、两个键的位置和原来一分不差（原来托盘外面空 12、里面垫 6，现在上面一共垫 18），
+            所以那道线正落在原来托盘的下沿，底下的聊天记录也还从原来的地方开始。
+            只改了这一处：底下输入框那块托盘没动 */}
         <div
           onClick={() => memePanel && setMemePanel(false)}
-          className="relative z-10 flex items-center flex-shrink-0"
-          style={{ ...glass(0.36, 28), borderRadius: 24, margin: "calc(12px + env(safe-area-inset-top)) 12px 0", padding: 6 }}
+          className="kfs-topbar relative z-10 flex items-center flex-shrink-0"
+          style={{ borderBottom: "1px solid rgba(var(--k-ink),0.2)", padding: "calc(18px + env(safe-area-inset-top)) 12px 6px" }}
         >
           <IconBtn onClick={() => setDrawerOpen(true)} label="打开侧栏">
             <Icon name="menu" />
