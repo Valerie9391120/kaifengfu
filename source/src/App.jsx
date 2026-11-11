@@ -6153,8 +6153,12 @@ export default function App({ account = {} }) {
         <div style={{ padding: "calc(22px + env(safe-area-inset-top)) 22px 12px", fontFamily: SERIF, fontSize: 23, lineHeight: "34px", letterSpacing: "0.14em", color: T.ink }}>
           开封府
         </div>
-        {/* 上面这一段（日期、四个方块）放不下的时候自己滚；里面的东西都不许被压（flex-shrink-0） */}
-        <div className="kfs-side-scroll flex-1 overflow-y-auto kfs-scroll flex flex-col" style={{ padding: "4px 16px 12px", gap: 12, minHeight: 0 }}>
+        {/* 上面这一段（日期、四个方块）放不下的时候自己滚；里面的东西都不许被压（flex-shrink-0）。
+            会滚的盒子把出了边的东西切掉，日期卡片往上晕开的影子原来在卡片上面 4 个像素的地方被齐齐切一刀，
+            看着是横着一道接缝，像底图分了两层。
+            所以盒子往上伸 12（伸到“开封府”那一行字的底边），里面多垫 12 补回来：卡片的位置一分没动（还是 72，见顶栏那里的说明），
+            影子有 16 个像素的地方淡出去，到切的那里已经淡没了 */}
+        <div className="kfs-side-scroll flex-1 overflow-y-auto kfs-scroll flex flex-col" style={{ marginTop: -12, padding: "16px 16px 12px", gap: 12, minHeight: 0 }}>
           {/* 并蒂莲的暗门（卿卿 10 月 12 日定的）：长按它，最底下那行换成“去看并蒂莲”，点那一行才进去；光点不算 */}
           <DaysCard
             now={now}
