@@ -6149,7 +6149,8 @@ export default function App({ account = {} }) {
           transition: dragX === null ? "transform .35s cubic-bezier(.2,.8,.2,1), opacity .35s" : "none",
         }}
       >
-        <div style={{ padding: "calc(22px + env(safe-area-inset-top)) 22px 12px", fontFamily: SERIF, fontSize: 23, letterSpacing: "0.14em", color: T.ink }}>
+        {/* 行高钉成 34：底下日期卡片的上沿要和对话页顶栏那道线对齐（见顶栏那里的说明），不钉的话是 34.5，手机上对不到整像素 */}
+        <div style={{ padding: "calc(22px + env(safe-area-inset-top)) 22px 12px", fontFamily: SERIF, fontSize: 23, lineHeight: "34px", letterSpacing: "0.14em", color: T.ink }}>
           开封府
         </div>
         {/* 上面这一段（日期、四个方块）放不下的时候自己滚；里面的东西都不许被压（flex-shrink-0） */}
@@ -6229,12 +6230,14 @@ export default function App({ account = {} }) {
             线的颜色跟着字走（--k-ink 淡两成）：浅色主题上是淡的深色线，黑夜上是淡银线；
             --k-hair 那一根在浅色主题上是白的，画上看不见，所以不用它。
             头像、名字、两个键的位置和原来一分不差（原来托盘外面空 12、里面垫 6，现在上面一共垫 18），
-            所以那道线正落在原来托盘的下沿，底下的聊天记录也还从原来的地方开始。
+            线原来落在托盘的下沿，开着侧栏的时候比左边日期卡片的上沿低两个像素，要对齐：
+            顶栏的高钉死成 73（连那道线），线就正压在日期卡片上沿那一根上——卡片的上沿在 22 + 34 + 12 + 4 = 72
+            （侧栏“开封府”那一行上面垫 22、行高钉成 34、下面垫 12，卡片那一栏上面再垫 4），哪一头改了数，另一头要跟着改。
             只改了这一处：底下输入框那块托盘没动 */}
         <div
           onClick={() => memePanel && setMemePanel(false)}
           className="kfs-topbar relative z-10 flex items-center flex-shrink-0"
-          style={{ borderBottom: "1px solid rgba(var(--k-ink),0.2)", padding: "calc(18px + env(safe-area-inset-top)) 12px 6px" }}
+          style={{ borderBottom: "1px solid rgba(var(--k-ink),0.2)", height: "calc(73px + env(safe-area-inset-top))", padding: "calc(18px + env(safe-area-inset-top)) 12px 0" }}
         >
           <IconBtn onClick={() => setDrawerOpen(true)} label="打开侧栏">
             <Icon name="menu" />
