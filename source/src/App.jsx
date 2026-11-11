@@ -28,6 +28,7 @@ import { urlToThumb, fileToPhoto, dataUrlToPhoto } from "./images.js";
 import { DEFAULT_MODEL, modelLabel, costOf, money, usageKey, windowOf, thinksFirst } from "./models.js";
 import { RECAP_KEY, RECAP_BAD_KEY, RECAP_LOG_KEY, normRecaps, pickRecap, tierOf, roomFor, dueRecap, splitForMerge, nextRecap, cleanRecap, addRecap, mayRetry, afterFail, afterAway, loadBad, loadLog, addLog, recapWhy, retryWhen, gauge } from "./recap.js";
 import { dayKeyOf, parseDayKey, moodOf, dayTranscript, parseDiary } from "./diary.js";
+import * as SIDE_TITLE from "./ui/art/title.js";
 import { WALL, SERIF, SANS, T, glass, fill, DOCK_GLASS, chip, chipPrimary, field, GLOBAL_CSS, HAIR, HAIRLINE, FLOAT_SHADOW } from "./ui/style.js";
 import { Icon } from "./ui/Icon.jsx";
 import { HIS_DEFAULT, Avatar } from "./ui/Avatar.jsx";
@@ -6150,8 +6151,12 @@ export default function App({ account = {} }) {
         }}
       >
         {/* 行高钉成 34：底下日期卡片的上沿要和对话页顶栏那道线对齐（见顶栏那里的说明），不钉的话是 34.5，手机上对不到整像素 */}
-        <div style={{ padding: "calc(22px + env(safe-area-inset-top)) 22px 12px", fontFamily: SERIF, fontSize: 23, lineHeight: "34px", letterSpacing: "0.14em", color: T.ink }}>
-          开封府
+        {/* 这三个字是画出来的：固定用秘戏钱匣卷轴上那款刻本体（齊伋體），不跟着系统的字体走。
+            刻本里只有繁体的“開”，所以是“開封府”。见 ui/art/title.js（tools/make_title.py 生成的）。这一行的高还是 34 */}
+        <div className="kfs-side-title flex items-center" role="img" aria-label="开封府" style={{ padding: "calc(22px + env(safe-area-inset-top)) 22px 12px", height: "calc(68px + env(safe-area-inset-top))", boxSizing: "border-box", color: T.ink }}>
+          <svg viewBox={SIDE_TITLE.BOX.join(" ")} height={25} fill="currentColor" aria-hidden="true" style={{ display: "block", flexShrink: 0 }}>
+            <path d={SIDE_TITLE.PATH} />
+          </svg>
         </div>
         {/* 上面这一段（日期、四个方块）放不下的时候自己滚；里面的东西都不许被压（flex-shrink-0）。
             会滚的盒子把出了边的东西切掉，日期卡片往上晕开的影子原来在卡片上面 4 个像素的地方被齐齐切一刀，

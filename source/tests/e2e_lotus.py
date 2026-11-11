@@ -154,7 +154,7 @@ def run(browser):
     ok(not back["door"] and back["text"] == before["text"] and pg.locator(".kfs-lotus").count() == 0 and not asked,
        f"点卡片上别的地方：变回纪念日那行（{back['text']}），哪儿也没进，也没去下载")
     door(pg); time.sleep(0.3)
-    t = pg.get_by_text("开封府", exact=True).first.bounding_box()
+    t = pg.locator(".kfs-side-title svg").bounding_box()  # 这三个字现在是画出来的（刻本体），不是字了
     pg.touchscreen.tap(t["x"] + t["width"] / 2, t["y"] + t["height"] / 2); time.sleep(0.6)
     ok(not pg.evaluate(CARD)["door"], "点卡片外头（侧栏顶上的“开封府”）：也变回去")
     door(pg); time.sleep(0.3)
