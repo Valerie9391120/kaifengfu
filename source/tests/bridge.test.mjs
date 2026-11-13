@@ -2,14 +2,14 @@
 // 再配一个假的“她接的 MCP”，把开封府寄来的那几种包走一遍：
 //   平常说一句、接着上一回那一条说（不另起）、重新回答（另起，照这一包从头接）、带图和工具的前情、
 //   停在手机那头的工具上（回话停在 tool_use，结果寄回来他接着说）、一回调两样、这一回不许调、她接的 MCP（写成 mcp_tool_use）、
-//   她按了停、出了岔子、磁盘上不落明文。
+//   她按了停、出了岔子、Opus 4.6 带 [1m]、磁盘上不落明文。
 // 直接跑：node tests/bridge.test.mjs（找不到 Claude Code 就跳过；KFS_CLAUDE 可以指定在哪）
 import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { createBridge, sessionDir } from "../alarm/bridge.js";
+import { createBridge, sessionDir, cliModel } from "../alarm/bridge.js";
 
 let pass = 0, failN = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); if (process.env.KFS_FAILFAST) process.exit(1); } };
@@ -36,7 +36,7 @@ const api = http.createServer((req, res) => {
       return res.end(req.url.includes("count_tokens") ? '{"input_tokens":10}' : '{"type":"error","error":{"type":"not_found_error","message":"nope"}}');
     }
     const j = JSON.parse(body);
-    seen.push({ system: j.system, messages: j.messages, tools: (j.tools || []).map((t) => t.name), thinking: j.thinking, max_tokens: j.max_tokens });
+    seen.push({ system: j.system, messages: j.messages, tools: (j.tools || []).map((t) => t.name), thinking: j.thinking, max_tokens: j.max_tokens, model: j.model, beta: String(req.headers["anthropic-beta"] || "") });
     // 同真的 Anthropic：名帖里有一块只有空白的字就不收（开封府测试连接那一包没带名帖，撞过这个）
     if (Array.isArray(j.system) && j.system.some((b) => b && b.type === "text" && !String(b.text || "").trim())) {
       res.writeHead(400, { "content-type": "application/json" });
@@ -305,6 +305,16 @@ try {
   ok((await bridge.mcp("0".repeat(32), { jsonrpc: "2.0", id: 1, method: "tools/list" })).error, "关了的、没有的那一条：MCP 不认");
   const live = bridge.runs()[0];
   ok(live && (await bridge.mcp(live.id, { jsonrpc: "2.0", id: 2, method: "nope" })).error.code === -32601 && (await bridge.mcp(live.id, { jsonrpc: "2.0", method: "notifications/initialized" })) === null, "不认的方法回 -32601；通知不用回");
+  // ---------- Opus 4.6：起 Claude Code 的时候名字后面带 [1m]（一百万的上下文），别的不带 ----------
+  ok(cliModel("claude-opus-4-6") === "claude-opus-4-6[1m]" && cliModel("claude-sonnet-4-6") === "claude-sonnet-4-6" && cliModel("claude-opus-5-5") === "claude-opus-5-5" && cliModel("claude-fable-5-2") === "claude-fable-5-2" && cliModel("claude-opus-4-5-20251101") === "claude-opus-4-5-20251101",
+    "只有 Opus 4.6 带 [1m]：Sonnet 4.6 在订阅上要另外付费，五代的本来就是一百万");
+  r = await bridge.handle(body([u("装得下吗")], { model: "claude-opus-4-6" }));
+  s = lastSeen();
+  ok(texts(r) === "收到：装得下吗" && s.model === "claude-opus-4-6" && s.beta.split(",").includes("context-1m-2025-08-07"), `Opus 4.6：Claude Code 发出去的请求带着一百万上下文的记号（${s.model}，${s.beta}）`);
+  ok(r.model === "claude-opus-4-6", "回话里报的还是不带 [1m] 的名字（手机那头照旧认得）");
+  r = await bridge.handle(body([u("那你呢")], { model: "claude-sonnet-4-6" }));
+  s = lastSeen();
+  ok(texts(r) === "收到：那你呢" && s.model === "claude-sonnet-4-6" && !s.beta.includes("context-1m"), `Sonnet 4.6：不带（${s.beta}）`);
 } finally {
   bridge.close();
 }

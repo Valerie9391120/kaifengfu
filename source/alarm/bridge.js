@@ -235,6 +235,15 @@ function errorOf(text, stderr, status) {
 // 回 { handle(body, { signal }) → 回话, mcp(runId, 一条 JSON-RPC) → 回的那一条（null 是不用回）, runs(), close() }
 // =====================================================
 // pagesDir：做网页的文件夹放在哪（一段对话一个子文件夹；不给就不许做网页）
+// 交给 Claude Code 的时候，名字后面带 [1m] 的那几个模型：开一百万的上下文。
+// Claude Code 里五代的模型本来就是一百万；四代的不带 [1m] 是“standard context”（二十万）。手机那头是照一百万算屋子的
+// （src/models.js 的 WINDOWS），名帖、记忆库厚的时候寄来的一包可能过二十万，不带就装不下。
+// 只列在她的订阅上试过给用的：11 月 13 日她在终端里跑 claude -p "ping" --model "claude-opus-4-6[1m]" 回了 pong；
+// Sonnet 4.6 带 [1m] 报 “Usage credits required for 1M context”（要另外开按量付费），所以不列：它走笔记本还是二十万。
+// 手机寄来的、会话记录里写的、回话里报的都还是不带 [1m] 的名字，只在起 Claude Code 的时候换（同 Moonlight 的 cliModel）
+const LONG_CONTEXT = new Set(["claude-opus-4-6"]);
+export const cliModel = (id) => (LONG_CONTEXT.has(id) ? `${id}[1m]` : id);
+
 export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, pagesDir = "", env = {}, log = () => {}, idleMs = IDLE_MS, waitMs = WAIT_MS, maxRuns = MAX_RUNS } = {}) {
   if (!cwd || !mcpUrl) throw new Error("createBridge 要 cwd、mcpUrl");
   fs.mkdirSync(cwd, { recursive: true });
@@ -295,7 +304,7 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, pagesD
       "--output-format", "stream-json",
       "--verbose",
       "--include-partial-messages",
-      "--model", body.model,
+      "--model", cliModel(body.model), // Opus 4.6 带 [1m]（见 LONG_CONTEXT）
       "--system-prompt-file", sysFile,
       "--tools", own.join(","), // Claude Code 自己的那些（跑命令这些）一样都不给；上网查开着给搜索、读网页，做网页给读、写、改
       "--mcp-config", JSON.stringify(mcp),
