@@ -1,23 +1,81 @@
 import { useState, useRef } from "react";
 import { fmtChars } from "../util.js";
-import { T, glass, chipPrimary, fill } from "../ui/style.js";
+import { T, glass, chip, chipPrimary, field, fill } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { Toggle } from "../ui/parts.jsx";
 
-export function MemoryPanel({ files, texts, note, onUpload, onToggle, onDelete }) {
+// onSave(id, 新的全文)：点开一份文档以后右上角的“改”，改完存回原来那一份（名字不变）。返回存没存上
+export function MemoryPanel({ files, texts, note, onUpload, onToggle, onDelete, onSave }) {
   const fileRef = useRef(null);
   const [viewing, setViewing] = useState(null);
+  const [draft, setDraft] = useState(null); // 正在改的那一份的字（null 是没在改）；改的是全文，不是只显示出来的前三万字
+  const [busy, setBusy] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
   const [armed, setArmed] = useState(null);
   const total = files.filter((f) => f.enabled).reduce((s, f) => s + (f.size || 0), 0);
 
   if (viewing) {
     const f = files.find((x) => x.id === viewing);
     const text = (f && texts[f.id]) || "";
+    if (f && draft != null) {
+      const canSave = !!draft.trim() && draft !== text && !busy;
+      const save = async () => {
+        if (!canSave) return;
+        setBusy(true);
+        setSaveErr("");
+        const ok = await onSave(f.id, draft);
+        setBusy(false);
+        if (ok) setDraft(null);
+        else setSaveErr("没存上，再点一次保存试试");
+      };
+      return (
+        <div className="kfs-mem-edit">
+          <button
+            onClick={() => {
+              setDraft(null);
+              setSaveErr("");
+            }}
+            className="kfs-tap flex items-center"
+            style={{ gap: 2, fontSize: 13.5, color: T.dai, marginBottom: 12 }}
+          >
+            <Icon name="chevL" size={16} /> 不改了
+          </button>
+          <div style={{ fontSize: 15, color: T.ink, marginBottom: 10 }}>{f.name}</div>
+          <textarea
+            className="kfs-field"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            aria-label="文档的字"
+            style={{ ...field, minHeight: 320, lineHeight: 1.7, resize: "vertical", userSelect: "text", WebkitUserSelect: "text" }}
+          />
+          <div className="flex items-center justify-between" style={{ marginTop: 12, gap: 8 }}>
+            <span style={{ fontSize: 12, color: saveErr ? T.red : T.inkSoft }}>{saveErr || fmtChars(draft.length)}</span>
+            <button onClick={save} disabled={!canSave} className="kfs-tap" style={{ ...chipPrimary, opacity: canSave ? 1 : 0.5 }}>
+              {busy ? "存着…" : "保存"}
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
-      <div>
-        <button onClick={() => setViewing(null)} className="kfs-tap flex items-center" style={{ gap: 2, fontSize: 13.5, color: T.dai, marginBottom: 12 }}>
-          <Icon name="chevL" size={16} /> 返回列表
-        </button>
+      <div className="kfs-mem-view">
+        <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+          <button onClick={() => setViewing(null)} className="kfs-tap flex items-center" style={{ gap: 2, fontSize: 13.5, color: T.dai }}>
+            <Icon name="chevL" size={16} /> 返回列表
+          </button>
+          {f && onSave && (
+            <button
+              onClick={() => {
+                setSaveErr("");
+                setDraft(text);
+              }}
+              className="kfs-tap flex items-center"
+              style={{ ...chip, gap: 5 }}
+            >
+              <Icon name="pen" size={15} /> 改
+            </button>
+          )}
+        </div>
         <div style={{ fontSize: 15, color: T.ink, marginBottom: 4 }}>{f ? f.name : ""}</div>
         <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 12 }}>{fmtChars(text.length)}</div>
         <div

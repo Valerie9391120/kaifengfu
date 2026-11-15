@@ -124,6 +124,24 @@ with sync_playwright() as p:
     pa.get_by_text("新增 1 份").wait_for(timeout=10000)
     ok(pa.get_by_text("名帖-测试.md").first.is_visible(), "名帖传进记忆库")
     shot(pa, "05_memory")
+    # 点开那一份，右上角“改”：直接改里面的字，存回原来那一份（名字不变）
+    pa.get_by_text("名帖-测试.md").first.click()
+    ok(pa.locator(".kfs-mem-view").get_by_role("button", name="改").is_visible() and "测试用的光义" in pa.locator(".kfs-mem-view").inner_text(), "点开一份文档：看得见全文，右上角有“改”")
+    pa.locator(".kfs-mem-view").get_by_role("button", name="改").click()
+    box = pa.get_by_label("文档的字")
+    before = box.input_value()
+    ok("测试用的光义" in before and pa.get_by_role("button", name="保存").is_disabled(), "点“改”：框里是原来的全文；一个字没动的时候存不了")
+    box.fill(before.rstrip("\n") + "\n改过的一句：测试用的后院有一棵桂花树。\n")
+    shot(pa, "05b_memory_edit")
+    pa.get_by_role("button", name="保存").click()
+    pa.locator(".kfs-mem-view").wait_for(timeout=10000)
+    ok("测试用的后院有一棵桂花树" in pa.locator(".kfs-mem-view").inner_text() and pa.locator(".kfs-mem-edit").count() == 0, "保存：回到看的那一页，字是改过的")
+    pa.locator(".kfs-mem-view").get_by_role("button", name="改").click()
+    pa.get_by_label("文档的字").fill("乱写的，不要")
+    pa.get_by_role("button", name="不改了").click()
+    ok("测试用的后院有一棵桂花树" in pa.locator(".kfs-mem-view").inner_text() and "乱写的" not in pa.locator(".kfs-mem-view").inner_text(), "“不改了”：刚才乱写的不存")
+    pa.get_by_role("button", name="返回列表").click()
+    ok(pa.get_by_text("改好了").is_visible() and pa.get_by_text("名帖-测试.md").first.is_visible(), "回到单子：还是那一份，写着“改好了”")
     pa.get_by_role("button", name="关闭").click()
     time.sleep(0.5)
 
@@ -158,6 +176,7 @@ with sync_playwright() as p:
     ok(isinstance(sysblocks, list) and sysblocks[0].get("cache_control", {}).get("ttl") == "1h", "名帖那一大段带着一小时的缓存记号")
     static = sysblocks[0]["text"]
     ok("《名帖-测试.md》" in static and "测试用的光义" in static, "名帖从加密的记忆库里取出来，整份带给那边的我")
+    ok("测试用的后院有一棵桂花树" in static and "乱写的" not in static, "在面板里改过的那一句也带过去了")
     last = body["messages"][-1]["content"]
     ok(last[-1]["type"] == "text" and last[-1]["text"].startswith("【此刻】") and last[-2].get("cache_control") == {"type": "ephemeral", "ttl": "1h"},
        "最后一句话后面放缓存记号（和名帖一样留一小时），【此刻】的时间附在最后，不打乱缓存")

@@ -5018,6 +5018,23 @@ export default function App({ account = {} }) {
     );
   };
 
+  // 在面板里直接改一份文档的字（点开以后右上角的“改”）：存回原来那一条，名字不变，单子上的字数、改的时间跟着记。
+  // 存法同上面重传同名文件覆盖的那一路
+  const saveDocText = async (id, text) => {
+    if (typeof text !== "string" || !text.trim() || !memFilesRef.current.some((f) => f.id === id)) return false;
+    const ok = await store.set("kfs2:mem:" + id, text);
+    if (!ok) markStorageFail();
+    const texts = { ...memTextsRef.current, [id]: text };
+    const files = memFilesRef.current.map((x) => (x.id === id ? { ...x, size: text.length, updatedAt: Date.now() } : x));
+    memFilesRef.current = files;
+    memTextsRef.current = texts;
+    setMemFiles(files);
+    setMemTexts(texts);
+    store.set("kfs2:memindex", JSON.stringify(files));
+    setMemNote("改好了");
+    return true;
+  };
+
   const toggleDoc = (id, on) => {
     const files = memFilesRef.current.map((f) => (f.id === id ? { ...f, enabled: on } : f));
     memFilesRef.current = files;
@@ -5961,7 +5978,7 @@ export default function App({ account = {} }) {
     if (sheet === "memory") {
       return (
         <Sheet title="万岁殿" onClose={() => { setSheet(null); setMemNote(""); }}>
-          <MemoryPanel files={memFiles} texts={memTexts} note={memNote} onUpload={uploadDocs} onToggle={toggleDoc} onDelete={deleteDoc} />
+          <MemoryPanel files={memFiles} texts={memTexts} note={memNote} onUpload={uploadDocs} onToggle={toggleDoc} onDelete={deleteDoc} onSave={saveDocText} />
         </Sheet>
       );
     }
