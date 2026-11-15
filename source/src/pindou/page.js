@@ -12,7 +12,7 @@
 //   三种样子只留像素（实心方格），顶上的切换拿掉了；色板、工具里那颗颜色也画成方块（她 10 月 26 日 02:33 说的：“拼豆和熨烫这俩其实可以拿掉 只要像素”）
 import { CSS } from "./style.js";
 import { paintWork, boundsOf } from "./draw.js";
-import { PALETTE, SIZES, CUSTOM_MAX, COLOR_MAX, PD_PREFS, readPrefs, packPrefs, colorName, normHex, isHex, countBeads, usageOf, toCode, fromCode, resizeGrid, floodGrid, cleanName } from "./parts.js";
+import { PALETTE, HER_SIZES, CUSTOM_MAX, COLOR_MAX, PD_PREFS, readPrefs, packPrefs, colorName, normHex, isHex, countBeads, usageOf, toCode, fromCode, resizeGrid, floodGrid, cleanName } from "./parts.js";
 
 const PAL = PALETTE.map((c) => [c.name, c.hex]);
 const NAME = new Map(PAL.map(([n, h]) => [h, n]));
@@ -226,7 +226,8 @@ export function mountBoard(root, api) {
     theme.accent = g("--accent", "#3F6A62");
   }
   const cellSize = () => (V / N) * zoom;
-  const maxZoom = () => clamp((44 * N) / Math.max(V, 1), 1, 6);
+  // 最多放大到一格 44 上下（手指点得准）；封顶 8 倍（原来 6 倍：64×64 的大板子放到头一格才三十出头。48 以下的板子用不到 6 倍，照旧）
+  const maxZoom = () => clamp((44 * N) / Math.max(V, 1), 1, 8);
   function clampPan() {
     const max = Math.max(0, N * cellSize() - V);
     ox = clamp(ox, 0, max);
@@ -730,7 +731,7 @@ export function mountBoard(root, api) {
   function renderSizes() {
     const el = $(".pd-sizes");
     el.textContent = "";
-    for (const n of SIZES) {
+    for (const n of HER_SIZES) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "pd-chip" + (n === N ? " on" : "");

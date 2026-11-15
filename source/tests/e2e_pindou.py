@@ -202,6 +202,29 @@ def run(browser):
     ok("“他自己醒”还关着" in pg.locator(".kfs-pindou .pd-his").inner_text(), "「他的」那一栏：他还没拼过、“他自己醒”关着，照实说")
     tab(pg, "pal")
 
+    # ---- 板子的大小：她这儿六种，最大的一块 64×64 ----
+    tab(pg, "board")
+    chips = pg.evaluate("[...document.querySelectorAll('.kfs-pindou .pd-sizes .pd-chip')].map((b) => b.textContent)")
+    ok(chips == ["16×16", "24×24", "29×29", "32×32", "48×48", "64×64"], f"板子多大：六种，最后一块是 64×64（{chips}）")
+    fit = pg.evaluate("(() => { const el = document.querySelector('.kfs-pindou .pd-sizes'), r = el.getBoundingClientRect(); return [...el.children].every((b) => { const q = b.getBoundingClientRect(); return q.left >= r.left - 0.5 && q.right <= r.right + 0.5 && q.right <= innerWidth; }); })()")
+    ok(fit, "六颗钮都在那一栏里摆得下，不伸出屏幕")
+    pg.locator(".kfs-pindou .pd-sizes .pd-chip", has_text="64×64").click(); pg.wait_for_timeout(300)
+    ok(pg.evaluate(CODE) == "PD1~64~~.4096" and pg.evaluate("document.querySelector('.kfs-pindou .pd-sizes .on').textContent") == "64×64", "点 64×64：换成一块空的大板子（4096 格）")
+    shot(pg, "pd_1b_board64")
+    tap_cell(pg, 63, 63); tap_cell(pg, 0, 0); tap_cell(pg, 31, 40)
+    big = pg.evaluate(CODE)
+    ok(big.startswith("PD1~64~EE7A2D~a") and big.endswith("a") and big.count("a") == 3, f"大板子上四个角、当中都点得到（{big}）")
+    for _ in range(8):
+        if pg.locator(".kfs-pindou [data-act='zin']").is_disabled(): break
+        act(pg, "zin")
+    zv = pg.evaluate("(() => { const c = document.querySelector('.kfs-pindou .pd-cv').getBoundingClientRect(); return [parseFloat(document.querySelector('.kfs-pindou .pd-zval').textContent), c.width]; })()")
+    ok(zv[0] > 6 and zv[1] / 64 * zv[0] >= 40, f"大板子放大到头：一格四十上下，手指点得准（{zv[0]} 倍，一格 {zv[1] / 64 * zv[0]:.0f}）")
+    shot(pg, "pd_1c_board64_zoom")
+    act(pg, "zfit")
+    act(pg, "undo"); act(pg, "undo"); act(pg, "undo"); act(pg, "undo")
+    ok(pg.evaluate(CODE) == "PD1~24~~.576" and pg.evaluate("document.querySelector('.kfs-pindou .pd-sizes .on').textContent") == "24×24", "撤销四回：回到原来那块空的 24×24")
+    tab(pg, "pal")
+
     # ---- 拼几颗、粘贴作品码 ----
     for x in range(3, 8):
         tap_cell(pg, x, 5)

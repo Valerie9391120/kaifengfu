@@ -3,7 +3,7 @@
 // 聊天里回屋看一眼；她发给他的那一幅寄给他的样子（图加一句）、聊天里摆的、提要和日记摘录里写的、预览、一条多厚。
 // 仓库是公开的：这里的板子都是编的（几颗豆子、一个小方块），不是她拼的。
 import {
-  PALETTE, SIZES, HIS_SIZE, PD_STATE, PD_WORK, PD_HIS, colorName, keyOf, hexOfKey, toCode, fromCode, resizeGrid, floodGrid, cleanName,
+  PALETTE, SIZES, HER_SIZES, HIS_SIZE, PD_STATE, PD_WORK, PD_HIS, colorName, keyOf, hexOfKey, toCode, fromCode, resizeGrid, floodGrid, cleanName,
   countBeads, usageOf, readState, packState, readPrefs, packPrefs, PD_PREFS, COLOR_MAX, readWork, packWork, listWorks, readHis, packHis, gridText, boardText, galleryText,
   PINDOU_TOOL, isPindouCall, PD_NOTE, hisApply, pindouBrief, pindouView, pdText, pdBrief, pdInfo, PD_SUB, DONE_MAX, NAME_MAX,
 } from "../src/pindou/parts.js";
@@ -44,6 +44,17 @@ ok(new Set(PALETTE.map((c) => c.k)).size === 39 && PALETTE.every((c) => c.k.leng
 ok(new Set(PALETTE.map((c) => c.hex)).size === 39 && PALETTE.every((c) => /^#[0-9A-F]{6}$/.test(c.hex)), "颜色一种一个，写法统一（井号、六位、大写）");
 ok(colorName(K) === "墨黑" && colorName("#123456") === "自定义 #123456" && keyOf(Z) === "Z" && keyOf("#123456") === "" && hexOfKey("o") === O && hexOfKey("?") === "", "名字、字母、颜色三样互相认得；色板外的颜色名字写“自定义”，没有字母");
 ok(eq(SIZES, [16, 24, 29, 32, 48]) && HIS_SIZE === 24, "板子五种大小，他头一块是 24×24");
+ok(eq(HER_SIZES, [16, 24, 29, 32, 48, 64]) && eq(PINDOU_TOOL.input_schema.properties.size.enum, [16, 24, 29, 32, 48]) && !PINDOU_TOOL.description.includes("64"), "她的拼豆作多一块 64×64 的大板子；他的工具认的还是那五种，说明里不提 64");
+{
+  const g = blank(64);
+  g[0] = K; g[63] = Z; g[64 * 64 - 1] = O; g[64 * 40 + 31] = K;
+  const back = fromCode(toCode(64, g));
+  const g48 = blank(48);
+  g48[0] = K;
+  const up = resizeGrid(48, g48, 64);
+  ok(back && back.n === 64 && eq(back.g, g) && fromCode("PD1~65~~.4225") === null, "64×64 的作品码来回一趟一样；65 的不认");
+  ok(up.g.length === 4096 && up.g[64 * 8 + 8] === K && up.g.filter(Boolean).length === 1, "48 的换成 64：拼好的居中挪过去（左上角那颗到了第 8 行第 8 列）");
+}
 ok(PD_STATE === "kfs2:pd:state" && PD_WORK === "kfs2:pd:work:" && PD_HIS === "kfs2:pindou", "存档的钥匙：她的板子、作品集一幅一条、他的板子");
 
 // =====================================================

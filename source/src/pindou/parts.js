@@ -67,7 +67,10 @@ export const colorName = (hex) => (BY_HEX.has(hex) ? BY_HEX.get(hex).name : `自
 export const keyOf = (hex) => (BY_HEX.has(hex) ? BY_HEX.get(hex).k : "");
 export const hexOfKey = (k) => (BY_KEY.has(k) ? BY_KEY.get(k).hex : "");
 
-export const SIZES = [16, 24, 29, 32, 48];
+export const SIZES = [16, 24, 29, 32, 48]; // 他屋里那块能换的几种（工具 play_pindou 的 size 认的就是这几种，改了闹钟要跟着换）
+// 她的拼豆作里能换的：上面五种，再加一块 64×64 的大板子（作品码的边长最大认到 64，见 fromCode）。
+// 大板子只给她：他是照一行一行字母拼的，一行六十四个字母看着费劲
+export const HER_SIZES = [...SIZES, 64];
 export const HIS_SIZE = 24; // 他桌上头一块板子多大（字母一行二十四个，他看得清、拼得动）
 export const NAME_MAX = 24; // 一幅的名字最长几个字
 
