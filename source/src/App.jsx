@@ -4722,8 +4722,8 @@ export default function App({ account = {} }) {
     window.addEventListener("kfs-kb", onKb);
     t = setTimeout(done, 600);
   };
+  // 发完一张面板不收（照微信），好接着点下一张；点聊天记录、顶栏、输入框、笑脸才收
   const sendMeme = async (file) => {
-    setMemePanel(false);
     setSheet(null);
     setDrawerOpen(false);
     await ensureMemeThumb(file);
@@ -6755,7 +6755,7 @@ export default function App({ account = {} }) {
                 )}
                 </span>
           </div>
-          {/* 表情包面板：沉在按钮底下，照键盘那么高（见 input.css 的 .kfs-meme-panel），一行四张，上下翻；点一张直接发出去 */}
+          {/* 表情包面板：沉在按钮底下，照键盘那么高（见 input.css 的 .kfs-meme-panel），一行四张，上下翻；点一张直接发出去，面板留着 */}
           {memePanel && (
             <div className="kfs-meme-panel overflow-y-auto kfs-scroll" style={{ margin: "8px -14px 0", borderTop: HAIRLINE }}>
               <div className="grid grid-cols-4" style={{ gap: 10, padding: "12px 14px max(12px, var(--kfs-sab))" }}>

@@ -116,7 +116,16 @@ with sync_playwright() as p:
     # ---- 点一张：直接发出去 ----
     n0 = pa.locator(".kfs-chat-rows img").count()
     pa.locator(".kfs-meme-panel .grid button").first.tap(); pa.wait_for_timeout(800)
-    ok(pa.locator(".kfs-chat-rows img").count() > n0 and not st(pa)["panel"], "点一张表情包：直接发出去（面板照旧收起）")
+    s1 = st(pa)
+    ok(pa.locator(".kfs-chat-rows img").count() > n0 and s1["panel"] and s1["panelH"] == H - 447,
+       "点一张表情包：直接发出去，面板留着不收（还是那么高）")
+    ok(pa.evaluate("(() => { const l = document.querySelector('.kfs-chat-scroll'); return l.scrollHeight - l.scrollTop - l.clientHeight; })()") <= 2,
+       "面板开着发出去：聊天记录到底，刚发的那张在面板上面看得见")
+    n1 = pa.locator(".kfs-chat-rows img").count()
+    pa.locator(".kfs-meme-panel .grid button").nth(1).tap(); pa.wait_for_timeout(800)
+    ok(pa.locator(".kfs-chat-rows img").count() > n1 and st(pa)["panel"], "接着点第二张：不用再开面板，也发出去了，面板还在")
+    pa.mouse.click(200, 300); pa.wait_for_timeout(400)
+    ok(not st(pa)["panel"], "发完点上面的聊天记录：面板收起")
 
     # ---- 打字的时候输入框变一行 ----
     pa.evaluate("document.activeElement && document.activeElement.blur()"); keyboard(pa, None)
