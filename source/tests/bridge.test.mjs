@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { createBridge, sessionDir, cliModel } from "../alarm/bridge.js";
+import { createBridge, sessionDir, cliModel, AFTER_RESULTS } from "../alarm/bridge.js";
 
 let pass = 0, failN = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); if (process.env.KFS_FAILFAST) process.exit(1); } };
@@ -28,6 +28,7 @@ if (!CLAUDE) {
 const seen = []; // 每一回请求：{ system, messages, tools, thinking, max_tokens }
 const said = (m) => (Array.isArray(m.content) ? m.content : [{ type: "text", text: m.content }]).filter((b) => b.type === "text" && !b.text.startsWith("<system-reminder>") && !b.text.startsWith("【此刻】")).map((b) => b.text.trim()).join(" ");
 const api = http.createServer((req, res) => {
+  req.setEncoding("utf8"); // 不然一个汉字正好劈在两截中间会读坏
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", async () => {
@@ -138,6 +139,11 @@ bridge = createBridge({
   env: { HOME: home, USERPROFILE: home, ANTHROPIC_BASE_URL: `http://127.0.0.1:${apiPort}`, ANTHROPIC_API_KEY: "sk-ant-test", HTTPS_PROXY: "", HTTP_PROXY: "", https_proxy: "", http_proxy: "", NO_PROXY: "127.0.0.1,localhost", DISABLE_TELEMETRY: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", DISABLE_AUTOUPDATER: "1" },
 });
 
+// Claude Code 给这个工作文件夹攒的自动记忆：埋一份，看它读不读（--setting-sources "" 挡不住，靠 CLAUDE_CODE_DISABLE_AUTO_MEMORY）
+const memDir = path.join(sessionDir(fs.realpathSync(cwd), path.join(home, ".claude")), "memory");
+fs.mkdirSync(memDir, { recursive: true });
+fs.writeFileSync(path.join(memDir, "MEMORY.md"), "自动记忆里埋的一句：桂花糕\n");
+
 // ---------- 开封府寄来的那一包长什么样（照 App.jsx 的 bodyFor、prompt/system.js 的 withNowNote） ----------
 const SYSTEM = [{ type: "text", text: "你是赵光义。说话短。（名帖）", cache_control: { type: "ephemeral", ttl: "1h" } }];
 const TOOLS = [
@@ -224,6 +230,63 @@ try {
   ok(r.stop_reason === "tool_use" && uses.length === 2 && uses.map((x) => x.name).join() === "jianghu_roll,qx_draw", `一回调两样：两样都交给手机（${uses.map((x) => x.name)}）`);
   r = await bridge.handle(body([u("两样都来"), a(...uses), { role: "user", content: uses.map((x, i) => ({ type: "tool_result", tool_use_id: x.id, content: i ? "上上签" : "掷出 2" })) }]));
   ok(texts(r) === "结果：掷出 2、上上签" && r.stop_reason === "end_turn", `两样的结果一起寄回来，他接着说（${texts(r)}）`);
+
+  // ---------- 照开封府真寄的样子：结果后面跟着【此刻】（prompt/system.js 的 withNowNote 总在最后一句后面附）----------
+  // 棋局里每一步都是这样寄的。还是交还给等着的那一条，【此刻】接在结果后面；她的下一句也还是那一条（不然一步另起一条，整段对话回回重算）
+  const resultTexts = (m, id) => {
+    const t = (m.content || []).find((b) => b.type === "tool_result" && b.tool_use_id === id);
+    return t ? (Array.isArray(t.content) ? t.content : [{ type: "text", text: t.content }]).filter((x) => x.type !== "text" || !x.text.startsWith("<system-reminder>")).map((x) => (x.type === "text" ? x.text.trim() : "<" + x.type + ">")) : null;
+  };
+  const mk = (b) => ({ ...b, cache_control: { type: "ephemeral" } }); // 手机那头放的缓存记号
+  let n0 = bridge.spawned();
+  r = await bridge.handle(body([u("扔个骰子吧", [now("14:40")])]));
+  const use2 = r.content.find((b) => b.type === "tool_use");
+  const game = [u("扔个骰子吧"), a("我替你扔", use2)];
+  r = await bridge.handle(body([...game, { role: "user", content: [mk({ type: "tool_result", tool_use_id: use2.id, content: "掷出 1" }), now("14:41")] }]));
+  s = lastSeen();
+  let got = resultTexts(s.messages[s.messages.length - 1], use2.id);
+  ok(r.stop_reason === "end_turn" && bridge.spawned() === n0 + 1 && bridge.runs().filter((x) => x.state === "waiting").length === 0, `结果后面跟着【此刻】：还是交还给等着的那一条，不另起（起过 ${bridge.spawned() - n0} 条）`);
+  ok(got && got.join("|") === "掷出 1|【此刻】10月1日 14:41" && !JSON.stringify(s.messages).includes("[调了") && !JSON.stringify(s.messages).includes(AFTER_RESULTS), `那边看到的：真的结果，【此刻】原样接在它后面，前面不添话（${got}）`);
+  game.push({ role: "user", content: [{ type: "tool_result", tool_use_id: use2.id, content: "掷出 1" }] }, a(texts(r)));
+  r = await bridge.handle(body([...game, u("再扔一回骰子", [now("14:42")])]));
+  const use3 = r.content.find((b) => b.type === "tool_use");
+  ok(r.stop_reason === "tool_use" && use3 && bridge.spawned() === n0 + 1, `她的下一句：还是那一条（起过 ${bridge.spawned() - n0} 条）`);
+  // 她趁他调引擎的工夫插了一句：也交还给那一条，前面添一句说清楚这不是工具回的
+  game.push(u("再扔一回骰子"), a("我替你扔", use3));
+  const cut = [{ type: "tool_result", tool_use_id: use3.id, content: "掷出 3" }, { type: "text", text: "等一下，我先说一句" }];
+  r = await bridge.handle(body([...game, { role: "user", content: [cut[0], mk(cut[1]), now("14:43")] }]));
+  s = lastSeen();
+  got = resultTexts(s.messages[s.messages.length - 1], use3.id);
+  ok(r.stop_reason === "end_turn" && bridge.spawned() === n0 + 1 && got && got.join("|") === ["掷出 3", AFTER_RESULTS, "等一下，我先说一句", "【此刻】10月1日 14:43"].join("|"),
+     `结果后面是她插的话：还是那一条；结果、一句“下面是她那头接着发来的”、她的话、【此刻】，照这个次序（${got}）`);
+  game.push({ role: "user", content: cut }, a(texts(r)));
+  r = await bridge.handle(body([...game, u("好了你说", [now("14:44")])]));
+  ok(texts(r) === "收到：好了你说" && bridge.spawned() === n0 + 1, `再下一句：还是那一条（起过 ${bridge.spawned() - n0} 条）`);
+  // 一回调两样：后面那几块跟在第二样的结果后面
+  game.push(u("好了你说"), a(texts(r)));
+  r = await bridge.handle(body([...game, u("两样都来一遍", [now("14:45")])]));
+  const two = r.content.filter((b) => b.type === "tool_use");
+  r = await bridge.handle(body([...game, u("两样都来一遍"), a(...two), { role: "user", content: [...two.map((x, i) => ({ type: "tool_result", tool_use_id: x.id, content: i ? "中吉" : "掷出 5" })), now("14:46")] }]));
+  s = lastSeen();
+  const lastTwo = s.messages[s.messages.length - 1];
+  ok(two.length === 2 && bridge.spawned() === n0 + 1 && resultTexts(lastTwo, two[0].id).join("|") === "掷出 5" && resultTexts(lastTwo, two[1].id).join("|") === "中吉|【此刻】10月1日 14:46",
+     `一回调两样、后面跟着【此刻】：还是那一条，【此刻】跟在第二样的结果后面（${resultTexts(lastTwo, two[0].id)} ／ ${resultTexts(lastTwo, two[1].id)}）`);
+  // 结果后面跟着带不过去的（图；太长的字）：照老办法另起一条，结果写成字递进去，一样不丢
+  r = await bridge.handle(body([u("扔个骰子看看", [now("14:47")])]));
+  const use4 = r.content.find((b) => b.type === "tool_use");
+  n0 = bridge.spawned();
+  r = await bridge.handle(body([u("扔个骰子看看"), a("我替你扔", use4), { role: "user", content: [{ type: "tool_result", tool_use_id: use4.id, content: "掷出 2" }, { type: "text", text: "看这张" }, { type: "image", source: { type: "base64", media_type: "image/png", data: PNG } }, now("14:48")] }]));
+  s = lastSeen();
+  let flatLast = JSON.stringify(s.messages[s.messages.length - 1]);
+  ok(bridge.spawned() === n0 + 1 && flatLast.includes("[结果：掷出 2]") && flatLast.includes("看这张") && flatLast.includes(PNG), "结果后面跟着图（结果里不带图）：另起一条，结果写成字，她的话和图照寄");
+  r = await bridge.handle(body([u("扔个骰子瞧瞧", [now("14:49")])]));
+  const use5 = r.content.find((b) => b.type === "tool_use");
+  n0 = bridge.spawned();
+  const long = "很长的一段话。".repeat(1300); // 九千来字
+  r = await bridge.handle(body([u("扔个骰子瞧瞧"), a("我替你扔", use5), { role: "user", content: [{ type: "tool_result", tool_use_id: use5.id, content: "掷出 4" }, { type: "text", text: long }, now("14:50")] }]));
+  s = lastSeen();
+  flatLast = JSON.stringify(s.messages[s.messages.length - 1]);
+  ok(bridge.spawned() === n0 + 1 && flatLast.includes("[结果：掷出 4]") && flatLast.includes(long), "结果后面跟着很长的字（过了八千）：另起一条，一个字不少");
 
   // ---------- 这一回不许调 ----------
   r = await bridge.handle(body([u("不许抽", [now("14:36")])], { tool_choice: { type: "none" } }));
@@ -315,6 +378,8 @@ try {
   r = await bridge.handle(body([u("那你呢")], { model: "claude-sonnet-4-6" }));
   s = lastSeen();
   ok(texts(r) === "收到：那你呢" && s.model === "claude-sonnet-4-6" && !s.beta.includes("context-1m"), `Sonnet 4.6：不带（${s.beta}）`);
+  // ---------- Claude Code 的自动记忆不读 ----------
+  ok(fs.existsSync(path.join(memDir, "MEMORY.md")) && !seen.some((x) => JSON.stringify([x.system, x.messages]).includes("桂花糕")), "这个工作文件夹的自动记忆（MEMORY.md）埋着：哪一回都没被读进去");
 } finally {
   bridge.close();
 }
@@ -332,7 +397,7 @@ const walk = (d) => {
 walk(tmp);
 const sess = sessionDir(fs.realpathSync(cwd), path.join(home, ".claude"));
 ok(!left.length, `跑完了这台电脑上找不到对话里的字、名帖（${left.join(", ")}）`);
-ok(!fs.existsSync(sess) || !fs.readdirSync(sess).length, "会话记录一份都没留");
+ok(!fs.existsSync(sess) || !fs.readdirSync(sess).some((f) => f !== "memory"), "会话记录一份都没留（那个文件夹里只有测试自己埋的自动记忆）");
 ok(!fs.readdirSync(cwd).length, "名帖的临时文件删了");
 ok(!logs.some((l) => /你好|第二句|骰子/.test(l)), "日志里不记对话里的字");
 

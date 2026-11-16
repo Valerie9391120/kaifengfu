@@ -11,7 +11,8 @@
 //     跑完了磁盘上找不到对话里的一个字）。最后那一句从 stdin 递进去。
 //   - 他回话半路要调的工具（江湖棋局、翻日记、抽签、回屋看一眼、翻梦廊，tools 里那些）：这里开一个 MCP（--mcp-config，http），
 //     工具在 Claude Code 那头叫 mcp__kfs__<名字>。他一调，这里把回话停在 tool_use 上交给手机（跟 Anthropic 一样），
-//     手机办完了照常把下一包寄来（最后一句是 tool_result），这里把结果交还给等着的那一下，他接着说。
+//     手机办完了照常把下一包寄来（最后一句最前面是 tool_result，后面跟着【此刻】，有时还有她插的话），这里把结果交还给
+//     等着的那一下，后面那几块接在最后一样的结果后面，他接着说。
 //     Claude Code 调的时候带着 tool_use 的编号（_meta 里的 claudecode/toolUseId），结果对得上号。
 //   - 她接的 MCP（mcp_servers，tavily 这些）：原样挂到 Claude Code 上，他自己调；回话里照 Anthropic 的样子写成
 //     mcp_tool_use、mcp_tool_result（手机那头照这个写“用了 tavily”）。
@@ -120,6 +121,17 @@ function cleanMessages(messages, own, forced = new Set()) {
     else out.push({ role: m.role, content: blocks });
   }
   return out;
+}
+
+// 结果后面跟着的那几块，带不带得过去：只带字，加起来不长的（Claude Code 给 MCP 的结果设着上限，太长会整个换成一句报错，
+// 引擎回的也跟着没了）。带着图、文档的，太长的，照老办法另起一条，一样不丢
+const EXTRAS_MAX = 8000;
+const carriable = (extras) => extras.every((b) => b && b.type === "text") && extras.reduce((n, b) => n + b.text.length, 0) <= EXTRAS_MAX;
+// 那几块接在工具的结果后面交给他。只有【此刻】那一块的原样接上；还有别的（她插的话、提示），前面添一句说清楚这不是工具回的
+export const AFTER_RESULTS = "[以上是工具回的结果。下面是她那头接着发来的：]";
+function afterResults(extras) {
+  const plain = extras.every((b) => b.text.startsWith("【此刻】"));
+  return [...(extras.length && !plain ? [{ type: "text", text: AFTER_RESULTS }] : []), ...extras.map((b) => ({ type: "text", text: b.text }))];
 }
 
 // 一块的指纹（比对“前面的对不对得上”用）
@@ -320,7 +332,9 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, pagesD
     const e = { ...process.env };
     delete e.ANTHROPIC_API_KEY;
     delete e.ANTHROPIC_AUTH_TOKEN;
-    Object.assign(e, env, { MCP_TOOL_TIMEOUT: String(waitMs + 60000), ENABLE_PROMPT_CACHING_1H: "1" });
+    // CLAUDE_CODE_DISABLE_AUTO_MEMORY：Claude Code 给每个工作文件夹攒的那份 MEMORY.md 不读（--setting-sources "" 挡不住它：
+    // 那个文件在的话，会被塞到她头一句前面，还写着“这些指示压过默认行为”）
+    Object.assign(e, env, { MCP_TOOL_TIMEOUT: String(waitMs + 60000), ENABLE_PROMPT_CACHING_1H: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" });
     if (body.max_tokens) e.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(body.max_tokens);
     const [cmd, argv] = /\.m?js$/.test(claude) ? [process.execPath, [claude, ...args]] : [claude, args];
     const proc = spawn(cmd, argv, { cwd: realCwd, env: e, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
@@ -542,17 +556,24 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, pagesD
     let history = all.slice(0, -1);
     const noTools = !!(body.tool_choice && body.tool_choice.type === "none");
     const results = last.content.filter((b) => b.type === "tool_result");
+    // 结果后面跟着的那几块：手机那头总在最后一句后面附【此刻】（棋局里还带【棋盘】），她趁这工夫插的话、换头像的提示也排在结果后面。
+    // 结果都排在最前头、后面那几块又都带得过去（只有字、不长），才交还给等着的那一条（见 afterResults）；不然照下面另起
+    const extras = last.content.slice(results.length);
+    const handBack = results.length > 0 && last.content.slice(0, results.length).every((b) => b.type === "tool_result") && carriable(extras);
 
     // 1. 接着上一回停在工具上的：结果交还给等着的那几下，他接着说
-    const waiting = [...runs.values()].find((r) => !r.dead && r.state === "waiting" && r.shape.key === shape.key && results.length === last.content.length && r.pending.every((id) => results.some((b) => b.tool_use_id === id)) && fits(r, history));
+    const waiting = handBack ? [...runs.values()].find((r) => !r.dead && r.state === "waiting" && r.shape.key === shape.key && r.pending.every((id) => results.some((b) => b.tool_use_id === id)) && fits(r, history)) : null;
     if (waiting) {
       waiting.transcript.push({ role: "user", keys: last.content.map(canon) });
       waiting.state = "busy";
       waiting.noTools = noTools;
       clearTimeout(waiting.timer);
+      // 后面那几块跟在最后一样的结果后面（Claude Code 把这一回的结果照他调的先后排在同一句里，这样它们还是在这一句的最后）
+      const tailId = waiting.pending[waiting.pending.length - 1];
       const out = turn(waiting, signal, () => {
         for (const b of results) {
           const r = { content: typeof b.content === "string" ? [{ type: "text", text: b.content || "（空）" }] : mcpContent(b.content), isError: !!b.is_error };
+          if (b.tool_use_id === tailId) r.content.push(...afterResults(extras));
           const call = waiting.calls.get(b.tool_use_id);
           if (call) {
             waiting.calls.delete(b.tool_use_id);

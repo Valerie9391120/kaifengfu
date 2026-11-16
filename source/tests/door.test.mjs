@@ -226,6 +226,9 @@ try {
 ok(!logs.some((l) => /你好|在吗|慢慢说/.test(l)), "日志里不记对话里的字");
 api.close();
 supa.close();
-fs.rmSync(tmp, { recursive: true, force: true });
+// 刚关掉的 Claude Code 有时还在往它的文件夹里写最后几样，删到一半又多出来（ENOTEMPTY）：多试几回；实在删不掉也不算测试没过
+try {
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+} catch {}
 console.log(`\n通过 ${pass}  失败 ${failN}`);
 process.exit(failN ? 1 : 0);
