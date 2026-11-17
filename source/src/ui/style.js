@@ -79,6 +79,15 @@ export const DOCK_GLASS = {
   borderRadius: "26px 26px 0 0",
 };
 
+// 自定义聊天背景开着的时候（见 wall.js）：输入框那一块不要玻璃，直接落在她选的那张图上。
+// 圆角、上面那一道线的位置留着（线是透明的），里头的东西一分不挪。
+// 系统在屏幕最底下另画一条色块的那种手机（gap.js 的 "bottom"），最底下那 14 个点照旧淡进底色，跟那一条接上（见 input.css）
+export const DOCK_CLEAR = {
+  background: "transparent",
+  borderTop: "1px solid transparent",
+  borderRadius: "26px 26px 0 0",
+};
+
 export const chip = {
   ...glass(0.62, 16),
   borderRadius: 999,

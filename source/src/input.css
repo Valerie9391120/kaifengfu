@@ -187,6 +187,10 @@ html[data-kfs-gap="bottom"][data-kfs-chat] .kfs-bottom-mist {
   opacity: 0;
 }
 /* 侧栏最底下那排（头像、新对话）垫一段渐变，同样接上那条 */
+/* 自定义聊天背景开着、输入框那一块是透明的：最底下照旧淡进底色，跟系统画的那一条接上 */
+html[data-kfs-gap="bottom"] .kfs-composer[data-clear] {
+  background: linear-gradient(to bottom, rgba(var(--k-base), 0) calc(100% - 14px), rgb(var(--k-base)) 100%) !important;
+}
 html[data-kfs-gap="bottom"] .kfs-dock-fade {
   background: linear-gradient(to bottom, rgba(var(--k-base), 0) 0%, rgb(var(--k-base)) 100%);
 }

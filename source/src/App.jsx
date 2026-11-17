@@ -12,6 +12,7 @@ import { createFollow } from "./scroll.js";
 import { createSlide } from "./slide.js";
 import { gapInfo, setFill } from "./gap.js";
 import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
+import { useWall, wallShown, wallPending, setWallOn, setWallImage, tallest, WALL_SIDE } from "./wall.js";
 import { HER_NAME, HIS_NAME, NAME_KEYS, cleanName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, docFmtOf, readDoc, replyRoom } from "./docs.js";
 import { parseReply, settleAvatarItems, rawOf } from "./reply.js";
@@ -29,7 +30,7 @@ import { DEFAULT_MODEL, modelLabel, costOf, money, usageKey, windowOf, thinksFir
 import { RECAP_KEY, RECAP_BAD_KEY, RECAP_LOG_KEY, normRecaps, pickRecap, tierOf, roomFor, dueRecap, splitForMerge, nextRecap, cleanRecap, addRecap, mayRetry, afterFail, afterAway, loadBad, loadLog, addLog, recapWhy, retryWhen, gauge } from "./recap.js";
 import { dayKeyOf, parseDayKey, moodOf, dayTranscript, parseDiary } from "./diary.js";
 import * as SIDE_TITLE from "./ui/art/title.js";
-import { WALL, SERIF, SANS, T, glass, fill, DOCK_GLASS, chip, chipPrimary, field, GLOBAL_CSS, HAIR, HAIRLINE, FLOAT_SHADOW } from "./ui/style.js";
+import { WALL, SERIF, SANS, T, glass, fill, DOCK_GLASS, DOCK_CLEAR, chip, chipPrimary, field, GLOBAL_CSS, HAIR, HAIRLINE, FLOAT_SHADOW } from "./ui/style.js";
 import { Icon } from "./ui/Icon.jsx";
 import { HIS_DEFAULT, Avatar } from "./ui/Avatar.jsx";
 import { Glows, IconBtn, SHEET_TITLE, Sheet, Toggle, RoundBtn } from "./ui/parts.jsx";
@@ -537,6 +538,35 @@ export default function App({ account = {} }) {
   const listMount = useRef(Date.now());
   const touch = useRef(null);
   const winRef = useRef(null); // 对话窗那一整块（侧栏出来的时候往右让开的就是它）
+  // 自定义聊天背景（见 wall.js）：开没开、她选的那一张；customWall 是“开着、图也有”。
+  // wallBox：对话窗在这个宽度下见过的最高的那个高，她选的那一张照这个高铺（键盘弹出来对话窗变矮，图不跟着缩）
+  const wall = useWall();
+  const customWall = wallShown(wall);
+  const wallInput = useRef(null);
+  const [wallNote, setWallNote] = useState("");
+  const [wallBox, setWallBox] = useState(null);
+  useLayoutEffect(() => {
+    const el = winRef.current;
+    if (!el) return undefined;
+    const read = () => setWallBox((p) => tallest(p, el.clientWidth, el.clientHeight));
+    read();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(read) : null;
+    if (ro) ro.observe(el);
+    else window.addEventListener("resize", read);
+    return () => (ro ? ro.disconnect() : window.removeEventListener("resize", read));
+  }, [customWall]);
+  // 从相册里选了一张：长边压到 WALL_SIDE，记在这台手机上。没放上的（不是图、存不进去）说一声，原来那张照旧
+  const pickWall = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    try {
+      await setWallImage(await fileToPhoto(f, WALL_SIDE));
+      setWallNote("");
+    } catch (err) {
+      setWallNote("这张图没放上，换一张试试");
+    }
+  };
   const slideRef = useRef(null); // 它怎么滑（见 slide.js，下面量 x 的地方接上）
   // 聊天记录怎么滚（见 scroll.js）：她在最底下就跟着最新，往上翻了就不拽她。
   // away：她翻上去了，输入框上面浮出“回到最新”的圆钮
@@ -5909,6 +5939,30 @@ export default function App({ account = {} }) {
               </button>
             </div>
           )}
+          {/* 自定义聊天背景（见 wall.js）：一个开关。开着、选好了图，不管换哪个主题色，聊天那一屏都是这一张；关了回到主题自带的。
+              头一回打开开关就让她选图（手指点下去的这一下才开得了相册）；开着的时候底下一行：那张图的小样、“换一张” */}
+          <div className="kfs-wall-set flex items-center justify-between" style={{ ...glass(0.5, 16), borderRadius: 16, padding: "10px 14px", marginBottom: wall.on ? 10 : 22, gap: 12 }}>
+            <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.5 }}>自定义聊天背景</div>
+            <Toggle
+              on={wall.on}
+              onChange={(v) => {
+                setWallOn(v);
+                setWallNote("");
+                if (v && wall.ready && !wall.img && wallInput.current) wallInput.current.click();
+              }}
+              label="自定义聊天背景"
+            />
+          </div>
+          {wall.on && (
+            <div className="flex items-center" style={{ gap: 10, marginBottom: 22 }}>
+              {wall.img ? <img className="kfs-wall-thumb" src={wall.img} alt="" draggable={false} style={{ width: 40, height: 64, objectFit: "cover", borderRadius: 10, border: HAIRLINE }} /> : null}
+              <button onClick={() => wallInput.current && wallInput.current.click()} className="kfs-tap kfs-wall-pick" style={{ ...chip, padding: "7px 14px" }}>
+                {wall.img ? "换一张" : "选一张图"}
+              </button>
+              {wallNote ? <span style={{ fontSize: 12, color: T.red2 }}>{wallNote}</span> : null}
+            </div>
+          )}
+          <input ref={wallInput} className="kfs-wall-file" type="file" accept="image/*" onChange={pickWall} style={{ display: "none" }} />
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>中间那行字</div>
           <button
             onClick={() => setSheet("motto")}
@@ -6275,14 +6329,29 @@ export default function App({ account = {} }) {
           background: WALL.paper,
         }}
       >
-        <img
-          key={theme}
-          src={THEMES[theme].wall}
-          alt=""
-          draggable={false}
-          className="kfs-wall absolute pointer-events-none"
-          style={{ top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 100%" }}
-        />
+        {/* 聊天背景：主题自带的那一张；“自定义聊天背景”开着、选好了图（见 wall.js），不管哪个主题都是她选的那一张。
+            她选的那一张照整块屏幕铺（wallBox 记着这个宽度下见过的最高的那个高）：键盘弹出来这一屏变矮，图不跟着缩、不跟着挪。
+            开着、图还没从存档里取出来的那一小会儿什么都不摆（只有底色），免得先闪一下主题的图 */}
+        {customWall ? (
+          <img
+            key="custom"
+            src={wall.img}
+            alt=""
+            draggable={false}
+            className="kfs-wall absolute pointer-events-none"
+            data-custom=""
+            style={{ top: 0, left: 0, width: "100%", height: wallBox ? wallBox.h : "100%", maxWidth: "none", objectFit: "cover", objectPosition: "50% 50%" }}
+          />
+        ) : wallPending(wall) ? null : (
+          <img
+            key={theme}
+            src={THEMES[theme].wall}
+            alt=""
+            draggable={false}
+            className="kfs-wall absolute pointer-events-none"
+            style={{ top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "50% 100%" }}
+          />
+        )}
 
         {/* 顶栏。原来是一块圆角的玻璃托盘，换成了 Moonlight 黑银那一版顶栏的样子：
             不要那块玻璃，头像、名字、两个键直接落在画上，底下划一道极细的线。
@@ -6597,7 +6666,8 @@ export default function App({ account = {} }) {
         <div
           className="kfs-composer relative z-10 flex-shrink-0"
           data-compact={compact ? "" : undefined}
-          style={{ ...DOCK_GLASS, padding: `${compact ? 8 : 10}px 14px ${memePanel ? "0" : "max(8px, var(--kfs-sab))"}` }}
+          data-clear={customWall ? "" : undefined}
+          style={{ ...(customWall ? DOCK_CLEAR : DOCK_GLASS), padding: `${compact ? 8 : 10}px 14px ${memePanel ? "0" : "max(8px, var(--kfs-sab))"}` }}
         >
           {attach.length > 0 && (
             <div className="flex overflow-x-auto kfs-scroll" style={{ gap: 10, padding: "6px 4px 10px" }}>
