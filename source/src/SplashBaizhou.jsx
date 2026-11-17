@@ -1,6 +1,7 @@
 // 白昼的开屏：一片米白，正中是恩师画的那只狐狸（南衙里狐宇宙那一行的那一只，ui/art/fox.js），陶土色。
 // 一开始纸上是空的；过半秒底下浮出一条素的滑块；圆钮往右拉多少，狐狸就照一笔的次序画出多少
-// （从尾巴尖起，绕一圈画完尾巴，再往上画身子、脸、耳朵、后背，见 ui/art/foxLine.js）；拉到头正好画完，手指松开才进门。
+// （从后背起笔，顺着后背往上，画耳朵、脸、下巴、胸口，再从身子底下绕出尾巴，收在尾巴尖上，见 ui/art/foxLine.js；
+// 起笔在哪儿是她定的）；拉到头正好画完，手指松开才进门。
 // 没拉到头就松手，圆钮弹回去，画也跟着收回去。规矩同丁香那条（拉到 98.5% 以上才算到头，到头了松手才进）。
 // 滑块不是液态玻璃：那个要折射底下的画才好看，这里底下是一片平的颜色。
 //
@@ -209,7 +210,7 @@ export default function SplashBaizhou({ fading, onEnter }) {
         <svg ref={svgRef} className="kfs-bz-fox" viewBox="0 0 24 24" aria-hidden="true" style={{ width: "min(58vw, 240px)", height: "min(58vw, 240px)", overflow: "visible" }}>
           <defs>
             <mask id="kfs-bz-mask" maskUnits="userSpaceOnUse" x="-2" y="-2" width="28" height="28">
-              {/* 次序要紧：头一笔和它的小笔 → 挡板（黑的，挡住第二笔还没画到的身子）→ 第二笔和它的小笔 */}
+              {/* 次序要紧：头一笔和它的小笔 → 挡板（黑的，挡住第二笔还没画到的尾巴）→ 第二笔和它的小笔 */}
               {[0, 1].map((k) => [
                 k === 1 ? <path key="guard" d={GUARD.d} fill="none" stroke="#000" strokeWidth={GUARD.width} strokeLinecap="round" strokeLinejoin="round" /> : null,
                 <path

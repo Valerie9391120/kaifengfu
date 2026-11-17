@@ -3,10 +3,13 @@
 # 生成 src/ui/art/foxLine.js：两段描线的路径（坐标系 24×24，和 fox.js 一样）、线多粗、各有多长。
 #
 # 画不是重画的：把 fox.js 那块形状涂成位图，细化成一个像素宽的骨架（线的正中），顺着骨架走一遍排成点，再抹平、删掉多余的点。
-# 这只狐狸差不多是一笔：尾巴尖起，绕一大圈回到左边、折回来往右，在身子底下跟身子那根线并到一处，再往右一小截收住；
-# 身子那根线从并到一处的地方往上：胸口、下巴、鼻尖、脸、两只耳朵、后背，收在腰上。所以骨架是三根枝、一个岔口：
-#   第一笔：尾巴尖 → 绕一圈 → 岔口 → 右边那一小截的头
-#   第二笔：岔口 → 身子 → 后背的头
+# 这只狐狸差不多是一笔。骨架是三根枝、一个岔口（身子底下，尾巴那根线跟身子那根线并到一处的地方）：
+#   身子：后背的头（腰上）→ 后背 → 两只耳朵 → 脸 → 鼻尖 → 下巴 → 胸口 → 岔口
+#   一小截：岔口 → 往右一小截收住
+#   尾巴：岔口 → 往左 → 折回来 → 绕一大圈 → 尾巴尖（收在下巴旁边）
+# 起笔在后背的头上、顺着后背往上画，是她定的（11 月 17 日，头一版是从尾巴尖起的，她在截图上画了箭头）：
+#   第一笔：后背的头 → 身子 → 岔口 → 右边那一小截的头
+#   第二笔：岔口 → 尾巴 → 尾巴尖
 # 开屏上滑块拉多少，照这个次序画多少（见 src/SplashBaizhou.jsx）。
 #
 # 要 numpy、Pillow、scikit-image。换了 fox.js（恩师换了画）重新跑一遍；认不出“三个头、一个岔口”的画会直接报错。
@@ -153,8 +156,8 @@ def rdp(p, tol):
 def length(p):
     return float(np.hypot(*np.diff(p, axis=0).T).sum())
 
-stroke1 = rdp(to_units(tail + stub[::-1][1:]), TOL)   # 尾巴尖 → 岔口 → 小截的头
-stroke2 = rdp(to_units(body[::-1]), TOL)              # 岔口 → 身子 → 后背的头
+stroke1 = rdp(to_units(body + stub[::-1][1:]), TOL)   # 后背的头 → 身子 → 岔口 → 小截的头
+stroke2 = rdp(to_units(tail[::-1]), TOL)              # 岔口 → 尾巴 → 尾巴尖
 
 # 线多粗：骨架上每一点到形状边上的距离的两倍，取中间那个数（岔口附近的不算数，中位数自己避开了）
 dist = ndi.distance_transform_edt(ink)
@@ -194,8 +197,8 @@ def brush(dr0, st, w):
         dr0.ellipse([x - r, y - r, x + r, y + r], fill=255)
 for st in [stroke1, stroke2] + [t[1] for t in tips]:
     brush(dc, st, width * MASK)
-# 挡板：蒙版比线粗，画尾巴尖的时候会把挨着的下巴那根线露出一丝。身子那一笔没画到的地方先用一根黑的挡住
-# （照第二笔描，比线粗一点；岔口往上头 GUARD_SKIP 这么长不挡，那一段跟头一笔本来就长在一处），第二笔自己画过去的时候再露。
+# 挡板：蒙版比线粗，头一笔画到下巴的时候会把挨着的尾巴尖露出一丝。第二笔（尾巴）没画到的地方先用一根黑的挡住
+# （照第二笔描，比线粗一点；从岔口起头 GUARD_SKIP 这么长不挡，那一段跟头一笔本来就长在一处），第二笔自己画过去的时候再露。
 GUARD = 1.3
 GUARD_SKIP = 1.3
 seg2 = np.hypot(*np.diff(stroke2, axis=0).T)
@@ -223,6 +226,7 @@ def part(st, upto):
     k = int(np.searchsorted(cum, upto))
     return st[:max(2, k + 1)] if upto > 0 else None
 worst = 0.0
+worst_late = 0.0
 for f in np.linspace(0.02, 0.98, 25):
     m = Image.new("L", (int(VB * S), int(VB * S)), 0); dm = ImageDraw.Draw(m)
     at = f * total
@@ -239,7 +243,11 @@ for f in np.linspace(0.02, 0.98, 25):
     seen = ink & (np.asarray(m) > 127)
     early = (seen & (WHEN > f + 0.1)).sum() / ink.sum()
     worst = max(worst, early)
-print(f"挡板照第二笔描、比线粗 {GUARD} 倍、岔口往上 {GUARD_SKIP} 不挡；拉到各处，早露一成以上的墨迹最多占 {worst * 100:.2f}%")
+    late = (ink & ~seen & (WHEN < f - 0.1)).sum() / ink.sum()   # 该露了一成以上还没露的（挡板挡多了、蒙版够不着）
+    worst_late = max(worst_late, late)
+print(f"挡板照第二笔描、比线粗 {GUARD} 倍、从岔口起头 {GUARD_SKIP} 不挡；拉到各处，早露一成以上的墨迹最多占 {worst * 100:.2f}%，该露没露的最多占 {worst_late * 100:.2f}%")
+if worst > 0.002 or worst_late > 0.004:
+    sys.exit("早露或者漏画得多了，不写文件")
 print(f"蒙版描得比线粗 {MASK} 倍，补了 {len(tips)} 小笔（画到 {', '.join(f'{t[0] * 100:.0f}%' for t in tips)} 的时候露）；画完以后形状没露出来的占 {missed * 100:.3f}%")
 if missed > 0.0005:
     sys.exit("蒙版盖不全，不写文件")
@@ -273,8 +281,9 @@ def path(p):
 with open(OUT, "w", encoding="utf-8") as f:
     f.write(f"""// 恩师画的那只狐狸（fox.js）里的那根线：白昼的开屏滑块拉多少、照这个次序画多少（见 SplashBaizhou.jsx）。
 // 这个文件是 tools/make_fox_line.py 从 fox.js 生成的，别手改：恩师换了画，先重新生成 fox.js，再跑一遍那个脚本。
-// 坐标系 24×24（同 fox.js）。两笔：头一笔从尾巴尖起，绕一圈回来，过身子底下那个岔口，到右边那一小截的头；
-// 第二笔从岔口往上画身子、脸、两只耳朵、后背。描出来（圆头、圆角、WIDTH 这么粗）跟 fox.js 那块形状重合 {iou * 100:.1f}%。
+// 坐标系 24×24（同 fox.js）。两笔：头一笔从后背的头（腰上）起，顺着后背往上，画两只耳朵、脸、下巴、胸口，
+// 过身子底下那个岔口，到右边那一小截的头；第二笔从岔口往左画尾巴，绕一大圈，收在尾巴尖上。起笔在哪儿是她定的。
+// 描出来（圆头、圆角、WIDTH 这么粗）跟 fox.js 那块形状重合 {iou * 100:.1f}%。
 //
 // 开屏上画的是 fox.js 那块形状，上面盖一层蒙版：蒙版照这两笔描（MASK_WIDTH 这么粗，比线粗一圈），描到哪形状露到哪，
 // 所以画完了就是恩师那块形状，一个点不差。尖出去的那几处蒙版够不着，各补一小笔（TIPS）：画到总长的 at 成的时候露出来。
@@ -284,7 +293,7 @@ export const STROKES = [
   {{ len: {length(stroke1):.2f}, d: "{path(stroke1)}" }},
   {{ len: {length(stroke2):.2f}, d: "{path(stroke2)}" }},
 ];
-// 挡板（GUARD）：蒙版里第二笔没画到的地方先用一根黑的挡住（不然画尾巴尖的时候会把挨着的下巴露出一丝），第二笔画过去才露
+// 挡板（GUARD）：蒙版里第二笔没画到的地方先用一根黑的挡住（不然头一笔画到下巴的时候会把挨着的尾巴尖露出一丝），第二笔画过去才露
 export const GUARD = {{ width: {width * GUARD:.3f}, d: "{path(guard)}" }};
 export const TIPS = [
 {chr(10).join(f'  {{ at: {t[0]:.4f}, stroke: {0 if t[0] * total <= length(stroke1) else 1}, d: "{path(t[1])}" }},' for t in tips)}
