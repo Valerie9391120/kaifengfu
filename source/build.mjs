@@ -303,7 +303,7 @@ const css = fs.readFileSync(`${OUT}/assets/_app.css`);
 const cssName = `app-${hash(css)}.css`;
 fs.renameSync(`${OUT}/assets/_app.css`, `${OUT}/assets/${cssName}`);
 
-const IMAGES = ["splash.webp", "kite.webp", "wall.webp", "splash-dingxiang.webp", "dx-heart.webp", "dx-blush.webp", "wall-dingxiang.webp", "wall-heiye.webp", "splash-heiye.webp"];
+const IMAGES = ["splash.webp", "kite.webp", "wall.webp", "splash-dingxiang.webp", "dx-heart.webp", "dx-blush.webp", "wall-dingxiang.webp", "wall-heiye.webp", "splash-heiye.webp", "wall-baizhou.webp"];
 for (const f of IMAGES) fs.copyFileSync(`static/${f}`, `${OUT}/assets/${f}`);
 
 // 三个入口：从哪个入口“添加到主屏幕”，图标就是哪个，头一回进去就是哪个主题（见 src/theme.js）。
@@ -315,6 +315,8 @@ const ENTRANCES = [
   { dir: "", icons: "icons", manifest: "manifest.webmanifest", color: "#D6DCCD", splash: "splash.webp" },
   { dir: "dingxiang", icons: "icons-dingxiang", manifest: "manifest-dingxiang.webmanifest", color: "#EFE2EF", splash: "splash-dingxiang.webp" },
   { dir: "heiye", icons: "icons-heiye", manifest: "manifest-heiye.webmanifest", color: "#060911", splash: "splash-heiye.webp" },
+  // 白昼的开屏没有图（狐狸是页面里画的），不用预载
+  { dir: "baizhou", icons: "icons-baizhou", manifest: "manifest-baizhou.webmanifest", color: "#F9F9F7", splash: "" },
 ];
 for (const e of ENTRANCES) {
   fs.mkdirSync(`${OUT}/${e.icons}`, { recursive: true });
@@ -391,8 +393,7 @@ ${e.dir ? '<base href="../">\n' : ""}<meta name="viewport" content="${VIEWPORT}"
 <link rel="manifest" href="./${e.manifest}">
 <link rel="apple-touch-icon" href="${e.icon("apple-touch-icon.png")}">
 <link rel="icon" type="image/png" sizes="192x192" href="${e.icon("icon-192.png")}">
-<link rel="preload" as="image" href="./assets/${e.splash}">
-<link rel="stylesheet" href="./assets/${cssName}">
+${e.splash ? `<link rel="preload" as="image" href="./assets/${e.splash}">\n` : ""}<link rel="stylesheet" href="./assets/${cssName}">
 </head>
 <body>
 <div id="root"></div>

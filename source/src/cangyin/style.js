@@ -20,6 +20,11 @@ html[data-kfs-theme="dingxiang"] .kfs-cangyin {
   --soft: rgba(84, 68, 118, 0.66); --faint: rgba(84, 68, 118, 0.34); --accent: rgb(112, 88, 176);
   --paper-accent: rgb(112, 88, 176); --inside: rgba(48, 38, 70, 0.045); --shade: 78, 56, 128;
 }
+html[data-kfs-theme="baizhou"] .kfs-cangyin {
+  --bg: rgb(246, 245, 241); --flower: rgb(196, 108, 79); --ink: rgb(168, 90, 64);
+  --soft: rgba(84, 82, 78, 0.66); --faint: rgba(84, 82, 78, 0.34); --accent: rgb(196, 108, 79);
+  --paper-accent: rgb(196, 108, 79); --inside: rgba(39, 39, 38, 0.045); --shade: 60, 56, 50;
+}
 html[data-kfs-theme="heiye"] .kfs-cangyin {
   --bg: rgb(13, 18, 33); --flower: rgb(172, 192, 230); --flower-amt: 0.8; --tex-amt: 0.6; --ink: rgb(196, 212, 240);
   --soft: rgba(226, 235, 248, 0.6); --faint: rgba(226, 235, 248, 0.3); --accent: rgb(143, 171, 220);

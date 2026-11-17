@@ -26,6 +26,12 @@ html[data-kfs-theme="dingxiang"] .kfs-pindou {
   --board: ${BOARD_OF.dingxiang}; --board-rim: rgba(112, 88, 176, 0.24); --check-a: #F3EBFB; --check-b: #E7DCF3; --well: rgb(236, 228, 243);
   --toast-bg: rgb(48, 38, 70); --scrim: rgba(36, 24, 54, 0.42); --shadow: 0 14px 28px -16px rgba(60, 40, 100, 0.5);
 }
+html[data-kfs-theme="baizhou"] .kfs-pindou {
+  --desk: rgb(246, 245, 241); --paper: rgb(255, 255, 255); --paper-2: rgb(243, 241, 236); --line: rgba(39, 39, 38, 0.12);
+  --ink: rgb(39, 39, 38); --mute: rgba(84, 82, 78, 0.72); --accent: rgb(196, 108, 79); --accent-soft: rgba(196, 108, 79, 0.14);
+  --board: ${BOARD_OF.baizhou}; --board-rim: rgba(196, 108, 79, 0.24); --check-a: #E2C4BB; --check-b: #D4B3AA; --well: rgb(240, 238, 233);
+  --toast-bg: rgb(39, 39, 38); --scrim: rgba(30, 30, 28, 0.42); --shadow: 0 14px 28px -16px rgba(60, 56, 50, 0.4);
+}
 html[data-kfs-theme="heiye"] .kfs-pindou {
   --desk: rgb(9, 13, 25); --paper: rgb(20, 27, 45); --paper-2: rgb(28, 37, 60); --line: rgba(226, 235, 248, 0.13);
   --ink: rgb(226, 235, 248); --mute: rgba(226, 235, 248, 0.6); --accent: rgb(143, 171, 220); --accent-ink: rgb(10, 16, 32); --accent-soft: rgba(143, 171, 220, 0.18);

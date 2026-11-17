@@ -475,7 +475,7 @@ with sync_playwright() as p:
     # ================= 跟着主题变色 =================
     colors = {}
     nanya_rows(pa)
-    for t in ["qinglv", "dingxiang", "heiye"]:
+    for t in ["qinglv", "dingxiang", "heiye", "baizhou"]:
         pa.evaluate("(t) => document.documentElement.setAttribute('data-kfs-theme', t)", t)
         open_box(pa)
         colors[t] = pa.evaluate("(() => { const s = getComputedStyle(document.querySelector('.cy-stage')), p = getComputedStyle(document.querySelector('.cy-boxfront path')); return [s.backgroundColor, p.stroke]; })()")
@@ -483,8 +483,8 @@ with sync_playwright() as p:
         pa.locator(".cy-back").click(); pa.wait_for_timeout(500)
         nanya_rows(pa)
     pa.evaluate("document.documentElement.setAttribute('data-kfs-theme', 'qinglv')")
-    ok(colors["qinglv"] == ["rgb(222, 230, 216)", "rgb(58, 98, 90)"] and colors["dingxiang"] == ["rgb(241, 232, 244)", "rgb(104, 80, 166)"] and colors["heiye"] == ["rgb(13, 18, 33)", "rgb(196, 212, 240)"],
-       f"跟着开封府的主题变色：青绿、丁香、黑夜各一套（{colors}）")
+    ok(colors["qinglv"] == ["rgb(222, 230, 216)", "rgb(58, 98, 90)"] and colors["dingxiang"] == ["rgb(241, 232, 244)", "rgb(104, 80, 166)"] and colors["heiye"] == ["rgb(13, 18, 33)", "rgb(196, 212, 240)"] and colors["baizhou"] == ["rgb(246, 245, 241)", "rgb(168, 90, 64)"],
+       f"跟着开封府的主题变色：青绿、丁香、黑夜、白昼各一套（{colors}）")
 
     # ================= 空的时候 =================
     open_box(pa)

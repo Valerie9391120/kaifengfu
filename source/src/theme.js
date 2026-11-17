@@ -1,9 +1,10 @@
 // =====================================================
-// 主题：青绿（沙燕）、丁香（小猪）、黑夜（月亮；主题 10 月 13 日添的，入口和图标 10 月 19 日添的）
+// 主题：白昼（狐狸；11 月 17 日添的）、黑夜（月亮；主题 10 月 13 日添的，入口和图标 10 月 19 日添的）、青绿（沙燕）、丁香（小猪）。
+// 账户面板“主题色”那一排照 THEME_ORDER 的次序摆
 // 颜色全写成 CSS 变量（input.css 里 :root 是青绿，html[data-kfs-theme="dingxiang"] 是丁香，"heiye" 是黑夜），
 // 换主题就是换 <html> 上的 data-kfs-theme，页面不用重画；图（聊天背景、开屏）跟着 useTheme() 换。
 // 主题记在这台手机上（localStorage），不跟着云端走：
-//   从哪个入口添加到主屏幕，头一回进去就是哪个主题（青绿的入口是 ./，丁香的是 ./dingxiang/，黑夜的是 ./heiye/）；
+//   从哪个入口添加到主屏幕，头一回进去就是哪个主题（青绿的入口是 ./，丁香的是 ./dingxiang/，黑夜的是 ./heiye/，白昼的是 ./baizhou/）；
 //   之后在账户面板里可以随时换，图标不跟着变（苹果在添加那一刻就把图标定死了）。
 // =====================================================
 import { useEffect, useState } from "react";
@@ -33,12 +34,28 @@ export const THEMES = {
     entrance: "./heiye/",
     icon: "月亮",
   },
+  // 白昼（11 月 17 日添的）：米白的底、陶土色的点缀。聊天背景是一片平的米白（那张图就是一个颜色）；
+  // 开屏是滑块拉多少、狐狸画多少（SplashBaizhou.jsx）；图标是陶土色的底上一只米白线条的狐狸（恩师画的那一只）
+  baizhou: {
+    label: "白昼",
+    wall: "./assets/wall-baizhou.webp",
+    meta: "#F9F9F7",
+    entrance: "./baizhou/",
+    icon: "狐狸",
+  },
 };
+// 账户面板里那一排的次序，和每一颗上那个小圆的颜色
+export const THEME_ORDER = [
+  ["baizhou", "linear-gradient(140deg,#F9F9F7 50%,#C46C4F 50%)"],
+  ["heiye", "linear-gradient(140deg,#8FABDC,#0E1A36)"],
+  ["qinglv", "linear-gradient(140deg,#BCD4CA,#7FA39A)"],
+  ["dingxiang", "linear-gradient(140deg,#DCCFF0,#A58BC9)"],
+];
 
 // 这次是从哪个入口进来的
 export function entranceTheme() {
   try {
-    const m = /\/(dingxiang|heiye)\/(index\.html)?$/.exec(window.location.pathname);
+    const m = /\/(dingxiang|heiye|baizhou)\/(index\.html)?$/.exec(window.location.pathname);
     return m ? m[1] : "qinglv";
   } catch (e) {
     return "qinglv";

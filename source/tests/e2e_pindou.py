@@ -405,13 +405,13 @@ def run(browser):
     # ---- 底板跟着主题换 ----
     open_pd(pg)
     boards = []
-    for th in ["", "dingxiang", "heiye"]:
+    for th in ["", "dingxiang", "heiye", "baizhou"]:
         pg.evaluate(f"document.documentElement.setAttribute('data-kfs-theme', '{th}')" if th else "document.documentElement.removeAttribute('data-kfs-theme')")
         pg.wait_for_timeout(300)
         boards.append(pg.evaluate(LAYER)["board"].upper())
         if th == "heiye":
             shot(pg, "pd_6_heiye")
-    ok(boards == ["#CEE2DA", "#EEE4F8", "#6C8090"], f"底板跟着三套主题换颜色（{boards}）")
+    ok(boards == ["#CEE2DA", "#EEE4F8", "#6C8090", "#DBBBB2"], f"底板跟着四套主题换颜色（{boards}）")
     pg.evaluate("document.documentElement.removeAttribute('data-kfs-theme')")
 
     # ---- 一块板子最多 52 种颜色（作品码写不下更多）：再拼一种新的不让放 ----

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import SplashDingxiang from "./SplashDingxiang.jsx";
 import SplashHeiye from "./SplashHeiye.jsx";
+import SplashBaizhou from "./SplashBaizhou.jsx";
 import { SERIF, T } from "./ui/style.js";
 import { Glows } from "./ui/parts.jsx";
 
@@ -144,8 +145,9 @@ function Splash({ fading, onEnter }) {
   );
 }
 
-// 黑夜的开屏是镜碎入月（SplashHeiye.jsx）
+// 黑夜的开屏是镜碎入月（SplashHeiye.jsx）；白昼的是滑块拉多少、狐狸画多少（SplashBaizhou.jsx）
 export function SplashByTheme({ theme, fading, onEnter }) {
   if (theme === "heiye") return <SplashHeiye fading={fading} onEnter={onEnter} />;
+  if (theme === "baizhou") return <SplashBaizhou fading={fading} onEnter={onEnter} />;
   return theme === "dingxiang" ? <SplashDingxiang fading={fading} onEnter={onEnter} /> : <Splash fading={fading} onEnter={onEnter} />;
 }

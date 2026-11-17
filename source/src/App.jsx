@@ -11,7 +11,7 @@ import { openProbe } from "./probe.js";
 import { createFollow } from "./scroll.js";
 import { createSlide } from "./slide.js";
 import { gapInfo, setFill } from "./gap.js";
-import { THEMES, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
+import { THEMES, THEME_ORDER, useTheme, setTheme, entranceTheme, entranceUrl } from "./theme.js";
 import { useWall, wallShown, wallPending, setWallOn, setWallImage, tallest, WALL_SIDE } from "./wall.js";
 import { HER_NAME, HIS_NAME, NAME_KEYS, cleanName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, docFmtOf, readDoc, replyRoom } from "./docs.js";
@@ -5901,21 +5901,17 @@ export default function App({ account = {} }) {
           <FoxSection settings={settings} onChange={updateSettings} state={foxState} canKnock={knockList().length > 0} now={now.getTime()} />
           <div style={{ height: 1, background: HAIR, margin: "22px 0 18px" }} />
           <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>主题色</div>
-          <div className="flex items-center flex-wrap" style={{ gap: 8, marginBottom: theme === entranceTheme() ? 22 : 10 }}>
-            {[
-              ["qinglv", "linear-gradient(140deg,#BCD4CA,#7FA39A)"],
-              ["dingxiang", "linear-gradient(140deg,#DCCFF0,#A58BC9)"],
-              ["heiye", "linear-gradient(140deg,#8FABDC,#0E1A36)"],
-            ].map(([k, g]) => (
+          <div className="flex items-center flex-wrap" style={{ gap: 6, marginBottom: theme === entranceTheme() ? 22 : 10 }}>
+            {THEME_ORDER.map(([k, g]) => (
               <button
                 key={k}
                 onClick={() => setTheme(k)}
                 aria-pressed={theme === k}
                 aria-label={`${THEMES[k].label}主题`}
                 className="kfs-tap flex items-center"
-                style={{ ...chip, gap: 8, padding: "5px 14px 5px 6px", backgroundColor: theme === k ? fill(0.82) : chip.backgroundColor }}
+                style={{ ...chip, gap: 6, padding: "5px 11px 5px 5px", backgroundColor: theme === k ? fill(0.82) : chip.backgroundColor }}
               >
-                <span style={{ width: 26, height: 26, borderRadius: "50%", background: g, border: `2px solid ${T.onDai}`, boxShadow: theme === k ? `0 0 0 2px ${T.dai}` : "none" }} />
+                <span style={{ width: 24, height: 24, borderRadius: "50%", background: g, border: `2px solid ${T.onDai}`, boxShadow: theme === k ? `0 0 0 2px ${T.dai}` : "none" }} />
                 {THEMES[k].label}
               </button>
             ))}

@@ -3,8 +3,9 @@
 // 官方 App 里那一页原来还有拼豆（一颗一颗带孔的圆豆子）、熨烫（熨过的圆角方块）两种样子，连那一页顶上的切换一起拿掉了；
 // 聊天里那一幅、「他的」那一栏的小图和大图也跟着换成像素（她接着点的“都换成像素”）。
 
-// 三套主题的底板（那一页的 --board，见 style.js 开头怎么挑的；聊天里那一幅也铺在上面，见 PindouRow.jsx）
-export const BOARD_OF = { qinglv: "#CEE2DA", dingxiang: "#EEE4F8", heiye: "#6C8090" };
+// 四套主题的底板（那一页的 --board，见 style.js 开头怎么挑的；聊天里那一幅也铺在上面，见 PindouRow.jsx）
+// 白昼的（11 月 17 日添的）是带一点陶土色的浅灰粉：照同一个办法挑的，跟三十九种豆子里最近的那一种（瓷肤）色差 15.0
+export const BOARD_OF = { qinglv: "#CEE2DA", dingxiang: "#EEE4F8", heiye: "#6C8090", baizhou: "#DBBBB2" };
 
 // 有豆子的那一块（上下左右各留 pad 格），一颗都没有回 null
 export function boundsOf(n, g, pad = 0) {
