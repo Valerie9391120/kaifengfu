@@ -558,6 +558,25 @@ with sync_playwright() as p:
     ok(plain[0] == "off" and plain[1] == "1" and plain[2] == "none" and "70, 50, 104" in plain[3] and abs(back["x"] - kb["x"]) < 2 and held == ["1", "1"] and pa.locator(".kfs-motto").is_visible(),
        f"玻璃算不出来时：退回紫色的滑块（{plain[3]}），拉一半弹回、拉到头松手照样进门")
     pa.evaluate("window.__kfsFixCanvas()")  # 画布修回来，后面的测试照常用
+    # 图那一下没画进画布（她手机上有时候一打开滑块是一条实的紫：玻璃照着一片垫底的颜色算好就摆上了）。
+    # 这里故意让开屏图头三秒画不进画布：先摆不带玻璃的那一条，过一会儿重算，算出来了换成玻璃，透得出底下的亮片
+    pa.add_init_script("if (sessionStorage.getItem('kfs-test-noimg')) { sessionStorage.removeItem('kfs-test-noimg'); const orig = CanvasRenderingContext2D.prototype.drawImage; const t0 = Date.now(); window.__kfsSkipped = 0; CanvasRenderingContext2D.prototype.drawImage = function (src, ...rest) { if (src instanceof HTMLImageElement && /splash-dingxiang/.test(src.src) && Date.now() - t0 < 3000) { window.__kfsSkipped++; return undefined; } return orig.call(this, src, ...rest); }; }")
+    pa.evaluate("sessionStorage.setItem('kfs-test-noimg', '1')")
+    pa.reload()
+    knob = pa.get_by_role("slider", name="把小猪拉到最右边，进开封府")
+    knob.wait_for(timeout=15000)
+    time.sleep(1.3)
+    early = pa.evaluate("""() => { const t = document.querySelector('.kfs-dx-track'); return [t.getAttribute('data-glass'), getComputedStyle(t).opacity, window.__kfsSkipped || 0, getComputedStyle(t).backgroundColor]; }""")
+    TEX = """() => { const t = document.querySelector('.kfs-dx-track'), c = t.querySelector('canvas'); const d = c.getContext('2d').getImageData(Math.floor(c.width * 0.3), Math.floor(c.height * 0.5), Math.floor(c.width * 0.5), 1).data;
+        let s = 0, s2 = 0, n = 0; for (let i = 0; i < d.length; i += 4) { const v = d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11; s += v; s2 += v * v; n++; } return [t.getAttribute('data-glass'), Math.round(Math.sqrt(Math.max(0, s2 / n - (s / n) ** 2)) * 10) / 10]; }"""
+    t0 = time.time()
+    while time.time() - t0 < 12 and pa.evaluate(TEX)[0] != "on": time.sleep(0.25)
+    later = pa.evaluate(TEX)
+    ok(early[0] == "off" and early[1] == "1" and early[2] >= 1 and "70, 50, 104" in early[3] and later[0] == "on" and later[1] > 2,
+       f"开屏图头几下没画进画布：先摆不带玻璃的紫色滑块（画了 {early[2]} 回都是空的），不拿一片平的颜色当玻璃；过一会儿重算出来，换成玻璃，透得出亮片（起伏 {later[1]}）")
+    kb = knob.bounding_box(); kx, ky = kb["x"] + kb["width"] / 2, kb["y"] + kb["height"] / 2
+    pa.mouse.move(kx, ky); pa.mouse.down(); pa.mouse.move(kx + 400, ky, steps=10); time.sleep(0.5); pa.mouse.up()
+    knob.wait_for(state="detached", timeout=10000)
     # 换回青绿，后面照旧
     pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.5)
     pa.get_by_role("button", name="头像与设置").click(); time.sleep(0.5)

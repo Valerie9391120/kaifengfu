@@ -3,7 +3,7 @@
 // 小猪脸红、白心里长出小紫心；手指松开才进门。没拉到头就松手，圆钮弹回去。
 // 玻璃是自己在画布上算的（见 liquid.js）；算不出来就退回不带折射的紫色滑块，照样能拉。
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { LQ, blit, createSlider, fillMask, hintLayout, prepareGlass } from "./liquid.js";
+import { LQ, blit, createSlider, fillMask, hintLayout, prepareGlass, EMPTY_BACKDROP } from "./liquid.js";
 
 // 脸红和白心里的小紫心是两小块透明图，叠在开屏上
 // （位置是它们在原图里的像素，tools/make_dingxiang.py 打印出来的）
@@ -128,11 +128,15 @@ export default function SplashDingxiang({ fading, onEnter }) {
     const img = imgRef.current;
     let off = false;
     let timer = 0;
+    let tries = 0;
     const fail = () => {
       if (off) return;
       if (ctl.current) ctl.current.setGlass(null);
       setGlass("off");
     };
+    // 图那一下没画进画布（见 liquid.js 的 grabBackdrop；她手机上有时候一打开滑块是一条实的紫，就是这个）：
+    // 先摆不带玻璃的那一条，隔一会儿再算，算出来了换成玻璃。试过这几回还不行才算了
+    const AGAIN = [150, 350, 800, 1500, 3000];
     const run = () => {
       if (off) return;
       try {
@@ -143,17 +147,33 @@ export default function SplashDingxiang({ fading, onEnter }) {
           pad: PAD,
           knob: KNOB,
           dpr: window.devicePixelRatio,
+          textured: true,
         });
         blit(trackCv.current, g.plain, g.w, g.h);
         blit(fillCv.current, g.full, g.w, g.h);
         if (ctl.current) ctl.current.setGlass(g);
         setGlass("on");
       } catch (e) {
-        fail();
+        if (e && e.message === EMPTY_BACKDROP && tries < AGAIN.length) {
+          // 正拖着的时候不换（换了水珠会跳一下），等她松手以后的那一回
+          timer = setTimeout(() => (ctl.current && ctl.current.isDragging() ? (timer = setTimeout(run, 400)) : run()), AGAIN[tries++]);
+          if (ctl.current) ctl.current.setGlass(null);
+          setGlass("off");
+        } else fail();
       }
     };
+    // 先叫浏览器把图解开（解开了再往画布上画，稳当一点）；它不认、解不开、迟迟不回，都照旧往下走
     const start = () => {
-      timer = setTimeout(run, 0);
+      let went = false;
+      const go = () => {
+        if (went || off) return;
+        went = true;
+        timer = setTimeout(run, 0);
+      };
+      if (typeof img.decode === "function") {
+        img.decode().then(go, go);
+        setTimeout(go, 600);
+      } else go();
     };
     if (img.complete && img.naturalWidth) start();
     else {

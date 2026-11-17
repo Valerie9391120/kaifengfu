@@ -118,9 +118,18 @@ function boxBlur(px, w, h, r) {
   }
 }
 
+// 图没画上（见 grabBackdrop）：外面过一会儿再试，别当成“玻璃算不出来”
+export const EMPTY_BACKDROP = "kfs-backdrop-empty";
+
 // 把开屏图里轨道底下那一块取出来（多取一圈边），糊一点
 // map：开屏图按 cover 铺在页面上的位置 { w, h, scale, ox, oy }；rect：轨道在页面上的位置
-function grabBackdrop(img, map, rect, margin) {
+// textured：底下那张画本来是花的（丁香的亮片）。取出来却是一片平的，也当图没画上
+//
+// 先验一遍图真的画上了：她手机上有时候一打开，滑块是一条实的紫（玻璃的边、高光都在，就是透不出底下的亮片）。
+// 量过她的截图，那个颜色正好是“底下是下面这个垫底的颜色”算出来的：图那一下没画进画布（drawImage 什么都没画，也不报错），
+// 玻璃照着一片垫底色算好就摆上了，以后也不再算。所以这里先往透明的画布上画，画完看这一块是不是都不透明了；
+// 没画上就抛 EMPTY_BACKDROP，外面隔一会儿重来（SplashDingxiang.jsx）
+function grabBackdrop(img, map, rect, margin, textured) {
   const res = LQ.bgRes;
   const w = Math.ceil((rect.w + margin * 2) * res);
   const h = Math.ceil((rect.h + margin * 2) * res);
@@ -128,12 +137,31 @@ function grabBackdrop(img, map, rect, margin) {
   cv.width = w;
   cv.height = h;
   const ctx = cv.getContext("2d", { willReadFrequently: true });
-  ctx.fillStyle = "#eee3f0";
-  ctx.fillRect(0, 0, w, h);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
   // 整张图照它在页面上的位置画进来，画布外面的自己裁掉
   ctx.drawImage(img, (map.ox - rect.x + margin) * res, (map.oy - rect.y + margin) * res, map.w * map.scale * res, map.h * map.scale * res);
+  {
+    const probe = ctx.getImageData(0, 0, w, h).data;
+    let n = 0;
+    let holes = 0;
+    let sum = 0;
+    let sum2 = 0;
+    for (let i = 0; i < probe.length; i += 4 * 37) {
+      n++;
+      if (probe[i + 3] < 250) holes++;
+      const lum = probe[i] * 0.3 + probe[i + 1] * 0.59 + probe[i + 2] * 0.11;
+      sum += lum;
+      sum2 += lum * lum;
+    }
+    const sd = Math.sqrt(Math.max(0, sum2 / n - (sum / n) * (sum / n)));
+    if (holes > n * 0.02 || (textured && sd < 3)) throw new Error(EMPTY_BACKDROP);
+  }
+  // 图够不着的地方（照理没有）垫一个浅丁香
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.fillStyle = "#eee3f0";
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = "source-over";
   const data = ctx.getImageData(0, 0, w, h);
   const px = data.data;
   // 三遍方框模糊，近似高斯
@@ -283,11 +311,12 @@ export function fillMask() {
 
 // 把玻璃备好。算不出来就抛错，外面退回不带玻璃的滑块。
 // look：换一套颜色（只写要换的那几样，见 LQ 开头）；不给就是丁香的紫
-export function prepareGlass({ img, map, rect, pad, knob, dpr, look }) {
+// textured：底下那张画是花的，取出来是平的就当图没画上（抛 EMPTY_BACKDROP，见 grabBackdrop）
+export function prepareGlass({ img, map, rect, pad, knob, dpr, look, textured }) {
   const C = look ? { ...LQ, ...look, hint: { ...LQ.hint, ...(look.hint || {}) } } : LQ;
   const S = clamp(dpr || 1, 1, LQ.res);
   const lut = bezelLut();
-  const bg = grabBackdrop(img, map, rect, 12);
+  const bg = grabBackdrop(img, map, rect, 12, !!textured);
   const t = buildTrack(bg, rect.w, rect.h, S, lut, C);
   const scene = withHints(t.plain, t.w, t.h, S, rect.h, pad, knob, C);
   // 灌满的那份也铺成不透明的给水珠折（边上的透明只留给显示用）
