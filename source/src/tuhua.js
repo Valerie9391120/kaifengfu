@@ -78,7 +78,7 @@ export function listEntries(pairs) {
 // 一段对话里他画过的每一张（摆着的这一支、翻过去的那些版本里的都算）：[{ key, m（那一条回话）, j（第几样）, title, ratio }]
 export function drawsOf(msgs, out = []) {
   (msgs || []).forEach((m) => {
-    drawsIn(m).forEach((d) => out.push({ key: d.key, m, j: Number(d.key.slice(d.key.lastIndexOf(".") + 1)), title: d.title, ratio: d.ratio }));
+    drawsIn(m).forEach((d) => out.push({ key: d.key, m, j: Number(d.key.slice(d.key.lastIndexOf(".") + 1)), title: d.title, ratio: d.ratio, prompt: d.prompt }));
     (m && m.alts ? m.alts : []).forEach((a) => {
       if (a && a.node) drawsOf([a.node], out);
       if (a && a.after) drawsOf(a.after, out);
@@ -94,8 +94,45 @@ export function toCollect(msgs, has) {
   return drawsOf(msgs).filter((x) => has("kfs2:img:" + drawImgOf(x.key)) && !has(TH_KEY + x.key));
 }
 
-// 南衙那一行的小字
-export const thSub = (n) => (n > 0 ? `收了 ${n} 张` : "还空着");
+// ---------- 还没画出来的：摆成空白的轴，点一下才画 ----------
+// 一段对话里他写了、还没画出来的那几张（存档里没有图；图画院里也没有这一条——删了的、说过不要的也算有）。
+// 没画过的、没画成的、正在画的都算；只认摆着的这一支（翻过去的版本里没画的不画了，同 painter.js 的规矩）。
+// 一样：{ id（那一张画的名字）, chat, at, title, ratio, prompt, blank: true, thumb: "" }
+export function blanksOf(msgs, has, chat) {
+  const out = [];
+  const seen = new Set();
+  (msgs || []).forEach((m) => {
+    drawsIn(m).forEach((d) => {
+      if (seen.has(d.key) || has("kfs2:img:" + drawImgOf(d.key)) || has(TH_KEY + d.key)) return;
+      seen.add(d.key);
+      out.push({ id: d.key, chat: s(chat), at: Math.max(0, Number(m.ts) || 0), title: cleanTitle(d.title), ratio: ["横", "竖", "方"].includes(d.ratio) ? d.ratio : "", prompt: d.prompt, blank: true, thumb: "", saved: 0 });
+    });
+  });
+  return out;
+}
+// 收着的和空白的排在一起：照他画的时候，从新到旧（同 listEntries）。已经收进来的那一张不再摆空白的
+export function withBlanks(list, blanks) {
+  const have = new Set((list || []).map((e) => e.id));
+  return (list || [])
+    .concat((blanks || []).filter((b) => !have.has(b.id)))
+    .sort((a, b) => b.at - a.at || b.saved - a.saved || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+}
+// 空白的轴纸上写什么、点了画不画（st 是 painter.js 交出来的样子；now 现在几点）。字照聊天里那张画的说法，“点这里”换成“点一下”
+export function blankSay(st, now) {
+  const s0 = st && st.s;
+  if (s0 === "busy") return { text: `在画 · ${Math.max(0, Math.round((now - (st.t0 || now)) / 1000))} 秒`, tap: false };
+  if (s0 === "wait") return { text: "等着画", tap: false };
+  if (s0 === "load") return { text: "", tap: false };
+  if (s0 === "ready") return { text: "画好了", tap: false };
+  if (s0 === "fail") {
+    const again = st.resume ? "接着画" : "重画";
+    return { text: st.link ? `没连上 ElevenLabs。在 API 面板连上以后，点一下${again}` : `没画成：${st.why || "不知道为什么"}。点一下${again}`, tap: true };
+  }
+  return { text: "点一下画出来", tap: true };
+}
+
+// 南衙那一行的小字（blank：还没画出来的有几张）
+export const thSub = (n, blank = 0) => (n > 0 ? `收了 ${n} 张${blank > 0 ? `，${blank} 张还没画` : ""}` : blank > 0 ? `${blank} 张还没画` : "还空着");
 
 // 每张底下的日期：今年的写“10月30日”，别的年份带上年
 export function dateOf(ms, nowYear) {

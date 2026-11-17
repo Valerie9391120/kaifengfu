@@ -291,6 +291,83 @@ with sync_playwright() as p:
         ok(next((r for r in rows_b if r["name"] == "图画院"), {}).get("sub") == "收了 2 张" and ids_b == sorted([k1, k3]) and tb.get(k1) == "月下" and tb.get(k3) == "一盏灯",
            f"另一台设备：也是那两张、改过的名字，删了的那张不冒出来（{ids_b}，{tb}）")
         pb_ctx.close()
+
+        # ================= 还没画出来的：挂成空白的轴，点一下才画 =================
+        # “他能画画”关着的时候他写的画，跟笔记本上的闹钟叫醒他那一回写的一个样：存档里没有图，没人画过
+        BL = """() => [...document.querySelectorAll('.kfs-tuhua .kfs-tuhua-card')].map((c) => ({ id: c.dataset.id, blank: c.dataset.blank === '1',
+          say: (c.querySelector('.kfs-tuhua-blank') || {}).textContent || '', title: (c.querySelector('.kfs-tuhua-title') || {}).textContent || '',
+          img: !!c.querySelector('.th-face img'), label: c.getAttribute('aria-label') }))"""
+        def card(page, key): return next((c for c in page.evaluate(BL) if c["id"] == key), None)
+        def sub_of(page):
+            rows = nanya(page)
+            got = next((r for r in rows if r["name"] == "图画院"), {}).get("sub")
+            page.get_by_role("button", name="关闭").click(); page.wait_for_timeout(400); shut_side(page)
+            return got
+        open_api(pa); pa.get_by_role("switch", name="他能画画").click(); pa.wait_for_timeout(500); close_api(pa)
+        n0 = len(prompts())
+        reply(pa, "醒着写的一张\n[DRAW:竖]《空白一》\n一只狐狸在读书")
+        reply(pa, "又一张\n[DRAW]《空白二》\n一盏灯")
+        cid, msgs = chat_of(pa)
+        hims = [m for m in msgs if m.get("role") == "him"]
+        kb1, kb2 = f"{hims[-2]['id']}.1", f"{hims[-1]['id']}.1"
+        ok(his(pa)[-1] == "D:none" and len(prompts()) == n0 and not kv_has(pa, "kfs2:img:draw." + kb1), "他写了两张、没人画：聊天里是“这张画还没画”")
+        rows = open_tuhua(pa)
+        ok(next((r for r in rows if r["name"] == "图画院"), {}).get("sub") == "收了 2 张，2 张还没画", f"南衙那一行：收了 2 张，2 张还没画（{next((r for r in rows if r['name'] == '图画院'), {}).get('sub')}）")
+        got = pa.evaluate(BL)
+        ok([c["id"] for c in got][:2] == [kb2, kb1] and all(c["blank"] and not c["img"] and c["say"] == "点一下画出来" for c in got[:2]) and [c["title"] for c in got[:2]] == ["空白二", "空白一"]
+           and got[1]["label"] == "空白一，还没画" and not any(c["blank"] for c in got[2:]),
+           f"图画院里：两幅空白的轴挂在最前头（新的在前），纸上“点一下画出来”，小签上是他起的名字；收着的照旧（{[(c['id'] == kb1, c['blank'], c['say'], c['title']) for c in got]}）")
+        shot(pa, "tuhua_blank.png")
+        pa.locator(f".kfs-tuhua-card[data-id='{kb1}']").click()
+        said = set()
+        t0 = time.time()
+        while time.time() - t0 < 40:
+            c = card(pa, kb1)
+            if not c or not c["blank"]: break
+            said.add(re.sub(r"\d+", "N", c["say"]))
+            if "在画" in c["say"] and SHOTS and not os.path.exists(os.path.join(SHOTS, "tuhua_painting.png")): shot(pa, "tuhua_painting.png")
+            time.sleep(0.3)
+        c1 = card(pa, kb1)
+        ok(c1 and not c1["blank"] and c1["img"] and c1["title"] == "空白一" and "在画 · N 秒" in said and pa.locator(".kfs-tuhua-big").count() == 0,
+           f"点一下空白的：纸上换成“在画 · 多少秒”，画好了原地换成那张画，名字还在；没有点开大图（中间写过：{sorted(said)}）")
+        ok(kv_has(pa, "kfs2:thy:" + kb1) and kv_has(pa, "kfs2:img:draw." + kb1) and len(prompts()) == n0 + 1 and prompts()[-1] == "一只狐狸在读书" and card(pa, kb2)["say"] == "点一下画出来",
+           f"那一张收进来了，只交出去画了一回、画的是他写的那几行（不带名字）；另一幅没点的还空着（{prompts()[n0:]}）")
+        shot(pa, "tuhua_painted.png")
+        # 长按空白的：只有“不要这张”，再点一次才算
+        target = pa.locator(f".kfs-tuhua-card[data-id='{kb2}']")
+        long_press(pa, target)
+        if not pa.locator(".kfs-tuhua-drop").count():
+            target.click(button="right"); pa.wait_for_timeout(500)
+        pa.wait_for_timeout(600)
+        ok(pa.locator(".kfs-tuhua-name").count() == 0 and pa.locator(".kfs-tuhua-drop").inner_text() == "不要这张", "长按空白的那一幅：只有“不要这张”，没有改名字")
+        shot(pa, "tuhua_blank_menu.png")
+        pa.locator(".kfs-tuhua-drop").click(); pa.wait_for_timeout(300)
+        armed = pa.locator(".kfs-tuhua-drop").inner_text()
+        pa.locator(".kfs-tuhua-drop").click(); pa.wait_for_timeout(600)
+        rec = json.loads(pa.evaluate(KV, "kfs2:thy:" + kb2) or "{}")
+        ok(armed == "再点一次，不要这张" and card(pa, kb2) is None and rec.get("gone") is True and len(prompts()) == n0 + 1, "再点一次：那一幅拿掉了，留个记号（往后不再冒出来），没去画")
+        back(pa)
+        got = his(pa)
+        ok(got[-1] == "D:none" and "P" in got and sub_of(pa) == "收了 3 张", f"聊天里：点过的那一张画出来了，说不要的那一张照旧是“还没画”；南衙那一行：收了 3 张（{got[-4:]}）")
+
+        # 没画成的：也挂成空白的，纸上写缘故，点一下重画
+        open_api(pa); pa.get_by_role("switch", name="他能画画").click(); pa.wait_for_timeout(500); close_api(pa)
+        setup("fail=quota")
+        reply(pa, "这一张画不成\n[DRAW]《画不成》\n一座桥")
+        got = wait_his(pa, "D:fail")
+        cid, msgs = chat_of(pa)
+        kf = f"{[m for m in msgs if m.get('role') == 'him'][-1]['id']}.1"
+        n1 = len(prompts())
+        open_tuhua(pa)
+        cf = card(pa, kf)
+        ok(got[-1] == "D:fail" and cf and cf["blank"] and cf["say"].startswith("没画成：") and cf["say"].endswith("点一下重画"), f"没画成的那一张：图画院里也是一幅空白的，纸上写缘故和“点一下重画”（{cf and cf['say']}）")
+        shot(pa, "tuhua_blank_fail.png")
+        setup("fail=")
+        pa.locator(f".kfs-tuhua-card[data-id='{kf}']").click()
+        done = wait_js(pa, f"(() => {{ const c = document.querySelector(\".kfs-tuhua-card[data-id='{kf}']\"); return !!c && c.dataset.blank !== '1' && !!c.querySelector('.th-face img'); }})()", 40000)
+        ok(done and kv_has(pa, "kfs2:thy:" + kf) and len(prompts()) == n1 + 1, "点一下：重画，画好了原地换成那张画，收进来了")
+        back(pa)
+        ok(wait_his(pa, "P", 8000)[-1] == "P" and sub_of(pa) == "收了 4 张", "聊天里那一张也成了画；南衙那一行：收了 4 张")
     finally:
         print("\n页面报错：" + ("\n".join(errors[:10]) if errors else "无"))
         browser.close()

@@ -18,7 +18,7 @@ const J = (x) => JSON.stringify(x);
 
 const th = await loadBundle("src/tuhua.js");
 const { TH_KEY, TH_IMG, TITLE_MAX, packEntry, packGone, readEntry, listEntries, cleanTitle, drawsOf, toCollect, thSub, dateOf, byMonth } = th;
-const { MOUNTS, mountOf, vaseOf, sceneOf, scrollParts, pageLayout, VASE_TOPS, VASE_RIGHTS, ART_W, TABLE_H } = th;
+const { MOUNTS, mountOf, vaseOf, sceneOf, scrollParts, pageLayout, VASE_TOPS, VASE_RIGHTS, ART_W, TABLE_H, blanksOf, withBlanks, blankSay } = th;
 const THUMB = "data:image/jpeg;base64,thumb";
 const T0 = Date.UTC(2026, 9, 30, 21, 40);
 
@@ -114,6 +114,34 @@ const T0 = Date.UTC(2026, 9, 30, 21, 40);
   const [sl, sr] = se.pages[0];
   ok(se.scale < 1 && sl.y + sl.p.h <= se.scene.flowersTop - 8 + 1 && sr.y + sr.p.h <= se.scene.tableTop - 10 + 1, `矮屏幕放不下就两幅一起缩（缩到 ${se.scale.toFixed(2)}）`);
   ok(pageLayout([], 390, 844).pages.length === 0, "一张都没有：没有页");
+}
+
+// ================= 还没画出来的：空白的轴 =================
+{
+  const him = (id, ts, items, alts) => ({ id, role: "him", ts, items, ...(alts ? { alts } : {}) });
+  const d = (prompt, title, ratio) => ({ type: "draw", prompt, ...(title ? { title } : {}), ...(ratio ? { ratio } : {}) });
+  const msgs = [
+    { id: "h1", role: "her", ts: 1, text: "画一张" },
+    him("m1", 1000, [{ type: "text", text: "好" }, d("一扇窗", "月下", "竖")]),
+    him("m2", 2000, [d("一盏灯", "", "横"), d("一只猫", "猫")]),
+    him("m3", 3000, [d("摆着的那一版", "新的")], [{ node: him("m0", 2500, [d("翻过去的那一版", "旧的")]) }]),
+  ];
+  const stored = new Set(["kfs2:img:draw.m1.1", "kfs2:thy:m2.1"]); // m1.1 画好了；m2.1 图画院里有一条（收了的、说过不要的都算）
+  const bl = blanksOf(msgs, (k) => stored.has(k), "c9");
+  ok(bl.map((x) => x.id).join() === "m2.0,m3.0" && bl.every((x) => x.blank && x.thumb === "" && x.chat === "c9"), `还没画出来的：画好了的、图画院里有了那一条的不算；翻过去的版本里的不算（${bl.map((x) => x.id)}）`);
+  ok(bl[0].at === 2000 && bl[0].ratio === "横" && bl[0].title === "" && bl[0].prompt === "一盏灯" && bl[1].title === "新的" && bl[1].ratio === "", "每一张带着哪天写的、横竖、名字、画什么（点了照这个画）");
+  ok(blanksOf(null, () => false, "c").length === 0 && blanksOf([{ id: "h", role: "her", ts: 1, text: "[DRAW] 她写的不算" }], () => false, "c").length === 0, "没有对话、她写的：没有");
+  const kept = [{ id: "a", at: 2500, saved: 9, title: "收着的", ratio: "竖", thumb: "data:image/jpeg;base64,xx" }, { id: "m3.0", at: 3000, saved: 5, title: "已经收了", ratio: "", thumb: "data:image/jpeg;base64,yy" }];
+  const all = withBlanks(kept, bl);
+  ok(all.map((x) => x.id + (x.blank ? "·空" : "")).join() === "m3.0,a,m2.0·空", `收着的和空白的排在一起，照写的时候从新到旧；已经收进来的那一张不再摆空白的（${all.map((x) => x.id + (x.blank ? "·空" : ""))}）`);
+  ok(withBlanks(kept, []).length === 2 && withBlanks([], bl).length === 2 && pageLayout(withBlanks([], bl), 390, 844).pages[0].length === 2, "没有空白的：原样；只有空白的：也挂得上墙");
+  // 纸上写什么、点了画不画
+  const T = 100000;
+  ok(blankSay(null, T).text === "点一下画出来" && blankSay(null, T).tap && blankSay({ s: "none" }, T).tap, "没画过的：点一下画出来");
+  ok(blankSay({ s: "busy", t0: T - 12400 }, T).text === "在画 · 12 秒" && !blankSay({ s: "busy", t0: T }, T).tap && blankSay({ s: "wait" }, T).text === "等着画" && !blankSay({ s: "wait" }, T).tap, "在画的写画了多少秒，等着画的写等着画：点了不动");
+  ok(blankSay({ s: "fail", why: "额度不够了" }, T).text === "没画成：额度不够了。点一下重画" && blankSay({ s: "fail", why: "断了", resume: true }, T).text === "没画成：断了。点一下接着画" && blankSay({ s: "fail", why: "" }, T).tap, "没画成的：缘故，点一下重画（画到一半的：接着画）");
+  ok(blankSay({ s: "fail", why: "x", link: true }, T).text === "没连上 ElevenLabs。在 API 面板连上以后，点一下重画" && blankSay({ s: "load" }, T).text === "" && !blankSay({ s: "ready" }, T).tap, "登录丢了的说去 API 面板连上；正在取的不写字；画好了的不认点");
+  ok(thSub(2, 1) === "收了 2 张，1 张还没画" && thSub(0, 3) === "3 张还没画" && thSub(2) === "收了 2 张" && thSub(0, 0) === "还空着", "南衙那一行：有空白的添一句几张还没画");
 }
 
 console.log(`\n通过 ${passed}  失败 ${failed}`);

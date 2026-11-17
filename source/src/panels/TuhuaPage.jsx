@@ -3,7 +3,7 @@ import { SERIF, T, glass, fill, HAIRLINE } from "../ui/style.js";
 import { Icon } from "../ui/Icon.jsx";
 import { useLongPress } from "../ui/press.js";
 import { useSlideIn } from "../ui/enter.js";
-import { dateOf, cleanTitle, TITLE_MAX, pageLayout, mountOf, vaseOf, hashStr, ZHOU } from "../tuhua.js";
+import { dateOf, cleanTitle, TITLE_MAX, pageLayout, mountOf, vaseOf, hashStr, ZHOU, blankSay } from "../tuhua.js";
 
 // 图画院（见 tuhua.js、开发说明“图画院”“图画院：框景”两节）。
 // 框景是恩师那张画拆成的——一面墙，右上角挂落，底下一张长案，案上月白瓶里插着当天那一瓶花（十瓶轮着）；
@@ -11,7 +11,10 @@ import { dateOf, cleanTitle, TITLE_MAX, pageLayout, mountOf, vaseOf, hashStr, ZH
 // 翻页的手感照藏音匣：两幅轴跟着手指走，下一页的两幅从长案、瓶花后面跟上来；松手过了两成就翻过去，不够就弹回来；第一页往下拉、最后一页往上推都弹回来。
 // 裱绫的颜色每一张随机挑一个（tuhua.js 的 MOUNTS）；横的挂成短一些的竖轴；轴底下垂一张小签，写名字和哪天画的。
 // 点一幅看大图；长按一幅“改名字”（没名字的写“起名字”）、“删掉这张”（再点一次才删）。
-// entries 见 tuhua.js 的 listEntries；imgOf(id) 那一张的大图（data URL，没取到是空的）；onRemove(id) 删掉这一张；onRename(id, 名字) 改名字
+// 他写了、还没画出来的那几张（entries 里 blank 的，见 tuhua.js 的 blanksOf）：挂成一幅空白的轴，纸上一行小字；点一下才画，画好了原地换成那张画；
+// 长按只有“不要这张”（再点一次才算）。
+// entries 见 tuhua.js 的 listEntries、withBlanks；imgOf(id) 那一张的大图（data URL，没取到是空的）；onRemove(id) 删掉这一张（空白的：不要这张）；
+// onRename(id, 名字) 改名字；states 每一张画眼下的样子（painter.js 交出来的，空白的轴照它写字）；onPaint(e) 点了一幅空白的
 
 /* global __KFS_TUHUA_ASSETS__ */
 const A =
@@ -64,7 +67,7 @@ function mix(a, b, t) {
 }
 
 // 一幅轴
-function Scroll({ it, nowYear, onOpen, onLong, current }) {
+function Scroll({ it, nowYear, onOpen, onLong, current, say }) {
   const { e, x, y, w, p } = it;
   const lp = useLongPress((rect) => onLong(e, rect));
   const [, col] = mountOf(e.id);
@@ -82,7 +85,8 @@ function Scroll({ it, nowYear, onOpen, onLong, current }) {
       className="kfs-tuhua-card th-scroll"
       data-id={e.id}
       data-slot={it.slot}
-      aria-label={e.title || dateOf(e.at, nowYear)}
+      data-blank={e.blank ? "1" : undefined}
+      aria-label={(e.title || dateOf(e.at, nowYear)) + (e.blank ? "，还没画" : "")}
       style={{ position: "absolute", left: x, top: y, width: w, height: p.h, padding: 0, margin: 0, border: 0, background: "none", textAlign: "left", WebkitTouchCallout: "none" }}
     >
       {/* 挂绳、钉子 */}
@@ -95,7 +99,17 @@ function Scroll({ it, nowYear, onOpen, onLong, current }) {
       <span className="th-face" style={{ position: "absolute", left: 0, top: p.rodT, width: w, height: p.face, display: "flex", flexDirection: "column", boxShadow: "0 8px 16px rgba(70,48,28,0.16), 0 2px 4px rgba(70,48,28,0.12)" }}>
         <span style={{ height: p.tian, flexShrink: 0, ...silk(A.zhouTian) }} />
         <span style={{ height: p.core, flexShrink: 0, padding: p.m, backgroundColor: "#efe3cb", backgroundImage: `url(${A.zhouPaper})`, backgroundSize: "100% auto", backgroundPosition: "center top" }}>
-          <img src={e.thumb} alt="" draggable={false} style={{ display: "block", width: p.iw, height: p.ih, objectFit: "cover", WebkitTouchCallout: "none" }} />
+          {e.blank ? (
+            // 还没画出来的：一张空白的纸，当中一行小字（点一下画出来、在画多少秒、没画成的缘故）
+            <span
+              className="kfs-tuhua-blank"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: p.iw, height: p.ih, padding: "0 8px", boxSizing: "border-box", background: "rgba(255,251,240,0.5)", boxShadow: "inset 0 0 0 1px rgba(150,120,90,0.2)", textAlign: "center", fontFamily: SERIF, fontSize: 12.5, lineHeight: 1.6, letterSpacing: "0.08em", color: INK_SOFT, overflow: "hidden" }}
+            >
+              {say}
+            </span>
+          ) : (
+            <img src={e.thumb} alt="" draggable={false} style={{ display: "block", width: p.iw, height: p.ih, objectFit: "cover", WebkitTouchCallout: "none" }} />
+          )}
         </span>
         <span style={{ height: p.di, flexShrink: 0, ...silk(A.zhouDi) }} />
       </span>
@@ -196,7 +210,7 @@ function useSafeTop() {
   return v;
 }
 
-export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
+export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename, states = {}, onPaint = () => {} }) {
   const pageRef = useRef(null);
   const deckRef = useRef(null);
   useSlideIn(pageRef);
@@ -210,6 +224,21 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
   const nowYear = today.getFullYear();
   const vase = vaseOf(today);
   const list = entries || [];
+  // 有正在画的：一秒走一下（纸上写着画了多少秒）
+  const painting = list.some((e) => e.blank && states[e.id] && states[e.id].s === "busy");
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!painting) return undefined;
+    setClock(Date.now());
+    const t = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [painting]);
+  // 点一幅：收着的看大图；空白的，没画过、没画成的开画，正在画、等着画的不动
+  const open = (e) => {
+    if (!e.blank) return setBig(e);
+    if (blankSay(states[e.id], Date.now()).tap) onPaint(e);
+    return undefined;
+  };
 
   // 屏幕多大
   useLayoutEffect(() => {
@@ -383,7 +412,7 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
           {shown.map((k) => (
             <div key={k} className="th-page" data-page={k} style={{ position: "absolute", left: 0, top: k * H, width: "100%", height: H }}>
               {lay.pages[k].map((it) => (
-                <Scroll key={it.e.id} it={it} nowYear={nowYear} current={k === pg} onOpen={setBig} onLong={(x, rect) => setAct({ e: x, rect, armed: false, at: Date.now() })} />
+                <Scroll key={it.e.id} it={it} nowYear={nowYear} current={k === pg} onOpen={open} say={it.e.blank ? blankSay(states[it.e.id], clock).text : ""} onLong={(x, rect) => setAct({ e: x, rect, armed: false, at: Date.now() })} />
               ))}
             </div>
           ))}
@@ -465,17 +494,20 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
               border: HAIRLINE,
             }}
           >
-            <button
-              className="kfs-tuhua-name w-full flex items-center text-left"
-              onClick={() => {
-                setNaming(act.e);
-                setAct(null);
-              }}
-              style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: T.ink }}
-            >
-              <Icon name="pen" size={19} />
-              {act.e.title ? "改名字" : "起名字"}
-            </button>
+            {/* 空白的那一幅只有“不要这张”（名字等画出来了再改） */}
+            {!act.e.blank && (
+              <button
+                className="kfs-tuhua-name w-full flex items-center text-left"
+                onClick={() => {
+                  setNaming(act.e);
+                  setAct(null);
+                }}
+                style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: T.ink }}
+              >
+                <Icon name="pen" size={19} />
+                {act.e.title ? "改名字" : "起名字"}
+              </button>
+            )}
             <button
               className="kfs-tuhua-drop w-full flex items-center text-left"
               onClick={() => {
@@ -486,7 +518,7 @@ export function TuhuaPage({ entries, imgOf, now, onBack, onRemove, onRename }) {
               style={{ gap: 12, padding: "12px 18px", fontSize: 15, color: act.armed ? T.red2 : T.ink, background: act.armed ? fill(0.4) : "transparent" }}
             >
               <Icon name="trash" size={19} />
-              {act.armed ? "再点一次，删掉这张" : "删掉这张"}
+              {act.e.blank ? (act.armed ? "再点一次，不要这张" : "不要这张") : act.armed ? "再点一次，删掉这张" : "删掉这张"}
             </button>
           </div>
         </div>

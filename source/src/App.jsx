@@ -77,7 +77,7 @@ import { ModelPanel } from "./panels/ModelPanel.jsx";
 import { NanyaPanel, soonToast } from "./panels/NanyaPanel.jsx";
 import { BOX_KEY, BOX_AUDIO, packEntry, keptText, listEntries, sameVoiceIds, findBySrc, boxSub } from "./cangyin/parts.js";
 import { CangyinPage, TRAD_KEY } from "./cangyin/CangyinPage.jsx";
-import { TH_KEY, TH_IMG, THUMB_SIDE, packEntry as packTh, packGone, readEntry as readTh, listEntries as listTh, drawsOf, toCollect, thSub } from "./tuhua.js";
+import { TH_KEY, TH_IMG, THUMB_SIDE, packEntry as packTh, packGone, readEntry as readTh, listEntries as listTh, drawsOf, toCollect, thSub, blanksOf, withBlanks } from "./tuhua.js";
 import { TuhuaPage } from "./panels/TuhuaPage.jsx";
 import { CallPage } from "./call/CallPage.jsx";
 import { FOX_CHAT, FOX_TITLE, FOX_STATE, FOX_DOORS, FOX_TASK, isFoxChat, wakeOn, readFoxState, foxSub, taskNote } from "./fox.js";
@@ -446,6 +446,9 @@ export default function App({ account = {} }) {
   const [thOpen, setThOpen] = useState(false);
   const [thList, setThList] = useState([]);
   const thSwept = useRef(false);
+  // 他写了、还没画出来的那几张（tuhua.js 的 blanksOf）：图画院里挂成空白的轴，点一下才画。点开南衙、点开图画院的时候各翻一遍
+  const [thBlanks, setThBlanks] = useState([]);
+  const thScan = useRef(0);
   const boxRef = useRef([]);
   // 藏音匣借走了放声音的东西（见 boxAudio）：这边要停下它的时候（切到后台、来电话）告诉那一页一声
   const audioOwner = useRef(null);
@@ -1846,6 +1849,35 @@ export default function App({ account = {} }) {
       await collectDraws(msgs, c.id);
     }
   };
+  // 所有对话翻一遍，他写了还没画出来的那几张找出来（见 tuhua.js 的 blanksOf），顺手看一眼每一张眼下什么样（没画成的缘故、别的设备正在画的）。
+  // 存着的对话是一整段字：里头没有 "draw" 的不拆（绝大多数对话没有画）；隔几段歇一下，别卡住画面。翻到一半又叫了一回的，前一回作废
+  const scanBlanks = async () => {
+    const mine = ++thScan.current;
+    const ids = Array.from(new Set(indexRef.current.map((c) => c.id).concat([FOX_CHAT])));
+    const out = [];
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      let msgs = null;
+      if (id === chatIdRef.current) msgs = messagesRef.current;
+      else {
+        const raw = store.peek("kfs2:chat:" + id);
+        if (typeof raw === "string" && raw.includes('"draw"')) msgs = safeParse(raw, []) || [];
+      }
+      if (msgs && msgs.length) out.push(...blanksOf(msgs, (k) => store.peek(k) != null, id));
+      if (i % 8 === 7) await new Promise((done) => setTimeout(done, 0));
+      if (mine !== thScan.current) return;
+    }
+    setThBlanks(out);
+    for (const b of out) if (!drawsRef.current[b.id]) getPainter().look(b.id, b.chat, b.prompt, b.ratio);
+  };
+  // 点开南衙：翻一遍（那一行的小字要写“几张还没画”）
+  useEffect(() => {
+    if (sheet === "nanya") scanBlanks();
+  }, [sheet]);
+  // 眼下还空白的那几张：收进来了的、说过不要的（图画院里有了那一条）、对话删了的不算
+  const blanksNow = () => thBlanks.filter((b) => store.peek(TH_KEY + b.id) == null && (b.chat === FOX_CHAT || indexRef.current.some((c) => c.id === b.chat)));
+  // 点了一幅空白的：画（跟聊天里“点这里画出来”“点这里重画”是同一下，两头不会画两回）
+  const paintTh = (e) => getPainter().again(e.chat, e.id, e.prompt, e.ratio || "");
   // 图画院里长按“改名字”（以前没名字的那几张她自己起；他起的她也能改，卿卿 10 月 31 日要的）。改成空的就是没名字
   const renameTh = async (id, title) => {
     const e = readTh(id, store.peek(TH_KEY + id));
@@ -6037,7 +6069,7 @@ export default function App({ account = {} }) {
       return (
         <Sheet title="南衙" onClose={() => setSheet(null)}>
           <NanyaPanel
-            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length), tuhua: thSub(thList.length), qx: hasLots(qxPool) ? `签库里 ${poolSize(qxPool)} 条签` : "签库还空着", pindou: PD_SUB }}
+            subs={{ fox: foxSub({ on: wakeOn(settings), state: foxState, now: now.getTime() }), diary: diarySub, jianghu: nanyaSub(latestGame() && latestGame().board), voicebox: boxSub(boxList.length), tuhua: thSub(thList.length, blanksNow().length), qx: hasLots(qxPool) ? `签库里 ${poolSize(qxPool)} 条签` : "签库还空着", pindou: PD_SUB }}
             open={{
               // 狐宇宙：菜单、侧栏收起，盖上他屋里那一层（一张书案，见 desk/DeskPage.jsx）；原来那一页（狐宇宙那段对话）成了案上信笺里的信匣
               fox: openDesk,
@@ -6058,6 +6090,7 @@ export default function App({ account = {} }) {
                 setSheet(null);
                 setThOpen(true);
                 sweepTh();
+                scanBlanks();
               },
               // 秘戏钱匣：菜单、侧栏都收起，盖上那一层（见 qx/QxPage.jsx）；叉一点回到眼前这段对话（她丢进来的签在这儿，他关上以后回）。
               // 聊天里正放着的语音停下（锦盒自己有声音）
@@ -6818,7 +6851,7 @@ export default function App({ account = {} }) {
         />
       )}
 
-      {thOpen && <TuhuaPage entries={thList} imgOf={thImgOf} now={now} onBack={() => setThOpen(false)} onRemove={dropTh} onRename={renameTh} />}
+      {thOpen && <TuhuaPage entries={withBlanks(thList, blanksNow())} imgOf={thImgOf} now={now} onBack={() => setThOpen(false)} onRemove={dropTh} onRename={renameTh} states={draws} onPaint={paintTh} />}
 
       {historyOpen && (
         <HistoryPage
