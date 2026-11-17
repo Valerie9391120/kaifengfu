@@ -1,21 +1,41 @@
 // 白昼的开屏：一片米白，正中是恩师画的那只狐狸（南衙里狐宇宙那一行的那一只，ui/art/fox.js），陶土色。
-// 一开始纸上是空的；过半秒底下浮出一条素的滑块；圆钮往右拉多少，狐狸就照一笔的次序画出多少
+// 一开始纸上是空的；过半秒底下浮出滑块；圆钮往右拉多少，狐狸就照一笔的次序画出多少
 // （从后背起笔，顺着后背往上，画耳朵、脸、下巴、胸口，再从身子底下绕出尾巴，收在尾巴尖上，见 ui/art/foxLine.js；
-// 起笔在哪儿是她定的）；拉到头正好画完，手指松开才进门。
-// 没拉到头就松手，圆钮弹回去，画也跟着收回去。规矩同丁香那条（拉到 98.5% 以上才算到头，到头了松手才进）。
-// 滑块不是液态玻璃：那个要折射底下的画才好看，这里底下是一片平的颜色。
+// 起笔在哪儿是她定的）；拉到头正好画完，手指松开才进门。没拉到头就松手，圆钮弹回去，画也跟着收回去。
+//
+// 滑块跟丁香那一条是同一条（她要的“丁香同款”：头一版做的是一条素的，她说手感薄）：一样的尺寸、一样的液态玻璃和手感
+// （liquid.js 的 prepareGlass、createSlider），只换了一套陶土色（LOOK_BZ）。底下不是画、是一片平的米白，玻璃折进来的
+// 就是这一片颜色，看得出的是玻璃自己的斜面、高光和水珠。玻璃算不出来就退回不带玻璃的陶土色滑块，照样能拉。
 //
 // 画的是 fox.js 那块形状，上面盖一层蒙版（蒙版照 foxLine.js 那两笔描，描到哪形状露到哪）；画完了蒙版拿掉，就是恩师那块形状。
-// 拖动的时候不经过 React：位置、蒙版、轨道上灌的那一截都是一帧一帧直接写到页面上的。
-import { useEffect, useRef, useState } from "react";
+// 狐狸不经过 React：圆钮每走一帧（createSlider 的 onMove），蒙版直接写到页面上。
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as fox from "./ui/art/fox.js";
 import { STROKES, TIPS, GUARD, MASK_WIDTH } from "./ui/art/foxLine.js";
+import { LQ, blit, createSlider, fillMask, hintLayout, prepareGlass } from "./liquid.js";
 
-const TRACK_H = 64;
-const KNOB = 52;
+// 尺寸同丁香那一条
+const TRACK_H = 80;
+const KNOB = 68;
 const PAD = 6;
-const SIDE = 28;
-export const END = 0.985; // 拉到这么多算到头
+const SIDE = 18;
+export const END = 0.985; // 拉到这么多算到头（同 liquid.js）
+const PAPER = [249, 249, 247]; // 开屏的底色（--k-paper）
+
+// 丁香那条玻璃换成陶土色：空着的那段深一点，灌满的那段亮一点；圆钮是浅陶土的环、深陶土的芯；提示的箭头是浅的。
+// 底是平的，不用放大反差（mean 设成底色，两头的放大都是 1）
+export const LOOK_BZ = {
+  mean: 249,
+  gainHi: 1,
+  gainLo: 1,
+  plainMul: [0.731, 0.406, 0.302],
+  plainFog: [170, 92, 66],
+  fullMul: [0.944, 0.663, 0.543],
+  fullFog: [226, 150, 120],
+  ring: [238, 184, 160],
+  core: [136, 70, 48],
+  hint: { color: [246, 208, 190] },
+};
 
 // 滑块拉到 p（0 到 1）的时候，两笔各画到几成、补的那几小笔露不露
 const TOTAL = STROKES[0].len + STROKES[1].len;
@@ -30,54 +50,80 @@ export function drawn(p) {
 }
 
 const CSS = `
-@keyframes kfsBzHint { 0%,100% { opacity: .25; } 50% { opacity: .8; } }
+@keyframes kfsBzHint { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
 .kfs-bz-hint { animation: kfsBzHint 1.4s ease-in-out infinite; }
-.kfs-bz-track[data-live] .kfs-bz-hint { animation: none; opacity: 0; }
-.kfs-bz-body { background: #fff; color: rgb(var(--k-dai)); box-shadow: 0 2px 8px rgba(60,56,50,.14), 0 0 0 1px rgba(39,39,38,.06); transition: box-shadow .2s ease, transform .2s ease, background .2s ease, color .2s ease; }
-.kfs-bz-knob[data-press] .kfs-bz-body { box-shadow: 0 6px 16px rgba(60,56,50,.18), 0 0 0 1px rgba(39,39,38,.06); transform: scale(1.06); }
-.kfs-bz-knob[data-done] .kfs-bz-body { background: rgb(var(--k-dai)); color: rgb(var(--k-on-dai)); }
-@media (prefers-reduced-motion: reduce) { .kfs-bz-hint { animation: none; opacity: .55; } }
+.kfs-bz-track[data-live] .kfs-bz-hint { animation-play-state: paused; }
+.kfs-bz-knob { color: #F0C2AC; transition: color .2s ease; }
+.kfs-bz-knob[data-press], .kfs-bz-knob[data-done] { color: #FFF6F1; }
+.kfs-bz-body { box-shadow: 0 5px 12px rgba(110,54,34,.3), 0 1px 3px rgba(110,54,34,.24); transition: box-shadow .25s ease; }
+.kfs-bz-knob[data-press] .kfs-bz-body { box-shadow: 0 9px 20px rgba(110,54,34,.32), 0 2px 5px rgba(110,54,34,.2); }
+.kfs-bz-knob[data-done] .kfs-bz-body { box-shadow: 0 0 14px rgba(255,255,255,.6), 0 0 30px rgba(255,206,182,.75), 0 6px 14px rgba(110,54,34,.22); }
+@media (prefers-reduced-motion: reduce) { .kfs-bz-hint { animation: none; opacity: .72; } }
 `;
 
-function Chev({ size, sw = 2 }) {
+const MASK = fillMask();
+
+function Chev({ size }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={LQ.hint.sw} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="m9 6 6 6-6 6" />
     </svg>
   );
 }
 
 export default function SplashBaizhou({ fading, onEnter }) {
-  const trackRef = useRef(null);
-  const knobRef = useRef(null);
-  const fillRef = useRef(null);
+  const ref = useRef(null);
   const svgRef = useRef(null);
-  const st = useRef({ pos: 0, vel: 0, max: 1, dragging: false, x0: 0, p0: 0, goal: null, raf: 0, last: 0 });
+  const trackRef = useRef(null);
+  const trackCv = useRef(null);
+  const fillRef = useRef(null);
+  const fillCv = useRef(null);
+  const knobRef = useRef(null);
+  const bodyRef = useRef(null);
+  const lensRef = useRef(null);
+  const iconRef = useRef(null);
+  const ctl = useRef(null);
   const entered = useRef(false);
-  const [ready, setReady] = useState(false);
+  const [box, setBox] = useState(null); // 页面多大、轨道在哪
+  const [ready, setReady] = useState(false); // 过了半秒
+  const [late, setLate] = useState(false); // 玻璃迟迟没算好，不等了
+  const [glass, setGlass] = useState("wait"); // wait 还在算 / on 好了 / off 算不出来
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = ref.current;
+      const t = trackRef.current;
+      if (!el || !t) return;
+      const b = { w: el.offsetWidth, h: el.offsetHeight, tx: t.offsetLeft, ty: t.offsetTop, tw: t.offsetWidth };
+      setBox((o) => (o && o.w === b.w && o.h === b.h && o.tx === b.tx && o.ty === b.ty && o.tw === b.tw ? o : b));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(measure);
+      ro.observe(ref.current);
+    }
+    return () => {
+      window.removeEventListener("resize", measure);
+      if (ro) ro.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => setReady(true), 500);
-    return () => clearTimeout(t);
+    const t2 = setTimeout(() => setLate(true), 1600);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(t2);
+    };
   }, []);
 
-  // 这一帧的样子写到页面上
-  const paint = () => {
-    const s = st.current;
-    const knob = knobRef.current;
+  // 圆钮走到 p：狐狸画到哪，写到页面上
+  const paintFox = (p) => {
     const svg = svgRef.current;
-    if (!knob || !svg) return;
-    const p = s.max > 0 ? Math.max(0, Math.min(1, s.pos / s.max)) : 0;
+    if (!svg) return;
     const d = drawn(p);
-    knob.style.transform = `translate3d(${s.pos}px,0,0)`;
-    knob.setAttribute("aria-valuenow", String(Math.round(p * 100)));
-    if (d.f >= 1) knob.setAttribute("data-done", "");
-    else knob.removeAttribute("data-done");
-    if (fillRef.current) fillRef.current.style.width = `${PAD * 2 + KNOB + s.pos}px`;
-    if (trackRef.current) {
-      if (s.pos > 0.5 || s.dragging) trackRef.current.setAttribute("data-live", "");
-      else trackRef.current.removeAttribute("data-live");
-    }
     svg.querySelectorAll("[data-stroke]").forEach((el) => {
       const t = d.s[Number(el.getAttribute("data-stroke"))];
       // 一点没画的时候整根藏起来（不然圆头会在起笔的地方露半个点）
@@ -96,111 +142,95 @@ export default function SplashBaizhou({ fading, onEnter }) {
     svg.setAttribute("data-drawn", d.f.toFixed(3));
   };
 
-  // 松手以后、按键盘的时候：一根弹簧把圆钮送到 goal
-  const tick = (now) => {
-    const s = st.current;
-    s.raf = 0;
-    if (s.dragging || s.goal === null) return;
-    const h = Math.min(0.032, Math.max(0.001, (now - s.last) / 1000));
-    s.last = now;
-    const a = -230 * (s.pos - s.goal) - 24 * s.vel;
-    s.vel += a * h;
-    s.pos += s.vel * h;
-    if (s.pos < 0) {
-      s.pos = 0;
-      s.vel = 0;
-    }
-    if (s.pos > s.max) {
-      s.pos = s.max;
-      s.vel = 0;
-    }
-    if (Math.abs(s.pos - s.goal) < 0.3 && Math.abs(s.vel) < 4) {
-      s.pos = s.goal;
-      s.vel = 0;
-      s.goal = null;
-    }
-    paint();
-    if (s.goal !== null) s.raf = requestAnimationFrame(tick);
-  };
-  const go = (goal) => {
-    const s = st.current;
+  // 手感：轨道多宽就建一个
+  const tw = box ? box.tw : 0;
+  useEffect(() => {
+    if (!tw) return;
     let reduced = false;
     try {
       reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     } catch (e) {}
-    if (reduced) {
-      s.pos = goal;
-      s.vel = 0;
-      s.goal = null;
-      paint();
-      return;
-    }
-    s.goal = goal;
-    s.last = performance.now();
-    if (!s.raf) s.raf = requestAnimationFrame(tick);
-  };
-
-  useEffect(() => {
-    const measure = () => {
-      const t = trackRef.current;
-      if (!t) return;
-      const s = st.current;
-      const max = Math.max(1, t.offsetWidth - PAD * 2 - KNOB);
-      const p = s.max > 0 ? s.pos / s.max : 0;
-      s.max = max;
-      s.pos = Math.min(max, p * max);
-      paint();
-    };
-    measure();
-    window.addEventListener("resize", measure);
+    const c = createSlider({
+      els: { track: trackRef.current, knob: knobRef.current, body: bodyRef.current, lens: lensRef.current, icon: iconRef.current, fill: fillRef.current },
+      geom: { W: tw, H: TRACK_H, pad: PAD, knob: KNOB },
+      onMove: paintFox,
+      reduced,
+    });
+    ctl.current = c;
+    trackRef.current.__kfs = c; // 测试和截图从这儿摆姿势
     return () => {
-      window.removeEventListener("resize", measure);
-      if (st.current.raf) cancelAnimationFrame(st.current.raf);
+      c.destroy();
+      ctl.current = null;
     };
-  }, []);
+  }, [tw]);
 
-  const atEnd = () => st.current.pos / st.current.max >= END;
+  // 玻璃：位置量好了就算；页面大小变了重算。底下是一片平的米白：拿一小块这个颜色的画布当“开屏图”，铺满整页
+  const key = box ? [box.w, box.h, box.tx, box.ty, box.tw].join(",") : "";
+  useEffect(() => {
+    if (!box) return;
+    let off = false;
+    const timer = setTimeout(() => {
+      if (off) return;
+      try {
+        const flat = document.createElement("canvas");
+        flat.width = 16;
+        flat.height = 16;
+        const fx = flat.getContext("2d");
+        fx.fillStyle = `rgb(${PAPER.join(",")})`;
+        fx.fillRect(0, 0, 16, 16);
+        const g = prepareGlass({
+          img: flat,
+          map: { w: 16, h: 16, scale: Math.max(box.w, box.h) / 16 + 1, ox: -8, oy: -8 },
+          rect: { x: box.tx, y: box.ty, w: box.tw, h: TRACK_H },
+          pad: PAD,
+          knob: KNOB,
+          dpr: window.devicePixelRatio,
+          look: LOOK_BZ,
+        });
+        blit(trackCv.current, g.plain, g.w, g.h);
+        blit(fillCv.current, g.full, g.w, g.h);
+        if (ctl.current) ctl.current.setGlass(g);
+        setGlass("on");
+      } catch (e) {
+        if (ctl.current) ctl.current.setGlass(null);
+        setGlass("off");
+      }
+    }, 0);
+    return () => {
+      off = true;
+      clearTimeout(timer);
+    };
+  }, [key]);
+
   const enter = () => {
     if (entered.current) return;
     entered.current = true;
     onEnter();
   };
   const onDown = (e) => {
-    if (fading || entered.current) return;
-    const s = st.current;
-    s.dragging = true;
-    s.goal = null;
-    s.vel = 0;
-    s.x0 = e.clientX;
-    s.p0 = s.pos;
-    e.currentTarget.setAttribute("data-press", "");
+    if (fading || entered.current || !ctl.current) return;
+    ctl.current.down(e.clientX);
     if (e.currentTarget.setPointerCapture) {
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
       } catch (x) {}
     }
-    paint();
   };
   const onMove = (e) => {
-    const s = st.current;
-    if (!s.dragging) return;
-    s.pos = Math.max(0, Math.min(s.max, s.p0 + e.clientX - s.x0));
-    paint();
+    if (ctl.current) ctl.current.move(e.clientX);
   };
-  const onUp = (e) => {
-    const s = st.current;
-    if (!s.dragging) return;
-    s.dragging = false;
-    e.currentTarget.removeAttribute("data-press");
-    if (atEnd()) {
-      s.pos = s.max;
-      paint();
-      enter();
-    } else go(0);
+  const onUp = () => {
+    if (ctl.current && ctl.current.up()) enter();
   };
+
+  const on = glass === "on";
+  const show = ready && (glass !== "wait" || late);
+  const hint = hintLayout(PAD, KNOB);
+  const b = box || { tw: 390 - SIDE * 2 };
 
   return (
     <div
+      ref={ref}
       className="kfs-bz-splash absolute inset-0 z-50 overflow-hidden"
       style={{ background: "rgb(var(--k-paper))", opacity: fading ? 0 : 1, transition: "opacity .7s ease", pointerEvents: fading ? "none" : "auto" }}
     >
@@ -235,34 +265,52 @@ export default function SplashBaizhou({ fading, onEnter }) {
         </svg>
       </div>
 
-      {/* 滑块 */}
+      {/* 滑块：同丁香那一条 */}
       <div
         ref={trackRef}
         className="kfs-bz-track"
+        data-glass={on ? "on" : "off"}
         style={{
           position: "absolute",
           left: SIDE,
           right: SIDE,
-          bottom: "max(28px, calc(8px + var(--kfs-sab)))",
+          bottom: "max(24px, calc(4px + var(--kfs-sab)))",
           height: TRACK_H,
           borderRadius: TRACK_H / 2,
-          background: "rgba(var(--k-ink),0.045)",
-          boxShadow: "inset 0 0 0 1px rgba(var(--k-ink),0.06)",
-          opacity: ready ? 1 : 0,
-          transform: ready ? "none" : "translateY(14px)",
+          ...(on
+            ? { boxShadow: "0 14px 30px rgba(140,74,50,0.22), 0 3px 8px rgba(120,62,42,0.14)" }
+            : {
+                // 不带玻璃的样子：一条实的陶土色
+                background: "rgba(178,98,72,0.94)",
+                boxShadow: "0 12px 30px rgba(140,74,50,0.26), inset 0 0 0 1px rgba(255,255,255,0.16), inset 0 1px 0 rgba(255,255,255,0.14)",
+              }),
+          opacity: show ? 1 : 0,
+          transform: show ? "none" : "translateY(18px)",
           transition: "opacity .5s ease, transform .5s cubic-bezier(.2,.8,.2,1)",
-          pointerEvents: ready ? "auto" : "none",
+          pointerEvents: show ? "auto" : "none",
         }}
       >
-        {/* 圆钮走过的那一截：淡淡的陶土色 */}
-        <div ref={fillRef} aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, height: "100%", width: PAD * 2 + KNOB, borderRadius: TRACK_H / 2, background: "rgba(var(--k-dai),0.16)", pointerEvents: "none" }} />
+        {/* 空着的玻璃 */}
+        <canvas ref={trackCv} aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, width: "100%", height: "100%", display: on ? "block" : "none", pointerEvents: "none" }} />
         {/* 提示的三个箭头 */}
-        <div aria-hidden="true" className="flex items-center" style={{ position: "absolute", left: PAD + KNOB + 14, top: 0, height: "100%", color: "rgba(var(--k-soft),0.7)", pointerEvents: "none" }}>
+        <div
+          aria-hidden="true"
+          className="flex items-center"
+          style={{ position: "absolute", left: hint.left, top: 0, height: "100%", color: on ? `rgb(${LOOK_BZ.hint.color.join(",")})` : "rgba(246,208,190,0.85)", pointerEvents: "none" }}
+        >
           {[0, 1, 2].map((i) => (
-            <span key={i} className="kfs-bz-hint" style={{ display: "flex", marginLeft: i ? -6 : 0, animationDelay: `${i * 0.18}s` }}>
-              <Chev size={20} />
+            <span key={i} className="kfs-bz-hint" style={{ display: "flex", marginLeft: i ? hint.gap - hint.size : 0, animationDelay: `${i * 0.18}s` }}>
+              <Chev size={hint.size} />
             </span>
           ))}
+        </div>
+        {/* 灌满的玻璃：圆钮走到哪露到哪 */}
+        <div
+          ref={fillRef}
+          aria-hidden="true"
+          style={{ position: "absolute", left: 0, top: 0, height: "100%", width: 0, overflow: "hidden", display: on ? "block" : "none", pointerEvents: "none", WebkitMaskImage: MASK, maskImage: MASK }}
+        >
+          <canvas ref={fillCv} style={{ position: "absolute", left: 0, top: 0, width: b.tw, height: TRACK_H }} />
         </div>
         <button
           ref={knobRef}
@@ -277,19 +325,23 @@ export default function SplashBaizhou({ fading, onEnter }) {
           onPointerUp={onUp}
           onPointerCancel={onUp}
           onKeyDown={(e) => {
-            if (fading || entered.current) return;
-            if (e.key === "ArrowRight" || e.key === "End") go(st.current.max);
-            else if (e.key === "ArrowLeft" || e.key === "Home") go(0);
-            else if ((e.key === "Enter" || e.key === " ") && atEnd()) enter();
+            const c = ctl.current;
+            if (!c || fading || entered.current) return;
+            if (e.key === "ArrowRight" || e.key === "End") c.jump(true);
+            else if (e.key === "ArrowLeft" || e.key === "Home") c.jump(false);
+            else if ((e.key === "Enter" || e.key === " ") && c.atEnd()) enter();
           }}
           className="kfs-bz-knob"
           style={{ position: "absolute", left: PAD, top: PAD, width: KNOB, height: KNOB, padding: 0, border: 0, borderRadius: "50%", background: "transparent", touchAction: "none", WebkitTapHighlightColor: "transparent" }}
         >
           <span
-            className="kfs-bz-body flex items-center justify-center"
-            style={{ position: "absolute", left: 0, top: 0, width: KNOB, height: KNOB, borderRadius: "50%" }}
-          >
-            <Chev size={26} sw={2.2} />
+            ref={bodyRef}
+            className="kfs-bz-body"
+            style={{ position: "absolute", left: 0, top: 0, width: KNOB, height: KNOB, boxSizing: "border-box", borderRadius: "50%", ...(on ? {} : { background: "rgba(136,70,48,0.45)", border: "8px solid #EEB8A0" }) }}
+          />
+          <canvas ref={lensRef} aria-hidden="true" style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)", display: on ? "block" : "none", pointerEvents: "none" }} />
+          <span ref={iconRef} className="flex items-center justify-center" style={{ position: "absolute", left: 0, top: 0, width: KNOB, height: KNOB, pointerEvents: "none" }}>
+            <Chev size={44} />
           </span>
         </button>
       </div>

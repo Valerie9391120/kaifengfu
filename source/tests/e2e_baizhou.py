@@ -63,6 +63,16 @@ with sync_playwright() as p:
         s0 = state(pa); i0 = ink(pa)
         ok(s0["now"] == 0 and s0["drawn"] == 0 and i0 == 0 and s0["shown"] == "1" and pa.locator(".kfs-bz-splash img").count() == 0,
            f"开屏：一片米白，纸上是空的（陶土色的像素 {i0} 个），底下浮出滑块")
+        # 滑块跟丁香那一条是同一条（液态玻璃），换了陶土色
+        glass = pa.evaluate("""() => { const t = document.querySelector('.kfs-bz-track'), r = t.getBoundingClientRect(), k = document.querySelector('.kfs-bz-knob').getBoundingClientRect();
+          const px = (c, x, y) => [...c.getContext('2d').getImageData(Math.floor(c.width * x), Math.floor(c.height * y), 1, 1).data];
+          const cvs = t.querySelectorAll('canvas');
+          return { glass: t.getAttribute('data-glass'), h: Math.round(r.height), side: Math.round(r.left), knob: Math.round(k.width), track: px(cvs[0], 0.6, 0.5), full: px(cvs[1], 0.6, 0.5), lens: px(cvs[2], 0.5, 0.2) }; }""")
+        dx = [80, 18, 68]
+        ok(glass["glass"] == "on" and [glass["h"], glass["side"], glass["knob"]] == dx and glass["track"][0] - glass["track"][2] > 80 and 150 < glass["track"][0] < 200
+           and glass["full"][0] > glass["track"][0] + 30 and glass["full"][0] - glass["full"][2] > 70 and glass["lens"][3] > 200,
+           f"滑块是丁香同款的液态玻璃（一样高、一样宽的边、一样大的圆钮），空着的是深一点的陶土色、灌满的亮一点，水珠画上了（{glass['track']} / {glass['full']}）")
+        shot(pa, "bz_splash_0.png")
         x0, y0, span = grab(pa)
         pa.mouse.move(x0, y0); pa.mouse.down()
         seen = []

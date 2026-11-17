@@ -1,5 +1,5 @@
 // =====================================================
-// 液态玻璃（丁香开屏那个滑块用）
+// 液态玻璃（丁香开屏那个滑块用；白昼的开屏是同一条，换了一套陶土色，见 SplashBaizhou.jsx 的 LOOK_BZ）
 //
 // 苹果的液态玻璃是系统给原生应用的材质，网页借不到。网上的仿法靠 backdrop-filter 接 SVG 滤镜，
 // 只有 Chrome 认，iPhone 的 Safari 不认。这里换个办法：滑块底下压着的是开屏图，是死的，
@@ -15,7 +15,8 @@
 // 坐标一律是“轨道自己的 CSS 像素”：左上角是 (0,0)，宽 W，高 H。
 // =====================================================
 
-// 调样子的数都在这儿
+// 调样子的数都在这儿。颜色那几样（plainMul/plainFog/fullMul/fullFog、ring、core、hint 的颜色）是丁香的紫；
+// 别的主题要同一条滑块换一套颜色：prepareGlass 的时候给一个 look（只写要换的那几样），别的照这里
 export const LQ = {
   res: 3, // 画布最多按几倍屏画
   bgRes: 2, // 底下那张画按几倍取样
@@ -143,7 +144,7 @@ function grabBackdrop(img, map, rect, margin) {
 }
 
 // 轨道：胶囊形的一条玻璃。一次算出空的和灌满的两份
-function buildTrack(bg, W, H, S, lut) {
+function buildTrack(bg, W, H, S, lut, C = LQ) {
   const w = Math.round(W * S);
   const h = Math.round(H * S);
   const plain = new Uint8ClampedArray(w * h * 4);
@@ -155,13 +156,13 @@ function buildTrack(bg, W, H, S, lut) {
   const bres = bg.res;
   const bm = bg.margin;
   const [LX, LY] = LQ.light;
-  const { tBezel, tBend, tCa, gainHi, gainLo, mean } = LQ;
-  const pm = LQ.plainMul;
-  const pf = LQ.plainFog;
-  const pa = LQ.plainFogA;
-  const fm = LQ.fullMul;
-  const ff = LQ.fullFog;
-  const fa = LQ.fullFogA;
+  const { tBezel, tBend, tCa, gainHi, gainLo, mean } = C;
+  const pm = C.plainMul;
+  const pf = C.plainFog;
+  const pa = C.plainFogA;
+  const fm = C.fullMul;
+  const ff = C.fullFog;
+  const fa = C.fullFogA;
 
   const tap = (x, y, c) => {
     const fx = clamp((x + bm) * bres - 0.5, 0, bw - 1.001);
@@ -243,7 +244,7 @@ export function hintLayout(pad, knob) {
 }
 
 // 水珠要折的“景”：空轨道上再画上那三个箭头（页面上的箭头会一闪一闪，景里的是稳的）
-function withHints(plain, w, h, S, H, pad, knob) {
+function withHints(plain, w, h, S, H, pad, knob, C = LQ) {
   const cv = document.createElement("canvas");
   cv.width = w;
   cv.height = h;
@@ -254,8 +255,8 @@ function withHints(plain, w, h, S, H, pad, knob) {
   ctx.putImageData(new ImageData(opaque, w, h), 0, 0);
   const L = hintLayout(pad, knob);
   const k = L.size / 24;
-  const [cr, cg, cb] = LQ.hint.color;
-  ctx.strokeStyle = `rgba(${cr},${cg},${cb},${LQ.hint.alpha})`;
+  const [cr, cg, cb] = C.hint.color;
+  ctx.strokeStyle = `rgba(${cr},${cg},${cb},${C.hint.alpha})`;
   ctx.lineWidth = LQ.hint.sw * k * S;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -280,17 +281,19 @@ export function fillMask() {
   return `linear-gradient(to right, ${stops.join(", ")})`;
 }
 
-// 把玻璃备好。算不出来就抛错，外面退回不带玻璃的滑块
-export function prepareGlass({ img, map, rect, pad, knob, dpr }) {
+// 把玻璃备好。算不出来就抛错，外面退回不带玻璃的滑块。
+// look：换一套颜色（只写要换的那几样，见 LQ 开头）；不给就是丁香的紫
+export function prepareGlass({ img, map, rect, pad, knob, dpr, look }) {
+  const C = look ? { ...LQ, ...look, hint: { ...LQ.hint, ...(look.hint || {}) } } : LQ;
   const S = clamp(dpr || 1, 1, LQ.res);
   const lut = bezelLut();
   const bg = grabBackdrop(img, map, rect, 12);
-  const t = buildTrack(bg, rect.w, rect.h, S, lut);
-  const scene = withHints(t.plain, t.w, t.h, S, rect.h, pad, knob);
+  const t = buildTrack(bg, rect.w, rect.h, S, lut, C);
+  const scene = withHints(t.plain, t.w, t.h, S, rect.h, pad, knob, C);
   // 灌满的那份也铺成不透明的给水珠折（边上的透明只留给显示用）
   const fullScene = new Uint8ClampedArray(t.full);
   for (let i = 3; i < fullScene.length; i += 4) fullScene[i] = 255;
-  return { S, W: rect.w, H: rect.h, w: t.w, h: t.h, plain: t.plain, full: t.full, scene, fullScene, lut };
+  return { S, W: rect.w, H: rect.h, w: t.w, h: t.h, plain: t.plain, full: t.full, scene, fullScene, lut, look: C };
 }
 
 // 把算好的一份画到画布上
@@ -336,8 +339,8 @@ export function paintKnob(g, out, cw, ch, K, st) {
   const veil = 255 * LQ.veil * press;
   const glowK = 255 * (0.1 + 0.2 * press);
   const shadeK = LQ.kShade * press;
-  const [rr, rg, rb] = LQ.ring;
-  const [kr, kg, kb] = LQ.core;
+  const [rr, rg, rb] = (g.look || LQ).ring;
+  const [kr, kg, kb] = (g.look || LQ).core;
   const ife = 1 / LQ.feather;
   const ox = cw / (2 * K) + st.dx; // 水珠中心在画布里的位置（CSS 像素）
   const oy = ch / (2 * K);
@@ -533,8 +536,9 @@ export function paintKnob(g, out, cw, ch, K, st) {
 // 动作：滑块的手感。只管位置、形变和每帧往页面上写，不管 React
 // els：{ track, knob, body（水珠的影子）, lens（水珠的画布）, icon, fill（灌满那份外面的裁剪框）}
 // geom：{ W, H, pad, knob }
+// onMove(p)：每画一帧叫一回，p 是圆钮走到几成（0 到 1）；白昼的开屏照它画狐狸
 // =====================================================
-export function createSlider({ els, geom, onDone, reduced }) {
+export function createSlider({ els, geom, onDone, onMove, reduced }) {
   const { W, H, pad } = geom;
   const R = geom.knob / 2;
   const max = Math.max(1, W - pad * 2 - geom.knob);
@@ -668,6 +672,7 @@ export function createSlider({ els, geom, onDone, reduced }) {
 
     els.knob.style.transform = `translate3d(${pos.toFixed(2)}px,0,0)`;
     els.knob.setAttribute("aria-valuenow", String(Math.round((pos / max) * 100)));
+    if (onMove) onMove(pos / max);
     els.body.style.transform = `translate(${dx.toFixed(2)}px,0) scale(${(rx / R).toFixed(4)},${(ry / R).toFixed(4)})`;
     els.icon.style.transform = `translate(${dx.toFixed(2)}px,0) scale(${(1 + 0.1 * p).toFixed(3)})`;
     // 按住的时候水珠是透的，圆钮上的箭头让开，底下的画才看得清
