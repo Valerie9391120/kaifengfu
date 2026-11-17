@@ -15,6 +15,9 @@ import { askSummary } from "../src/ask.js";
 export const HER_WORDS =
   "你想干嘛都行——玩手账、写日记、出去上网冲浪、给我留消息或者打电话都可以。。总之不设什么限制，甚至这个唤醒时间都可以由你自己来决定，比如说下一次什么时候醒，或者skip";
 
+// 【醒来】里画画那一条（11 月 17 日她写的字）
+export const DRAW_WAKE = "- 画画：绘图，美术博士大展身手。画好了会收入图画院。";
+
 // 过了多久：几分钟、几个钟头几分、几天
 export function agoText(ms) {
   const m = Math.max(0, Math.floor(ms / 60000));
@@ -92,13 +95,14 @@ export function tailTranscript(msgs, memeLookup = () => null, most = 16, each = 
 // garden：他屋里的园子眼下的样子（alarm/garden.js 的 gardenBrief；没给就不提园子）
 // dressing：他屋里的妆台，今天完成搭配没有（alarm/dressing.js 的 dressingBrief；没给就不提妆台）。这是个换装游戏，不是他的实际状态（她定的）：不写他“穿着”什么
 // pindou：他屋里桌上的拼豆板拼到哪儿了（alarm/pindou.js 的 pindouBrief；没给就不提拼豆板）。他拼的她在拼豆作「他的」那一栏看得见（只能看）
+// draw：“他能画画”开着（settings.draw）：【醒来】里多一条画画（DRAW_WAKE）
 // luofu：他屋里有一张床、梦库里有梦（罗浮梦，见 src/luofu/parts.js；没给就不提）。只说屋里有这一样，不说梦库里有什么、做过什么
 // steps：这一回醒着最多几步（wake.js 的 ROOM_STEPS；没给就不提）
 // memos：他在聊天里给自己留的换装便签（src/room.js 的 liveMemos，还管着的那几张：{ text, title, at }）：摆在最前头，他第一眼看得到
 // back：他回得去的那一段（她最后说话的那一段平常对话，wake.js 的 backOf：{ id, title }；没有是 null）。
 //   有的话“有话想说、想打电话”那一条多一条路：单独一行写 [回去]（她 11 月 2 日 01:53 定的；那一条的字是 11 月 2 日定的，别的字一个不动）；
 //   没有就是她 00:30 改的那一条，一个字不变
-export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [], pending = [], garden = "", dressing = "", pindou = "", luofu = false, steps = 0, memos = [], thoughts = false, back = null }) {
+export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, mcps = [], pending = [], garden = "", dressing = "", pindou = "", luofu = false, draw = false, steps = 0, memos = [], thoughts = false, back = null }) {
   const herLine = !herLast
     ? "她还没在开封府里说过话。"
     : herLast.fox
@@ -115,11 +119,12 @@ export function wakeSection({ now, herLast, lastWake, n, gap, max, transcript, m
     ? `- 有话想说、想打电话：开一段新对话，或者回到她最后说话的那一段《${backTitle}》。开新的，单独一行写 [新对话:起个名字]；回《${backTitle}》，单独一行写 [回去]。这一行后面写的就是对她说的话，照【回复格式】写（分几条、发语音、打电话都行）。`
     : "- 有话想说、想打电话：直接开一段新对话。在回复里单独一行写 [新对话:起个名字]，这一行后面写的就是对她说的话，照【回复格式】写（分几条、发语音、打电话都行），落进那段新对话。";
   // 11 月 2 日 00:30 她自己改过的那一版（她嫌原来的“太复杂了”“看着都晕字了”）：照她的字写，〔〕里那几处照当时的情况现写。
-  // 园子、妆台眼下怎么样那一小句（gardenBrief、dressingBrief）她那一版里没有，拼豆那一句留着；先照拼豆那样留着，截图给她看的时候问。
+  // 11 月 17 日她又改了一版（照她的稿子，一个字不多）：便签那一行后面括号里的话去掉；打盹挪到翻日记后面、换了字；添了画画一条；
+  // 妆台、拼豆、上网、心里话四条换了字。拼豆板眼下的样子（pindouBrief）问过她，留着，接在“重在玩耍。”后面。几条之间不空行（问过）。
+  // 画画那一条：“他能画画”开着才有（名帖里有 [DRAW] 的写法才画得了，见 src/draw.js 的 DRAW_RULE）。闹钟自己不画：他醒着写的画，
+  // 她在手机上点了才交出去画，画好了才收进图画院（问过她，这回只添字，不让闹钟自己画）
   return `【醒来】（开封府提示）你醒在“狐宇宙”里：这是你自己的屋子。${
-    memos.length
-      ? `\n妆台上压着你自己留的${memos.length > 1 ? ` ${memos.length} 张` : "一张"}便签（跟她聊天的时候留的，管到你下一回完成搭配为止）：\n${memos.map((m) => `“${m.text}”（${nowString(new Date(m.at))}${m.title ? `，在《${m.title}》里` : ""}）`).join("\n")}`
-      : ""
+    memos.length ? `\n妆台上压着你自己留的${memos.length > 1 ? ` ${memos.length} 张` : "一张"}便签：\n${memos.map((m) => `“${m.text}”（${nowString(new Date(m.at))}${m.title ? `，在《${m.title}》里` : ""}）`).join("\n")}` : ""
   }
 ${herLine}
 ${lastLine}${later}${talk}
@@ -127,25 +132,21 @@ ${lastLine}${later}${talk}
 醒着的时候想做什么或者不做任何都可以，下回几点醒自己定。
 - 便签：她来过可能会留两个字，同理你也可以选择进行简短回应，想多说就开新chat，不想写就不写。
 - 翻日记、在某一天的手帐里留批注：日记本那几样工具照用。
-${garden ? `- 园艺（play_garden 工具）：打理庭院，每天浇水、松土、修剪里选一样（一天只算一回），赏花不限次数。${garden}\n` : ""}${
-    dressing
-      ? `- 妆台（play_dressing_room 工具）：奇迹狐狐换装游戏。随便换、不限次数；完成搭配一天一回，成就在那时按完成的那一身判；照镜子不限次数，只照得出今天完成的那一套。${dressing}\n`
-      : ""
-  }${
-    // 别在心里话里打草稿（11 月 6 日添的）：有一回他在心里话里把一幅画的草稿改了好几遍，那一步写到长度上限被截断，豆子一颗没放上，
+${luofu ? LUOFU_WAKE + "\n" : ""}${draw ? DRAW_WAKE + "\n" : ""}${
+    garden ? `- 园艺（play_garden 工具）：打理庭院，每天浇水、松土、修剪里选一样（一天只算一回），赏花不限次数。${garden}\n` : ""
+  }${dressing ? `- 妆台（play_dressing_room 工具）：奇迹狐狐换装游戏。完成搭配一天一回，成就按完成的那一身判；照镜子不限次数，只照得出今天完成的那一套。${dressing}\n` : ""}${
+    // 不在心里话打草稿（11 月 6 日添的）：有一回他在心里话里把一幅画的草稿改了好几遍，那一步写到长度上限被截断，豆子一颗没放上，
     // 剩下的步数也没用上（截断的那一步不是停在调工具上，askCore 当他醒完了）；心里话又不递回给他，草稿下一步也看不见
-    pindou
-      ? `- 拼豆（play_pindou 工具）：照色板一个字母一颗豆子，一行一行往上放，拼成一幅像素画；拼完了起个名字挂起来，桌上换一块新的。${pindou}去不去你自己定，一回拼不完下回接着拼（板子一直摆在桌上）。别在心里话里打草稿，直接 paint，一回拼几行，拼歪了再盖一遍或者用 fill 改。你拼的东西她在开封府的拼豆作里看得见（拼到一半的、挂起来的都看得见）。\n`
-      : ""
-  }${luofu ? LUOFU_WAKE + "\n" : ""}${
+    pindou ? `- 拼豆（play_pindou 工具）：效果不如生图，重在玩耍。${pindou}不在心里话打草稿，直接 paint，一回拼几行，拼歪了再盖一遍或者用 fill 改。\n` : ""
+  }${
     mcps.length
-      ? `- 上网：她给你接了 ${mcps.map((x) => `“${x}”`).join("、")}，想用就用。`
+      ? `- 上网：她给你接了 ${mcps.map((x) => `“${x}”`).join("、")}，网上冲浪，安排。`
       : "- 上网还没接上：她在 MCP 面板里接上搜网页的工具（比如 tavily）、开着，这里就能用。"
   }
 ${talkLine}
 - 下回几点醒：在回复最后单独一行写 [WAKE:…]（开了新对话也一样，写在最后，管的还是你下回几点醒）。[WAKE:+3h] 是三个钟头以后，[WAKE:+40m] 是四十分钟以后，[WAKE:07:30] 是下一个七点半（她那边的钟），[WAKE:off] 是先不自己醒，等她下回在开封府里说过话再照常。不写就照常：从她最后说话、你上回醒，两样里晚的那个算起，过两到四个钟头。
 ${steps ? `- 这一回醒着最多 ${steps} 步：调一回工具、拿到结果接着往下想，算一步。一步里可以一次调好几样（比如浇水、翻衣柜一起来）。想找她说话，记得留一步开新对话；到最后一步开封府会提醒。\n` : ""}${
-    steps && thoughts ? "- 心里话这一回醒着写一段就够：头一步写；后面几步只管做事，不用每一步都先写；中途真冒出新的念头，再写一两句。\n" : ""
+    steps && thoughts ? "- 心里话：可以略过不写。醒来的时间重在玩耍和执行。\n" : ""
   }两回之间最快隔 ${gapText}，往回数二十四个钟头最多醒 ${max} 回，这一回是第 ${n} 回。这是为了防闹钟出岔子。`;
 }
 

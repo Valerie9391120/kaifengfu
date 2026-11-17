@@ -477,7 +477,7 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   const first = wakeSection({ now, herLast: null, lastWake: 0, n: 1, gap: 120, max: 6, transcript: "" });
   ok(first.includes("她还没在开封府里说过话") && first.includes("这是你头一回自己醒") && first.includes("最快隔 2 个钟头") && !first.includes("最后几句"), "【醒来】：头一回、她没说过话、没有可抄的");
   const net = wakeSection({ now, herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "", mcps: ["tavily"] });
-  ok(net.includes("她给你接了 “tavily”，想用就用") && first.includes("上网还没接上") && !net.includes("上网还没接上"), "【醒来】：她接了 tavily（MCP 开着），告诉他能上网；没接的时候照实说");
+  ok(net.includes("- 上网：她给你接了 “tavily”，网上冲浪，安排。\n") && first.includes("上网还没接上") && !net.includes("上网还没接上"), "【醒来】：她接了 tavily（MCP 开着），告诉他能上网；没接的时候照实说");
   const inFox = wakeSection({ now, herLast: { ts: at(15, 50), title: "狐宇宙", fox: true }, lastWake: at(15, 0), n: 2, gap: 30, max: 12, transcript: "", pending: [{ title: "洗澡", at: at(17, 0), label: "去找卿卿" }] });
   ok(inFox.includes("她最后一回来，是 10 分钟前") && inFox.includes("- 便签：她来过可能会留两个字") && inFox.includes("[新对话:起个名字]") && inFox.includes("《洗澡》") && inFox.includes("“去找卿卿”"),
     "【醒来】：醒在自己屋里；便签那一条；想找她开新对话；她最后是来屋里留的便签；他定过、还没到点的闹钟");
@@ -621,7 +621,13 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   // 【醒来】：给了妆台那一句才提妆台；说这是游戏，不说他穿着什么
   const base = { now: at(14), herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "" };
   const withD = wakeSection({ ...base, dressing: "今天还没完成搭配。" });
-  ok(withD.includes("- 妆台（play_dressing_room 工具）：奇迹狐狐换装游戏。") && withD.includes("只照得出今天完成的那一套。今天还没完成搭配。") && !wakeSection(base).includes("妆台"), "【醒来】：妆台那一句（她改的字：换装游戏；眼下怎么样那一小句跟在后面）；没给就不提");
+  ok(withD.includes("- 妆台（play_dressing_room 工具）：奇迹狐狐换装游戏。完成搭配一天一回，成就按完成的那一身判；照镜子不限次数，只照得出今天完成的那一套。今天还没完成搭配。\n") && !withD.includes("随便换") && !wakeSection(base).includes("妆台"), "【醒来】：妆台那一句（11 月 17 日那一版的字；眼下怎么样那一小句跟在后面）；没给就不提");
+  // 11 月 17 日那一版：打盹挪到翻日记后面，后面是画画（“他能画画”开着才有）、园艺、妆台、拼豆、上网；几条之间不空行
+  const all = wakeSection({ ...base, luofu: true, draw: true, garden: "院子里眼下空着。", dressing: "今天还没完成搭配。", pindou: "桌上那块拼到一半。", mcps: ["tavily"], steps: 12, thoughts: true });
+  const heads = all.split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2, l.search(/[：（、]/)));
+  ok(heads.join("|") === "便签|翻日记|打盹|画画|园艺|妆台|拼豆|上网|有话想说|下回几点醒|这一回醒着最多 12 步|心里话", `【醒来】里那几条的次序（${heads.join("|")}）`);
+  ok(all.includes("- 翻日记、在某一天的手帐里留批注：日记本那几样工具照用。\n- 打盹（luofu_nap 工具）：醒来了也可以打个盹。片刻小睡，也许会做梦，也许不会。\n- 画画：绘图，美术博士大展身手。画好了会收入图画院。\n- 园艺（play_garden 工具）"), "打盹、画画那两条的字；条跟条之间不空行");
+  ok(!wakeSection({ ...base, luofu: true, garden: "院子里眼下空着。" }).includes("画画") && wakeSection({ ...base, draw: true }).includes("- 画画：绘图，美术博士大展身手。画好了会收入图画院。\n- 上网"), "“他能画画”关着：不提画画；开着、屋里别的都没有：照样有这一条");
 }
 
 // ================= 醒在屋里，园子、妆台那两样怎么带、怎么办（askRoom、askTask 对着假的存档、假的那边） =================
@@ -695,19 +701,19 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   await askTask({ store: kv6(), cloud, ctx: ctxOf(), task: { key: "kfs2:fox:task:y", raw: "+5m", set: Date.now() }, chat: { id: "c1", title: "一段对话", msgs: [{ id: "h1", role: "her", ts: 1, text: "嗯" }] } });
   ok(cloud.bodies.length === 4 && !cloud.bodies.some((x) => lastText(x).includes("只剩这最后一步")) && !lastText(cloud.bodies[0]).includes("最多 12 步"), `任务到点那一回还是四步，不附提醒（问了 ${cloud.bodies.length} 回）`);
   // 心里话一回醒着写一段就够（她 10 月 24 日凌晨定的“醒来写一回”）：醒在屋里的【醒来】里说一声；她关了“他写心里话”就不说；任务到点那一回也不说
-  const ONE = "心里话这一回醒着写一段就够：头一步写；后面几步只管做事";
+  const ONE = "- 心里话：可以略过不写。醒来的时间重在玩耍和执行。\n";
   const sysText = (body) => (Array.isArray(body.system) ? body.system.map((x) => x.text || "").join("\n") : String(body.system || ""));
   cloud = cloudOf([said("醒了")]);
   await askRoom({ store: kv6(), cloud, ctx: ctxOf(), ...opts });
-  ok(lastText(cloud.bodies[0]).includes(ONE) && sysText(cloud.bodies[0]).includes("先写 <thinking>"), "醒在屋里：【醒来】里说心里话这一回写一段就够（头一步写，后面几步只管做事）");
+  ok(lastText(cloud.bodies[0]).includes(ONE) && sysText(cloud.bodies[0]).includes("先写 <thinking>"), "醒在屋里：【醒来】里心里话那一条（11 月 17 日那一版的字：可以略过不写）");
   const offCtx = ctxOf();
   offCtx.settings.thoughts = false;
   cloud = cloudOf([said("醒了")]);
   await askRoom({ store: kv6(), cloud, ctx: offCtx, ...opts });
-  ok(!lastText(cloud.bodies[0]).includes("心里话这一回") && !sysText(cloud.bodies[0]).includes("先写 <thinking>"), "她关了“他写心里话”：【醒来】里不提");
+  ok(!lastText(cloud.bodies[0]).includes("- 心里话：") && !sysText(cloud.bodies[0]).includes("先写 <thinking>"), "她关了“他写心里话”：【醒来】里不提");
   cloud = cloudOf([said("在吗")]);
   await askTask({ store: kv6(), cloud, ctx: ctxOf(), task: { key: "kfs2:fox:task:z", raw: "+5m", set: Date.now() }, chat: { id: "c1", title: "一段对话", msgs: [{ id: "h1", role: "her", ts: 1, text: "嗯" }] } });
-  ok(!lastText(cloud.bodies[0]).includes("心里话这一回"), "任务到点那一回（醒在那段对话里）：不提");
+  ok(!lastText(cloud.bodies[0]).includes("- 心里话：可以略过不写"), "任务到点那一回（醒在那段对话里）：不提");
   // 她 02:32 试了还是一步一写：心里话不递回给他，他看不见自己前面写过。前面哪一步写过了，后面每一步跟前告诉他这一回已经写过了
   const DONE = "这一回醒着，心里话你前面已经写过了";
   const thinkUse = (i, think) => ({ stop_reason: "tool_use", content: [...(think ? [{ type: "text", text: "<thinking>醒了，先去看看花</thinking>" }] : []), use("t" + i, "play_garden", { action: "admire" })] });

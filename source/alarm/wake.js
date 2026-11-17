@@ -574,6 +574,7 @@ export async function askRoom({ store, cloud, ctx, now = Date.now(), n = 1, log 
     dressing: dressingBrief(dressed, dressing.today()),
     pindou: pindouBrief(await pd.load()),
     luofu: await bed.hasDreams(),
+    draw: !!st.draw, // “他能画画”开着：多一条画画（闹钟自己不画，他写的画她在手机上点了才画）
     steps: ROOM_STEPS,
     memos: memoLines(shown),
     // 心里话一回醒着写一段（她 10 月 24 日 02:05 说十二步写了十二段、差不多都是一个意思，02:09 定的“醒来写一回”）；她关了“他写心里话”就不提

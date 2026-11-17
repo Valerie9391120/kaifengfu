@@ -348,7 +348,7 @@ ok(both.staticText.indexOf("【日记本】") < both.staticText.indexOf("【你�
   ]);
   await askRoom({ store: r1, cloud, ctx: ctxOf(), now, ...opts });
   const woke = lastText(cloud.bodies[0]);
-  ok(woke.includes("妆台上压着你自己留的一张便签（跟她聊天的时候留的，管到你下一回完成搭配为止）：") && woke.includes("“答应了卿卿下次穿旗袍”") && woke.includes("在《布丁》里") && !woke.includes("早就过期的那张"),
+  ok(woke.includes("妆台上压着你自己留的一张便签：\n“") && woke.includes("“答应了卿卿下次穿旗袍”") && woke.includes("在《布丁》里") && !woke.includes("早就过期的那张"),
     "醒在屋里：【醒来】里摆着那张便签（写的什么、哪段对话里留的）；过了三天的不摆");
   ok(woke.indexOf("妆台上压着") < woke.indexOf("她还没在开封府里说过话"), "便签摆在前头（他第一眼看得到）");
   ok(!r1.m.has(MEMO_KEY + "m1") && !r1.m.has(MEMO_KEY + "old"), "他这一回完成了搭配：便签收起来；过了三天的那张也收了");
@@ -436,7 +436,7 @@ ok(both.staticText.indexOf("【日记本】") < both.staticText.indexOf("【你�
   ok(threw && threw.code === "badlogin", "收便签的时候密码不对：往外抛（同园子、妆台）");
   // 【醒来】那一段：没给便签，跟原来一个字不差
   const base = { now, herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "" };
-  ok(wakeSection(base) === wakeSection({ ...base, memos: [] }) && !wakeSection(base).includes("便签（跟她聊天"), "没有便签：【醒来】跟原来一个字不差");
+  ok(wakeSection(base) === wakeSection({ ...base, memos: [] }) && !wakeSection(base).includes("妆台上压着"), "没有便签：【醒来】跟原来一个字不差");
 }
 
 ok(localDay(new Date(2026, 9, 22, 0, 5).getTime()) === "2026-10-22" && localDay(new Date(2026, 9, 21, 23, 59).getTime()) === "2026-10-21", "哪一天照这台设备的钟（她那边的钟）");

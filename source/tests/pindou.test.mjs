@@ -245,8 +245,8 @@ ok(threw, "密码不对、凭据坏了：往外抛（闹钟那头照这个停下
 const cu = cutPindou(call("j", { action: "paint", rows: [{ y: 0, beads: "kk" }] }));
 ok(cu.err && cu.note === PD_NOTE.fail && cu.out.includes("没写完"), "写到长度上限截断的：不替他办");
 const sec = wakeSection({ now: T0, herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "", pindou: "桌上那块 24×24 拼了 6 颗，拼到一半。" });
-ok(sec.includes("- 拼豆（play_pindou 工具）") && sec.includes("桌上那块 24×24 拼了 6 颗") && sec.includes("她在开封府的拼豆作里看得见"), "【醒来】里一行：拼豆、拼到哪儿了、她看得见");
-ok(sec.includes("别在心里话里打草稿，直接 paint，一回拼几行"), "【醒来】里那一行：别在心里话里打草稿，直接 paint");
+ok(sec.includes("- 拼豆（play_pindou 工具）：效果不如生图，重在玩耍。桌上那块 24×24 拼了 6 颗，拼到一半。不在心里话打草稿，直接 paint，一回拼几行，拼歪了再盖一遍或者用 fill 改。\n"), "【醒来】里一行（11 月 17 日那一版的字）：拼豆、拼到哪儿了接在“重在玩耍。”后面、不在心里话打草稿");
+ok(!sec.includes("一行一行往上放") && !sec.includes("拼豆作里看得见"), "原来那几句（怎么拼、她在拼豆作里看得见）不带了");
 ok(!wakeSection({ now: T0, herLast: null, lastWake: 0, n: 1, gap: 30, max: 12, transcript: "" }).includes("拼豆"), "没给就不提拼豆板");
 
 // =====================================================
