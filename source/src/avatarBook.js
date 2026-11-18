@@ -1,6 +1,6 @@
 // =====================================================
 // 头像册：她存好的头像，一行一张图、一个名字（“头像与设置”里点“头像册”进来，见 panels/AvatarBook.jsx）。
-// 点哪一行就换成哪张；能添（从相册选一张起个名字、把眼下用着的那张存进来），能删。
+// 点哪一行就换成哪张；能添（从相册选一张起个名字、把眼下用着的那张存进来），能删，名字能改。
 //
 // 存法（都加密了跟着云端走）：
 //   kfs2:avbook        { v: 1, list: [{ id, label, file } | { id, label, pic: 1 }] }   单子本身，只有名字和“是哪张”
@@ -86,3 +86,13 @@ export function addEntry(list, av, label, id) {
 }
 
 export const dropEntry = (list, id) => list.filter((e) => e.id !== id);
+
+// 改一行的名字。改完和原来一样的、清空了的、没有这一行的：回 null（不用存）
+export function renameEntry(list, id, label) {
+  const e = list.find((x) => x.id === id);
+  const raw = String(label == null ? "" : label).trim();
+  if (!e || !raw) return null;
+  const next = cleanLabel(raw);
+  if (next === e.label) return null;
+  return list.map((x) => (x.id === id ? { ...x, label: next } : x));
+}

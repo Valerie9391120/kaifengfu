@@ -139,6 +139,41 @@ with sync_playwright() as p:
         ok(blue.startswith("data:image/jpeg") and blue != red, "回到“头像与设置”：头像是蓝的那张")
         open_book(pa)
 
+        # ================= 改名字：点钢笔就地改 =================
+        def pen(name): row(pa, name).locator(".kfs-avbook-pen").click(); pa.wait_for_timeout(300)
+        box = pa.locator(".kfs-avbook-rename")
+        pen("白兔")
+        st = pa.evaluate("(() => { const i = document.querySelector('.kfs-avbook-rename'); const r = i.closest('.kfs-avbook-row'); return { v: i.value, focus: document.activeElement === i, sel: [i.selectionStart, i.selectionEnd], fs: parseFloat(getComputedStyle(i).fontSize), pen: r.querySelectorAll('.kfs-avbook-pen, .kfs-avbook-drop').length, done: r.querySelectorAll('.kfs-avbook-renamed').length, img: !!r.querySelector('img') }; })()")
+        ok(st["v"] == "白兔" and st["focus"] and st["sel"] == [0, 2] and st["fs"] >= 16 and st["pen"] == 0 and st["done"] == 1 and st["img"] and box.count() == 1,
+           f"点“白兔”那行的钢笔：名字就地变成输入框，旧名字全选着；钢笔和小桶换成一个对勾，图还在（{st}）")
+        shot(pa, "avbook_9_rename.png")
+        box.fill("大白兔"); box.press("Enter"); pa.wait_for_timeout(400)
+        ok(labels(pa) == ["未命名", "蓝的", "红的那张", "大白兔", "小老鼠", "吃东西鼠", "坏猫"] and box.count() == 0 and using(pa) == ["蓝的"] and rows(pa)[3]["src"] == bunny,
+           "打“大白兔”按回车：名字换了，位置、图都没动；在用的还是原来那张")
+        pen("大白兔"); box.fill(""); box.press("Enter"); pa.wait_for_timeout(300)
+        ok(labels(pa)[3] == "大白兔", "清空了按回车：不改，还是原来的名字")
+        pen("大白兔"); box.fill("一二三四五六七八九十甲乙丙丁")
+        ok(box.input_value() == "一二三四五六七八九十甲乙", "改名字也是最多十二个字")
+        box.press("Escape"); pa.wait_for_timeout(300)
+        ok(labels(pa)[3] == "大白兔" and box.count() == 0, "按 Esc：不改了")
+        pen("大白兔"); box.fill("点别处"); pa.get_by_text("头像册", exact=True).click(); pa.wait_for_timeout(400)
+        ok(labels(pa)[3] == "点别处" and box.count() == 0, "打了字点别处：也算改好")
+        pen("点别处"); box.fill("点对勾"); pa.locator(".kfs-avbook-renamed").click(); pa.wait_for_timeout(400)
+        ok(labels(pa)[3] == "点对勾" and box.count() == 0, "点对勾：改好")
+        pen("点对勾"); box.fill("关了也算"); back(pa); open_book(pa)
+        ok(labels(pa)[3] == "关了也算", "改到一半直接把册子关了：写了的也算数")
+        pen("关了也算"); box.fill("白兔"); box.press("Enter"); pa.wait_for_timeout(300)
+        pen("蓝的"); box.fill("蓝蓝的"); box.press("Enter"); pa.wait_for_timeout(300)
+        ok(using(pa) == ["蓝蓝的"], "正在用的那一行改名字：还是“在用”")
+        pen("蓝蓝的"); box.fill("蓝的"); box.press("Enter"); pa.wait_for_timeout(300)
+        pen("吃东西鼠"); box.fill("  吃货 \n鼠 ".replace("\n", " ")); box.press("Enter"); pa.wait_for_timeout(400)
+        ok(labels(pa) == ["未命名", "蓝的", "红的那张", "白兔", "小老鼠", "吃货 鼠", "坏猫"], "名字照样收拾：头尾的空去掉、中间连着的空收成一个")
+        pen("吃货 鼠"); box.fill("吃货鼠"); box.press("Enter"); pa.wait_for_timeout(400)
+        row(pa, "坏猫").locator(".kfs-avbook-drop").click(); pa.wait_for_timeout(250)
+        pen("小老鼠")
+        ok(row(pa, "坏猫").locator(".kfs-avbook-drop").inner_text() == "", "小桶点了一下又去点别的行的钢笔：小桶收回去")
+        box.press("Escape"); pa.wait_for_timeout(300)
+
         # ================= 删：点两次才删 =================
         row(pa, "坏猫").locator(".kfs-avbook-drop").click(); pa.wait_for_timeout(250)
         ok(row(pa, "坏猫").locator(".kfs-avbook-drop").inner_text() == "再点一次删掉" and len(labels(pa)) == 7, "点一下“坏猫”那行的小桶：变成“再点一次删掉”，还没删")
@@ -147,7 +182,7 @@ with sync_playwright() as p:
         ok(row(pa, "坏猫").locator(".kfs-avbook-drop").inner_text() == "" and len(labels(pa)) == 7, "三秒没再点：收回成小桶，没删")
         row(pa, "坏猫").locator(".kfs-avbook-drop").click(); pa.wait_for_timeout(250)
         row(pa, "坏猫").locator(".kfs-avbook-drop").click(); pa.wait_for_timeout(400)
-        ok(labels(pa) == ["未命名", "蓝的", "红的那张", "白兔", "小老鼠", "吃东西鼠"], "再点一次：删掉了，原来那四张也删得掉")
+        ok(labels(pa) == ["未命名", "蓝的", "红的那张", "白兔", "小老鼠", "吃货鼠"], "再点一次：删掉了，原来那四张也删得掉")
         # 删正在用的那一张：头像不变
         row(pa, "蓝的").locator(".kfs-avbook-drop").click(); pa.wait_for_timeout(250)
         row(pa, "蓝的").locator(".kfs-avbook-drop").click(); pa.wait_for_timeout(400)
@@ -161,13 +196,14 @@ with sync_playwright() as p:
         cloud = mock("/__debug/rows")
         dump = json.dumps(cloud, ensure_ascii=False)
         ok("红的那张" not in dump and "avbook" not in dump and "data:image" not in dump and "未命名" not in dump, "云端看不到册子里的名字、图，连记录名都看不出是什么")
+        ok("吃货鼠" not in dump, "改的名字云端也看不到")
 
         # ================= 重新打开：记着 =================
         pa.reload()
         kite(pa); pa.wait_for_timeout(800)
         open_panel(pa); open_book(pa)
         r = rows(pa)
-        ok([x["label"] for x in r] == ["未命名", "红的那张", "白兔", "小老鼠", "吃东西鼠"] and [x["kind"] for x in r][:2] == ["pic", "pic"] and all(x["ok"] for x in r),
+        ok([x["label"] for x in r] == ["未命名", "红的那张", "白兔", "小老鼠", "吃货鼠"] and [x["kind"] for x in r][:2] == ["pic", "pic"] and all(x["ok"] for x in r),
            "划掉重开：册子还是那五行，相册选的那两张图也在")
         back(pa); close_panel(pa)
 
@@ -179,7 +215,7 @@ with sync_playwright() as p:
         second_device(pb); pb.wait_for_timeout(1500)
         open_panel(pb); open_book(pb)
         r = rows(pb)
-        ok([x["label"] for x in r] == ["未命名", "红的那张", "白兔", "小老鼠", "吃东西鼠"] and all(x["ok"] for x in r) and [x["kind"] for x in r][:2] == ["pic", "pic"],
+        ok([x["label"] for x in r] == ["未命名", "红的那张", "白兔", "小老鼠", "吃货鼠"] and all(x["ok"] for x in r) and [x["kind"] for x in r][:2] == ["pic", "pic"],
            f"另一台设备登进来：看到的是同一份册子，图也到了（{[x['label'] for x in r]}）")
         # 那一台上删一张、添一张；这一台开着册子，自己跟着变
         open_panel(pa); open_book(pa)
@@ -187,8 +223,10 @@ with sync_playwright() as p:
         row(pb, "小老鼠").locator(".kfs-avbook-drop").click(); pb.wait_for_timeout(400)
         pick(pb, lambda: pb.locator(".kfs-avbook-add").click(), BLUE)
         pb.locator(".kfs-avbook-name").fill("那台添的"); pb.locator(".kfs-avbook-save").click(); pb.wait_for_timeout(500)
-        want = ["那台添的", "未命名", "红的那张", "白兔", "吃东西鼠"]
-        ok(labels(pb) == want, "那一台上删一张、添一张")
+        row(pb, "红的那张").locator(".kfs-avbook-pen").click(); pb.wait_for_timeout(300)
+        pb.locator(".kfs-avbook-rename").fill("那台改的"); pb.locator(".kfs-avbook-rename").press("Enter"); pb.wait_for_timeout(500)
+        want = ["那台添的", "未命名", "那台改的", "白兔", "吃货鼠"]
+        ok(labels(pb) == want, "那一台上删一张、添一张、改一个名字")
         for _ in range(60):
             r = rows(pa)
             if [x["label"] for x in r] == want and all(x["ok"] for x in r): break

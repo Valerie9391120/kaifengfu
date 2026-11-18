@@ -1,5 +1,5 @@
 // 头像册：存着的那一份怎么读、怎么写，添一行、删一行、认不认得出“这一张已经在里头”
-import { BOOK_KEY, picKey, BOOK_MAX, LABEL_MAX, NO_LABEL, STARTERS, cleanLabel, readBook, packBook, inBook, canAdd, addEntry, dropEntry } from "../src/avatarBook.js";
+import { BOOK_KEY, picKey, BOOK_MAX, LABEL_MAX, NO_LABEL, STARTERS, cleanLabel, readBook, packBook, inBook, canAdd, addEntry, dropEntry, renameEntry } from "../src/avatarBook.js";
 
 let pass = 0, failN = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); } };
@@ -51,6 +51,17 @@ ok(back[1].pic === true && back[1].av === null && back[0].av.file === "fox_a.jpg
   "读回来：表情包那种带着图；相册选的那种图先空着，等外面去取");
 ok(!inBook(back, pic("AAAA")) && canAdd(back, meme("fox_b.jpg")), "图还没取到的那一行不拿来认“是不是眼下这张”");
 ok(packBook(back) === packed, "图还没取到的时候再存一遍：那一行不丢");
+
+// ---- 改名字 ----
+const renamed = renameEntry(list, "n1", "  新 \n 名字 ");
+ok(renamed && renamed.length === 6 && renamed.find((e) => e.id === "n1").label === "新 名字" && renamed.find((e) => e.id === "n1").av.data.endsWith("AAAA") && list.find((e) => e.id === "n1").label === "我的图"
+  && renamed.map((e) => e.id).join() === list.map((e) => e.id).join(), "改名字：只换那一行的名字，图、先后都不动；原来的单子不动");
+ok(renameEntry(list, "n1", "我的图") === null && renameEntry(list, "n1", " 我的图  ") === null, "改完和原来一样：不算改（不用存）");
+ok(renameEntry(list, "n1", "") === null && renameEntry(list, "n1", "   ") === null && renameEntry(list, "n1", null) === null, "清空了：不改，留着原来的名字");
+ok(renameEntry(list, "没有这个", "名字") === null, "没有这一行：不改");
+ok(Array.from(renameEntry(list, "s4", "一二三四五六七八九十甲乙丙丁").find((e) => e.id === "s4").label).length === LABEL_MAX && renameEntry(list, "s1", "白兔") === null && renameEntry(list, "s1", "大白兔")[2].label === "大白兔",
+  "原来那四张也能改；名字照样最多十二个字");
+ok(readBook(packBook(renamed)).find((e) => e.id === "n1").label === "新 名字" && readBook(packBook(renameEntry(back, "n1", "图没到也能改"))).find((e) => e.id === "n1").pic === true, "改了再存、再读：名字记着；图还没取到的那一行改名字也不丢");
 
 // ---- 删 ----
 const dropped = dropEntry(list, "n1");

@@ -8,7 +8,7 @@ import { createPainter } from "./painter.js";
 import { MOTTO_KEY, MOTTO_LAST, DEFAULT_MOTTO, parseMotto, pickMotto, poolAt, fillMotto, mottoLines, readMotto, packMotto, describeMotto } from "./motto.js";
 import { MottoPanel } from "./panels/MottoPanel.jsx";
 import { AvatarBook } from "./panels/AvatarBook.jsx";
-import { BOOK_KEY, picKey, readBook, packBook, addEntry, dropEntry } from "./avatarBook.js";
+import { BOOK_KEY, picKey, readBook, packBook, addEntry, dropEntry, renameEntry } from "./avatarBook.js";
 import { openProbe } from "./probe.js";
 import { createFollow } from "./scroll.js";
 import { createSlide } from "./slide.js";
@@ -5044,6 +5044,11 @@ export default function App({ account = {} }) {
     if (e.pic) store.del(picKey(id));
   };
 
+  const renameInBook = (id, label) => {
+    const next = renameEntry(bookRef.current, id, label);
+    if (next) saveBook(next);
+  };
+
   const changeHisAvatar = (av) => {
     const nextAv = { ...avatarsRef.current, him: av };
     avatarsRef.current = nextAv;
@@ -5930,7 +5935,7 @@ export default function App({ account = {} }) {
     if (sheet === "avbook") {
       return (
         <Sheet title="头像册" onClose={() => setSheet("account")}>
-          <AvatarBook list={book} av={avatars.her} onUse={changeHerAvatar} onAdd={addToBook} onDrop={dropFromBook} />
+          <AvatarBook list={book} av={avatars.her} onUse={changeHerAvatar} onAdd={addToBook} onDrop={dropFromBook} onRename={renameInBook} />
         </Sheet>
       );
     }
