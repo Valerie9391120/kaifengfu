@@ -1,5 +1,5 @@
 // 头像册：存着的那一份怎么读、怎么写，添一行、删一行、认不认得出“这一张已经在里头”
-import { BOOK_KEY, picKey, BOOK_MAX, LABEL_MAX, NO_LABEL, STARTERS, cleanLabel, readBook, packBook, inBook, canAdd, addEntry, dropEntry, renameEntry } from "../src/avatarBook.js";
+import { BOOK_KEY, picKey, BOOK_MAX, LABEL_MAX, NO_LABEL, STARTERS, cleanLabel, readBook, packBook, inBook, canAdd, addEntry, dropEntry, renameEntry, REVEAL, REVEAL_ARMED, swipeDir, revealAt, staysOpen } from "../src/avatarBook.js";
 
 let pass = 0, failN = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++; console.log("FAIL:", m); } };
@@ -81,6 +81,15 @@ for (let i = 0; i < BOOK_MAX + 5; i++) { const r = addEntry(many, meme(`m${i}.jp
 ok(many.length === BOOK_MAX && !canAdd(many, meme("more.jpg")) && addEntry(many, meme("more.jpg"), "多的", "idx") === null, `最多 ${BOOK_MAX} 张，满了添不进去`);
 const over = JSON.stringify({ v: 1, list: Array.from({ length: BOOK_MAX + 9 }, (_, i) => ({ id: `o${i}`, label: `${i}`, file: `o${i}.jpg` })) });
 ok(readBook(over).length === BOOK_MAX, "存着的比上限多：只读前面那些");
+
+// ---- 左滑露出垃圾桶：这一回算不算横着划、让开多宽、松手停在哪 ----
+ok(swipeDir(3, 2) === null && swipeDir(-7, 7) === null && swipeDir(-9, 0) === "h" && swipeDir(9, 3) === "h" && swipeDir(-9, 9) === "v" && swipeDir(2, -30) === "v" && swipeDir(-12, 10) === "v" && swipeDir(-13, 10) === "h",
+  "手指走出 8 个像素才定：横着走得明显多的算划，不然算滚册子");
+ok(revealAt(0, -20) === 20 && revealAt(0, -REVEAL) === REVEAL && revealAt(0, 15) === 0 && revealAt(REVEAL, 30) === REVEAL - 30 && revealAt(REVEAL, 200) === 0,
+  "让开多宽：从关着起往左划多少让多少，往右不动；从开着起往右划就收");
+ok(revealAt(0, -REVEAL - 100) === REVEAL + 30 && revealAt(REVEAL, -50) === REVEAL + 15 && revealAt(0, -1000) < REVEAL + 300, "划过头的那一截只跟三成");
+ok(!staysOpen(0) && !staysOpen(REVEAL / 2) && staysOpen(REVEAL / 2 + 1) && staysOpen(REVEAL + 40), "松手：让开过半停在开着，不然收回去");
+ok(REVEAL_ARMED > REVEAL + 60, "点了一下垃圾桶以后让得更开，放得下“再点一次删掉”");
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);
 process.exit(failN ? 1 : 0);

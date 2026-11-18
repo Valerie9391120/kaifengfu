@@ -1,6 +1,6 @@
 // =====================================================
 // 头像册：她存好的头像，一行一张图、一个名字（“头像与设置”里点“头像册”进来，见 panels/AvatarBook.jsx）。
-// 点哪一行就换成哪张；能添（从相册选一张起个名字、把眼下用着的那张存进来），能删，名字能改。
+// 点哪一行最右边的方格就换成哪张；能添（从相册选一张起个名字、把眼下用着的那张存进来），左滑能删，名字能改。
 //
 // 存法（都加密了跟着云端走）：
 //   kfs2:avbook        { v: 1, list: [{ id, label, file } | { id, label, pic: 1 }] }   单子本身，只有名字和“是哪张”
@@ -96,3 +96,20 @@ export function renameEntry(list, id, label) {
   if (next === e.label) return null;
   return list.map((x) => (x.id === id ? { ...x, label: next } : x));
 }
+
+// ---- 左滑露出垃圾桶（panels/AvatarBook.jsx）----
+export const REVEAL = 56; // 露出垃圾桶要让开多宽
+export const REVEAL_ARMED = 124; // 垃圾桶点了一下、变成“再点一次删掉”以后
+// 手指走了 dx、dy：这一回算横着划（"h"）还是竖着滚（"v"）；还没走出 8 个像素先不定（null）
+export function swipeDir(dx, dy) {
+  if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return null;
+  return Math.abs(dx) > Math.abs(dy) * 1.2 ? "h" : "v";
+}
+// 眼下让开多宽：从 base 起，手指往左（dx 是负的）多让、往右收；让过头的那一截只跟三成
+export function revealAt(base, dx, max = REVEAL) {
+  const r = base - dx;
+  if (r <= 0) return 0;
+  return r <= max ? r : max + (r - max) * 0.3;
+}
+// 松手：让开过半就停在开着，不然收回去
+export const staysOpen = (reveal, max = REVEAL) => reveal > max / 2;

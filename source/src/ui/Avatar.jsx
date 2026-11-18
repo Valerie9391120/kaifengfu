@@ -5,7 +5,7 @@ import { SERIF, T, HAIRLINE } from "./style.js";
 // 光义的头像由光义自己定：先用读书狐，之后他在回复里写 [AVATAR:文件名] 自己换
 export const HIS_DEFAULT = { type: "meme", file: "fox_reading_book.jpg" };
 
-function avatarSrc(av) {
+export function avatarSrc(av) {
   if (!av) return null;
   if (av.type === "upload") return av.data;
   if (av.type === "meme") return memeSrc(av.file);
