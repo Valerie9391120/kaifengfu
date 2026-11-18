@@ -1,6 +1,7 @@
 # 开封府端到端测试：两台“iPhone”，一个假 Supabase
 import json, re, time, urllib.request, urllib.parse, os
 from playwright.sync_api import sync_playwright
+from mailkit import seed_his_book  # 往他的头像册里放一张带描述的图（他换头像只认册子里的）
 
 # 先在 source/ 里：npm run build:test，再开两个服务：
 #   npm run mock                         （假 Supabase，8787）
@@ -206,7 +207,7 @@ with sync_playwright() as p:
     first_opening = opening(mock("/__debug/claude")[0]["body"])
     pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
     pa.get_by_role("button", name="头像与设置").click(); time.sleep(0.5)
-    pa.get_by_role("button", name="头像册").click(); time.sleep(0.5)  # 那四张收在头像册里了（见 e2e_avbook.py）
+    pa.locator(".kfs-avbook-entry").click(); time.sleep(0.5)  # 那四张收在她的头像册里了（见 e2e_avbook.py）
     pa.get_by_role("checkbox", name="用这张：白兔", exact=True).click(); time.sleep(0.4)  # 点那一行最右边的方格才换
     pa.get_by_role("button", name="关闭").click(); time.sleep(0.5)  # 头像册 → 头像与设置
     pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
@@ -475,10 +476,12 @@ with sync_playwright() as p:
     ok(pb.evaluate(HIS) == "光义" and pb.get_by_text("光义改了名字").count() == notices and quoted.count() == 1,
        "他只是讲名字怎么改（写法夹在句子里、照抄占位的写法）：不算改名，顶栏没变，写法原样显示")
     # 改名的标记和表情包、换头像的标记拼在同一条正则里：那两种照旧认得
+    # 他换头像只认头像册里有描述的（见 e2e_hisbook.py）：先往册子里放一张
+    seed_his_book(pb, ["换的那张"])
     FACE ="document.querySelector('.kfs-his-name').previousElementSibling.querySelector('img').src"
     face0 = pb.evaluate(FACE)
     memes0 = pb.locator("img[style*='width: 140px']").count()
-    tb.fill("原样回：先发图[MEME:fox_reading_book.jpg]再换头像[AVATAR:fox_melancholy.jpg]换好了"); tb.press("Enter")
+    tb.fill("原样回：先发图[MEME:fox_reading_book.jpg]再换头像[AVATAR:换的那张]换好了"); tb.press("Enter")
     pb.get_by_text("光义换了新头像").wait_for(timeout=20000)
     pb.get_by_text("换好了", exact=True).wait_for(timeout=10000); time.sleep(0.6)
     bubble = lambda t: pb.locator("div.whitespace-pre-wrap.break-words").filter(has_text=re.compile("^" + t + "$")).count()

@@ -672,6 +672,39 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   const results = cloud.bodies[1].messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((x) => x.type === "tool_result").map((x) => x.tool_use_id);
   ok(dressEnum(cloud.bodies[0]).includes("complete") && cloud.bodies[0].tools.some((t) => t.name === "play_garden") && results.join() === "t1,t2,t3,t4" && roomNotes(b).join("|") === "去园子里浇了水|完成了今天的搭配：披发、素面、不熏香；衣柜：高开叉旗袍|照了照镜子",
     `醒在屋里：园子、妆台两样都带着；一步里调了几样都替他办、一样一样递回去；屋里那几行（${roomNotes(b).join("|")}）`);
+  // 他醒着换头像：只认头像册里有描述的（src/hisBook.js，同手机那头；11 月 18 日起不再从表情包里挑）
+  {
+    const PIC_A = "data:image/jpeg;base64,QUFBQQ==", PIC_B = "data:image/jpeg;base64,QkJCQg==";
+    const sb = kv6({
+      "kfs2:hisbook": JSON.stringify({ v: 1, list: [{ id: "hb1", label: "雪地小狐", look: "白色小狐趴在雪地里", mood: "安静" }, { id: "hb2", label: "没描述的", look: "", mood: "" }] }),
+      "kfs2:hisbook:hb1": PIC_A,
+      "kfs2:hisbook:hb2": PIC_B,
+      "kfs2:avatar:guangyi": JSON.stringify({ type: "meme", file: "fox_reading_book.jpg" }),
+    });
+    const got = await gather(sb);
+    ok(got.hisBook.length === 2 && got.hisBook[0].av.data === PIC_A && got.avatars.him.type === "meme", "取齐：他的头像册连图一起取出来；眼下用的是表情包的照旧认");
+    let cl = cloudOf([said("换一张\n[AVATAR:没描述的]\n[AVATAR:fox_melancholy.jpg]\n[AVATAR:雪地小狐]\n好了")]);
+    let bb = await askRoom({ store: sb, cloud: cl, ctx: { ...ctxOf(), hisBook: got.hisBook, avatars: got.avatars }, ...opts });
+    const sys0 = cl.bodies[0].system[0].text;
+    const him0 = bb.puts[0].rows.find((r) => r.role === "him");
+    const avIt = him0.items.find((it) => it.type === "avatar");
+    ok(sys0.includes("【你的头像】\n想换头像吗？在回复里单独一行写 [AVATAR:头像册里的名字]。") && sys0.includes("\n雪地小狐｜画面：白色小狐趴在雪地里｜氛围：安静\n") && !sys0.includes("没描述的｜") && !sys0.includes("从下面的表情包索引里挑"),
+      "醒着的时候寄的名帖：【你的头像】是头像册那一段，只列有描述的（同手机那头）");
+    ok(bb.newAvatar && bb.newAvatar.type === "book" && bb.newAvatar.id === "hb1" && bb.newAvatar.label === "雪地小狐" && bb.newAvatar.data === PIC_A && him0.items.filter((it) => it.type === "avatar").length === 1
+      && avIt.file === "雪地小狐" && avIt.pic === "hb1" && avIt.data === PIC_A && avIt.prev.type === "meme" && avIt.prev.file === "fox_reading_book.jpg",
+      "他醒着写 [AVATAR:名字]：换成头像册里的那一张（带着图）；没描述的、表情包的文件名不认；换之前那张记着");
+    // 放进存档的那一步（commitWake）照它交出来的存：换上的头像一条、狐宇宙里那几行
+    const foxRows = bb.puts[0].rows;
+    await sb.set("kfs2:avatar:guangyi", JSON.stringify(bb.newAvatar));
+    const got2 = await gather(sb);
+    cl = cloudOf([said("<thinking>歇着</thinking>")]);
+    bb = await askRoom({ store: sb, cloud: cl, ctx: { ...ctxOf(), hisBook: got2.hisBook, avatars: got2.avatars, fox: foxRows }, ...opts });
+    const flat2 = JSON.stringify(cl.bodies[0].messages);
+    ok(got2.avatars.him.type === "book" && flat2.includes("你现在的头像：「雪地小狐」。") && flat2.includes("[开封府提示：你的新头像换好了，是「雪地小狐」，长这样]") && flat2.includes("QUFBQQ=="), "下回醒：【此刻】里写着现在是「雪地小狐」，上回换的地方有提示、带着图");
+    cl = cloudOf([said("[AVATAR:雪地小狐]")]);
+    bb = await askRoom({ store: kv6(), cloud: cl, ctx: ctxOf(), ...opts });
+    ok(!bb.newAvatar && cl.bodies[0].system[0].text.includes("眼下册子里还没有图"), "册子空着：名帖里是“眼下册子里还没有图”那一句，他写了也不换");
+  }
   // 同一天下回醒：不给 complete
   cloud = cloudOf([said("<thinking>歇着</thinking>")]);
   await askRoom({ store: s, cloud, ctx: ctxOf(), ...opts });

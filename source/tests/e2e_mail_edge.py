@@ -69,11 +69,12 @@ def avatar(browser):
     his = lambda page: json.loads(page.evaluate(KV, "kfs2:avatar:guangyi") or "null")
     pa = page_of(A, "avatar")
     first_time(pa); enable_notifications(pa)
-    say(pa, "原样回：[AVATAR:fox_reading_book.jpg]\n先换一张")
+    seed_his_book(pa, ["甲图", "乙图"])       # 他换头像只认头像册里有描述的（见 src/hisBook.js）
+    say(pa, "原样回：[AVATAR:甲图]\n先换一张")
     pa.get_by_text("先换一张").last.wait_for(timeout=20000); time.sleep(GRACE + 0.5)
     b0 = len(banners())
     mock("/__debug/claude-hold?ms=3000")
-    say(pa, "原样回：[AVATAR:brand_new_meme.jpg]\n又换了")
+    say(pa, "原样回：[AVATAR:乙图]\n又换了")
     ok(wait_mock(working, 8), "横幅进来认头像·准备：发一句、开封府被收掉")
     pa.close()
     ok(wait_mock(lambda: len(banners()) == b0 + 1, GRACE + 12), "横幅进来认头像·准备：横幅到了")
@@ -83,8 +84,8 @@ def avatar(browser):
     pb.get_by_text("又换了").last.wait_for(timeout=15000); time.sleep(2.0)
     _, msgs = chat_of(pb)
     av = his(pb)
-    ok(bool(av) and av.get("file") == "brand_new_meme.jpg" and any(it.get("type") == "avatar" and it.get("file") == "brand_new_meme.jpg" for it in msgs[-1]["items"]),
-       f"点着横幅进来、他换的头像是仓库里新加的图：等清单读回来再取信，头像换上了（{av}）")
+    ok(bool(av) and av.get("type") == "book" and av.get("label") == "乙图" and any(it.get("type") == "avatar" and it.get("file") == "乙图" and it.get("pic") == av.get("id") for it in msgs[-1]["items"]),
+       f"点着横幅进来、他换的头像是头像册里的一张：册子读回来了才取信，头像换上了（{(av or {}).get('label')}）")
     A.close()
 
 

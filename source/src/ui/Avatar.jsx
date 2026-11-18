@@ -8,6 +8,7 @@ export const HIS_DEFAULT = { type: "meme", file: "fox_reading_book.jpg" };
 export function avatarSrc(av) {
   if (!av) return null;
   if (av.type === "upload") return av.data;
+  if (av.type === "book") return av.data || null; // 他头像册里的一张（见 ../hisBook.js）：图自己带着
   if (av.type === "meme") return memeSrc(av.file);
   return null;
 }

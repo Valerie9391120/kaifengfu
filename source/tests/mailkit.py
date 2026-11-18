@@ -133,6 +133,35 @@ def open_panel(page):
     wait_js(page, "(() => { const p = document.querySelector('.kfs-push'); return !!p && p.dataset.state !== 'checking'; })()")
     time.sleep(0.3)
 
+# 往他的头像册里放几张带描述的图（走界面：“头像与设置”→ 他那张卡片上的“头像册”→ 添一张、起名字、整理描述）。
+# 11 月 18 日起他换头像只认头像册里有描述的（见 src/hisBook.js）：要测他换头像的，先用它备好。回来的时候面板都关好了。
+# 每一张要问一回假的那边的我（写描述）：数 calls() 的测试，在它之后再记数
+SEED_COLORS = [(206, 112, 92), (84, 124, 186), (110, 160, 120), (176, 140, 78)]
+def seed_his_book(page, names):
+    from PIL import Image, ImageDraw
+    art = os.path.abspath(os.path.join(HERE, "..", ".cache", "hisbook-seed"))
+    os.makedirs(art, exist_ok=True)
+    open_panel(page)
+    page.locator(".kfs-hisbook-entry").scroll_into_view_if_needed()
+    page.locator(".kfs-hisbook-entry").click()
+    page.locator(".kfs-hisbook").wait_for(timeout=5000); time.sleep(0.45)
+    for i, name in enumerate(names):
+        path = os.path.join(art, f"seed{i}.png")
+        im = Image.new("RGB", (400, 400), SEED_COLORS[i % len(SEED_COLORS)]); d = ImageDraw.Draw(im)
+        d.rectangle([40 + 60 * i, 120, 160 + 60 * i, 280], fill=(248, 240, 228)); im.save(path)
+        with page.expect_file_chooser(timeout=5000) as fc:
+            page.locator(".kfs-avbook-add").click()
+        fc.value.set_files(path); time.sleep(0.7)
+        page.locator(".kfs-avbook-name").fill(name)
+        page.locator(".kfs-avbook-save").click()
+        page.locator(".kfs-hisbook-write").wait_for(timeout=5000)
+        page.locator(".kfs-hisbook-write").click()
+        if not wait_js(page, "!!document.querySelector('.kfs-hisbook-desc[data-state=\"has\"]')", 20000):
+            raise RuntimeError("他的头像册：描述没写回来（" + name + "）")
+        time.sleep(0.3)
+    page.get_by_role("button", name="关闭").click(); time.sleep(0.45)
+    close_panel(page)
+
 def close_panel(page):
     page.get_by_role("button", name="关闭").click(); time.sleep(0.4)
     if page.locator("div.absolute.inset-0.z-30").count():

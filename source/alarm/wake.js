@@ -17,7 +17,8 @@
 // =====================================================
 import { buildSystem, withNowNote } from "../src/prompt/system.js";
 import { buildMessages } from "../src/prompt/messages.js";
-import { parseReply, settleAvatarItems } from "../src/reply.js";
+import { parseReply } from "../src/reply.js";
+import { loadHisBook, settleHisAvatar, hisAvatarOk } from "../src/hisBook.js";
 import { DIARY_TOOLS, DIARY_NAMES, DIARY_KEY, isDiaryCall, runDiaryCalls, toolCallsOf } from "../src/diaryTools.js";
 import { tyReader } from "../src/tongye/host.js";
 import { MEME_DATA, MEME_MAP, RAW_BASE, newMemesFrom, parseReadme } from "../src/memes.js";
@@ -144,7 +145,9 @@ export async function gather(store, extras = []) {
   const names = { her: (await store.get(NAME_KEYS.her)) || "", him: (await store.get(NAME_KEYS.him)) || "" };
   const ah = parse(await store.get("kfs2:avatar:her"), null);
   const am = parse(await store.get("kfs2:avatar:guangyi"), null);
-  const avatars = { her: ah, him: am && am.type === "meme" ? am : HIS_DEFAULT };
+  const avatars = { her: ah, him: hisAvatarOk(am) ? am : HIS_DEFAULT };
+  // 他的头像册（见 src/hisBook.js）：名帖里【你的头像】那一段照它拼，他醒着换头像也只认里头有描述的那几张（同手机那头）
+  const hisBook = await loadHisBook((k) => store.get(k));
   const memindex = parse(await store.get("kfs2:memindex"), []) || [];
   const memDocs = [];
   for (const f of memindex) {
@@ -165,7 +168,7 @@ export async function gather(store, extras = []) {
   const wakes = marks.map((m) => m.ts || 0).sort((a, b) => a - b);
   const capWakes = marks.filter((m) => !(m.go && m.go.how === "task")).map((m) => m.ts || 0).sort((a, b) => a - b);
   const tasks = await tasksOf(store);
-  return { settings, names, avatars, memDocs, index, fox, recaps, read, herLast, herChat, wakes, capWakes, mark: lastMark(fox), tasks, extras };
+  return { settings, names, avatars, hisBook, memDocs, index, fox, recaps, read, herLast, herChat, wakes, capWakes, mark: lastMark(fox), tasks, extras };
 }
 
 // 那段对话里她发过的照片、文档：全文另存着，打包之前取出来（同手机那头的 loadImagesFor、loadDocsFor）
@@ -279,7 +282,13 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   const memeLookup = lookupOf(ctx);
   const memeKnown = (file) => !!memeLookup(file);
   const thumbLookup = (file) => store.peek("kfs2:memethumb:" + file) || null;
+  const hisBook = ctx.hisBook || [];
+  const hisPic = (id) => {
+    const e = hisBook.find((x) => x.id === id);
+    return e && e.av ? e.av.data : null;
+  };
   const avatarName = (av) => {
+    if (av && av.type === "book") return `「${av.label}」`; // 头像册里的一张
     if (!av || av.type !== "meme") return "";
     const m = memeLookup(av.file);
     return m ? `「${m.name}」（${av.file}）` : av.file;
@@ -305,6 +314,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
     room: roomSection(wakeOn(st)), // 【你的屋子】：同手机那头（“他自己醒”开着才有；闹钟叫他的时候总是开着的）
     luofu: luofuSection(readLuofuPool(store.peek(LUOFU_POOL)), wakeOn(st)), // 【罗浮梦】：同手机那头（梦库里有梦才有，见 src/luofu/parts.js）
     draw: !!st.draw, // 他能画画：同手机那头（名帖一样才接得上缓存）。闹钟自己不画，他醒着画的手机上点了才画
+    hisBook, // 他的头像册：同手机那头
   });
   const roomOf = (sure) => roomFor(windowOf(model), staticText.length, maxTokens, sure);
   const tier = tierOf(st.recall, roomOf(false), roomOf(true));
@@ -318,7 +328,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
   // final：这是最后一步，【醒来】后面附上提醒（附在缓存记号后面，前面那些照样读缓存）
   // thought：这一回醒着前面几步里已经写过心里话（thoughtNote，醒在屋里那一回才有；同样附在缓存记号后面）
   const bodyFor = (list, at, final = false, thought = false) => {
-    const { messages, tail } = buildMessages(list, ctx.avatars, memeLookup, imgLookup, thumbLookup, docLookup, { recaps, tier, drawLookup });
+    const { messages, tail } = buildMessages(list, ctx.avatars, memeLookup, imgLookup, thumbLookup, docLookup, { recaps, tier, drawLookup, picLookup: hisPic });
     const body = {
       model,
       max_tokens: maxTokens,
@@ -394,12 +404,12 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
       const lastDoc = parsed.items.filter((it) => it.type === "doc").pop();
       if (lastDoc && parsed.items[parsed.items.length - 1] === lastDoc) lastDoc.cut = true;
     }
-    const settled = settleAvatarItems(parsed.items, memeKnown);
+    const settled = settleHisAvatar(parsed.items, hisBook, avatarNow);
     const him = {
       id: newId(),
       role: "him",
       ts: Date.now(),
-      items: settled.items.map((it) => (it.type === "avatar" ? { ...it, prev: avatarNow } : it)),
+      items: settled.items,
       raw: parsed.body,
       thinking: parsed.thinking,
       tools: usedTools,
@@ -411,7 +421,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
       if (data.stop_reason === "tool_use") {
         him.calls = calls;
         him.stop = "tool_use";
-        if (!String(parsed.body || "").trim() && !parsed.rename && !settled.avatarFile) him.items = [];
+        if (!String(parsed.body || "").trim() && !parsed.rename && !settled.av) him.items = [];
       } else {
         // 写到长度上限被截断、没停在调工具上：他调的那几样不替他办，各记一行“没翻成 / 没去成”；一样的只留一行（另一双眼睛挑出来的）
         const seen = new Set();
@@ -432,8 +442,8 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
         });
       }
     }
-    if (settled.avatarFile) {
-      newAvatar = { type: "meme", file: settled.avatarFile };
+    if (settled.av) {
+      newAvatar = settled.av;
       avatarNow = newAvatar;
     }
     if (parsed.rename && parsed.rename !== nameNow) {
@@ -442,7 +452,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
       nameNow = parsed.rename;
     }
     // 一个看得见的都没有：只写了心里话、只定了下回几点醒（换了头像、改了名字、翻了日记都算干了点什么）
-    const quiet = !!parsed.quiet && !him.calls && !him.rename && !settled.avatarFile;
+    const quiet = !!parsed.quiet && !him.calls && !him.rename && !settled.av;
     return { him, text: whole, quiet, data, used };
   };
 

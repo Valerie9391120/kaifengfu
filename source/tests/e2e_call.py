@@ -164,6 +164,7 @@ with sync_playwright() as p:
         return hi
     try:
         first_time(pa)
+        seed_his_book(pa, ["电话里换的"])     # 他换头像只认头像册里有描述的（见 src/hisBook.js）：电话里换头像那一段要用
         chat(pa, "先打个字")
         before = mock("/__debug/claude")[-1]["body"]
         ok(pa.evaluate(KEY) == "打电话", "输入框空着、他没在回：右下角那个声波键是“打电话”（原来是“发一条语音”）")
@@ -291,7 +292,7 @@ with sync_playwright() as p:
         # 她 16:27 改的那一段里拿掉了“不换头像”（她看得到的就是头像和昵称）：电话里他换头像、改名字，通话页上马上跟着换；记号不念
         face0 = pa.evaluate(CALLFACE)
         e2 = len(eleven())
-        queue_reply("[AVATAR:fox_melancholy.jpg]\n嗯，好看。\n[NAME:狐狐]")
+        queue_reply("[AVATAR:电话里换的]\n嗯，好看。\n[NAME:狐狐]")
         wait_mock(lambda: len(calls()) == c0 + 4, 8)
         wait_phase(pa, "speaking", 15000)
         wait_phase(pa, "listening", 20000)

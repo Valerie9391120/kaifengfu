@@ -1,3 +1,4 @@
+import { avOfItem } from "../hisBook.js";
 import { HIS_NAME } from "../names.js";
 import { isCallMark, markText } from "../call/marks.js";
 import { isWakeMark, wakeText } from "../fox.js";
@@ -95,7 +96,7 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId
             key: m.id + "-" + j,
             msg: m,
             who: "him",
-            av: { type: "meme", file: it.file },
+            av: avOfItem(it), // 头像册里的一张（带着图）；老记录是表情包
             text: "光义换了新头像",
           });
         } else {

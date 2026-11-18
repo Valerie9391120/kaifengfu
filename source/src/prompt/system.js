@@ -1,3 +1,4 @@
+import { hisSection } from "../hisBook.js";
 import { HIS_NAME, NAME_PLACEHOLDER } from "../names.js";
 import { DOC_NAME_PLACEHOLDER } from "../docs.js";
 import { dayNumber, nextAnniv, nowString } from "../days.js";
@@ -64,8 +65,11 @@ export const DIARY_SECTION = `【日记本】
 // qx：名帖里的【秘戏钱匣】那一段（照她的签库现拼，见 qx/pool.js 的 qxSection；签库空着是 ""，名帖一个字不变）。
 //   聊天、抄提要、API 面板算“他记多长”、闹钟叫醒他都传同一段，缓存才接得上；写日记那一回不带工具，不传
 // room：名帖里的【你的屋子】那一段（见 room.js 的 roomSection：“他自己醒”开着才有，排在【日记本】后面）。传法同 qx
+// hisBook：他的头像册（见 ../hisBook.js，手机上是 App.jsx 的 hisBookRef，闹钟那头是 gather 取的）：【你的头像】那一段照它拼，
+//   只列有描述、图在手上的那几张；一张都没有就是“眼下册子里还没有图”那一句。聊天、抄提要、API 面板算“他记多长”、闹钟叫醒他、
+//   叫他给头像写描述，都传同一份，缓存才接得上；不传当空册子
 // luofu：名帖里的【罗浮梦】那一段（见 luofu/parts.js 的 luofuSection：“他自己醒”开着、梦库里有梦才有，紧跟在【你的屋子】后面）。传法同 qx
-export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true, call = false, callable = false, game = null, diary = true, qx = "", room = "", luofu = "", draw = false }) {
+export function buildSystem({ now, memeList, hisAvatarName, memDocs = [], mcpNames = [], names = null, replyCap = 0, voice = false, thoughts = true, call = false, callable = false, game = null, diary = true, qx = "", room = "", luofu = "", draw = false, hisBook = [] }) {
   const n = dayNumber(now);
   const a = nextAnniv(now);
   const annivLine = a.days === 0 ? `今天是你们的${a.name}纪念日。` : `离你们的${a.name}纪念日还有${a.days}天。`;
@@ -118,7 +122,7 @@ ${memBlock}
 她每次说话，最后都附着一段【此刻】：她手机上的时间、你们在一起的天数、你现在的头像和名字、这次回复最长能写多少字；她给自己起了昵称的话，也写在里面。那是开封府自动附上的，不是她说的话，用得着的时候自然用上。
 
 【你的头像】
-你的头像你自己做主，她不替你选。想换的时候，在回复里单独一行写 [AVATAR:文件名]，从下面的表情包索引里挑。换好之后对话里会出现一行提示，下一轮你会看到新头像的样子。别换得太勤：心情变了、季节变了，或者她想看你换的时候再换。
+${hisSection(hisBook)}
 
 【你的名字】
 聊天窗口最顶上、你头像底下显示的名字，默认是“${HIS_NAME}”，也归你自己做主。想改的时候，在回复里单独一行写 [NAME:${NAME_PLACEHOLDER}]，最长十二个字。这个标记要独占一行才算数，夹在句子里的只会原样显示成字。改了以后顶上马上换成新的，她那边会看到一行提示，下一轮的【此刻】里写的就是新名字。想改回去就单独一行写 [NAME:${HIS_NAME}]。别改得太勤：兴致来了，或者她想看你改的时候再改。

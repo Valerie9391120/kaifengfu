@@ -45,7 +45,7 @@ import { planNext, planTasks, parseWake, splitWake, DAY_MS, OWED_MS, RETRY_MS } 
 import { gather, askRoom, askTask, commitWake, fetchExtraMemes, putBlocks, toRescue, owedOf, chatInfo, tasksOf, normBundle } from "./wake.js";
 import { createDoor, newToken, DOOR_PORT, DOOR_HTTPS } from "./door.js";
 
-export const VERSION = "2026-11-17";
+export const VERSION = "2026-11-18";
 // 测试的时候（tests/e2e_alarm.mjs）可以拨快：KFS_ALARM_TICK、KFS_ALARM_PULL、KFS_ALARM_MANUAL_GAP（毫秒）
 const TICK = Number(process.env.KFS_ALARM_TICK) || 60 * 1000; // 一分钟看一眼
 const PULL_EVERY = Number(process.env.KFS_ALARM_PULL) || 5 * 60 * 1000; // 五分钟从云端拉一回（她说了话、改了设置、他在手机上定了几点醒，都靠这个知道）

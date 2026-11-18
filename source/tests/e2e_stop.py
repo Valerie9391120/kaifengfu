@@ -301,10 +301,11 @@ def avatar(browser):
     pa = page_of(A, "avatar")
     his = lambda: json.loads(pa.evaluate(KV, "kfs2:avatar:guangyi") or "null")
     first_time(pa)
-    say(pa, "原样回：[AVATAR:fox_reading_book.jpg]\n先换一张")
+    seed_his_book(pa, ["甲图", "乙图"])       # 他换头像只认头像册里有描述的（见 src/hisBook.js）
+    say(pa, "原样回：[AVATAR:甲图]\n先换一张")
     wait_js(pa, shown("先换一张"), 20000); pa.wait_for_timeout(1500)
     before = his()
-    parts = [LONG("头一条"), LONG("第二条"), "[AVATAR:pig_king_awake.jpg]", LONG("第三条")]
+    parts = [LONG("头一条"), LONG("第二条"), "[AVATAR:乙图]", LONG("第三条")]
     say(pa, "原样回：" + "\n[SPLIT]\n".join(parts) + "\n[NAME:小狐狸]")
     first = wait_js(pa, shown(parts[0]), 20000)
     pa.wait_for_timeout(400)
@@ -315,8 +316,9 @@ def avatar(browser):
     cid, msgs = chat_of(pa)
     m = msgs[-1]
     top = pa.evaluate("document.querySelector('.kfs-his-name').textContent")
-    ok(first and (before or {}).get("file") == "fox_reading_book.jpg" and (mid or {}).get("file") == "pig_king_awake.jpg" and (after or {}).get("file") == "fox_reading_book.jpg",
-       f"掐断·头像：没蹦到的那一段里他换了头像（回话一到就换上了）：掐断以后换回原来那张（{(mid or {}).get('file')} → {(after or {}).get('file')}）")
+    ok(first and (before or {}).get("label") == "甲图" and (mid or {}).get("label") == "乙图" and (after or {}).get("label") == "甲图" and (after or {}).get("type") == "book" and str((after or {}).get("data", "")).startswith("data:image/")
+       and after == before,
+       f"掐断·头像：没蹦到的那一段里他换了头像（回话一到就换上了）：掐断以后换回原来那张，图也带着（{(mid or {}).get('label')} → {(after or {}).get('label')}）")
     ok(len(m["items"]) == 1 and m["raw"] == "[NAME:小狐狸]\n[SPLIT]\n" + parts[0] and top == "小狐狸" and pa.evaluate(KV, "kfs2:name:guangyi") == "小狐狸" and pa.get_by_text("光义改了名字").count() == 1 and pa.get_by_text("光义换了新头像").count() == 1,
        "掐断·名字：这一条里他改的名字照旧算数（顶上是新名字、对话里留一行提示，他自己说过的话里也还写着）；换头像的提示只有先前那一回的")
     A.close()
@@ -602,7 +604,7 @@ FRESH_HOOK = """(firstBubble) => {
   IDBObjectStore.prototype.put = function (rec, ...a) {
     const r = put.call(this, rec, ...a);
     try {
-      if (window.__fresh && rec && typeof rec.k === 'string' && rec.k.startsWith('kfs2:chat:') && typeof rec.v === 'string' && rec.v.includes('照着说') && rec.v.includes('pig_king_awake'))
+      if (window.__fresh && rec && typeof rec.k === 'string' && rec.k.startsWith('kfs2:chat:') && typeof rec.v === 'string' && rec.v.includes('照着说') && rec.v.includes('乙图'))
         this.transaction.addEventListener('complete', () => { window.__saved = true; });
     } catch (e) {}
     return r;
@@ -627,9 +629,10 @@ def fresh(browser):
     A = phone(browser)
     pa = page_of(A, "fresh")
     first_time(pa)
-    say(pa, "原样回：[AVATAR:fox_reading_book.jpg]\n先换一张")
+    seed_his_book(pa, ["甲图", "乙图"])       # 他换头像只认头像册里有描述的（见 src/hisBook.js）
+    say(pa, "原样回：[AVATAR:甲图]\n先换一张")
     wait_js(pa, shown("先换一张"), 20000); pa.wait_for_timeout(1500)
-    parts = [LONG("头一条"), LONG("第二条"), "[AVATAR:pig_king_awake.jpg]", LONG("第三条")]
+    parts = [LONG("头一条"), LONG("第二条"), "[AVATAR:乙图]", LONG("第三条")]
     pa.evaluate(FRESH_HOOK, parts[0])
     mock("/__debug/claude-hold?ms=4000")
     say(pa, "原样回：" + "\n[SPLIT]\n".join(parts))
@@ -642,7 +645,7 @@ def fresh(browser):
     m = msgs[-1]
     av = json.loads(pa.evaluate(KV, "kfs2:avatar:guangyi") or "null")
     ok(fired and pa.evaluate("window.__bubbleAtTap") is False and m["role"] == "him" and len(m["items"]) == 1 and m.get("cut") is True and m["raw"] == parts[0] and key(pa) == "打电话" and not typing(pa)
-       and (av or {}).get("file") == "fox_reading_book.jpg" and pa.evaluate(shown(parts[0])) and not pa.evaluate(shown(parts[1])),
+       and (av or {}).get("label") == "甲图" and pa.evaluate(shown(parts[0])) and not pa.evaluate(shown(parts[1])),
        "回话刚摆出来、画面还没重画的那一眨眼按停（按的时候一条都还没画出来）：只留头一条，他自己说过的话跟着改，没蹦到的换头像换回去；不会整条一下子全摆出来")
     A.close()
 
@@ -663,6 +666,7 @@ def guard(browser):
     A = phone(browser)
     pa = page_of(A, "guard")
     first_time(pa)
+    seed_his_book(pa, ["乙图"])               # 他换头像只认头像册里有描述的（见 src/hisBook.js）：册子里有这一张，作废了才看得出“没换”
     chat(pa, "老公在吗")
     pa.wait_for_timeout(500)
     usage0 = pa.evaluate(USAGE)
@@ -670,7 +674,7 @@ def guard(browser):
     c0 = len(calls())
     old = calls()[-1]["via"] == "claude"
     mock("/__debug/claude-hold?ms=2500")
-    say(pa, "原样回：[AVATAR:pig_king_awake.jpg]\n换了\n[NAME:小狐狸]")
+    say(pa, "原样回：[AVATAR:乙图]\n换了\n[NAME:小狐狸]")
     ok(old and wait_js(pa, TYPING, 6000), "老路上回话读完的那一下按停·准备：走的是老路，他正在回")
     pa.wait_for_timeout(600)
     pa.evaluate("window.__g = true")
@@ -679,7 +683,7 @@ def guard(browser):
     usage1 = pa.evaluate(USAGE)
     av = json.loads(pa.evaluate(KV, "kfs2:avatar:guangyi") or "null")
     cid, msgs = chat_of(pa)
-    ok(fired and msgs[-1]["role"] == "her" and msgs[-1].get("stopped") is True and notes(pa) == 1 and (av or {}).get("file") != "pig_king_awake.jpg" and pa.evaluate(KV, "kfs2:name:guangyi") != "小狐狸"
+    ok(fired and msgs[-1]["role"] == "her" and msgs[-1].get("stopped") is True and notes(pa) == 1 and (av or {}).get("label") != "乙图" and pa.evaluate(KV, "kfs2:name:guangyi") != "小狐狸"
        and usage0 == usage1 and len(usage0) == 1 and len(calls()) == c0 + 1 and pa.evaluate("document.querySelector('.kfs-his-name').textContent") == "光义",
        "老路上，回话正好读完的那一下按停：作废。头像没换、名字没改、用量没记，她那句底下一行小字")
     A.close()

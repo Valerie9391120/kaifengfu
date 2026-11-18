@@ -8,11 +8,13 @@ import { isWakeMark, wakeNote } from "../fox.js";
 import { lotText } from "../qx/pool.js";
 import { pdText } from "../pindou/parts.js";
 import { pageNote } from "../laptop.js";
+import { avOfItem } from "../hisBook.js";
 
-function avatarBlock(av, thumbLookup = () => null) {
+// picLookup(id)：他头像册里那一张的图（data URL）。册子里的头像自己带着图的用自己的；不带的（记“换之前那张”的那一份）从册子里取，取不到就附不上
+function avatarBlock(av, thumbLookup = () => null, picLookup = () => null) {
   if (!av) return null;
-  if (av.type === "upload") {
-    const m = /^data:([^;]+);base64,(.+)$/.exec(av.data || "");
+  if (av.type === "upload" || av.type === "book") {
+    const m = /^data:([^;]+);base64,(.+)$/.exec((av.type === "book" ? av.data || picLookup(av.id) : av.data) || "");
     if (!m) return null;
     return {
       type: "image",
@@ -88,6 +90,7 @@ const UNKNOWN_AV = { type: "unknown" };
 export function sameAv(a, b) {
   if (!a || !b) return !a && !b;
   if (a.type !== b.type) return false;
+  if (a.type === "book") return a.id === b.id; // 他头像册里的一张：认的是哪一张，带没带图不管
   return a.type === "upload" ? a.data === b.data : a.file === b.file;
 }
 
@@ -110,7 +113,8 @@ function herTrail(msgs, from, current) {
   return { changed: true, start, last: inWin[inWin.length - 1].m.av || null };
 }
 
-// 光义换头像写在他的回复里（items 里的 avatar）：file 是换上的，prev 是换之前的
+// 光义换头像写在他的回复里（items 里的 avatar）：file 是换上的，prev 是换之前的。
+// 11 月 18 日起他只从头像册里挑（见 ../hisBook.js）：那一项多了 pic（册子里的哪一张）和图；没有 pic 的是老记录，file 是表情包的文件名
 function hisTrail(msgs, from, current) {
   const all = [];
   msgs.forEach((m, i) => {
@@ -126,27 +130,28 @@ function hisTrail(msgs, from, current) {
   if ("prev" in first.it) start = first.it.prev || null;
   else {
     const before = all.filter((x) => x.i < first.i).pop();
-    start = before ? { type: "meme", file: before.it.file } : UNKNOWN_AV;
+    start = before ? avOfItem(before.it) : UNKNOWN_AV;
   }
-  return { changed: true, start, last: { type: "meme", file: inWin[inWin.length - 1].it.file } };
+  return { changed: true, start, last: avOfItem(inWin[inWin.length - 1].it) };
 }
 
 // 一张头像写成附注：有图带图；默认头像、图附不上、没记下来，各说各的
-function avatarNote(av, lead, defaultText, unknownText, memeLookup, thumbLookup) {
+function avatarNote(av, lead, defaultText, unknownText, memeLookup, thumbLookup, picLookup) {
   if (av === UNKNOWN_AV) return [{ type: "text", text: unknownText }];
   if (!av) return [{ type: "text", text: defaultText }];
-  const img = avatarBlock(av, thumbLookup);
+  const img = avatarBlock(av, thumbLookup, picLookup);
   if (img) return [{ type: "text", text: lead }, img];
-  const name = av.type === "meme" ? (memeLookup(av.file) || {}).name || av.file : "";
+  const name = av.type === "meme" ? (memeLookup(av.file) || {}).name || av.file : av.type === "book" ? av.label || "" : "";
   return [{ type: "text", text: name ? `${lead}「${name}」，这张图暂时附不上。` : `${lead}（这张图暂时附不上）` }];
 }
 
-// ctx：{ recaps, tier, drawLookup }。recaps 是这段对话抄过的提要（没有就不带）；tier 是“他记多长”那一档眼下的几个数（见 ../recap.js 的 tierOf）；
+// ctx：{ recaps, tier, drawLookup, picLookup }。picLookup(id)：他头像册里那一张的图（见 ../hisBook.js；不给就当取不到）。recaps 是这段对话抄过的提要（没有就不带）；tier 是“他记多长”那一档眼下的几个数（见 ../recap.js 的 tierOf）；
 // drawLookup(key)：他画的那一张眼下什么样（{ img（画好的图）, why（没画成的缘故） }，见 ../draw.js），不给就不提他画的画
 // 回 { messages, tail }：messages 是寄的那一整段；tail 是要附在最后一句话后面的几块字（在别的对话里又换过头像的那句提示），
 // 多半是空的。它不直接接在 messages 里：得放在缓存记号后面（见 system.js 的 withNowNote），
 // 不然这一回记号落在它上头，下一回它又挪到新的最后一句后面去了，上一回写下的缓存就再也对不上
 export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null, thumbLookup = () => null, docLookup = () => null, ctx = {}) {
+  const picLookup = ctx.picLookup || (() => null); // 他头像册里那一张的图（见 ../hisBook.js）
   const plan = planWindow(msgs, ctx.recaps || [], ctx.tier || tierOf());
   const from = plan.from;
   // 她发的图太多的时候，老的那几张不带图，只留那一句话（见 ../recap.js 的 staleImages）
@@ -282,12 +287,12 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
       arr.push({ role: "user", content: blocks });
     }
     if (av) {
-      const img = avatarBlock({ type: "meme", file: av.file }, thumbLookup);
+      const img = avatarBlock(avOfItem(av), thumbLookup, picLookup);
       const blocks = [
         {
           type: "text",
           text: `[开封府提示：你的新头像换好了，是「${
-            (memeLookup(av.file) || {}).name || av.file
+            av.pic ? av.file : (memeLookup(av.file) || {}).name || av.file
           }」${img ? "，长这样" : ""}]`,
         },
       ];
@@ -319,7 +324,8 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
         "【开封府附注】卿卿用的是默认的“卿”字头像。",
         "【开封府附注】卿卿这段对话开头用的什么头像没记下来。",
         memeLookup,
-        thumbLookup
+        thumbLookup,
+        picLookup
       ),
       ...avatarNote(
         mt.start,
@@ -327,7 +333,8 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
         "你用的是默认的“炅”字头像。",
         "你这段对话开头用的什么头像没记下来。",
         memeLookup,
-        thumbLookup
+        thumbLookup,
+        picLookup
       ),
       { type: "text", text: "对话中途换了头像的话，换的地方会有开封府提示，以最新的一次为准。" },
     ];
@@ -346,7 +353,8 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
           "[开封府提示：卿卿后来又换回了默认的“卿”字头像]",
           "",
           memeLookup,
-          thumbLookup
+          thumbLookup,
+          picLookup
         )
       );
     }
@@ -358,7 +366,8 @@ export function buildMessages(msgs, avatars, memeLookup, imgLookup = () => null,
           "[开封府提示：你的头像后来换回了默认的“炅”字]",
           "",
           memeLookup,
-          thumbLookup
+          thumbLookup,
+          picLookup
         )
       );
     }

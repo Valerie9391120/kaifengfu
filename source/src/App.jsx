@@ -9,6 +9,8 @@ import { MOTTO_KEY, MOTTO_LAST, DEFAULT_MOTTO, parseMotto, pickMotto, poolAt, fi
 import { MottoPanel } from "./panels/MottoPanel.jsx";
 import { AvatarBook } from "./panels/AvatarBook.jsx";
 import { BOOK_KEY, picKey, readBook, packBook, addEntry, dropEntry, renameEntry } from "./avatarBook.js";
+import { HisBook } from "./panels/HisBook.jsx";
+import { HIS_BOOK_KEY, hisPicKey, loadHisBook, packHisBook, addHis, dropHis, renameHis, describeHisEntry, parseDesc, descRule, descRedo, descLead, described, settleHisAvatar, hisAvatarOk, leanAv, fatAv, avOfItem } from "./hisBook.js";
 import { openProbe } from "./probe.js";
 import { createFollow } from "./scroll.js";
 import { createSlide } from "./slide.js";
@@ -17,7 +19,7 @@ import { THEMES, THEME_ORDER, useTheme, setTheme, entranceTheme, entranceUrl } f
 import { useWall, wallShown, wallPending, setWallOn, setWallImage, tallest, WALL_SIDE } from "./wall.js";
 import { HER_NAME, HIS_NAME, NAME_KEYS, cleanName, tidyName } from "./names.js";
 import { DOC_KEY, DOC_FMT, docFmtOf, readDoc, replyRoom } from "./docs.js";
-import { parseReply, settleAvatarItems, rawOf } from "./reply.js";
+import { parseReply, rawOf } from "./reply.js";
 import { forkAt, switchAlt, needsReply, insertReply, answeredAfter, hasJob, mailFit, mailPut, mailBefore, markStopped, unmarkStopped, stoppedAt, cutReply, stillWaiting, midTurn } from "./thread.js";
 import { GAME_PREFIX, SNAP_KEY, ON_KEY, TOOLS as GAME_TOOLS, GAME_NAMES, OFF_CALL, isGameChat, gameOn, readOn, hasSteps, needsRun, lastStep, boardIn, collectStepIds, runCalls, nanyaSub } from "./game/jianghu.js";
 import { DIARY_TOOLS, DIARY_NAMES, DIARY_KEY, isDiaryCall, runDiaryCalls, toolCallsOf } from "./diaryTools.js";
@@ -225,6 +227,7 @@ const RECAP_ROOM = 4000; // 抄的那一回最多让他写这么多 token：一�
 // 自己会先想一阵再写的模型（models.js 的 thinksFirst）：想的那些字也算在这个数里，所以放宽一倍，免得想的把写的挤掉。
 // 只放宽上限，别的不动：想多想少（effort）一改，名帖那一大段就接不上聊天时写下的缓存了
 const RECAP_ROOM_THINK = 8000;
+const DESC_ROOM = 600; // 叫他给头像写描述的那一回最多写这么多 token（就两行字；会先想一想的模型照 RECAP_ROOM_THINK）
 const RECAP_PATIENCE = 140 * 1000; // 抄的那一回最多等这么久（网关自己等到 150 秒也就不等了）
 const SWEEP_WAIT = 20 * 1000; // 开机以后过这么久，去收一遍删掉的对话留下的提要（见 sweepRecaps）
 const SWEEP_AGE = 60 * 60 * 1000; // 只收抄了一个钟头以上的：刚抄的那份，它的对话可能只是还没同步过来
@@ -264,6 +267,11 @@ export default function App({ account = {} }) {
   // 头像册：她存好的头像（见 avatarBook.js）。相册选的那几张，图另外一条一条存着，读单子的时候取回来
   const [book, setBook] = useState([]);
   const bookRef = useRef([]);
+  // 他的头像册：她给他攒的头像，他换头像只从这里挑（见 hisBook.js）。hisBusy 是正叫他写描述的那几张，hisErr 是没写成的缘故
+  const [hisBook, setHisBook] = useState([]);
+  const hisBookRef = useRef([]);
+  const [hisBusy, setHisBusy] = useState({});
+  const [hisErr, setHisErr] = useState({});
   const [names, setNames] = useState({ her: "", him: "" }); // 两个人的昵称，空的就是默认（见 names.js）
   const namesRef = useRef({ her: "", him: "" });
   const [extraMemes, setExtraMemes] = useState([]);
@@ -670,10 +678,11 @@ export default function App({ account = {} }) {
 
       const ah = safeParse(await store.get("kfs2:avatar:her"), null);
       const am = safeParse(await store.get("kfs2:avatar:guangyi"), null);
-      const bootAv = { her: ah, him: am && am.type === "meme" ? am : HIS_DEFAULT };
+      const bootAv = { her: ah, him: hisAvatarOk(am) ? am : HIS_DEFAULT };
       avatarsRef.current = bootAv;
       setAvatars(bootAv);
       await loadBook();
+      await loadHis();
       await loadNames();
 
       const mu = safeParse(await store.get(usageKey()), null);
@@ -814,11 +823,12 @@ export default function App({ account = {} }) {
       if (has("kfs2:avatar:")) {
         const ah = safeParse(await store.get("kfs2:avatar:her"), null);
         const am = safeParse(await store.get("kfs2:avatar:guangyi"), null);
-        const av = { her: ah, him: am && am.type === "meme" ? am : HIS_DEFAULT };
+        const av = { her: ah, him: hisAvatarOk(am) ? am : HIS_DEFAULT };
         avatarsRef.current = av;
         setAvatars(av);
       }
       if (has(BOOK_KEY)) await loadBook();
+      if (has(HIS_BOOK_KEY)) await loadHis();
       if (has("kfs2:name:")) await loadNames();
       if (has(RECAP_KEY)) showRecaps(chatIdRef.current);
       // 藏音匣：别的设备存了、移出了
@@ -2078,15 +2088,14 @@ export default function App({ account = {} }) {
       const lastDoc = parsed.items.filter((it) => it.type === "doc").pop();
       if (lastDoc && parsed.items[parsed.items.length - 1] === lastDoc) lastDoc.cut = true;
     }
-    const settled = settleAvatarItems(parsed.items, memeKnown);
-    // 他换头像时也记下换之前那张（见 buildMessages）
-    const prevHim = avatarsRef.current.him || null;
+    // 他换头像只认头像册里有描述的那几张（见 hisBook.js）；换的那一项上也记下换之前那张（见 buildMessages）
+    const settled = settleHisAvatar(parsed.items, hisBookRef.current, avatarsRef.current.him || null);
     const him = {
       // 走新路的，编号定了这一条的 id：两台设备各取一遍同一封信，放进对话的是同一条
       id: job ? "r" + job : newId(),
       role: "him",
       ts: ts || Date.now(),
-      items: settled.items.map((it) => (it.type === "avatar" ? { ...it, prev: prevHim } : it)),
+      items: settled.items,
       raw: parsed.body,
       thinking: parsed.thinking,
       tools: usedTools,
@@ -2105,7 +2114,7 @@ export default function App({ account = {} }) {
       if (data.stop_reason === "tool_use") {
         him.calls = calls;
         him.stop = "tool_use";
-        if (!String(parsed.body || "").trim() && !parsed.rename && !settled.avatarFile) him.items = [];
+        if (!String(parsed.body || "").trim() && !parsed.rename && !settled.av) him.items = [];
       } else
         him.calls = calls.map((c) =>
           isDiaryCall(c)
@@ -2126,7 +2135,7 @@ export default function App({ account = {} }) {
       made.saves.forEach((x) => store.set(x.key, x.value));
       him.items = [...him.items, ...made.items];
     }
-    if (settled.avatarFile) changeHisAvatar({ type: "meme", file: settled.avatarFile });
+    if (settled.av) changeHisAvatar(settled.av);
     // 他给自己改了名字：顶栏马上换；回复上记一笔，对话里留一行提示（和现在一样的不算改）
     if (parsed.rename && parsed.rename !== (namesRef.current.him || HIS_NAME)) {
       him.rename = parsed.rename;
@@ -2320,6 +2329,7 @@ export default function App({ account = {} }) {
       room: roomSection(wakeOn(st)), // 他的屋子：“他自己醒”开着才有这一段（见 room.js）
       luofu: luofuSection(lfPoolRef.current, wakeOn(st)), // 他屋里那张床（罗浮梦）：“他自己醒”开着、梦库里有梦才有这一段，一个字不变（见 luofu/parts.js）
       draw: !!st.draw, // 他能画画（API 面板里的开关，默认关着；见 draw.js）
+      hisBook: hisBookRef.current, // 他的头像册：【你的头像】那一段照它拼（见 hisBook.js）
     });
     // 任务标记（见 fox.js）：“他自己醒”开着的时候，平常的对话里【此刻】后面附一段，他知道能定个闹钟到点来找她。在记号后面，名帖一个字不动
     const tasks = wakeOn(st) && !isFoxChat(opts.chat) && !isGameChat(opts.chat);
@@ -2331,7 +2341,7 @@ export default function App({ account = {} }) {
       const ds = drawsRef.current[key];
       return { img: imgsRef.current[drawImgOf(key)] || null, why: ds && ds.s === "fail" ? ds.why || "没画成" : "", none: !!(ds && ds.s === "none") };
     };
-    const { messages: apiMessages, tail } = buildMessages(msgs, avatarsRef.current, memeLookup, imgLookup, thumbLookup, docLookup, { recaps: recapList, tier: recallTier(staticText), drawLookup });
+    const { messages: apiMessages, tail } = buildMessages(msgs, avatarsRef.current, memeLookup, imgLookup, thumbLookup, docLookup, { recaps: recapList, tier: recallTier(staticText), drawLookup, picLookup: hisPic });
 
     // 依次尝试：带缓存 → 不带缓存 → 不带MCP，哪种通了用哪种
     const withMcp = mcps.length > 0;
@@ -2914,7 +2924,11 @@ export default function App({ account = {} }) {
     });
     if (unpainted.length) refreshTh();
     const av = out.dropped.find((it) => it.type === "avatar");
-    if (av && sameAv(avatarsRef.current.him || null, { type: "meme", file: av.file })) changeHisAvatar(av.prev || null);
+    // 换之前那张记的是不带图的（见 hisBook.js 的 leanAv）：图从册子里补上；册子里已经没有那一张了，就回默认的
+    if (av && sameAv(avatarsRef.current.him || null, avOfItem(av))) {
+      const was = av.prev || null;
+      changeHisAvatar(was && was.type === "book" ? fatAv(was, hisBookRef.current) || HIS_DEFAULT : was);
+    }
   };
 
   // 她点“停了，点这里让我回”：照眼下的对话要一条回话。
@@ -4438,7 +4452,7 @@ export default function App({ account = {} }) {
     // 名帖那一大段和聊天时寄的一个字不差（缓存接得上；正在打电话的这段对话，心里话那一条照关着算，见 thoughtsFor；
     // 江湖棋局那一段带着【江湖棋局】那一段，见 game/jianghu.js）；【此刻】这回用不着
     const game = isOn(id) ? { board: null, mixed: !isGameChat(id) } : hasSteps(msgs) ? { off: true } : null;
-    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game, qx: qxSection(qxPoolRef.current), room: roomSection(wakeOn(st)), luofu: luofuSection(lfPoolRef.current, wakeOn(st)), draw: !!st.draw });
+    const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(id), callable: st.callable !== false, game, qx: qxSection(qxPoolRef.current), room: roomSection(wakeOn(st)), luofu: luofuSection(lfPoolRef.current, wakeOn(st)), draw: !!st.draw, hisBook: hisBookRef.current });
     // 这段对话的照片：眼前这一段的都在手上，别的对话的现从存档里取
     const photos = {};
     for (const m of msgs) {
@@ -4966,6 +4980,7 @@ export default function App({ account = {} }) {
 
   // ---- 头像 ----
   const avatarName = (av, withFile = true) => {
+    if (av && av.type === "book") return withFile ? `「${av.label}」` : av.label; // 头像册里的一张（见 hisBook.js）
     if (!av || av.type !== "meme") return "";
     const m = memeLookup(av.file);
     if (!m) return av.file;
@@ -5047,6 +5062,117 @@ export default function App({ account = {} }) {
   const renameInBook = (id, label) => {
     const next = renameEntry(bookRef.current, id, label);
     if (next) saveBook(next);
+  };
+
+  // ---- 他的头像册（见 hisBook.js、panels/HisBook.jsx）----
+  const loadHis = async () => {
+    const list = await loadHisBook((k) => store.get(k));
+    hisBookRef.current = list;
+    setHisBook(list);
+  };
+  const saveHis = (list) => {
+    hisBookRef.current = list;
+    setHisBook(list);
+    store.set(HIS_BOOK_KEY, packHisBook(list)).then((ok) => {
+      if (!ok) markStorageFail();
+    });
+  };
+  // 册子里那一张的图（寄给那边的时候补“换之前那张”的图用，见 prompt/messages.js）
+  const hisPic = (id) => {
+    const e = hisBookRef.current.find((x) => x.id === id);
+    return e && e.av ? e.av.data : null;
+  };
+  // 添一张：回 { id } 添上了；{ why } 没添成（缘故见 hisBook.js 的 addHis）
+  const addToHis = (av, label) => {
+    const r = addHis(hisBookRef.current, av, label, newId());
+    if (r.why) return r;
+    store.set(hisPicKey(r.entry.id), r.entry.av.data).then((ok) => {
+      if (!ok) markStorageFail();
+    });
+    saveHis(r.list);
+    return { id: r.entry.id };
+  };
+  // 删掉：只是册子里没有它了（他也就挑不着了），他正用着的头像不动
+  const dropFromHis = (id) => {
+    if (!hisBookRef.current.some((x) => x.id === id)) return;
+    saveHis(dropHis(hisBookRef.current, id));
+    store.del(hisPicKey(id));
+  };
+  // 改名字：回 "" 改了或者用不着改；"dup" 名字跟册子里别的重了。他正用着这一张的话，记在头像上的名字跟着改（【此刻】里写的是它）
+  const renameInHis = (id, label) => {
+    const r = renameHis(hisBookRef.current, id, label);
+    if (!r) return "";
+    if (r.why) return r.why;
+    saveHis(r.list);
+    const cur = avatarsRef.current.him;
+    const e = r.list.find((x) => x.id === id);
+    if (cur && cur.type === "book" && cur.id === id && e) changeHisAvatar({ ...cur, label: e.label });
+    return "";
+  };
+  // 她自己改描述
+  const editHisDesc = (id, look, mood) => {
+    const next = describeHisEntry(hisBookRef.current, id, look, mood);
+    if (next) saveHis(next);
+    // 上一回叫他写没写成的那行字：她自己动了手，收掉
+    setHisErr((prev) => {
+      if (!prev[id]) return prev;
+      const rest = { ...prev };
+      delete rest[id];
+      return rest;
+    });
+  };
+  // 叫他看着图写描述（“整理描述”“重写”）：图和 hisBook.js 的 descRule 那段要求单独寄给他一回，回来的两行存上。
+  // 走的是抄提要那条路（askRecap）：名帖那一大段、工具都照眼前这段对话聊天时的寄（缓存接得上），这一回不许调工具；
+  // 走笔记本的照旧走笔记本。写的工夫里她把这一张删了：不存
+  const hisBusyRef = useRef({});
+  const describeHis = async (id, redo = false) => {
+    const e = hisBookRef.current.find((x) => x.id === id);
+    if (!e || !e.av || hisBusyRef.current[id]) return;
+    const mark = (on) => {
+      hisBusyRef.current = { ...hisBusyRef.current, [id]: on };
+      if (!on) delete hisBusyRef.current[id];
+      setHisBusy({ ...hisBusyRef.current });
+    };
+    mark(true);
+    setHisErr((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    let data = null;
+    try {
+      const chat = chatIdRef.current;
+      const msgs = messagesRef.current || [];
+      const st = settingsRef.current;
+      const model = st.model || DEFAULT_MODEL;
+      const memDocs = memFilesRef.current.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTextsRef.current[f.id] || "" }));
+      const game = isOn(chat) ? { board: null, mixed: !isGameChat(chat) } : hasSteps(msgs) ? { off: true } : null;
+      const { staticText } = buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs, mcpNames: [], voice: !!st.voice, thoughts: thoughtsFor(chat), callable: st.callable !== false, game, qx: qxSection(qxPoolRef.current), room: roomSection(wakeOn(st)), luofu: luofuSection(lfPoolRef.current, wakeOn(st)), draw: !!st.draw, hisBook: hisBookRef.current });
+      const body = {
+        model,
+        max_tokens: thinksFirst(model) ? RECAP_ROOM_THINK : DESC_ROOM,
+        system: [
+          { type: "text", text: staticText, cache_control: { type: "ephemeral", ttl: "1h" } },
+          { type: "text", text: descRule(e.label) + (redo && described(e) ? "\n\n" + descRedo(e.look, e.mood) : "") },
+        ],
+        messages: [{ role: "user", content: [{ type: "text", text: descLead(e.label) }, dataUrlBlock(e.av.data)] }],
+        tools: (game ? GAME_TOOLS : []).concat(DIARY_TOOLS, QX_TOOLS, ROOM_TOOLS, LUOFU_LOOK_TOOLS),
+        tool_choice: { type: "none" },
+      };
+      data = await askRecap(body);
+      recordUsage(data, true);
+      if (data.stop_reason && data.stop_reason !== "end_turn" && data.stop_reason !== "stop_sequence") {
+        throw Object.assign(new Error("没写完"), { code: "cut", stop: data.stop_reason, out: data.usage && data.usage.output_tokens, cap: body.max_tokens });
+      }
+      const d = parseDesc((data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n"));
+      if (!d) throw Object.assign(new Error("没照“画面”“氛围”两行写"), { code: "format" });
+      const next = describeHisEntry(hisBookRef.current, id, d.look, d.mood);
+      if (next) saveHis(next);
+    } catch (err) {
+      setHisErr((prev) => ({ ...prev, [id]: recapWhy(err) }));
+    } finally {
+      mark(false);
+    }
   };
 
   const changeHisAvatar = (av) => {
@@ -5257,6 +5383,7 @@ export default function App({ account = {} }) {
       callable: st.callable !== false, // 他能打电话（API 面板里的开关，默认开着；见 call/incoming.js）
       diary: false, // 名帖不带【日记本】那一段：这一回不带工具，他翻不了（日记共读，见 diaryTools.js）
       draw: !!st.draw, // 他能画画：跟聊天那一回一样写上（名帖一样才接得上缓存）
+      hisBook: hisBookRef.current,
     });
     const msgs = dayMsgsRef.current[key] || [];
     const transcript = msgs.length ? dayTranscript(msgs, memeLookup) : "（这天你们没在开封府说话）";
@@ -5440,6 +5567,7 @@ export default function App({ account = {} }) {
         callable: st.callable !== false,
         diary: false,
         draw: !!st.draw,
+        hisBook: hisBookRef.current,
       });
       const diary = ((await loadMonth(day.slice(0, 7))) || {})[day] || {};
       const P = pageRecOf(store, day) || {};
@@ -5932,6 +6060,13 @@ export default function App({ account = {} }) {
         </Sheet>
       );
     }
+    if (sheet === "hisbook") {
+      return (
+        <Sheet title="光义的头像册" onClose={() => setSheet("account")}>
+          <HisBook list={hisBook} av={avatars.him} busy={hisBusy} errs={hisErr} onAdd={addToHis} onDrop={dropFromHis} onRename={renameInHis} onEdit={editHisDesc} onDescribe={describeHis} />
+        </Sheet>
+      );
+    }
     if (sheet === "avbook") {
       return (
         <Sheet title="头像册" onClose={() => setSheet("account")}>
@@ -5946,7 +6081,7 @@ export default function App({ account = {} }) {
           onClose={() => { setSheet(null); setClearArmed(false); setLogoutArmed(false); setBackupNote(""); }}
         >
           <AvatarSection av={avatars.her} onChange={changeHerAvatar} onBook={() => setSheet("avbook")} />
-          <HisAvatarCard av={avatars.him} name={avatarName(avatars.him, false) || "炅"} />
+          <HisAvatarCard av={avatars.him} name={avatarName(avatars.him, false) || "炅"} onBook={() => setSheet("hisbook")} />
           {/* 他写不写心里话：卿卿 10 月 14 日凌晨要的开关，放在他的头像卡片底下；一个开关管所有模型，默认开着。
               关了，寄过去的【回复格式】里就没有心里话那一条（见 prompt/system.js 的 THOUGHT_RULE）。存在设置里，跟着云端走。
               打电话的时候自动照关着寄（10 月 15 日，见 thoughtsFor），这里的开关不跟着动 */}
@@ -6132,7 +6267,7 @@ export default function App({ account = {} }) {
     }
     if (sheet === "api") {
       // “他记多长”照眼下这个模型算出来的数；眼前这段对话抄到哪儿了（见 recap.js 的 gauge）
-      const fit = recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false, qx: qxSection(qxPool), room: roomSection(wakeOn(settings)), luofu: luofuSection(lfPool, wakeOn(settings)), draw: !!settings.draw }).staticText);
+      const fit = recallTier(buildSystem({ now: new Date(), memeList: allMemes, hisAvatarName: "", memDocs: memFiles.filter((f) => f.enabled).map((f) => ({ name: f.name, content: memTexts[f.id] || "" })), mcpNames: [], voice: !!settings.voice, thoughts: settings.thoughts !== false, callable: settings.callable !== false, qx: qxSection(qxPool), room: roomSection(wakeOn(settings)), luofu: luofuSection(lfPool, wakeOn(settings)), draw: !!settings.draw, hisBook }).staticText);
       return (
         <Sheet title="API" onClose={() => { setSheet(null); setTestNote(""); setVoiceTestNote(""); if (recapTry && recapTry.done) setRecapTry(null); }}>
           <ApiPanel

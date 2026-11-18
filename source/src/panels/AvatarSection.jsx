@@ -4,7 +4,8 @@ import { T, glass, chip, chipPrimary } from "../ui/style.js";
 import { Avatar } from "../ui/Avatar.jsx";
 import { Icon } from "../ui/Icon.jsx";
 
-export function HisAvatarCard({ av, name }) {
+// 他的头像那张卡片。底下一颗“头像册”：她给他攒的头像（panels/HisBook.jsx），他换头像只从那里挑
+export function HisAvatarCard({ av, name, onBook }) {
   return (
     <div className="flex items-center" style={{ ...glass(0.5, 16), borderRadius: 20, padding: 14, gap: 14 }}>
       <Avatar av={av} who="him" size={48} />
@@ -13,6 +14,12 @@ export function HisAvatarCard({ av, name }) {
         <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 3, lineHeight: 1.5 }}>
           现在是「{name}」，我自己挑的。名字也归我自己起。想看我换，跟我说。
         </div>
+        {onBook && (
+          <button onClick={onBook} className="kfs-tap kfs-hisbook-entry flex items-center" style={{ ...chip, gap: 4, paddingRight: 10, marginTop: 10 }}>
+            头像册
+            <Icon name="chevR" size={14} />
+          </button>
+        )}
       </div>
     </div>
   );

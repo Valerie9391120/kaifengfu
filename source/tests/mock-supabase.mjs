@@ -17,7 +17,8 @@ const claudeLog = []; // 每一回问“Anthropic”：{ body, beta, via }。via
 // 压着没答的工夫里问的那头把线掐了（她按了停，push 函数不等了）的那一回：{ body, beta, via, cut: true }，没有回话
 let claudeFail = null; // 测试用：下一次问 Anthropic 照它的样子报错（workspace：key 没绑工作区；overloaded：太挤）；
 // 这三种一直管用、直到改回来：broken：回回都报 key 没绑工作区；mcp：带着工具的一律不行；
-// recap：叫他抄前情提要的那一种一律报太挤（平常的话照回）；recap-cut：抄提要的那一种写到上限被截断
+// recap：叫他抄前情提要的那一种一律报太挤（平常的话照回）；recap-cut：抄提要的那一种写到上限被截断；
+// desc：叫他给头像写描述的那一种一律报太挤；desc-bad：那一种不照“画面”“氛围”两行写
 let claudeFailTimes = 0; // overloaded 连着挤几回（不写就是一回）
 let kvFail = { times: 0, key: "" }; // 测试用：往后这么多回往库房里写都不成（库房一时出岔子，见 /__debug/kv-fail）
 let claudeHold = 0; // 测试用：下一次问 Anthropic，压这么多毫秒再答（等的工夫里她切走、关掉）
@@ -431,6 +432,9 @@ function fakeArrange(body) {
   return { status: 200, json: { model: body.model, stop_reason: "end_turn", content: think.concat([{ type: "text", text: `排好了。\n[JZ]\n${JSON.stringify(o)}\n[/JZ]` }]), usage } };
 }
 
+// 是不是叫他给头像写描述的那一种（见 src/hisBook.js 的 descRule）：跟在名帖后面的那段要求是这个标题开头的
+const descRuleOf = (body) => (Array.isArray(body.system) ? body.system.map((x) => x.text || "").find((t) => t.startsWith("【给头像写描述】")) : "") || "";
+
 // 假的那边的我：照寄来的话编一条回复。两条路问的都是它
 function fakeAnthropic(body, beta, via) {
   claudeLog.push({ body, beta, via });
@@ -447,6 +451,17 @@ function fakeAnthropic(body, beta, via) {
   }
   if (body.ping) {
     return { status: 200, json: { model: "claude-haiku-4-5-20251001", content: [{ type: "text", text: "在" }], usage: { input_tokens: 12, output_tokens: 1 } } };
+  }
+  // 叫他给头像写描述的那一种：照格式回两行，写明是哪张、带了几张图、是不是重写；desc 一律报太挤，desc-bad 不照格式写
+  const descRule = descRuleOf(body);
+  if (descRule) {
+    if (claudeFail === "desc") return { status: 529, json: { type: "error", error: { type: "overloaded_error", message: "Overloaded" } } };
+    const blocks = (body.messages[0] && body.messages[0].content) || [];
+    const name = (/名字叫「([^」]*)」/.exec(descRule) || [])[1] || "?";
+    const n = blocks.filter((b) => b.type === "image").length;
+    const redo = descRule.includes("重新写一遍");
+    const text = claudeFail === "desc-bad" ? "这张图挺好看的，我很喜欢。" : `<thinking>看了看图</thinking>\n画面：（测试）「${name}」这张图${redo ? "重写的" : ""}画面，带着 ${n} 张图。\n氛围：（测试）${redo ? "重写的氛围" : "安静"}`;
+    return { status: 200, json: { model: body.model, stop_reason: "end_turn", content: [{ type: "text", text }], usage: { input_tokens: 900, cache_creation_input_tokens: 0, cache_read_input_tokens: 8000, output_tokens: 60 } } };
   }
   // 叫他抄前情提要的那两种：照寄来的东西编一段，写明抄了几条、前面有没有提要、带了几张图
   const recapRule = recapRuleOf(body);
@@ -550,7 +565,7 @@ async function heldAnthropic(body, beta, via, signal) {
     const m = (body.messages || [])[(body.messages || []).length - 1];
     return !!m && Array.isArray(m.content) && m.content.some((b) => b && b.type === "tool_result");
   };
-  if (claudeHold && (claudeHoldKind === "recap" ? recapRuleOf(body) : claudeHoldKind === "cont" ? cont() : true)) {
+  if (claudeHold && (claudeHoldKind === "recap" ? recapRuleOf(body) : claudeHoldKind === "desc" ? descRuleOf(body) : claudeHoldKind === "cont" ? cont() : true)) {
     const ms = claudeHold;
     claudeHold = 0;
     claudeHoldKind = "";
