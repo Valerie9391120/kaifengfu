@@ -2,12 +2,6 @@ import { memeSrc } from "../memes.js";
 import { SERIF, T, HAIRLINE } from "./style.js";
 
 // ---------- 头像 ----------
-export const HER_PRESETS = [
-  { label: "白兔", file: "bunny_couple_hate_you.jpg" },
-  { label: "小老鼠", file: "mouse_caught.jpg" },
-  { label: "吃东西鼠", file: "mouse_eating.jpg" },
-  { label: "坏猫", file: "cat_angry_face.jpg" },
-];
 // 光义的头像由光义自己定：先用读书狐，之后他在回复里写 [AVATAR:文件名] 自己换
 export const HIS_DEFAULT = { type: "meme", file: "fox_reading_book.jpg" };
 

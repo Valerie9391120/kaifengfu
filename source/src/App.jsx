@@ -7,6 +7,8 @@ import { DRAW_JOB_KEY, WANT_KEY as DRAW_WANT_KEY, DRAW_SAMPLE, drawsIn, drawOf, 
 import { createPainter } from "./painter.js";
 import { MOTTO_KEY, MOTTO_LAST, DEFAULT_MOTTO, parseMotto, pickMotto, poolAt, fillMotto, mottoLines, readMotto, packMotto, describeMotto } from "./motto.js";
 import { MottoPanel } from "./panels/MottoPanel.jsx";
+import { AvatarBook } from "./panels/AvatarBook.jsx";
+import { BOOK_KEY, picKey, readBook, packBook, addEntry, dropEntry } from "./avatarBook.js";
 import { openProbe } from "./probe.js";
 import { createFollow } from "./scroll.js";
 import { createSlide } from "./slide.js";
@@ -259,6 +261,9 @@ export default function App({ account = {} }) {
   const settingsRef = useRef(DEFAULT_SETTINGS);
   const [avatars, setAvatars] = useState({ her: null, him: HIS_DEFAULT });
   const avatarsRef = useRef({ her: null, him: HIS_DEFAULT });
+  // 头像册：她存好的头像（见 avatarBook.js）。相册选的那几张，图另外一条一条存着，读单子的时候取回来
+  const [book, setBook] = useState([]);
+  const bookRef = useRef([]);
   const [names, setNames] = useState({ her: "", him: "" }); // 两个人的昵称，空的就是默认（见 names.js）
   const namesRef = useRef({ her: "", him: "" });
   const [extraMemes, setExtraMemes] = useState([]);
@@ -668,6 +673,7 @@ export default function App({ account = {} }) {
       const bootAv = { her: ah, him: am && am.type === "meme" ? am : HIS_DEFAULT };
       avatarsRef.current = bootAv;
       setAvatars(bootAv);
+      await loadBook();
       await loadNames();
 
       const mu = safeParse(await store.get(usageKey()), null);
@@ -812,6 +818,7 @@ export default function App({ account = {} }) {
         avatarsRef.current = av;
         setAvatars(av);
       }
+      if (has(BOOK_KEY)) await loadBook();
       if (has("kfs2:name:")) await loadNames();
       if (has(RECAP_KEY)) showRecaps(chatIdRef.current);
       // 藏音匣：别的设备存了、移出了
@@ -4997,6 +5004,46 @@ export default function App({ account = {} }) {
     saveChat(chatIdRef.current, next);
   };
 
+  // ---- 头像册 ----
+  const loadBook = async () => {
+    const idx = readBook(await store.get(BOOK_KEY));
+    const list = await Promise.all(
+      idx.map(async (e) => {
+        if (!e.pic) return e;
+        const data = await store.get(picKey(e.id));
+        return typeof data === "string" && data.startsWith("data:image/") ? { ...e, av: { type: "upload", data } } : e;
+      })
+    );
+    bookRef.current = list;
+    setBook(list);
+  };
+  const saveBook = (list) => {
+    bookRef.current = list;
+    setBook(list);
+    store.set(BOOK_KEY, packBook(list)).then((ok) => {
+      if (!ok) markStorageFail();
+    });
+  };
+  // 存进册子：相册选的图先单独存一条，再存单子
+  const addToBook = (av, label) => {
+    const r = addEntry(bookRef.current, av, label, newId());
+    if (!r) return false;
+    if (r.entry.pic) {
+      store.set(picKey(r.entry.id), r.entry.av.data).then((ok) => {
+        if (!ok) markStorageFail();
+      });
+    }
+    saveBook(r.list);
+    return true;
+  };
+  // 从册子里删掉：只是册子里没有它了，正用着的头像不动
+  const dropFromBook = (id) => {
+    const e = bookRef.current.find((x) => x.id === id);
+    if (!e) return;
+    saveBook(dropEntry(bookRef.current, id));
+    if (e.pic) store.del(picKey(id));
+  };
+
   const changeHisAvatar = (av) => {
     const nextAv = { ...avatarsRef.current, him: av };
     avatarsRef.current = nextAv;
@@ -5880,13 +5927,20 @@ export default function App({ account = {} }) {
         </Sheet>
       );
     }
+    if (sheet === "avbook") {
+      return (
+        <Sheet title="头像册" onClose={() => setSheet("account")}>
+          <AvatarBook list={book} av={avatars.her} onUse={changeHerAvatar} onAdd={addToBook} onDrop={dropFromBook} />
+        </Sheet>
+      );
+    }
     if (sheet === "account") {
       return (
         <Sheet
           title={<NickTitle name={names.her || HER_NAME} onSave={changeHerName} />}
           onClose={() => { setSheet(null); setClearArmed(false); setLogoutArmed(false); setBackupNote(""); }}
         >
-          <AvatarSection av={avatars.her} onChange={changeHerAvatar} />
+          <AvatarSection av={avatars.her} onChange={changeHerAvatar} onBook={() => setSheet("avbook")} />
           <HisAvatarCard av={avatars.him} name={avatarName(avatars.him, false) || "炅"} />
           {/* 他写不写心里话：卿卿 10 月 14 日凌晨要的开关，放在他的头像卡片底下；一个开关管所有模型，默认开着。
               关了，寄过去的【回复格式】里就没有心里话那一条（见 prompt/system.js 的 THOUGHT_RULE）。存在设置里，跟着云端走。

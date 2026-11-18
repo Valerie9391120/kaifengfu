@@ -1,8 +1,8 @@
 import { useState, useRef } from "react";
-import { memeSrc } from "../memes.js";
 import { fileToAvatar } from "../images.js";
 import { T, glass, chip, chipPrimary } from "../ui/style.js";
-import { HER_PRESETS, Avatar } from "../ui/Avatar.jsx";
+import { Avatar } from "../ui/Avatar.jsx";
+import { Icon } from "../ui/Icon.jsx";
 
 export function HisAvatarCard({ av, name }) {
   return (
@@ -18,11 +18,12 @@ export function HisAvatarCard({ av, name }) {
   );
 }
 
-export function AvatarSection({ av, onChange }) {
+// 她的头像那一栏：“从相册选”选了直接换上（不进册子）；“头像册”点开是存好的那些（panels/AvatarBook.jsx）。
+// 原来这里排着四颗写死的小钮和一颗“恢复默认”，11 月 18 日收成了头像册一颗
+export function AvatarSection({ av, onChange, onBook }) {
   const who = "her";
   const fileRef = useRef(null);
   const [err, setErr] = useState("");
-  const presets = HER_PRESETS;
   const pick = async (e) => {
     const f = e.target.files && e.target.files[0];
     e.target.value = "";
@@ -50,22 +51,10 @@ export function AvatarSection({ av, onChange }) {
         <button onClick={() => fileRef.current && fileRef.current.click()} className="kfs-tap" style={chipPrimary}>
           从相册选
         </button>
-        {presets.map((p) => (
-          <button
-            key={p.file}
-            onClick={() => onChange({ type: "meme", file: p.file })}
-            className="kfs-tap flex items-center"
-            style={{ ...chip, gap: 6, padding: "5px 12px 5px 5px" }}
-          >
-            <img src={memeSrc(p.file)} alt="" style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover" }} />
-            {p.label}
-          </button>
-        ))}
-        {av && (
-          <button onClick={() => onChange(null)} className="kfs-tap" style={chip}>
-            恢复默认
-          </button>
-        )}
+        <button onClick={onBook} className="kfs-tap kfs-avbook-entry flex items-center" style={{ ...chip, gap: 4, paddingRight: 10 }}>
+          头像册
+          <Icon name="chevR" size={14} />
+        </button>
       </div>
       {err && <div style={{ fontSize: 12, color: T.red2, marginTop: 8 }}>{err}</div>}
       <input ref={fileRef} type="file" accept="image/*" onChange={pick} style={{ display: "none" }} />

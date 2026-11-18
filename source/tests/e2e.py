@@ -206,7 +206,9 @@ with sync_playwright() as p:
     first_opening = opening(mock("/__debug/claude")[0]["body"])
     pa.get_by_role("button", name="打开侧栏").click(); time.sleep(0.6)
     pa.get_by_role("button", name="头像与设置").click(); time.sleep(0.5)
-    pa.get_by_role("button", name="白兔").click(); time.sleep(0.4)
+    pa.get_by_role("button", name="头像册").click(); time.sleep(0.5)  # 那四张收在头像册里了（见 e2e_avbook.py）
+    pa.get_by_role("button", name="白兔", exact=True).click(); time.sleep(0.4)
+    pa.get_by_role("button", name="关闭").click(); time.sleep(0.5)  # 头像册 → 头像与设置
     pa.get_by_role("button", name="关闭").click(); time.sleep(0.4)
     pa.locator("div.absolute.inset-0.z-30").click(); time.sleep(0.6)
     ta = pa.get_by_placeholder("说话，我听着")
