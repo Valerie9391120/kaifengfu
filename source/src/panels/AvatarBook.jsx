@@ -13,7 +13,7 @@ import { Icon } from "../ui/Icon.jsx";
 import { Avatar, avatarSrc } from "../ui/Avatar.jsx";
 import { sameAv } from "../prompt/messages.js";
 import { BOOK_MAX, LABEL_MAX, canAdd, inBook } from "../avatarBook.js";
-import { useBookRows, BookRow } from "./BookRows.jsx";
+import { useBookRows, BookRow, imeProps, isSubmitKey } from "./BookRows.jsx";
 
 const small = { fontSize: 12, color: T.inkSoft, lineHeight: 1.6 };
 const BIG = 196; // 放大出来的那张图多大
@@ -84,9 +84,9 @@ export function AvatarBook({ list, av, onUse, onAdd, onDrop, onRename }) {
             <input
               className="kfs-avbook-name flex-1 min-w-0"
               value={label}
-              onChange={(e) => setLabel(Array.from(e.target.value).slice(0, LABEL_MAX).join(""))}
+              {...imeProps(setLabel, (v) => Array.from(v).slice(0, LABEL_MAX).join(""))}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) save();
+                if (isSubmitKey(e)) save();
               }}
               placeholder="起个名字"
               aria-label="起个名字"

@@ -11,8 +11,8 @@ import { useRef, useState } from "react";
 import { fileToAvatar } from "../images.js";
 import { T, glass, chip, chipPrimary, field, fill, HAIRLINE } from "../ui/style.js";
 import { Avatar, avatarSrc } from "../ui/Avatar.jsx";
-import { HIS_BOOK_MAX, HIS_LABEL_MAX, DESC_MAX, described, hisLabel } from "../hisBook.js";
-import { useBookRows, BookRow } from "./BookRows.jsx";
+import { HIS_BOOK_MAX, DESC_MAX, described, hisLabel } from "../hisBook.js";
+import { useBookRows, BookRow, imeProps, isSubmitKey } from "./BookRows.jsx";
 
 const small = { fontSize: 12, color: T.inkSoft, lineHeight: 1.6 };
 const PIC = 116; // 展开以后左边那张图多大
@@ -51,9 +51,9 @@ function Detail({ e, busy, err, onEdit, onDescribe }) {
         {draft ? (
           <>
             <div style={tag}>画面</div>
-            <textarea className="kfs-hisbook-look kfs-field" rows={3} value={draft.look} onChange={(ev) => setDraft({ ...draft, look: clip(ev.target.value) })} aria-label="画面" style={area} />
+            <textarea className="kfs-hisbook-look kfs-field" rows={3} value={draft.look} {...imeProps((v) => setDraft((d) => (d ? { ...d, look: v } : d)), clip)} aria-label="画面" style={area} />
             <div style={{ ...tag, marginTop: 8 }}>氛围</div>
-            <textarea className="kfs-hisbook-mood kfs-field" rows={2} value={draft.mood} onChange={(ev) => setDraft({ ...draft, mood: clip(ev.target.value) })} aria-label="氛围" style={area} />
+            <textarea className="kfs-hisbook-mood kfs-field" rows={2} value={draft.mood} {...imeProps((v) => setDraft((d) => (d ? { ...d, mood: v } : d)), clip)} aria-label="氛围" style={area} />
           </>
         ) : busy ? (
           <div className="kfs-hisbook-busy" style={{ ...words, color: T.inkSoft }}>
@@ -190,9 +190,9 @@ export function HisBook({ list, av, busy = {}, errs = {}, onAdd, onDrop, onRenam
             <input
               className="kfs-avbook-name flex-1 min-w-0"
               value={label}
-              onChange={(e) => setLabel(Array.from(hisLabel(e.target.value)).slice(0, HIS_LABEL_MAX).join(""))}
+              {...imeProps(setLabel, hisLabel)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) save();
+                if (isSubmitKey(e)) save();
               }}
               placeholder="起个名字"
               aria-label="起个名字"

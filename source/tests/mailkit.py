@@ -162,6 +162,19 @@ def seed_his_book(page, names):
     page.get_by_role("button", name="关闭").click(); time.sleep(0.45)
     close_panel(page)
 
+# 装输入法：在眼下点着的输入框里一个字母一个字母打拼音（还没选字），再选字。回还没选字那会儿框里的字。
+# 她 11 月 18 日报的毛病就是这样试出来的：一边打字一边收拾的输入框，拼音打到一半被改了字，输入法就把字母交了出来
+IME = {}
+def ime(page, box, pinyin, final):
+    cdp = IME.setdefault(page, page.context.new_cdp_session(page))
+    box.click()
+    for i in range(1, len(pinyin) + 1):
+        cdp.send("Input.imeSetComposition", {"text": pinyin[:i], "selectionStart": i, "selectionEnd": i})
+    page.wait_for_timeout(200)
+    mid = box.input_value()
+    cdp.send("Input.insertText", {"text": final}); page.wait_for_timeout(200)
+    return mid
+
 def close_panel(page):
     page.get_by_role("button", name="关闭").click(); time.sleep(0.4)
     if page.locator("div.absolute.inset-0.z-30").count():

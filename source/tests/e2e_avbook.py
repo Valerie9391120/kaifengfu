@@ -153,6 +153,10 @@ with sync_playwright() as p:
         ok(fs >= 16, f"起名字的框是十六像素的字，iPhone 上点进去不会放大（{fs}）")
         pa.locator(".kfs-avbook-name").fill("一二三四五六七八九十甲乙丙丁")
         ok(pa.locator(".kfs-avbook-name").input_value() == "一二三四五六七八九十甲乙", "名字最多十二个字，多的打不进去")
+        # 用拼音打名字（她 11 月 18 日 19:10 在他那本上报的，这一本是同一个毛病）：还没选字的工夫里不动框里的字
+        nb = pa.locator(".kfs-avbook-name"); nb.fill("")
+        mid = ime(pa, nb, "hong hong de na yi zhang tu", "红红的那一张图")
+        ok(mid == "hong hong de na yi zhang tu" and nb.input_value() == "红红的那一张图", f"用拼音打名字：拼音超过十二个字母也不被截，选了字才落进去（{mid} → {nb.input_value()}）")
         pa.locator(".kfs-avbook-name").fill("  红的那张 ")
         shot(pa, "avbook_4_naming.png")
         pa.locator(".kfs-avbook-save").click(); pa.wait_for_timeout(500)
@@ -212,6 +216,8 @@ with sync_playwright() as p:
         ok(st["v"] == "白兔" and st["focus"] and st["sel"] == [0, 2] and st["fs"] >= 16 and st["others"] == 0 and st["done"] == 1 and st["img"] and box.count() == 1,
            f"点“白兔”名字后面的钢笔：名字就地变成输入框，旧名字全选着；钢笔和方格换成一个对勾，图还在（{st}）")
         shot(pa, "avbook_9_rename.png")
+        box.fill(""); mid = ime(pa, box, "da bai tu da bai tu", "大白兔")
+        ok(mid == "da bai tu da bai tu" and box.input_value() == "大白兔", "改名字的框里用拼音打：一样不被截")
         box.fill("大白兔"); box.press("Enter"); pa.wait_for_timeout(400)
         ok(labels(pa) == ["未命名", "蓝的", "红的那张", "大白兔", "小老鼠", "吃东西鼠", "坏猫"] and box.count() == 0 and using(pa) == ["蓝的"] and rows(pa)[3]["src"] == bunny,
            "打“大白兔”按回车：名字换了，位置、图都没动；打勾的还是原来那张")

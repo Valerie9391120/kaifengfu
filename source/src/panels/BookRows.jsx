@@ -17,6 +17,20 @@ import { LABEL_MAX, REVEAL, REVEAL_ARMED, swipeDir, revealAt, staysOpen } from "
 const EASE = "cubic-bezier(.2,.8,.2,1)";
 const SWALLOW_MS = 350; // 划完松手以后这么久里的那一下点击不算数（那是松手带出来的）
 
+// 一边打字一边收拾（去掉不许有的字、截到上限）的输入框用：拼音还没选字的工夫里**不动它的字**，选好了字再收拾。
+// 她 11 月 18 日报的：想打“泡泡浴”，拼音字母才打到第十二个就被截断、当成字母落进去了（那会儿每打一下都截到十二个字，
+// 还把拼音中间的空格去掉，输入法手里那一串被改了，就当场把字母交了出来）。
+// 用法：<input value={v} {...imeProps(setV, clean)} />。clean 是收拾的办法
+export function imeProps(set, clean) {
+  return {
+    onChange: (ev) => set(ev.nativeEvent && ev.nativeEvent.isComposing ? ev.target.value : clean(ev.target.value)),
+    // 选好了字（iPhone 上这一下排在最后那回 onChange 后面，那一回还算“正在选”，所以这里再收拾一遍）
+    onCompositionEnd: (ev) => set(clean(ev.target.value)),
+  };
+}
+// 回车是不是“存”：输入法选字的那一下回车不算（iPhone 上那一下报的是 229）
+export const isSubmitKey = (ev) => ev.key === "Enter" && !(ev.nativeEvent && ev.nativeEvent.isComposing) && ev.keyCode !== 229;
+
 export function useBookRows({ list, onDrop, onRename }) {
   const [open, setOpen] = useState(null); // 左滑开着（垃圾桶露着）的那一行的 id
   const [armed, setArmed] = useState(null); // 垃圾桶点过一次的那一行的 id
@@ -221,9 +235,9 @@ export function BookRow({ e, rows, tail = null, below = null, using = false, ope
               <input
                 className="kfs-avbook-rename kfs-field flex-1 min-w-0"
                 value={edit.draft}
-                onChange={(ev) => rows.setEdit({ id: e.id, draft: Array.from(ev.target.value).slice(0, LABEL_MAX).join("") })}
+                {...imeProps((v) => rows.setEdit({ id: e.id, draft: v }), (v) => Array.from(v).slice(0, LABEL_MAX).join(""))}
                 onKeyDown={(ev) => {
-                  if (ev.key === "Enter" && !ev.nativeEvent.isComposing && ev.keyCode !== 229) {
+                  if (isSubmitKey(ev)) {
                     ev.preventDefault();
                     rows.endEdit(true);
                   } else if (ev.key === "Escape") {
