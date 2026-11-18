@@ -50,9 +50,11 @@ const aiId = st1.players.ai.identity;
 ok(!r1.calls[0].err && st1.players.human.name === HER && st1.players.ai.name === HIM && st1.players.human.identity.id === "imperial", "开局：她叫卿卿、他叫小晋；她自选的帝室成员");
 ok(r1.calls[0].out.includes(`〔只给你看〕你的身份：${aiId.name}`) && /〔引擎〕status=(active|setup)｜currentPlayer=human$/.test(r1.calls[0].out), "引擎回的字后面：只给他看的他自己的身份，最后一行状态");
 ok(r1.calls[0].card.length === 1 && r1.calls[0].card[0] === "〔局〕开局 · 卿卿选了帝室成员（亲王/长公主）" && !r1.calls[0].card.join("").includes(aiId.name === st1.players.human.identity.name ? "@@" : aiId.name), `开局的卡片只写她的身份，不写他的（${r1.calls[0].card[0]}）`);
-ok(r1.board && r1.board.ch === "第一章：中原风起" && r1.board.her.join() === "1,45" && r1.board.him.join() === "1,45" && r1.board.turn === "human" && r1.board.got === 0 && r1.board.all === 36, "开局以后的棋盘：第一章，两人都在第1格、45两，轮到她");
-ok(stripLines(r1.board).join("|") === "第一章 · 中原风起|卿卿 第1格 45两 ｜ 小晋 第1格 45两" && nanyaSub(r1.board) === "第一章 · 第1格" && nanyaSub(null) === "还没开局", "顶上那条两行、南衙那一行的小字");
-ok(nowLine(r1.board).startsWith("【棋盘】第一章：中原风起；卿卿第1格、45两；小晋第1格、45两；轮到卿卿") && nowLine(null).startsWith("【棋盘】还没开局") && nowLine(r1.board, true).includes("正在打电话"), "【此刻】里那一行：棋盘眼下的样子；打电话的时候添一句不下棋");
+// 开局银两：她 11 月 18 日定的，开封府这一份两个人都是 50 两（她仓库里的原样是 45；见 tools/make_jianghu.mjs 的 HOUSE）
+ok(st1.players.human.money === 50 && st1.players.ai.money === 50 && r1.calls[0].out.includes("双方初始银两：50两。") && !r1.calls[0].out.includes("45两"), "开局：两个人各 50 两，引擎报给他的开场话里也是 50");
+ok(r1.board && r1.board.ch === "第一章：中原风起" && r1.board.her.join() === "1,50" && r1.board.him.join() === "1,50" && r1.board.turn === "human" && r1.board.got === 0 && r1.board.all === 36, "开局以后的棋盘：第一章，两人都在第1格、50两，轮到她");
+ok(stripLines(r1.board).join("|") === "第一章 · 中原风起|卿卿 第1格 50两 ｜ 小晋 第1格 50两" && nanyaSub(r1.board) === "第一章 · 第1格" && nanyaSub(null) === "还没开局", "顶上那条两行、南衙那一行的小字");
+ok(nowLine(r1.board).startsWith("【棋盘】第一章：中原风起；卿卿第1格、50两；小晋第1格、50两；轮到卿卿") && nowLine(null).startsWith("【棋盘】还没开局") && nowLine(r1.board, true).includes("正在打电话"), "【此刻】里那一行：棋盘眼下的样子；打电话的时候添一句不下棋");
 
 // 他的身份要伪装（千岁仙人这种）：先挑伪装
 let st = st1;
@@ -185,7 +187,7 @@ ok(twin[0].state.sessionId === st.sessionId && twin[1].state.sessionId === g1.st
 
 // 同一段对话里又开了一局：卡片只写开局，不拿上一局去比
 const again = await runCalls(E, st, [call("new_game", { humanIdentityMode: "select", humanIdentityId: "imperial", aiIdentityMode: "random" })]);
-ok(!again.calls[0].err && again.calls[0].card.join("|") === "〔局〕开局 · 卿卿选了帝室成员（亲王/长公主）" && again.board.her.join() === "1,45",
+ok(!again.calls[0].err && again.calls[0].card.join("|") === "〔局〕开局 · 卿卿选了帝室成员（亲王/长公主）" && again.board.her.join() === "1,50",
   `又开了一局：卡片只有开局那一行（${again.calls[0].card.join("|")}）`);
 
 // 他自己的身份：只进【此刻】给他看，顶上那条、南衙都不摆
@@ -206,7 +208,7 @@ ok(line.includes(`你在这一局里的身份：千岁仙人，伪装成${mercha
 const named = await runCalls(E, null, [call("new_game", { humanName: "  阿卿 ", aiName: "晋哥", humanIdentityMode: "select", humanIdentityId: "merchant", aiIdentityMode: "select", aiIdentityId: "escort" })]);
 ok(named.state.players.human.name === "阿卿" && named.state.players.ai.name === "晋哥" && String(named.board.names) === "阿卿,晋哥" && named.calls[0].card[0] === "〔局〕开局 · 阿卿选了商贾",
   "开局时起了名字：引擎里、棋盘上、卡片上都是这一局的名字");
-ok(stripLines(named.board)[1] === "阿卿 第1格 45两 ｜ 晋哥 第1格 45两" && nowLine(named.board).startsWith("【棋盘】第一章：中原风起；阿卿第1格、45两；晋哥第1格、45两；轮到阿卿"), "顶上那条、【此刻】那一行也照这一局的名字写");
+ok(stripLines(named.board)[1] === "阿卿 第1格 50两 ｜ 晋哥 第1格 50两" && nowLine(named.board).startsWith("【棋盘】第一章：中原风起；阿卿第1格、50两；晋哥第1格、50两；轮到阿卿"), "顶上那条、【此刻】那一行也照这一局的名字写");
 const namedRoll = await runCalls(E, named.state, [call("roll")]);
 ok(!namedRoll.calls[0].err && namedRoll.calls[0].card[0].startsWith("〔骰〕阿卿掷出"), `掷骰子的卡片也是（${namedRoll.calls[0].card[0]}）`);
 const half = await runCalls(E, null, [call("new_game", { aiName: "晋哥", humanIdentityMode: "random", aiIdentityMode: "random" })]);

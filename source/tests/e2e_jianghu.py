@@ -84,14 +84,14 @@ with sync_playwright() as p:
            "结果递回去：最后一句最前面是 tool_result（对得上他调的那一样），【此刻】排在后面")
         ok(prev["role"] == "assistant" and [x["type"] for x in prev["content"]] == ["text", "tool_use"] and prev["content"][0]["text"] == "好，开局。" and prev["content"][1]["id"] == c["id"],
            "他前面那一步照原样寄回去：他说的字、他调的那一样")
-        ok(board_line(b1)[0].startswith("【棋盘】第一章：中原风起；卿卿第1格、45两；小晋第1格、45两；轮到卿卿"), f"接着说的那一回，【此刻】里的棋盘已经是开了局的（{board_line(b1)}）")
+        ok(board_line(b1)[0].startswith("【棋盘】第一章：中原风起；卿卿第1格、50两；小晋第1格、50两；轮到卿卿"), f"接着说的那一回，【此刻】里的棋盘已经是开了局的（{board_line(b1)}）")
         ok(sys_text(b1) == sys_text(b0) and b1.get("tools") == b0.get("tools"), "名帖、工具前后两回一个字不差（缓存接得上）")
         snap = json.loads(pa.evaluate(KV, "kfs2:jhs:" + step["id"]) or "null")
         ok(snap and snap["players"]["human"]["identity"]["id"] == "merchant" and step["board"]["ch"] == "第一章：中原风起" and "stop" not in done and done.get("calls") is None,
            "这一步的整份棋盘另存了一条（kfs2:jhs:那一步）；他说完的那一条不记“没说完”")
         cards = pa.evaluate(CARDS)
         ok(cards == ["〔局〕开局 · 卿卿选了商贾"], f"聊天里摆了一张卡片，只写她的身份（{cards}）")
-        ok(pa.evaluate(STRIP) == "第一章 · 中原风起 | 卿卿 第1格 45两 ｜ 小晋 第1格 45两", f"顶上那条：第一章，两人都在第1格、45两（{pa.evaluate(STRIP)}）")
+        ok(pa.evaluate(STRIP) == "第一章 · 中原风起 | 卿卿 第1格 50两 ｜ 小晋 第1格 50两", f"顶上那条：第一章，两人都在第1格、50两（{pa.evaluate(STRIP)}）")
         ok(pa.evaluate(HIS)[:1] == ["好，开局。"] and pa.evaluate(HIS)[-1] == "轮到下一步了", "他的话：开局前那一句、卡片、接着说的两条")
 
         # ================= 帮我扔 =================
@@ -241,13 +241,13 @@ with sync_playwright() as p:
         ok([t.get("name") for t in b8.get("tools", [])] == GD and "这段对话原来是你们平常聊天" in sys_text(b8) and board_line(b8) == ["【棋盘】还没开局（还没调 new_game）。"] and "tool_choice" not in b8
            and any(blk.get("type") == "text" and blk.get("text") == "你好" for m in b8["messages"] if m["role"] == "user" and isinstance(m["content"], list) for blk in m["content"]),
            "摆开以后寄的：带着四样工具，名帖里是换了说法的那一段（原来是平常聊天），【此刻】里一行棋盘，前面聊的照样寄")
-        ok(last_chat(pa) == plain_id and pa.evaluate(CARDS)[-1:] == ["〔局〕开局 · 阿卿选了商贾"] and pa.evaluate(STRIP) == "第一章 · 中原风起 | 阿卿 第1格 45两 ｜ 晋哥 第1格 45两",
+        ok(last_chat(pa) == plain_id and pa.evaluate(CARDS)[-1:] == ["〔局〕开局 · 阿卿选了商贾"] and pa.evaluate(STRIP) == "第一章 · 中原风起 | 阿卿 第1格 50两 ｜ 晋哥 第1格 50两",
            f"开局时起了名字（她叫阿卿、他叫晋哥）：卡片、顶上那条照这一局的名字写（{pa.evaluate(STRIP)}）")
         index = json.loads(pa.evaluate(KV, "kfs2:index") or "[]")
         ok(any(x["id"] == plain_id and x["title"] == "你好" for x in index), "这段对话的名字没变（还叫“你好”，不改成“江湖棋局”）")
         jianghu_sheet(pa)
         sheet2 = pa.locator(".kfs-jianghu").inner_text()
-        ok(pa.locator(".kfs-jianghu-stop").count() == 1 and pa.locator(".kfs-jianghu-here").count() == 0 and "阿卿 第1格 45两" in sheet2 and "正摆着棋盘" in sheet2,
+        ok(pa.locator(".kfs-jianghu-stop").count() == 1 and pa.locator(".kfs-jianghu-here").count() == 0 and "阿卿 第1格 50两" in sheet2 and "正摆着棋盘" in sheet2,
            "再点开那一张：“上一局”是这段对话里的这一局，换成一颗“收棋”")
         pa.locator(".kfs-jianghu-stop").click(); time.sleep(0.8)
         ok(pa.evaluate(STRIP) is None and plain_id not in ons(pa) and pa.evaluate(CARDS)[-1:] == ["〔局〕开局 · 阿卿选了商贾"], "收棋：顶上那条没了，单子里拿掉了，下过的卡片还在")
@@ -266,7 +266,7 @@ with sync_playwright() as p:
         ok(any(x.startswith("（测试主持）没成：棋盘收着") for x in pa.evaluate(HIS)), "他接着说的时候看得到没下成")
         jianghu_sheet(pa)
         pa.locator(".kfs-jianghu-here").click(); time.sleep(0.8)
-        ok(pa.evaluate(STRIP) == "第一章 · 中原风起 | 阿卿 第1格 45两 ｜ 晋哥 第1格 45两" and plain_id in ons(pa), "再摆开：接着原来那一局（顶上那条还是那一局）")
+        ok(pa.evaluate(STRIP) == "第一章 · 中原风起 | 阿卿 第1格 50两 ｜ 晋哥 第1格 50两" and plain_id in ons(pa), "再摆开：接着原来那一局（顶上那条还是那一局）")
         # 收起来：后面几段照旧用专门下棋的那一局
         jianghu_sheet(pa)
         pa.locator(".kfs-jianghu-stop").click(); time.sleep(0.8)

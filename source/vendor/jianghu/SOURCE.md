@@ -12,7 +12,9 @@
 
 ## 原样拷来的
 
-- `engine/game.ts`：只换了头上一行，`node:crypto` 换成 `./rng.js`
+- `engine/game.ts`：头上一行 `node:crypto` 换成 `./rng.js`；另有她在开封府这头定的规矩（只改这一份，她仓库里的不动；写在脚本的 HOUSE 那张表里）：
+  - 开局银两 45 两 → 50 两（两个人都是）
+  - 开局那段话里报的数跟着改
 - `engine/types.ts`
 - `content/`、`chapters/` 里的 JSON
 

@@ -3,7 +3,7 @@
 // 江湖棋局是卿卿和恩师 10 月 5 日到 7 日做的双人武侠桌游（仓库 veden001/jianghu-rp-mcp：文本、玩法她写的，引擎恩师写的）。
 // 原来是在聊天里由那边的我直接调引擎的函数来下；开封府里由开封府在手机上替他调（见 src/game/jianghu.js、开发说明“江湖棋局”那一节）。
 //
-// 这个脚本把她仓库里的引擎和章节原样拷到 vendor/jianghu/，只动离不开电脑的三处，别的一个字不动：
+// 这个脚本把她仓库里的引擎和章节原样拷到 vendor/jianghu/，只动离不开电脑的三处，外加她在开封府这头定的规矩（见下面的 HOUSE），别的一个字不动：
 //   1. game.ts 头上那一行 import { randomInt, randomUUID } from 'node:crypto' 换成 './rng.js'（手机自带的随机数）
 //   2. content.ts 换成开封府写的：章节、身份、道具直接打进包里，不读文件（读出来的东西和她的一样，每回给一份新的）
 //   3. store.ts 换成开封府写的：存档不写文件，放在“眼下这一局”那一格里，开封府每回调引擎之前放进去、调完拿走
@@ -37,7 +37,20 @@ const want = [
 for (const w of want) if (!imports.includes(w)) stop(`game.ts 里没有这一行：${w}`);
 const others = imports.filter((l) => !want.includes(l));
 if (others.some((l) => !/from '\.\/types\.js';$/.test(l))) stop(`game.ts 多了没见过的 import：\n${others.join("\n")}`);
-const gameOut = game.replace(want[0], "import { randomInt, randomUUID } from './rng.js';");
+let gameOut = game.replace(want[0], "import { randomInt, randomUUID } from './rng.js';");
+
+// ---- 她在开封府这头定的规矩：只改开封府里的这一份，她仓库里的原样不动 ----
+// 一处一处对着原文换：原文得正好出现一回，对不上（她那边改过这一行了）就停下来看，别闷头换。
+// 要添新的：在这张表里加一行，写上是哪天定的、为什么。
+const HOUSE = [
+  { what: "开局银两 45 两 → 50 两（两个人都是）", from: "    money: 45,\n", to: "    money: 50,\n" },
+  { what: "开局那段话里报的数跟着改", from: "'双方初始银两：45两。'", to: "'双方初始银两：50两。'" },
+];
+for (const h of HOUSE) {
+  const n = gameOut.split(h.from).length - 1;
+  if (n !== 1) stop(`开封府这头改的规矩对不上原文（“${h.what}”）：原文里这一处出现了 ${n} 回，应该正好一回：${JSON.stringify(h.from)}`);
+  gameOut = gameOut.replace(h.from, h.to);
+}
 
 // ---- 章节：照她 content.ts 里那张表（CHAPTER_CONTENT）的次序 ----
 const content = read("src/engine/content.ts");
@@ -218,7 +231,8 @@ put(
 
 ## 原样拷来的
 
-- \`engine/game.ts\`：只换了头上一行，\`node:crypto\` 换成 \`./rng.js\`
+- \`engine/game.ts\`：头上一行 \`node:crypto\` 换成 \`./rng.js\`；另有她在开封府这头定的规矩（只改这一份，她仓库里的不动；写在脚本的 HOUSE 那张表里）：
+${HOUSE.map((h) => `  - ${h.what}`).join("\n")}
 - \`engine/types.ts\`
 - \`content/\`、\`chapters/\` 里的 JSON
 
