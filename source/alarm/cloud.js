@@ -84,11 +84,19 @@ export function createCloud(creds) {
 
   const headers = async (extra = {}) => ({ apikey: SUPABASE_KEY, Authorization: `Bearer ${await token()}`, ...extra });
 
-  // 库房：一页一页往后翻（同网页那头 src/cloud.js 的 remote.fetchPage，排序、接着翻的规矩一样）
-  async function fetchPage({ from, cursor, limit }) {
-    const q = new URLSearchParams({ select: "key,value,updated_at", order: "updated_at.asc,key.asc", limit: String(limit) });
+  // 库房往下拉分两步（同网页那头 src/cloud.js，见 src/engine.js 开头）：
+  // 先一页一页问哪几行改过、什么时候（只有钥匙名和时间，排序、接着翻的规矩同手机），再只取真要的那几行
+  async function fetchStamps({ from, cursor, limit }) {
+    const q = new URLSearchParams({ select: "key,updated_at", order: "updated_at.asc,key.asc", limit: String(limit) });
     if (cursor) q.set("or", `(updated_at.gt."${cursor.t}",and(updated_at.eq."${cursor.t}",key.gt."${cursor.k}"))`);
     else if (from) q.set("updated_at", "gte." + from);
+    const r = await ask(`${SUPABASE_URL}/rest/v1/kv?${q}`, { headers: await headers() });
+    if (!r.ok) throw coded(r.status === 401 ? "auth" : "store", "库房没给东西：" + why(r));
+    return Array.isArray(r.data) ? r.data : [];
+  }
+  async function fetchRows(keys) {
+    if (!keys.length) return [];
+    const q = new URLSearchParams({ select: "key,value,updated_at", key: `in.(${keys.join(",")})` });
     const r = await ask(`${SUPABASE_URL}/rest/v1/kv?${q}`, { headers: await headers() });
     if (!r.ok) throw coded(r.status === 401 ? "auth" : "store", "库房没给东西：" + why(r));
     return Array.isArray(r.data) ? r.data : [];
@@ -104,15 +112,17 @@ export function createCloud(creds) {
     return out;
   }
 
+  // 传上去，回每一行在云端记的时间（只回钥匙名和时间）：闹钟自己刚写的，下回拉的时候不用再取回来
   async function upsert(rows) {
-    if (!rows.length) return;
+    if (!rows.length) return [];
     const uid = session && session.user && session.user.id;
-    const r = await ask(`${SUPABASE_URL}/rest/v1/kv?on_conflict=user_id,key`, {
+    const r = await ask(`${SUPABASE_URL}/rest/v1/kv?on_conflict=user_id,key&select=key,updated_at`, {
       method: "POST",
-      headers: await headers({ "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" }),
+      headers: await headers({ "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=representation" }),
       body: JSON.stringify(rows.map((x) => (uid ? { user_id: uid, ...x } : x))),
     });
     if (!r.ok) throw coded("store", "没存上：" + why(r));
+    return Array.isArray(r.data) ? r.data : [];
   }
 
   // 问那边的我（同网页那头 src/cloud.js 的 callClaude：拿着登录凭证敲 claude 函数的门，它转给 Anthropic）
@@ -204,7 +214,8 @@ export function createCloud(creds) {
   return {
     login,
     token,
-    fetchPage,
+    fetchStamps,
+    fetchRows,
     fetchKeys,
     upsert,
     callClaude,

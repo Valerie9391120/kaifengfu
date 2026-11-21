@@ -20,6 +20,9 @@ let claudeFail = null; // 测试用：下一次问 Anthropic 照它的样子报�
 // recap：叫他抄前情提要的那一种一律报太挤（平常的话照回）；recap-cut：抄提要的那一种写到上限被截断；
 // desc：叫他给头像写描述的那一种一律报太挤；desc-bad：那一种不照“画面”“氛围”两行写
 let claudeFailTimes = 0; // overloaded 连着挤几回（不写就是一回）
+// 库房往外发了多少（kv 表 GET 回的字节数，同 Supabase 后台的“PostgREST Egress”）：网页（浏览器）、闹钟（Node）各记各的，
+// value：其中存档那几行（h_ 开头的）的内容占了多少（对暗号的 m_check 那一小行闹钟每拉一回都取，几十个字，不算）。/__debug/kv-egress 看，?reset=1 清零（11 月 21 日流量超了以后加的，见 src/engine.js 开头）
+const kvEgress = { browser: 0, node: 0, value: 0, gets: 0 };
 let kvFail = { times: 0, key: "" }; // 测试用：往后这么多回往库房里写都不成（库房一时出岔子，见 /__debug/kv-fail）
 let claudeHold = 0; // 测试用：下一次问 Anthropic，压这么多毫秒再答（等的工夫里她切走、关掉）
 let echoSeq = 0; // “原样回：”回过几回（回话里写 {回} 换成这是第几回：重新回答的那一版和原来那一版字不一样，分得清）
@@ -873,6 +876,11 @@ const server = http.createServer(async (req, res) => {
 
     // ---- 调试用 ----
     if (url.pathname === "/__debug/rows") return send(res, 200, [...rows.values()]);
+    if (url.pathname === "/__debug/kv-egress") {
+      const now = { ...kvEgress };
+      if (url.searchParams.get("reset")) Object.assign(kvEgress, { browser: 0, node: 0, value: 0, gets: 0, recent: [] });
+      return send(res, 200, now);
+    }
     if (url.pathname === "/__debug/claude") return send(res, 200, claudeLog);
     if (url.pathname === "/__debug/claude-fail") {
       claudeFail = url.searchParams.get("kind") || null;
@@ -1040,6 +1048,7 @@ const server = http.createServer(async (req, res) => {
         await laptopUp();
       }
       rows.clear();
+      Object.assign(kvEgress, { browser: 0, node: 0, value: 0, gets: 0, recent: [] });
       claudeLog.length = 0;
       claudeFail = null;
       kvFail = { times: 0, key: "" };
@@ -1136,11 +1145,15 @@ const server = http.createServer(async (req, res) => {
         list.sort((a, b) => tsNum(a.updated_at) - tsNum(b.updated_at) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
         const limit = Number(url.searchParams.get("limit") || 1000);
         const sel = (url.searchParams.get("select") || "*").split(",");
-        return send(
-          res,
-          200,
-          list.slice(0, limit).map((r) => Object.fromEntries(sel.map((c) => [c, r[c]])))
-        );
+        const out = list.slice(0, limit).map((r) => Object.fromEntries(sel.map((c) => [c, r[c]])));
+        const bytes = Buffer.byteLength(JSON.stringify(out));
+        kvEgress[/node/i.test(req.headers["user-agent"] || "") ? "node" : "browser"] += bytes;
+        const archive = out.filter((r) => typeof r.value === "string" && String(r.key || "").startsWith("h_"));
+        kvEgress.value += archive.reduce((n, r) => n + r.value.length, 0);
+        kvEgress.gets++;
+        // 最近几回取了内容的（看是谁在取、取的哪几行）
+        if (archive.length) kvEgress.recent = [...(kvEgress.recent || []).slice(-19), { who: /node/i.test(req.headers["user-agent"] || "") ? "node" : "browser", q: url.search.slice(0, 160), rows: archive.length, value: archive.reduce((n, r) => n + r.value.length, 0) }];
+        return send(res, 200, out);
       }
       if (req.method === "POST") {
         const body = JSON.parse((await readBody(req)) || "[]");
@@ -1150,9 +1163,17 @@ const server = http.createServer(async (req, res) => {
           return send(res, 503, { message: "upstream connect error (test)", code: "PGRST000" });
         }
         const t = stamp();
+        const done = [];
         for (const r of list) {
           if (r.user_id && r.user_id !== u.id) return send(res, 403, { message: 'new row violates row-level security policy for table "kv"', code: "42501" });
-          rows.set(u.id + "|" + r.key, { user_id: u.id, key: r.key, value: r.value, updated_at: t });
+          const row = { user_id: u.id, key: r.key, value: r.value, updated_at: t };
+          rows.set(u.id + "|" + r.key, row);
+          done.push(row);
+        }
+        // Prefer: return=representation 的（照 select 那几栏回写进去的行，同 PostgREST）；不要的回空
+        if (/return=representation/.test(req.headers.prefer || "")) {
+          const sel = (url.searchParams.get("select") || "*").split(",");
+          return send(res, 201, done.map((r) => (sel[0] === "*" ? r : Object.fromEntries(sel.map((c) => [c, r[c]])))));
         }
         return send(res, 201);
       }

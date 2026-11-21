@@ -15,11 +15,13 @@ const fail = (error) => {
 };
 
 // 库房：只有一张 kv 表，所有内容在手机上就已经加密
+// 往下拉分两步（见 engine.js 的 pull）：先只问哪几行、什么时候改的（fetchStamps，一行几十个字），再只取真要的那几行的内容（fetchRows）。
+// 11 月 21 日改的：原来一步连内容一起取，往回多拉的那一分钟里的几行（多半是整段对话）每拉一回就重新下载一遍，Supabase 的流量超了
 export const remote = {
-  async fetchPage({ from, cursor, limit }) {
+  async fetchStamps({ from, cursor, limit }) {
     let q = supabase
       .from("kv")
-      .select("key,value,updated_at")
+      .select("key,updated_at")
       .order("updated_at", { ascending: true })
       .order("key", { ascending: true })
       .limit(limit);
@@ -29,10 +31,18 @@ export const remote = {
     if (error) fail(error);
     return data || [];
   },
-  async upsert(rows) {
-    if (!rows.length) return;
-    const { error } = await supabase.from("kv").upsert(rows, { onConflict: "user_id,key" });
+  async fetchRows(keys) {
+    if (!keys.length) return [];
+    const { data, error } = await supabase.from("kv").select("key,value,updated_at").in("key", keys);
     if (error) fail(error);
+    return data || [];
+  },
+  // 传上去，回每一行在云端记的时间（只回钥匙名和时间，不回内容）：这台设备自己刚传上去的，下回拉的时候不用再取回来
+  async upsert(rows) {
+    if (!rows.length) return [];
+    const { data, error } = await supabase.from("kv").upsert(rows, { onConflict: "user_id,key" }).select("key,updated_at");
+    if (error) fail(error);
+    return data || [];
   },
   async getMeta() {
     const { data, error } = await supabase.from("kv").select("key,value").in("key", ["m_kdf", "m_check"]);

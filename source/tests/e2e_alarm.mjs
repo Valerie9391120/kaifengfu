@@ -398,6 +398,22 @@ await sleep(2500);
 const afterDel = JSON.parse((await read("kfs2:chat:hyz")) || "[]");
 ok(afterDel.length === fox.length - 1 && !afterDel.some((m) => m.id === step1.id), "后台跑：她在手机上删了他的一句（手机那头看见过这几行）：不放回去");
 
+// 流量（11 月 21 日超了以后加的，见 src/engine.js 开头）：后台每半秒拉一回，什么都没变的时候存档一行都不再取（原来那一分钟里的整段对话回回重新下载；
+// 对暗号的 m_check 那一小行每回照取，几十个字，不算）；
+// 手机那头写了一样，闹钟只取那一行、只取一回
+await get("/__debug/kv-egress?reset=1");
+await sleep(4000);
+const quiet = await get("/__debug/kv-egress?reset=1");
+if (quiet.value) console.log(JSON.stringify(quiet.recent, null, 1));
+ok(quiet.gets >= 6 && quiet.value === 0, `后台跑：四秒拉了好几回（问了 ${quiet.gets} 回），什么都没变，内容一行都没再取（${quiet.node} 字节都是“哪几行改过”）`);
+const memoKey = await rowKeyFor(vault, "kfs2:fox:memo:egress");
+await put({ "kfs2:fox:memo:egress": "一张便条".repeat(50) });
+await sleep(3000);
+const once = await get("/__debug/kv-egress?reset=1");
+const memoRow = (await get("/__debug/rows")).find((r) => r.key === memoKey);
+if (!(once.value > 0 && once.value <= memoRow.value.length)) console.log(JSON.stringify(once.recent, null, 1));
+ok(once.value > 0 && once.value <= memoRow.value.length, `后台跑：手机那头写了一样，闹钟只取了那一行、一回（${once.value} 字）`);
+
 // 后台在跑的时候手敲 wake：交给后台叫。问到了，一时放不进存档（库房不应）：封好记着，过一会儿只再放，不再问他一遍
 const nAsk = (await get("/__debug/claude")).length;
 await get("/__debug/reply-queue?text=" + encodeURIComponent("<thinking>又想她了</thinking>\n又醒了一回，看看你在不在"));

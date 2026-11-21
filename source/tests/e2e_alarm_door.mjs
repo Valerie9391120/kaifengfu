@@ -219,7 +219,7 @@ r = alarm(["status"]);
 ok(r.out.includes("笔记本那扇门：开着"), "status 里写着门开着");
 let res = await fetch(`http://127.0.0.1:${DOOR}/kfs/ping`, { headers: { "x-kfs-door": token2 } });
 let d = await res.json();
-ok(res.status === 200 && d.ok && d.version === "2026-11-18", `带着新暗记敲 ping：回闹钟的版本（${d.version}）`);
+ok(res.status === 200 && d.ok && d.version === "2026-11-21", `带着新暗记敲 ping：回闹钟的版本（${d.version}）`);
 ok((await fetch(`http://127.0.0.1:${DOOR}/kfs/ping`, { headers: { "x-kfs-door": token } })).status === 401, "换掉的那一串暗记不管用了");
 if (CLAUDE) {
   res = await fetch(`http://127.0.0.1:${DOOR}/kfs/claude`, { method: "POST", headers: { "content-type": "application/json", "x-kfs-door": token2 }, body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 100, messages: [{ role: "user", content: "你好" }] }) });

@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { deriveVault, newSalt, seal, unseal, rowKeyFor, CHECK_TEXT } from "../src/vault.js";
-import { createEngine, cmpTs, tsMinus, PAGE } from "../src/engine.js";
+import { createEngine, cmpTs, tsMinus, PAGE, trimEdge, edgeFrom } from "../src/engine.js";
 import { localDb } from "../src/localdb.js";
 import { explainError } from "../src/errors.js";
 
@@ -9,8 +9,10 @@ const ok = (c, m) => { if (c) { pass++; console.log("ok:", m); } else { failN++;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---- 假云端：照 PostgREST 的规矩排序、过滤、翻页；同一批写入共用一个时间戳（像 Postgres 的 now()） ----
+// sent：往外发了多少字（同 Supabase 后台记的流量）；valueSent：其中整行内容占了多少；stampless：传上去不回时间（像改之前的云端）
 class FakeRemote {
-  constructor() { this.rows = new Map(); this.clock = Date.UTC(2026, 9, 1, 14, 0, 0) * 1000; this.down = false; this.calls = 0; }
+  constructor() { this.rows = new Map(); this.clock = Date.UTC(2026, 9, 1, 14, 0, 0) * 1000; this.down = false; this.calls = 0; this.sent = 0; this.valueSent = 0; this.stampless = false; }
+  count(list) { this.sent += JSON.stringify(list).length; this.valueSent += list.reduce((n, r) => n + (r.value ? r.value.length : 0), 0); return list; }
   stamp() {
     this.clock += 1234;
     const ms = Math.floor(this.clock / 1000), us = this.clock % 1000;
@@ -24,14 +26,19 @@ class FakeRemote {
     if (this.down) throw new Error("network down");
     const t = this.stamp();
     for (const r of rows) this.rows.set(r.user_id + "|" + r.key, { ...r, updated_at: t });
+    return this.stampless ? undefined : rows.map((r) => ({ key: r.key, updated_at: t }));
   }
-  async fetchPage({ from, cursor, limit }) {
+  async fetchStamps({ from, cursor, limit }) {
     if (this.down) throw new Error("network down");
     let list = [...this.rows.values()];
     if (cursor) list = list.filter((r) => cmpTs(r.updated_at, cursor.t) > 0 || (cmpTs(r.updated_at, cursor.t) === 0 && r.key > cursor.k));
     else if (from) list = list.filter((r) => cmpTs(r.updated_at, from) >= 0);
     list.sort((a, b) => cmpTs(a.updated_at, b.updated_at) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-    return list.slice(0, limit).map(({ key, value, updated_at }) => ({ key, value, updated_at }));
+    return this.count(list.slice(0, limit).map(({ key, updated_at }) => ({ key, updated_at })));
+  }
+  async fetchRows(keys) {
+    if (this.down) throw new Error("network down");
+    return this.count([...this.rows.values()].filter((r) => keys.includes(r.key)).map(({ key, value, updated_at }) => ({ key, value, updated_at })));
   }
 }
 
@@ -203,6 +210,130 @@ G1.stop();
 const G2 = createEngine({ local: localG, remote: new FakeRemote(), vault, uid: "u1" });
 await G2.load();
 ok(G2.get("kfs2:chat:offline") === "没网时写的" && G2.getStatus().pending === 2, "app 关掉重开：没传上去的改动和删除都还在排队");
+
+// ---- 流量（11 月 21 日 Supabase 的流量超了以后加的，见 src/engine.js 开头） ----
+// 原来往回多拉的那一分钟里的几行每拉一回都重新下载一遍：最后改的是整段对话，手机开着每四十五秒、闹钟每五分钟就是一整段
+{
+  const R = new FakeRemote();
+  const LA = new FakeLocal(), LB = new FakeLocal();
+  const P = createEngine({ local: LA, remote: R, vault, uid: "u1" });   // 手机
+  const Q = createEngine({ local: LB, remote: R, vault, uid: "u1" });   // 另一台
+  await P.load(); await Q.load();
+  const longChat = JSON.stringify(Array.from({ length: 3000 }, (_, i) => ({ role: i % 2 ? "him" : "her", text: "今天的第" + i + "句话，说得长一点长一点长一点" })));
+  await P.set("kfs2:chat:long", longChat);
+  await P.set("kfs2:index", JSON.stringify([{ id: "long" }]));
+  await P.set("kfs2:lastChat", "long");
+  await P.push();
+  const big = [...R.rows.values()].reduce((n, r) => n + r.value.length, 0);
+  ok(big > 200000, `一段长对话加目录，密文一共 ${Math.round(big / 1000)} KB`);
+
+  R.valueSent = 0;
+  await P.pull();
+  ok(R.valueSent === 0, "手机自己刚传上去的：拉的时候不再取回来（云端回了时间，记下了）");
+
+  R.valueSent = 0; R.sent = 0;
+  for (let i = 0; i < 80; i++) await P.pull();
+  ok(R.valueSent === 0 && R.sent < 80 * 400, `什么都没变，连着拉八十回（开着一个钟头）：内容一行都没再取，一共只问了 ${R.sent} 个字的“哪几行改过”`);
+
+  R.valueSent = 0;
+  await Q.pull();
+  const once = R.valueSent;
+  ok(Q.get("kfs2:chat:long") === longChat && once >= big - 10, "另一台头一回拉：整段对话取下来一遍");
+  R.valueSent = 0;
+  for (let i = 0; i < 10; i++) await Q.pull();
+  ok(R.valueSent === 0, "另一台再拉十回：不再取");
+
+  // 手机又说了一句：另一台只取改了的那一行（对话、目录这一回都改了），而且只取一回
+  const longer = longChat.slice(0, -1) + ',{"role":"her","text":"再说一句"}]';
+  await P.set("kfs2:chat:long", longer);
+  await P.push();
+  R.valueSent = 0;
+  await Q.pull(); await Q.pull(); await Q.pull();
+  const chatRow = R.rows.get("u1|" + (await rowKeyFor(vault, "kfs2:chat:long")));
+  ok(Q.get("kfs2:chat:long") === longer && R.valueSent <= chatRow.value.length + 10, "手机又说了一句：另一台拉三回，只取了改了的那一行、一回");
+
+  // 关掉重开：记着的那一分钟（edge）也在，不再取
+  const P2 = createEngine({ local: LA, remote: R, vault, uid: "u1" });
+  await P2.load();
+  R.valueSent = 0;
+  await P2.pull();
+  ok(R.valueSent === 0 && P2.get("kfs2:chat:long") === longer, "手机关掉重开：拉的时候也不再取（记着的存在本地）");
+
+  // 改之前那一版的设备（本地没记 edge）：头一回把那一分钟里的取一遍，往后不再取
+  LB.meta.delete("edge");
+  const Q2 = createEngine({ local: LB, remote: R, vault, uid: "u1" });
+  await Q2.load();
+  R.valueSent = 0;
+  await Q2.pull();
+  const first = R.valueSent;
+  R.valueSent = 0;
+  await Q2.pull(); await Q2.pull();
+  ok(first > 0 && R.valueSent === 0, "从改之前那一版换过来的设备：头一回多取一遍那一分钟里的，往后不再取");
+
+  // 云端传上去不回时间（像改之前的云端、或者回音丢了）：手机自己写的取回来一回，往后不再取，不会错
+  R.stampless = true;
+  await P2.set("kfs2:settings", JSON.stringify({ a: 1 }));
+  await P2.push();
+  R.valueSent = 0;
+  await P2.pull(); await P2.pull();
+  ok(R.valueSent > 0 && R.valueSent < 1000 && P2.get("kfs2:settings") === JSON.stringify({ a: 1 }), "传上去没回时间：自己写的那一行取回来一回（不大），往后不再取");
+  R.stampless = false;
+
+  // 问的时候和取的时候之间又改了：照取到的新的那一版放、记，不漏也不再取
+  const origRows = R.fetchRows.bind(R);
+  let sneak = true;
+  R.fetchRows = async (keys) => {
+    if (sneak) { sneak = false; await P2.set("kfs2:settings", JSON.stringify({ a: 2 })); await P2.push(); }
+    return origRows(keys);
+  };
+  await Q2.set("kfs2:note", "x"); await Q2.push();  // 让 Q2 那头有点东西要取
+  await P2.set("kfs2:settings", JSON.stringify({ a: 1.5 })); await P2.push();
+  await Q2.pull();
+  R.fetchRows = origRows;
+  R.valueSent = 0;
+  await Q2.pull();
+  ok(Q2.get("kfs2:settings") === JSON.stringify({ a: 2 }) && R.valueSent === 0, "问完、还没取的工夫里又改了：取到的就是新的那一版，下回不再取");
+
+  // 放进本地的数据库那一下出了岔子：这一版不算拿到，下回再取
+  const LZ = new FakeLocal();
+  const Z = createEngine({ local: LZ, remote: R, vault, uid: "u1" });
+  await Z.load(); await Z.pull();
+  await P2.set("kfs2:chat:flaky", "第一版"); await P2.push();
+  const origPut = LZ.putKv.bind(LZ);
+  LZ.putKv = async () => { throw new Error("disk full"); };
+  await Z.pull();
+  LZ.putKv = origPut;
+  await Z.pull();
+  ok(LZ.kv.get("kfs2:chat:flaky") && LZ.kv.get("kfs2:chat:flaky").v === "第一版", "放进本地那一下出了岔子：下回拉的时候再取一遍，放进去了");
+
+  // 记着的只留那一分钟里的：几百行改过以后也不会越攒越多
+  for (let i = 0; i < 40; i++) await P2.set("kfs2:mem:" + i, "文档" + i);
+  await P2.push();
+  for (let i = 0; i < 6; i++) { R.clock += 20 * 1000 * 1000; await P2.set("kfs2:tick", String(i)); await P2.push(); await P2.pull(); }
+  ok(P2._debug.getEdge().size <= 4, `过了几分钟：记着的只剩最近那一分钟里的几行（${P2._debug.getEdge().size}）`);
+
+  // 翻页：同一时刻写的七十行，一回只问二十行，一行不漏、一行不多取
+  const R3 = new FakeRemote();
+  const S = createEngine({ local: new FakeLocal(), remote: R3, vault, uid: "u1" });
+  await S.load();
+  for (let i = 0; i < 70; i++) await S.set("kfs2:mem:" + String(i).padStart(2, "0"), "同一时刻" + i);
+  await S.push();
+  const T = createEngine({ local: new FakeLocal(), remote: R3, vault, uid: "u1", stampPage: 20 });
+  await T.load();
+  R3.valueSent = 0;
+  await T.pull();
+  const all70 = [...R3.rows.values()].reduce((n, r) => n + r.value.length, 0);
+  ok(T.keys("kfs2:mem:").length === 70 && R3.valueSent === all70, "同一时刻写的七十行，一回问二十行翻四页：一行不漏，每行只取一回");
+  R3.valueSent = 0;
+  await T.pull();
+  ok(R3.valueSent === 0, "再拉：一行不再取");
+
+  // 工具：只留那一分钟里的；读坏了的当没有
+  const e = new Map([["a", "2026-10-01T14:00:00+00:00"], ["b", "2026-10-01T14:00:30+00:00"], ["c", "2026-10-01T14:02:00+00:00"]]);
+  trimEdge(e, "2026-10-01T14:01:20+00:00");
+  ok([...e.keys()].join() === "b,c", "记着的只留 since 往回一分钟以内的");
+  ok(edgeFrom("坏了").size === 0 && edgeFrom(null).size === 0 && edgeFrom('[["h_x","t"]]').get("h_x") === "t", "本地记着的读坏了当没有（下回多取一遍），好的照读");
+}
 
 // ---- 真正的浏览器数据库（这里用模拟的 IndexedDB） ----
 await localDb.putKv({ k: "a", v: "1", dirty: 1, del: 0 });
