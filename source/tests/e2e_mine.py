@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from PIL import Image, ImageDraw
 from playwright.sync_api import sync_playwright
 from mailkit import *
+from diarykit import diary_day
 
 errors = []
 SHOTS = os.environ.get("KFS_SHOTS", "")
@@ -174,7 +175,7 @@ with sync_playwright() as p:
         pa.on("pageerror", lambda e: errors.append(str(e)))
         first_time(pa)
         open_xianbi(pa)
-        pa.locator(f".kfs-page button[data-day='{td}']").click(); time.sleep(0.8)
+        diary_day(pa, td)
         pa.locator(".kfs-jz-open").click()
         f = frame_when(pa, DAYSCREEN, 40)
         ftap(f, "#toSelf")

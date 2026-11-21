@@ -15,6 +15,7 @@
 import json, os, re, struct, time, urllib.parse, wave
 from playwright.sync_api import sync_playwright
 from mailkit import *
+from diarykit import diary_day
 
 SHOTS = os.environ.get("KFS_SHOTS", "")
 DOOR = "http://127.0.0.1:8788"
@@ -282,6 +283,7 @@ with sync_playwright() as p:
         pa.get_by_role("button", name=re.compile("^南衙")).click(); time.sleep(0.6)
         pa.locator(".kfs-nanya-row", has_text="闲笔集").click()
         pa.locator(".kfs-page").wait_for(timeout=10000); time.sleep(0.6)
+        diary_day(pa)   # 月历上今天再点一下，翻到今天那一页
         n6 = len(calls())
         pa.get_by_role("button", name="让光义写这一天").click()
         ok(wait_js(pa, "!!document.querySelector('.kfs-lap-confirm')", 15000) and "这篇日记走 API 吗" in pa.locator(".kfs-lap-confirm").inner_text() and len(calls()) == n6,

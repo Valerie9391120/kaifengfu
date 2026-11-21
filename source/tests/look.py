@@ -14,6 +14,7 @@
 import io, json, os, re, sys, time, urllib.parse, urllib.request
 from PIL import Image, ImageDraw
 from playwright.sync_api import sync_playwright
+from diarykit import diary_day
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = os.environ.get("KFS_BASE", "http://127.0.0.1:8080/")
@@ -219,7 +220,9 @@ def tour(browser, theme):
     shot("19_nanya", 0.8)
     page.locator(".kfs-nanya-row", has_text="闲笔集").click()
     page.locator(".kfs-page").wait_for(timeout=10000)
-    shot("20_diary", 1.0)
+    shot("20_diary", 1.0)          # 月历那一页
+    diary_day(page)
+    shot("20b_diary_day", 0.6)     # 今天那一页
     page.get_by_role("button", name="返回").first.click(); time.sleep(0.6)
 
     page.get_by_role("button", name="头像与设置").click()

@@ -9,6 +9,7 @@
 import json, os, re, time
 from playwright.sync_api import sync_playwright
 from mailkit import *
+from diarykit import diary_day
 
 errors = []
 HIS = "[...document.querySelectorAll(\"[data-kfs-bubble='him']\")].map((e) => e.innerText)"
@@ -67,6 +68,7 @@ with sync_playwright() as p:
         pa.get_by_role("button", name=re.compile("^南衙")).click(); time.sleep(0.6)
         pa.locator(".kfs-nanya-row", has_text="闲笔集").click()
         pa.locator(".kfs-page").wait_for(timeout=10000); time.sleep(0.6)
+        diary_day(pa)   # 进来是月历，今天已经选中：再点一下今天，翻到今天那一页
         pa.get_by_role("button", name=re.compile("甜")).first.click(); time.sleep(0.3)
         pa.get_by_role("button", name="写几句").click(); time.sleep(0.3)
         pa.get_by_placeholder("这天发生了什么").fill(HER_DIARY)

@@ -1,6 +1,7 @@
 # 开封府端到端测试：两台“iPhone”，一个假 Supabase
 import json, re, time, urllib.request, urllib.parse, os
 from playwright.sync_api import sync_playwright
+from diarykit import diary_day, diary_cal, diary_page
 from mailkit import seed_his_book  # 往他的头像册里放一张带描述的图（他换头像只认册子里的）
 
 # 先在 source/ 里：npm run build:test，再开两个服务：
@@ -39,12 +40,16 @@ def mock(path):
 
 # 进日记（侧栏已经开着）：第四个格子是“南衙”，点了从底下冒出一张菜单，日记是里面的头一行“闲笔集”。
 # 2026 年 10 月 11 日以前这一格叫“日记本”，点了直接进。南衙自己的检查在 tests/e2e_nanya.py
-def open_diary(page):
+# 进来是月历那一页（今天已经选中）；enter：再点一下今天，翻到今天那一页（见 tests/diarykit.py）
+def open_diary(page, enter=True):
     page.get_by_role("button", name=re.compile("^南衙")).click()
     row = page.locator(".kfs-nanya-row", has_text="闲笔集")
     row.wait_for(timeout=5000); time.sleep(0.4)
     row.click()
     page.locator(".kfs-page").wait_for(timeout=10000)
+    if enter:
+        time.sleep(0.6)
+        diary_day(page)
 
 def shot(page, name):
     page.screenshot(path=f"{SHOTS}/{name}.png")
@@ -243,16 +248,30 @@ with sync_playwright() as p:
     skew = pa.evaluate("""() => new Promise((done) => { const s = document.querySelector('.select-none'); const wide = s.scrollWidth - s.clientWidth; s.scrollLeft = 80; s.scrollTop = 40; const now = [s.scrollLeft, s.scrollTop];
         setTimeout(() => { const later = [s.scrollLeft, s.scrollTop]; s.scrollLeft = 0; s.scrollTop = 0; done({ wide, now, later }); }, 150); })""")
     ok(skew["wide"] > 100 and skew["later"] == [0, 0], f"侧栏开着时外壳推不歪（对话窗伸出去 {skew['wide']} 像素，往右推 80 以后还在 {skew['later']}）")
-    open_diary(pa)
+    open_diary(pa, enter=False)
     pa.get_by_text("在一起的第").first.wait_for(timeout=10000)
     time.sleep(0.6)
-    box = pa.evaluate("""() => { const h = [...document.querySelectorAll('div')].find(d => d.textContent.trim() === '闲笔集' && d.children.length === 0); const page = h.closest('.kfs-page').getBoundingClientRect(); const mon = [...document.querySelectorAll('div')].find(d => d.textContent.trim() === '一' && d.children.length === 0).getBoundingClientRect(); return [page.x, page.width, mon.x]; }""")
-    ok(abs(box[0]) < 1 and abs(box[1] - 390) < 1 and box[2] > 20, f"日记页完全展开，周一那一列也在屏幕里（{box}）")
-    gap = pa.evaluate("""() => { const page = document.querySelector('.kfs-page'); const head = page.querySelector('[aria-label="返回"]').closest('div.relative'); const sc = page.querySelector('.kfs-page-scroll');
-        sc.scrollTop = 200; const first = sc.firstElementChild.getBoundingClientRect();
-        return [Math.round(sc.getBoundingClientRect().top - head.getBoundingClientRect().bottom), Math.round(first.top), Math.round(sc.getBoundingClientRect().top)]; }""")
-    pa.evaluate("document.querySelector('.kfs-page-scroll').scrollTop = 0")
-    ok(gap[0] == 12 and gap[1] < gap[2], f"日记往上滑：顶栏底下那道缝留着，日历在缝底下收住（{gap}）")
+    # 月历那一页：没有顶栏、没有“闲笔集”三个字；年月在上面，格子都在屏幕里；今天选中着；底下那一页这时候碰不着
+    cal = pa.evaluate("""() => { const page = document.querySelector('.kfs-page'); const r = page.getBoundingClientRect();
+        const t = page.querySelector('.kfs-diary-title'); const tr = t.getBoundingClientRect();
+        const mon = page.querySelector('.kfs-diary-mon:not([inert])'); const cells = [...mon.querySelectorAll('button[data-day]')].map((b) => b.getBoundingClientRect());
+        const d = new Date(); const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        const sel = mon.querySelector('button[aria-pressed="true"]');
+        return { x: r.x, w: r.width, title: t.getAttribute('aria-label'), want: d.getFullYear() + '年' + (d.getMonth() + 1) + '月', titleTop: tr.top, titleMid: tr.left + tr.width / 2,
+                 left: Math.min(...cells.map((c) => c.left)), right: Math.max(...cells.map((c) => c.right)), top: Math.min(...cells.map((c) => c.top)), bottom: Math.max(...cells.map((c) => c.bottom)),
+                 head: [...page.querySelectorAll('div')].some((e) => e.children.length === 0 && e.textContent.trim() === '闲笔集'),
+                 sel: sel && sel.dataset.day, key, at: page.dataset.page, dayInert: page.querySelector('.kfs-diary-day').inert, arrows: page.querySelectorAll('[aria-label="上个月"],[aria-label="下个月"]').length }; }""")
+    ok(abs(cal["x"]) < 1 and abs(cal["w"] - 390) < 1 and cal["left"] > 12 and cal["right"] < 378 and cal["top"] > cal["titleTop"] + 40 and cal["bottom"] < 844,
+       f"日记页完全展开，月历那一页的格子都在屏幕里、在年月底下（{cal}）")
+    ok(cal["title"] == cal["want"] and abs(cal["titleMid"] - 195) < 2 and cal["titleTop"] < 200 and not cal["head"] and cal["arrows"] == 0,
+       f"月历那一页：年月在上面正中，没有顶栏那行“闲笔集”，也没有左右箭头（{cal['title']}）")
+    ok(cal["sel"] == cal["key"] and cal["at"] == "0" and cal["dayInert"], f"进来停在月历那一页，今天选中着，底下那一页碰不着（{cal['sel']}）")
+    ok(diary_day(pa), "选中的那一天再点一下：翻到那一天的那一页")
+    day = pa.evaluate("""() => { const page = document.querySelector('.kfs-page'); const sec = page.querySelector('.kfs-diary-day').getBoundingClientRect(); const sc = page.querySelector('.kfs-page-scroll');
+        return { top: Math.round(sec.top), h: Math.round(sec.height), calInert: page.querySelector('.kfs-diary-cal').inert, dayInert: page.querySelector('.kfs-diary-day').inert, st: sc.scrollTop,
+                 text: page.querySelector('.kfs-diary-day').innerText }; }""")
+    ok(day["top"] == 0 and day["h"] == 844 and day["calInert"] and not day["dayInert"] and "卿卿写的" in day["text"] and "光义写的" in day["text"],
+       f"那一天的那一页铺满屏幕，月历这时候碰不着（{ {k: v for k, v in day.items() if k != 'text'} }）")
     pa.get_by_role("button", name=re.compile("甜")).first.click()
     time.sleep(0.5)
     shot(pa, "08_diary")

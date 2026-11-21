@@ -2,7 +2,7 @@
 #   格子叫“南衙”，图标是恩师画的牡丹（比手绘的那一套大一号，跟着主题色走），底下那行小字照旧是今天的日记写了没；
 #   点了从底下冒出一张菜单（和万岁殿、MCP、API 那几张一样）：闲笔集（就是日记，改了名）、江湖棋局、藏音匣、网易云；
 #   藏音匣 10 月 17 日盖好了（点进去是那一页，细的见 e2e_cangyin.py）；网易云还没盖：淡一档、写“营造中”，点了只冒一句“还在营造”，别的不动；
-#   点闲笔集：菜单收起，日记那一页滑进来，顶上写“闲笔集”；按返回回到侧栏，不回菜单；
+#   点闲笔集：菜单收起，日记那一页滑进来（进来是月历，没有顶栏）；按返回回到侧栏，不回菜单；
 #   让那边写日记时寄去的话里还叫“日记本”，没跟着改。
 # 真的浏览器、假 Supabase、假的 Anthropic。账号和话都是编的。
 # 先在 source/ 里 npm run build:test，起好两个服务（见开发说明），再：python3 tests/e2e_nanya.py
@@ -10,6 +10,7 @@ import io, json, re, time
 from PIL import Image
 from playwright.sync_api import sync_playwright
 from mailkit import *
+from diarykit import diary_day
 
 errors = []
 
@@ -162,10 +163,12 @@ def run(browser):
     open_menu(pg)
     pg.locator(".kfs-nanya-row", has_text="闲笔集").click()   # 照名字找（11 月 1 日前面多了一行罗浮梦）
     pg.locator(".kfs-page").wait_for(timeout=5000); pg.wait_for_timeout(600)
-    head = pg.evaluate("() => { const p = document.querySelector('.kfs-page'); return p.querySelector('[aria-label=\"返回\"]').parentElement.innerText.trim(); }")
+    head = pg.evaluate("() => { const p = document.querySelector('.kfs-page'); return [p.querySelector('.kfs-diary-title').getAttribute('aria-label'), p.dataset.page, !!p.querySelector('[aria-label=\"返回\"]')]; }")
+    ok(re.match(r"^\d+年\d+月$", head[0] or "") and head[1] == "0" and head[2] and pg.locator(".kfs-sheet-box").count() == 0 and pg.locator(".kfs-nanya").count() == 0,
+       f"点闲笔集：菜单收起，日记那一页滑进来，停在月历那一页，左上角有返回（{head}）")
+    diary_day(pg)   # 今天已经选中：再点一下，翻到今天那一页
     page_text = pg.locator(".kfs-page").inner_text()
-    ok(head == "闲笔集" and "日记本" not in page_text and pg.locator(".kfs-sheet-box").count() == 0 and pg.locator(".kfs-nanya").count() == 0,
-       f"点闲笔集：菜单收起，日记那一页滑进来，顶上写“闲笔集”（{head}）")
+    ok("日记本" not in page_text, "页面上没有“日记本”三个字")
     ok("卿卿写的" in page_text and "光义写的" in page_text and pg.get_by_role("button", name="让光义写这一天").count() == 1,
        "日记里面没动：还是“卿卿写的”“光义写的”，还能让光义写这一天")
 

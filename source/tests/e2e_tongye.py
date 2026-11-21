@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from PIL import Image, ImageDraw
 from playwright.sync_api import sync_playwright
 from mailkit import *
+from diarykit import diary_day
 
 errors = []
 refused = []
@@ -114,11 +115,8 @@ def open_xianbi(page):
     page.get_by_text("手帐和批注").wait_for(timeout=10000); time.sleep(0.6)
 
 def pick_day(page, d):
-    # 日历上点那一天（不是这个月的先翻到上个月）
-    today_d = date.today()
-    if (d.year, d.month) != (today_d.year, today_d.month):
-        page.get_by_role("button", name="上个月").click(); time.sleep(0.5)
-    page.locator(f".kfs-page button[data-day='{d.isoformat()}']").click(); time.sleep(0.8)
+    # 回月历、翻到那个月、点那一天、再点一下翻到那一天的那一页（见 tests/diarykit.py）
+    diary_day(page, d.isoformat())
 
 def close_ty(page, f, fast=False):
     # 编辑器左上角回本子，再点本子左上角“闲笔集”（关之前那一层先把没存的存了，等框拆了）。fast：两下连着点，不停
@@ -460,6 +458,7 @@ with sync_playwright() as p:
         second_device(pb)
         time.sleep(2)
         open_xianbi(pb)
+        diary_day(pb)
         card_b = pb.locator(".kfs-jz-open").inner_text()
         ok("拍立得墙 × 牛皮纸" in card_b and "批注 1" in card_b, f"第二台：今天的卡片照样（{card_b!r}）")
         pb.locator(".kfs-jz-open").click()

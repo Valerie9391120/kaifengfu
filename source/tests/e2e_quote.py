@@ -11,6 +11,7 @@ import json, os, re, time
 from datetime import date, datetime, timedelta
 from playwright.sync_api import sync_playwright
 from mailkit import *
+from diarykit import diary_day
 
 errors = []
 SHOTS = os.environ.get("KFS_SHOTS", "")
@@ -141,7 +142,7 @@ with sync_playwright() as p:
 
         # ================= 闲笔集、那一天的那一屏：只数聊天 =================
         open_xianbi(pa)
-        pa.locator(f".kfs-page button[data-day='{td}']").click(); time.sleep(0.8)
+        diary_day(pa, td)
         said = pa.locator(".kfs-page").inner_text()
         ok(f"这天说了 {2 * N} 句" in said, f"闲笔集“这天说了几句”只数聊天（{2 * N} 条，狐宇宙那几条不算）")
         pa.locator(".kfs-jz-open").click()

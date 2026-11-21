@@ -124,7 +124,7 @@ export function createSlide({ put, raf, caf, now, ms = SLIDE_MS, ease = SLIDE_EA
 // 历史对话那一页里每段对话是一行毛玻璃，各成一层；对话攒到几百段，这 0.3 秒就是开头说的同一个毛病
 // （进场的动画也是 transform 的系统动画，整页是那些行的长辈）。所以也改成一帧一帧写，样子不变。
 // 位置和深浅照同一个数走（v：离到位还差几个像素），和 CSS 动画里两样一起走是一回事。
-// 日记那一页还用着 CSS 的 kfs-page：它里面单独成层的只有那几张卡片
+// 日记那一页还用着 CSS 的 kfs-page：进来的那一下只有这一条动画，里面两页怎么走是 panels/diaryDeck.js 自己一帧一帧写的
 export const ENTER_MS = 300;
 export const ENTER_X = 28;
 
