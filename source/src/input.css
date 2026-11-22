@@ -130,7 +130,7 @@ html[data-kfs-theme="baizhou"] {
   --k-fill: 255, 255, 255;
   --k-hair: rgba(39, 39, 38, 0.1);
   --k-float-shadow: 0 6px 20px rgba(60, 56, 50, 0.07);
-  --k-bubble: rgba(255, 255, 255, 0.96);
+  --k-bubble: rgba(255, 255, 255, 0.46); /* 同青绿：她会换自定义聊天背景，气泡要透得出来（原来 0.96，米白底上几乎看不出差别） */
   --k-glass-sat: 110%;
   --k-dock-sat: 110%;
   --k-on-dai: 255, 255, 255;
