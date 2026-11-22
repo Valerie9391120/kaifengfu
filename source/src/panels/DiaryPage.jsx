@@ -100,7 +100,8 @@ const HEAT = [0.05, 0.12, 0.22, 0.34, 0.48];
 const LAY = { r: 0.55, cx: 0.8, cy: 0.21, left: 0.06, right: 0.07 };
 const GAP = 7;
 const LEGEND_H = 44; // 图例那一行连上面的线
-const PEEK_H = 58; // 最底下那行小字占的（不算主屏幕底下那一条）
+const PEEK_H = 48; // 最底下那行小字占的（不算主屏幕底下那一条）
+const DIAL_OUT = 1.1; // 晷盘最外那圈节气画到半径的几倍（格子要躲开它）
 
 // 整页两页上下接着（手指怎么走见 diaryDeck.js）：
 //   上面一页是月历，摆在背景上，没有顶栏、没有衬底的卡片：右上角一块日晷（Dial.jsx），左边竖着写年月，底下是日期的格子。
@@ -361,11 +362,16 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
   const DR = LAY.r * W;
   const DCX = LAY.cx * W;
   const DCY = LAY.cy * H;
-  const calL = LAY.left * W;
-  const calW = W - calL - LAY.right * W;
-  const colW = (calW - 6 * GAP) / 7;
-  const calStart = Math.max(DCY + DR + 14, 0.36 * H);
-  const rowH = Math.max(34, Math.min(colW * 1.25, (H - sb - PEEK_H - LEGEND_H - 24 - calStart - 5 * GAP) / 6));
+  // 格子整块从晷盘最外那圈底下起（11 月 22 日她截图圈出来：星期五六日压在节气那圈上）。放不下六行 1:1.25 的，
+  // 先扁一点（最扁 1:1.1），再扁就整块一起缩窄、左右居中（格子宽跟着高缩，不压成扁条）
+  const calStart = Math.max(DCY + DR * DIAL_OUT + 12, 0.36 * H);
+  const fullW = W - LAY.left * W - LAY.right * W;
+  const rowFit = (H - sb - PEEK_H - LEGEND_H - 24 - calStart - 5 * GAP) / 6;
+  const colFull = (fullW - 6 * GAP) / 7;
+  const rowH = Math.max(34, Math.min(colFull * 1.25, rowFit));
+  const colW = Math.min(colFull, rowH / 1.1);
+  const calW = colW * 7 + 6 * GAP;
+  const calL = LAY.left * W + (fullW - calW) / 2;
   const gridH = 6 * rowH + 5 * GAP;
 
   // ---- 晷盘上跟着月份变的：眼前那个月的地支、有哪几个地支、每个月的月亮（写了日记的天数占过了的天数几成）、走过的那一段 ----
@@ -536,7 +542,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
             ref={peekRef}
             className="kfs-diary-peek"
             aria-hidden="true"
-            style={{ position: "absolute", left: 0, right: 0, bottom: "calc(30px + env(safe-area-inset-bottom))", textAlign: "center", fontSize: 12, letterSpacing: "0.04em", color: T.inkSoft, pointerEvents: "none", opacity: sel ? 1 : 0, transition: "opacity .25s ease" }}
+            style={{ position: "absolute", left: 0, right: 0, bottom: "calc(24px + env(safe-area-inset-bottom))", textAlign: "center", fontSize: 12, letterSpacing: "0.04em", color: T.inkSoft, pointerEvents: "none", opacity: sel ? 1 : 0, transition: "opacity .25s ease" }}
           >
             {sel ? [`${selDate.getMonth() + 1}月${selDate.getDate()}日 星期${WEEK[selDate.getDay()]}`, together >= 1 ? `第${together}天` : "", counts[sel] ? `说了 ${counts[sel]} 句` : ""].filter(Boolean).join(" · ") : ""}
           </div>
