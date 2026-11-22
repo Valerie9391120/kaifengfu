@@ -100,7 +100,7 @@ const HEAT = [0.05, 0.12, 0.22, 0.34, 0.48];
 const LAY = { r: 0.55, cx: 0.8, cy: 0.21, left: 0.06, right: 0.07 };
 const GAP = 7;
 const LEGEND_H = 44; // 图例那一行连上面的线
-const PEEK_H = 48; // 最底下那行小字占的（不算主屏幕底下那一条）
+const PEEK_H = 30; // 最底下那行小字占的（不算主屏幕底下那一条）：整块沉到底，小字贴着主屏幕底下那一条
 const DIAL_OUT = 1.1; // 晷盘最外那圈节气画到半径的几倍（格子要躲开它）
 
 // 整页两页上下接着（手指怎么走见 diaryDeck.js）：
@@ -542,7 +542,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
             ref={peekRef}
             className="kfs-diary-peek"
             aria-hidden="true"
-            style={{ position: "absolute", left: 0, right: 0, bottom: "calc(24px + env(safe-area-inset-bottom))", textAlign: "center", fontSize: 12, letterSpacing: "0.04em", color: T.inkSoft, pointerEvents: "none", opacity: sel ? 1 : 0, transition: "opacity .25s ease" }}
+            style={{ position: "absolute", left: 0, right: 0, bottom: "calc(8px + env(safe-area-inset-bottom))", textAlign: "center", fontSize: 12, letterSpacing: "0.04em", color: T.inkSoft, pointerEvents: "none", opacity: sel ? 1 : 0, transition: "opacity .25s ease" }}
           >
             {sel ? [`${selDate.getMonth() + 1}月${selDate.getDate()}日 星期${WEEK[selDate.getDay()]}`, together >= 1 ? `第${together}天` : "", counts[sel] ? `说了 ${counts[sel]} 句` : ""].filter(Boolean).join(" · ") : ""}
           </div>
