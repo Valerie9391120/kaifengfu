@@ -442,8 +442,8 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                     </span>
                   ) : null}
                   {/* 原来右上角两个小点（她写了、他写了）：她嫌杂，拿掉了 */}
-                  <span style={{ ...OLDNUM, fontSize: 16, fontWeight: 400, lineHeight: 1.1, color: anniv ? T.gold : "rgba(var(--k-ink),0.88)" }}>{d}</span>
-                  <span style={{ ...(mood ? null : OLDNUM), fontSize: mood ? 11 : 10.5, lineHeight: 1.3, color: T.inkSoft, minHeight: 13 }}>
+                  <span style={{ ...OLDNUM, fontSize: 14.5, fontWeight: 400, lineHeight: 1.1, color: anniv ? T.gold : "rgba(var(--k-ink),0.88)" }}>{d}</span>
+                  <span style={{ ...(mood ? null : OLDNUM), fontSize: mood ? 11 : 9.5, lineHeight: 1.3, color: T.inkSoft, minHeight: 13 }}>
                     {mood ? mood.e : n ? n : ""}
                   </span>
                 </button>
