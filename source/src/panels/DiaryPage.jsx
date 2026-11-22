@@ -99,6 +99,8 @@ const HEAT = [0.05, 0.12, 0.22, 0.34, 0.48];
 // 摆法（她在原型上调的；都是占整页宽、高的几成）：日晷的半径、圆心，月历左右留白
 const LAY = { r: 0.55, cx: 0.8, cy: 0.325, left: 0.06, right: 0.07 }; // cy：她拿截图改的稿子，晷盘整个往下挪（原来 0.21）
 const GAP = 7;
+// 年月、格子里的数字：西文衬线的老式数字（数字有高有低，像旧书的页码；她挑的），汉字落到宋体
+const OLDNUM = { fontFamily: "Georgia," + SERIF, fontVariantNumeric: "oldstyle-nums" };
 const DIAL_OUT = 1.1; // 晷盘最外那圈节气画到半径的几倍（格子要躲开它）
 const DIAL_GAP = 40; // 晷盘最外那圈和星期那一行之间留的白（她要两块隔开一段）
 const ROW_MIN = 34; // 格子最矮多少：屏幕矮、放不下的时候晷盘往上让（最高到 0.18）
@@ -438,8 +440,8 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                     </span>
                   ) : null}
                   {/* 原来右上角两个小点（她写了、他写了）：她嫌杂，拿掉了 */}
-                  <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.1, color: anniv ? T.gold : T.ink }}>{d}</span>
-                  <span style={{ fontSize: mood ? 11 : 9.5, lineHeight: 1.3, color: T.inkSoft, minHeight: 13 }}>
+                  <span style={{ ...OLDNUM, fontSize: 16, fontWeight: 400, lineHeight: 1.1, color: anniv ? T.gold : "rgba(var(--k-ink),0.88)" }}>{d}</span>
+                  <span style={{ ...(mood ? null : OLDNUM), fontSize: mood ? 11 : 10.5, lineHeight: 1.3, color: T.inkSoft, minHeight: 13 }}>
                     {mood ? mood.e : n ? n : ""}
                   </span>
                 </button>
@@ -478,13 +480,13 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               <style>{".kfs-dial *{vector-effect:non-scaling-stroke}"}</style>
               <Dial cur={branchOf(cur.m)} inRange={inRange} fracs={fracs} past={pastArc} diskRef={diskRef} moonRefs={moonRefs} />
             </svg>
-            {/* 左边竖着写的年、月（她画的稿子：年份一列，月份错开一点在它右下） */}
+            {/* 左边竖着写的年、月（她画的稿子：年份一列，月份错开一点在它右下）；整块压在星期那一行上面一点（她又画了一张：月份挨着月历） */}
             <div
               className="kfs-diary-title"
               role="heading"
               aria-level={2}
               aria-label={`${cur.y}年${cur.m + 1}月`}
-              style={{ position: "absolute", left: 0.085 * W, top: Math.max(DCY - 0.06 * H, 56), display: "flex", flexDirection: "column", alignItems: "flex-start", fontFamily: SERIF, color: T.ink, pointerEvents: "none" }}
+              style={{ position: "absolute", left: 0.085 * W, bottom: `calc(env(safe-area-inset-bottom) * 0.5 + ${(6 + 28 + gridH + 18).toFixed(1)}px)`, display: "flex", flexDirection: "column", alignItems: "flex-start", ...OLDNUM, color: T.ink, pointerEvents: "none" }}
             >
               <div ref={yRef} aria-hidden="true" style={{ ...VERT, display: "grid", textOrientation: "upright", fontSize: 27, letterSpacing: "0.18em" }}>
                 {rollLayer(false)}

@@ -26,7 +26,7 @@ WHERE = """(() => { const t = document.querySelector('.kfs-diary-title').getBoun
   const g = document.querySelector('.kfs-diary-mon:not([inert])').getBoundingClientRect();
   const d = document.querySelector('.kfs-dial').getBoundingClientRect();
   const rot = parseFloat((document.querySelector('.kfs-dial > g').getAttribute('transform') || 'rotate(0)').slice(7));
-  return { titleLeft: Math.round(t.left), titleTop: Math.round(t.top), fade: parseFloat(getComputedStyle(lay).opacity), mons,
+  return { titleLeft: Math.round(t.left), titleTop: Math.round(t.top), titleBottom: t.bottom, fade: parseFloat(getComputedStyle(lay).opacity), mons,
     wk: document.querySelector('.kfs-diary-mon').parentElement.previousElementSibling.getBoundingClientRect().top, gw: g.width, gx: g.left + g.width / 2, gy: g.top + Math.min(g.height, 200) * 0.3, gb: g.bottom, rot, cx: d.left + d.width / 2, cy: d.top + d.height / 2, r: d.width / 2 }; })()"""
 # 晷盘上亮着的是哪个地支
 CUR_BRANCH = "(() => { const b = document.querySelector('.kfs-dial-b[data-on=\"1\"]'); return b ? +b.dataset.b : null; })()"
@@ -82,7 +82,7 @@ with sync_playwright() as p:
            f"年月在左边，晷盘在右上、出了屏幕一截；没有图例、没有最底下那行小字（{ex}）")
         ok(pa.evaluate(CUR_BRANCH) == (td.month + 1) % 12 and abs(((w0["rot"] + (td.month + 1) % 12 * 30 - 232) + 180) % 360 - 180) < 0.5,
            f"晷盘：这个月的地支（{BR[(td.month + 1) % 12]}）亮着，转到指针底下（转了 {w0['rot']:.1f} 度）")
-        ok(H - 12 < w0["gb"] < H and w0["wk"] > w0["cy"] + w0["r"] * 1.1 + 40, f"格子整块沉到屏幕底、和晷盘最外那圈隔开一段（星期那一行 {w0['wk']:.0f}，晷盘最外 {w0['cy'] + w0['r'] * 1.09:.0f}，格子底边 {w0['gb']:.0f}）")
+        ok(H - 12 < w0["gb"] < H and 0 < w0["wk"] - w0["titleBottom"] < 40 and w0["wk"] > w0["cy"] + w0["r"] * 1.1 + 40, f"格子整块沉到屏幕底、和晷盘最外那圈隔开一段，年月压在星期那一行上面一点（年月底边 {w0['titleBottom']:.0f}，星期那一行 {w0['wk']:.0f}，晷盘最外 {w0['cy'] + w0['r'] * 1.09:.0f}，格子底边 {w0['gb']:.0f}）")
         if SHOTS: pa.screenshot(path=f"{SHOTS}/xianbi-1-cal.png")
 
         if many:
