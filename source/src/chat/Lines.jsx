@@ -30,7 +30,8 @@ export function CtrlRow({ row, busy, onPrev, onNext }) {
   );
 }
 
-export function ThinkingRow({ msg, open, onToggle }) {
+// text：这一张摆哪一段（一回里写了好几段心里话的，一段一张，见 chat/rows.js）；没给就是整条的 msg.thinking
+export function ThinkingRow({ msg, text, open, onToggle }) {
   return (
     <div className="flex flex-col items-start" style={{ marginLeft: 42, marginTop: 14 }}>
       <button
@@ -76,7 +77,7 @@ export function ThinkingRow({ msg, open, onToggle }) {
             WebkitUserSelect: "text",
           }}
         >
-          {msg.thinking}
+          {text != null ? text : msg.thinking}
         </div>
       )}
     </div>

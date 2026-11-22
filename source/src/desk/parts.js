@@ -175,7 +175,7 @@ export function boxOf(msgs, { read = new Set(), recaps = [], now = new Date() } 
     else if (row.type === "recap") out.push({ k: row.key, t: "recap", id: row.recap.id });
     else if (row.type === "lot") out.push({ k: row.key, t: "card", head: "签", text: (m.lines || []).map((l) => (l && l.t) || "").filter(Boolean).join("、") });
     else if (row.type === "pindou") out.push({ k: row.key, t: "card", head: "拼豆", text: m.name || "拼豆作", ...(typeof m.png === "string" && /^data:image\//.test(m.png) ? { img: m.png } : {}) });
-    else if (row.type === "thinking") out.push({ k: row.key, t: "think", side: "me", text: m.thinking });
+    else if (row.type === "thinking") out.push({ k: row.key, t: "think", side: "me", text: row.text != null ? row.text : m.thinking });
     else if (row.type === "tools" || row.type === "game") out.push({ k: row.key, t: "line", side: "me", text: row.text });
     else if (row.type === "ask") say(row, "me", askSummary(row.item.qs));
     else if (row.type === "bubble") {

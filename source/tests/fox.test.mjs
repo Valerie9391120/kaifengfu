@@ -35,6 +35,34 @@ const M = 60 * 1000;
 // 钉一个时刻：2026 年 10 月 20 日 14:00（照跑测试这台机器的钟点算，跟她电脑上一样：钟点按本地）
 const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
 
+// ================= 拆：心里话一回里写了好几段：一段一张，摆在他写的地方 =================
+{
+  const p = parseReply("<thinking>先想一段</thinking>\n我查一下\n[SPLIT]\n<thinking>查完回来又想一段</thinking>\n查到了\n[SPLIT]\n第二条");
+  ok(p.items.map((x) => x.text).join("|") === "我查一下|查到了|第二条" && !p.body.includes("thinking"),
+    "拆：心里话写了两段（中间查了东西），气泡里一个字都不带；寄回去的原话里也没有");
+  const tool = parseReply("<thinking>想查查</thinking>\n<thinking>查到了，想想怎么说</thinking>\n在呢\n[SPLIT]\n给你");
+  ok(JSON.stringify(tool.thoughts.map((t) => t.at)) === "[0,0]" && tool.items.length === 2, "拆：用工具那样的（两段都在话前头）：两段都摆在话前面");
+  const mid = parseReply("前半句<thinking>夹在一条中间的</thinking>后半句");
+  ok(mid.items.length === 1 && mid.items[0].text === "前半句后半句" && mid.thinking === "夹在一条中间的", "拆：夹在一条话中间的心里话：话照原来接成一条（同通知那头），心里话摆在那一条后面");
+  ok(JSON.stringify(p.thoughts) === JSON.stringify([{ at: 0, text: "先想一段" }, { at: 1, text: "查完回来又想一段" }]) && p.thinking === "先想一段\n\n查完回来又想一段",
+    "拆：两段各记一条，带着摆在第几样前面（thoughts）；thinking 照旧是几段接起来");
+  const one = parseReply("<thinking>只一段</thinking>\n在呢");
+  ok(one.thinking === "只一段" && one.thoughts === undefined, "拆：只一段的不带 thoughts，照原来那样");
+  const q = parseReply("<thinking>一</thinking>\n在呢\n<thinking>写到一半断了");
+  ok(q.thoughts && q.thoughts[1].at === 1 && q.thoughts[1].text === "写到一半断了" && q.items.length === 1 && q.items[0].text === "在呢", "拆：最后一段只有开头没收尾的，从那儿往后都算心里话，前面的话照常");
+  const r = parseReply("<thinking>  </thinking>\n<thinking>真的</thinking>\n话");
+  ok(r.thinking === "真的" && r.thoughts === undefined && r.items[0].text === "话", "拆：空的那段不算");
+  const m = { id: "h9", role: "him", ts: 1, items: p.items, thinking: p.thinking, thoughts: p.thoughts, tools: ["tavily"] };
+  const kinds = buildRows([m], null).filter((x) => x.msg === m).map((x) => (x.type === "thinking" ? "想:" + x.text : x.type === "tools" ? "工具" : x.item.text));
+  ok(kinds.join("|") === "想:先想一段|工具|我查一下|想:查完回来又想一段|查到了|第二条", `摆：一段一张，摆在他写的地方；头一段在“用了 tavily”前面（${kinds.join("|")}）`);
+  const tail = { id: "h8", role: "him", ts: 1, items: [{ type: "text", text: "话" }], thinking: "甲\n\n乙", thoughts: [{ at: 0, text: "甲" }, { at: 1, text: "乙" }] };
+  const k2 = buildRows([tail], null).filter((x) => x.msg === tail).map((x) => (x.type === "thinking" ? "想:" + x.text : x.item.text));
+  const k3 = buildRows([tail], { id: "h8", count: 1 }).filter((x) => x.msg === tail).map((x) => (x.type === "thinking" ? "想:" + x.text : x.item.text));
+  ok(k2.join("|") === "想:甲|话|想:乙" && k3.join("|") === "想:甲|话", "摆：写在最后的那段摆在最后；正一条一条蹦的时候先不摆，蹦完了才摆");
+  const keys = buildRows([m], null).filter((x) => x.type === "thinking").map((x) => x.open);
+  ok(new Set(keys).size === 2, "摆：一张一张各自开合（记开没开的不是同一个名字）");
+}
+
 // ================= 拆：[WAKE:…] 不显示成字，单独带出去 =================
 {
   const p = parseReply("<thinking>想她了</thinking>\n醒了，看看你\n[SPLIT]\n[MEME:a.jpg]\n[WAKE:+3h]");

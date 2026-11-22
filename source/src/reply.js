@@ -80,18 +80,57 @@ export function splitMarks(text) {
   return parts;
 }
 
-export function parseReply(text) {
-  let thinking = "";
-  let body = text || "";
-  const m = body.match(/<thinking>([\s\S]*?)<\/thinking>/);
-  if (m) {
-    thinking = m[1].trim();
-    body = body.replace(m[0], "");
-  } else if (body.includes("<thinking>")) {
-    thinking = body.split("<thinking>")[1].trim();
-    body = "";
+// 心里话：一回里可能写好几段（先写一段，查了东西、用了工具回来，又想写，再写一段），一段是一段，各摆一张“思考过程”，
+// 摆在他写它的那个地方（她 11 月 22 日要的：“如果你又有心里话想写 可以新开一个心里话的气泡 这样一次回复里的心里话气泡我们不设置上限”）。
+// 切成一截一截：给她的话、心里话、给她的话……；最后一段只有开头没有收尾的（写到一半断了），从那儿往后都算心里话
+export function splitThoughts(text) {
+  const src = String(text || "");
+  const out = [];
+  const re = /<thinking>([\s\S]*?)<\/thinking>/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    out.push({ type: "text", value: src.slice(last, m.index) });
+    out.push({ type: "think", value: m[1] });
+    last = re.lastIndex;
   }
-  body = body.trim();
+  let rest = src.slice(last);
+  const open = rest.indexOf("<thinking>");
+  if (open >= 0) {
+    out.push({ type: "text", value: rest.slice(0, open) });
+    out.push({ type: "think", value: rest.slice(open + "<thinking>".length) });
+    rest = "";
+  }
+  out.push({ type: "text", value: rest });
+  return out;
+}
+
+export function parseReply(text) {
+  const segs = splitThoughts(text);
+  // 给她的话：心里话摘掉，剩下的接起来照原来一整段拆（同通知的小后端，两边拆出来的一样）
+  const body = segs.filter((s) => s.type === "text").map((s) => s.value).join("").trim();
+  const { items, rename, wake } = sayAll(body);
+  // 心里话：一段一条，at：它前面那些给她的话拆出来有几样（摆在第 at 样前面；见 chat/rows.js）
+  // （头几十段才一段一段数；再多的都算在最后，免得他写了几千段、一段拆一遍前面的卡住）
+  const thoughts = [];
+  let before = "";
+  segs.forEach((s) => {
+    if (s.type === "text") before += s.value;
+    else if (s.value.trim()) {
+      const at = thoughts.length >= 30 ? items.length : Math.min(items.length, before.trim() ? sayAll(before.trim()).items.length : 0);
+      thoughts.push({ at, text: s.value.trim() });
+    }
+  });
+  // 一个看得见的都没有（只写了心里话、只定了下回几点醒）：照旧摆“……”，另记一笔 quiet（狐宇宙里这一回不留话、不敲她，见 fox.js）
+  const quiet = !items.length;
+  if (quiet) items.push({ type: "text", text: "……" });
+  // thinking：几段接起来（中间空一行），老的那些地方照旧认它；thoughts：两段以上才带（一段的照原来那样摆）
+  const thinking = thoughts.map((t) => t.text).join("\n\n");
+  return { thinking, ...(thoughts.length > 1 ? { thoughts } : {}), body, items, rename, ...(wake !== null ? { wake } : {}), ...(quiet ? { quiet } : {}) };
+}
+
+// 给她的那一整段拆成一样一样（不管心里话、不补省略号）
+function sayAll(body) {
   const items = [];
   // 改名字的标记不显示成字，新名字单独带出去（写了好几次只认最后一次；收拾完是空的不算）
   let rename = null;
@@ -160,10 +199,7 @@ export function parseReply(text) {
       after.forEach((x) => items.push(x));
     }
   });
-  // 一个看得见的都没有（只写了心里话、只定了下回几点醒）：照旧摆“……”，另记一笔 quiet（狐宇宙里这一回不留话、不敲她，见 fox.js）
-  const quiet = !items.length;
-  if (quiet) items.push({ type: "text", text: "……" });
-  return { thinking, body, items, rename, ...(wake !== null ? { wake } : {}), ...(quiet ? { quiet } : {}) };
+  return { items, rename, wake };
 }
 
 // 接起来说的话里不留 [CALL] 这几个字：跟 untoken 一个办法，从头往后收，末尾正好是一个就扔掉（摘掉一个、两头拼起来又成了一个的，也摘得干净）

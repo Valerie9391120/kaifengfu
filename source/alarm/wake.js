@@ -207,9 +207,9 @@ const NEW_CHAT = /^[ \t]*\[(?:新对话|NEWCHAT|newchat)[:：]([^\[\]\n]{1,80})\
 function unmasked(s) {
   const blank = (t) => t.replace(/[^\n]/g, " ");
   let out = s;
-  const m = /<thinking>[\s\S]*?<\/thinking>/.exec(out);
-  if (m) out = out.slice(0, m.index) + blank(m[0]) + out.slice(m.index + m[0].length);
-  else if (out.includes("<thinking>")) {
+  // 心里话可能好几段（同网页 reply.js 的 splitThoughts），每一段都涂掉；只有开头没收尾的，从那儿往后都涂掉
+  out = out.replace(/<thinking>[\s\S]*?<\/thinking>/g, blank);
+  if (out.includes("<thinking>")) {
     const i = out.indexOf("<thinking>");
     out = out.slice(0, i) + blank(out.slice(i));
   }
@@ -412,6 +412,7 @@ async function askCore({ store, cloud, ctx, log, msgs, recaps, section, game = n
       items: settled.items,
       raw: parsed.body,
       thinking: parsed.thinking,
+      ...(parsed.thoughts ? { thoughts: parsed.thoughts } : {}),
       tools: usedTools,
       toolNote: mcps.length && !used.mcp ? "这次MCP没连上，先不用工具回你" : "",
     };

@@ -2098,6 +2098,7 @@ export default function App({ account = {} }) {
       items: settled.items,
       raw: parsed.body,
       thinking: parsed.thinking,
+      ...(parsed.thoughts ? { thoughts: parsed.thoughts } : {}), // 心里话两段以上：一段一张，摆在他写的地方（见 chat/rows.js）
       tools: usedTools,
       toolNote: ctx && ctx.withMcp && !(used && used.mcp) ? "这次MCP没连上，先不用工具回你" : "",
     };
@@ -6755,10 +6756,12 @@ export default function App({ account = {} }) {
                 <ThinkingRow
                   key={row.key}
                   msg={row.msg}
-                  open={!!openThinking[row.msg.id]}
+                  text={row.text}
+                  open={!!openThinking[row.open || row.msg.id]}
                   onToggle={() => {
                     follow.loose(); // 她自己点开的：聊天记录变高了不是新话来了，别把刚点开的字带走
-                    setOpenThinking((o) => ({ ...o, [row.msg.id]: !o[row.msg.id] }));
+                    const k = row.open || row.msg.id; // 一回里好几张的，一张一张各自开合
+                    setOpenThinking((o) => ({ ...o, [k]: !o[k] }));
                   }}
                 />
               );

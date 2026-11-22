@@ -72,7 +72,19 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId
     } else {
       let items = m.items || [];
       if (reveal && reveal.id === m.id) items = items.slice(0, reveal.count);
-      if (m.thinking) rows.push({ type: "thinking", key: "th-" + m.id, msg: m });
+      // 心里话：一段的照原来那样，一张摆在最前头；两段以上的（thoughts）一段一张，摆在他写它的地方（第 at 样前面），
+      // 头一段写在最前头的，摆在“用了 tavily”那一行前面（他先想、再去查），别的摆在它后面
+      const many = Array.isArray(m.thoughts) && m.thoughts.length > 1 ? m.thoughts : null;
+      const thinkRow = (t, n) => ({ type: "thinking", key: "th-" + m.id + (n ? "-" + n : ""), msg: m, text: t.text, open: "th-" + m.id + (n ? "-" + n : "") });
+      let tn = 0;
+      if (many && many[0].at === 0) rows.push(thinkRow(many[tn++], 0));
+      else if (!many && m.thinking) rows.push({ type: "thinking", key: "th-" + m.id, msg: m });
+      const thoughtsBefore = (j) => {
+        while (many && tn < many.length && many[tn].at <= j) {
+          rows.push(thinkRow(many[tn], tn));
+          tn++;
+        }
+      };
       if (m.toolNote || (m.tools && m.tools.length)) {
         rows.push({
           type: "tools",
@@ -82,6 +94,7 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId
         });
       }
       items.forEach((it, j) => {
+        thoughtsBefore(j);
         if (it.type === "call") {
           // 他打电话（见 call/incoming.js）：一行小字“光义来电”，前面一个小电话；接了、没接看后面那一行（“通话开始”“未接来电”）。
           // 打着电话的时候他又写了 [CALL] 的：那会儿当照常说话念了，摆成他说的一句
@@ -105,6 +118,8 @@ export function buildRows(messages, reveal, stoppedId = "", recap = null, moreId
         }
       });
       const revealing = reveal && reveal.id === m.id;
+      // 写在最后那几样后面的心里话：这一条蹦完了才摆（正一条一条蹦的时候，后面的还没轮到）
+      if (!revealing) thoughtsBefore(Infinity);
       // 这条回复里他给自己改了名字：话说完以后留一行提示。新名字只显示在顶栏，这里不写
       if (m.rename && !revealing) {
         rows.push({

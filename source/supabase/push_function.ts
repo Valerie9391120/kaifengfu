@@ -1003,9 +1003,10 @@ function bubblesOf(reply: string): string[] {
 // 一个气泡一条：看得见的那几条（一条都没有就是空的），外加换没换头像
 function visibleBubbles(reply: string): { lines: string[]; avatar: boolean } {
   let body = reply.length > BANNER_SOURCE ? reply.slice(0, BANNER_SOURCE) : reply;
-  const think = body.match(/<thinking>([\s\S]*?)<\/thinking>/);
-  if (think) body = body.replace(think[0], () => "");
-  else if (body.includes("<thinking>")) body = "";
+  // 心里话一段都不写（他一回里可能写好几段，同网页 reply.js 的 splitThoughts）；只有开头没收尾的，从那儿往后都不写
+  body = body.replace(/<thinking>[\s\S]*?<\/thinking>/g, () => "");
+  const open = body.indexOf("<thinking>");
+  if (open >= 0) body = body.slice(0, open);
   body = body.trim();
   const lines: string[] = [];
   let avatar = false;
