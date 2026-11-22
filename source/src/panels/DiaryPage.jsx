@@ -97,12 +97,13 @@ function MoodChips({ value = [], onToggle, readOnly }) {
 const FIRST = { y: 2026, m: 9 };
 const HEAT = [0.05, 0.12, 0.22, 0.34, 0.48];
 // 摆法（她在原型上调的；都是占整页宽、高的几成）：日晷的半径、圆心，月历左右留白
-const LAY = { r: 0.55, cx: 0.8, cy: 0.21, left: 0.06, right: 0.07 };
+const LAY = { r: 0.55, cx: 0.8, cy: 0.325, left: 0.06, right: 0.07 }; // cy：她拿截图改的稿子，晷盘整个往下挪（原来 0.21）
 const GAP = 7;
-const LEGEND_H = 44; // 图例那一行连上面的线
-const PEEK_H = 30; // 最底下那行小字占的（不算主屏幕底下那一条）：整块沉到底，小字贴着主屏幕底下那一条
 const DIAL_OUT = 1.1; // 晷盘最外那圈节气画到半径的几倍（格子要躲开它）
-const DIAL_GAP = 44; // 晷盘最外那圈和星期那一行之间留的白（她要两块隔开一段）
+const DIAL_GAP = 40; // 晷盘最外那圈和星期那一行之间留的白（她要两块隔开一段）
+const ROW_MIN = 34; // 格子最矮多少：屏幕矮、放不下的时候晷盘往上让（最高到 0.18）
+// 格子整块沉到底：底边离屏幕底多少（主屏幕底下那一条只让一半，再加 6；图例、最底下那行小字她不要了）
+const BOTTOM = "calc(env(safe-area-inset-bottom) * 0.5 + 6px)";
 
 // 整页两页上下接着（手指怎么走见 diaryDeck.js）：
 //   上面一页是月历，摆在背景上，没有顶栏、没有衬底的卡片：右上角一块日晷（Dial.jsx），左边竖着写年月，底下是日期的格子。
@@ -198,7 +199,6 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
   const dialRef = useRef(null);
   const diskRef = useRef(null);
   const moonRefs = useRef([]);
-  const peekRef = useRef(null);
   const deck = useRef(null);
   const probeRef = useRef(null);
   // 整页多宽多高、主屏幕底下空出来的那一条多高（摆法照它们算，见 LAY）
@@ -296,7 +296,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
   };
   useLayoutEffect(() => {
     const d = mountDeck(
-      { root: rootRef.current, pages: pagesRef.current, cal: calRef.current, wrap: wrapRef.current, months: monthsRef.current, day: dayRef.current, sc: scRef.current, peek: peekRef.current },
+      { root: rootRef.current, pages: pagesRef.current, cal: calRef.current, wrap: wrapRef.current, months: monthsRef.current, day: dayRef.current, sc: scRef.current },
       () => live.current
     );
     deck.current = d;
@@ -355,21 +355,21 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
     setWriting(false);
   };
 
-  const legendCell = (lv) => ({ width: 14, height: 14, borderRadius: 4, background: `rgba(var(--k-dai),${[0.06, 0.12, 0.22, 0.34, 0.48][lv]})` });
   const cur = months[Math.min(at, months.length - 1)];
 
   // ---- 摆法：照整页的宽高算（LAY）。格子的高矮跟着屏幕：晷盘底下到图例上面那一段放得下六行就照原来的 1:1.25，放不下就扁一点 ----
   const { W, H, sb } = box;
   const DR = LAY.r * W;
   const DCX = LAY.cx * W;
-  const DCY = LAY.cy * H;
-  // 格子整块从晷盘最外那圈底下起（11 月 22 日她截图圈出来：星期五六日压在节气那圈上）。放不下六行 1:1.25 的，
-  // 先扁一点（最扁 1:1.1），再扁就整块一起缩窄、左右居中（格子宽跟着高缩，不压成扁条）
-  const calStart = Math.max(DCY + DR * DIAL_OUT + DIAL_GAP, 0.36 * H);
   const fullW = W - LAY.left * W - LAY.right * W;
-  const rowFit = (H - sb - PEEK_H - LEGEND_H - 24 - calStart - 5 * GAP) / 6;
   const colFull = (fullW - 6 * GAP) / 7;
-  const rowH = Math.max(34, Math.min(colFull * 1.25, rowFit));
+  const bottomPx = sb * 0.5 + 6;
+  // 格子从晷盘最外那圈底下（再空一段）起，到屏幕底：放得下六行 1:1.25 就照它，放不下先扁一点（最扁 1:1.1），
+  // 再不够就整块缩窄、左右居中（格子宽跟着高缩）；矮到 ROW_MIN 还放不下，晷盘往上让
+  const fitRow = (cy) => (H - bottomPx - 28 - (cy + DR * DIAL_OUT + DIAL_GAP) - 5 * GAP) / 6; // 28：星期那一行连底下的空
+  let DCY = LAY.cy * H;
+  if (fitRow(DCY) < ROW_MIN) DCY = Math.max(0.18 * H, DCY - (ROW_MIN - fitRow(DCY)) * 6);
+  const rowH = Math.max(ROW_MIN, Math.min(colFull * 1.25, fitRow(DCY)));
   const colW = Math.min(colFull, rowH / 1.1);
   const calW = colW * 7 + 6 * GAP;
   const calL = LAY.left * W + (fullW - calW) / 2;
@@ -437,12 +437,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                       🏷️
                     </span>
                   ) : null}
-                  {e.her && e.her.text ? (
-                    <span style={{ position: "absolute", top: 4, right: 5, width: 5, height: 5, borderRadius: "50%", background: T.dai }} />
-                  ) : null}
-                  {e.him && e.him.text ? (
-                    <span style={{ position: "absolute", top: 4, right: e.her && e.her.text ? 12 : 5, width: 5, height: 5, borderRadius: "50%", background: T.goldDot }} />
-                  ) : null}
+                  {/* 原来右上角两个小点（她写了、他写了）：她嫌杂，拿掉了 */}
                   <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.1, color: anniv ? T.gold : T.ink }}>{d}</span>
                   <span style={{ fontSize: mood ? 11 : 9.5, lineHeight: 1.3, color: T.inkSoft, minHeight: 13 }}>
                     {mood ? mood.e : n ? n : ""}
@@ -489,7 +484,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               role="heading"
               aria-level={2}
               aria-label={`${cur.y}年${cur.m + 1}月`}
-              style={{ position: "absolute", left: 0.085 * W, top: Math.max(0.15 * H, 56), display: "flex", flexDirection: "column", alignItems: "flex-start", fontFamily: SERIF, color: T.ink, pointerEvents: "none" }}
+              style={{ position: "absolute", left: 0.085 * W, top: Math.max(DCY - 0.06 * H, 56), display: "flex", flexDirection: "column", alignItems: "flex-start", fontFamily: SERIF, color: T.ink, pointerEvents: "none" }}
             >
               <div ref={yRef} aria-hidden="true" style={{ ...VERT, display: "grid", textOrientation: "upright", fontSize: 27, letterSpacing: "0.18em" }}>
                 {rollLayer(false)}
@@ -503,8 +498,8 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
                 <div style={{ ...VERT, fontSize: 24, marginTop: "0.12em" }}>月</div>
               </div>
             </div>
-            {/* 底下：星期那一行、格子、图例。整块贴着屏幕底（最底下那行小字上面） */}
-            <div style={{ position: "absolute", left: calL, width: calW, bottom: `calc(${PEEK_H}px + env(safe-area-inset-bottom))` }}>
+            {/* 底下：星期那一行、格子。整块沉到屏幕底 */}
+            <div style={{ position: "absolute", left: calL, width: calW, bottom: BOTTOM }}>
               <div className="grid grid-cols-7" aria-hidden="true" style={{ gap: GAP, marginBottom: 10 }}>
                 {"一二三四五六日".split("").map((w) => (
                   <div key={w} className="text-center" style={{ fontSize: 11.5, color: T.inkFaint }}>
@@ -519,33 +514,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
               >
                 {months.map((mm, i) => (Math.abs(i - at) <= 1 ? monthPanel(mm, i) : null))}
               </div>
-              <div className="flex items-center justify-between" style={{ marginTop: 14, paddingTop: 12, borderTop: HAIRLINE, fontSize: 11.5, color: T.inkSoft }}>
-                <span className="flex items-center" style={{ gap: 4 }}>
-                  少
-                  {[0, 1, 2, 3, 4].map((lv) => (
-                    <span key={lv} style={legendCell(lv)} />
-                  ))}
-                  多
-                </span>
-                <span className="flex items-center" style={{ gap: 10 }}>
-                  <span className="flex items-center" style={{ gap: 4 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.dai }} />卿卿写的
-                  </span>
-                  <span className="flex items-center" style={{ gap: 4 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.goldDot }} />光义写的
-                  </span>
-                </span>
-              </div>
             </div>
-          </div>
-          {/* 选中了一天：最底下一行很淡的小字（往上划就是它） */}
-          <div
-            ref={peekRef}
-            className="kfs-diary-peek"
-            aria-hidden="true"
-            style={{ position: "absolute", left: 0, right: 0, bottom: "calc(8px + env(safe-area-inset-bottom))", textAlign: "center", fontSize: 12, letterSpacing: "0.04em", color: T.inkSoft, pointerEvents: "none", opacity: sel ? 1 : 0, transition: "opacity .25s ease" }}
-          >
-            {sel ? [`${selDate.getMonth() + 1}月${selDate.getDate()}日 星期${WEEK[selDate.getDay()]}`, together >= 1 ? `第${together}天` : "", counts[sel] ? `说了 ${counts[sel]} 句` : ""].filter(Boolean).join(" · ") : ""}
           </div>
         </section>
 

@@ -15,7 +15,10 @@ errors = []
 SHOTS = os.environ.get("KFS_SHOTS", "")
 W, H = IPHONE["viewport"]["width"], IPHONE["viewport"]["height"]
 SEL = "(() => { const b = document.querySelector('.kfs-diary-mon:not([inert]) button[aria-pressed=\"true\"]'); return b ? b.dataset.day : null; })()"
-PEEK = "document.querySelector('.kfs-diary-peek').textContent"
+# 月历那一页上还有没有图例、最底下那行小字（她不要了）、格子右上角的小点（她不要了）
+EXTRA = """(() => { const c = document.querySelector('.kfs-diary-cal');
+  return { peek: !!document.querySelector('.kfs-diary-peek'), legend: c.innerText.includes('卿卿写的') || c.innerText.includes('光义写的'),
+    dots: [...c.querySelectorAll('button[data-day] > span')].filter((e) => e.style.borderRadius === '50%').length }; })()"""
 # 年月那一块在哪儿、月份那一格前一层淡到几成、眼前那个月的格子在哪儿、格子那一块在哪儿、晷盘转了多少度、晷盘的圆心和半径
 WHERE = """(() => { const t = document.querySelector('.kfs-diary-title').getBoundingClientRect();
   const lay = document.querySelector('.kfs-diary-title > div:nth-child(2) > div').children[0];
@@ -74,11 +77,12 @@ with sync_playwright() as p:
         w0 = pa.evaluate(WHERE)
         ok(pa.evaluate(DIARY_PAGE) == "0" and pa.evaluate(DIARY_TITLE) == this_month and pa.evaluate(SEL) == today,
            f"进来停在月历那一页：{this_month}，今天选中着")
-        ok(w0["titleLeft"] < W * 0.2 and w0["cx"] > W * 0.6 and w0["cy"] < H * 0.4 and w0["cx"] + w0["r"] > W and len(w0["mons"]) >= 1 and f"{td.month}月{td.day}日" in pa.evaluate(PEEK),
-           f"年月在左边，晷盘在右上、出了屏幕一截；最底下一行小字写着今天（{pa.evaluate(PEEK)}）")
+        ex = pa.evaluate(EXTRA)
+        ok(w0["titleLeft"] < W * 0.2 and w0["cx"] > W * 0.6 and w0["cy"] < H * 0.45 and w0["cx"] + w0["r"] > W and len(w0["mons"]) >= 1 and not ex["peek"] and not ex["legend"],
+           f"年月在左边，晷盘在右上、出了屏幕一截；没有图例、没有最底下那行小字（{ex}）")
         ok(pa.evaluate(CUR_BRANCH) == (td.month + 1) % 12 and abs(((w0["rot"] + (td.month + 1) % 12 * 30 - 232) + 180) % 360 - 180) < 0.5,
            f"晷盘：这个月的地支（{BR[(td.month + 1) % 12]}）亮着，转到指针底下（转了 {w0['rot']:.1f} 度）")
-        ok(w0["gb"] < H - 40 and w0["wk"] > w0["cy"] + w0["r"] * 1.1 + 40, f"格子整块在晷盘最外那圈底下、最底下那行小字上面（星期那一行 {w0['wk']:.0f}，晷盘最外 {w0['cy'] + w0['r'] * 1.09:.0f}，格子底边 {w0['gb']:.0f}）")
+        ok(H - 12 < w0["gb"] < H and w0["wk"] > w0["cy"] + w0["r"] * 1.1 + 40, f"格子整块沉到屏幕底、和晷盘最外那圈隔开一段（星期那一行 {w0['wk']:.0f}，晷盘最外 {w0['cy'] + w0['r'] * 1.09:.0f}，格子底边 {w0['gb']:.0f}）")
         if SHOTS: pa.screenshot(path=f"{SHOTS}/xianbi-1-cal.png")
 
         if many:
@@ -96,7 +100,7 @@ with sync_playwright() as p:
             w1 = pa.evaluate(WHERE)
             ok(w1["fade"] > 0.99 and w1["titleTop"] == w0["titleTop"] and abs(w1["rot"] - w0["rot"] - 30) < 0.5 and pa.evaluate(CUR_BRANCH) == (pm + 1) % 12,
                f"停住：月份的数字换好了，晷盘正好转了一格（{w1['rot'] - w0['rot']:.1f} 度），亮的是{BR[(pm + 1) % 12]}")
-            ok(pa.evaluate(SEL) is None and pa.evaluate(PEEK) == "", "换到别的月：不选哪一天，最底下那行小字收了")
+            ok(pa.evaluate(SEL) is None, "换到别的月：不选哪一天")
             # 没选中：往上划翻不过去
             drag(cdp, 200, gy + 40, 200, 200); time.sleep(1.0)
             ok(pa.evaluate(DIARY_PAGE) == "0" and pa.evaluate("document.querySelector('.kfs-diary-pages').style.transform").startswith("translate3d(0px, 0"), "没选中哪一天：往上划翻不过去，松手回来")
@@ -106,7 +110,7 @@ with sync_playwright() as p:
             # 点一天：选中
             box = pa.locator(f".kfs-diary-mon:not([inert]) button[data-day='{prev_day}']").bounding_box()
             pa.touchscreen.tap(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2); time.sleep(0.4)
-            ok(pa.evaluate(SEL) == prev_day and pa.evaluate(DIARY_PAGE) == "0" and f"{pm}月15日" in pa.evaluate(PEEK), f"点一天：选中，还在月历那一页，最底下写着那一天（{pa.evaluate(PEEK)}）")
+            ok(pa.evaluate(SEL) == prev_day and pa.evaluate(DIARY_PAGE) == "0", "点一天：选中，还在月历那一页")
             # 往上划一点点、慢慢的：不翻
             drag(cdp, 200, gy + 40, 200, gy - 20, steps=10, hold=0.25); time.sleep(0.9)
             ok(pa.evaluate(DIARY_PAGE) == "0", "选中了，往上慢慢划一点点就松手：不翻，回来")
@@ -183,7 +187,7 @@ with sync_playwright() as p:
         pa.get_by_role("button", name="保存").tap(); time.sleep(0.6)
         ok("测试写的一句" in pa.evaluate("document.querySelector('.kfs-diary-day').innerText"), "那一页里照常写、照常存")
         drag(cdp, 200, 300, 200, 660); time.sleep(1.1)
-        ok(pa.evaluate(DIARY_PAGE) == "0" and pa.locator(f".kfs-diary-mon:not([inert]) button[data-day='{today}'] span").count() >= 3, "往下拉回月历：今天的格子上多了她写过的那个小点")
+        ok(pa.evaluate(DIARY_PAGE) == "0" and pa.evaluate(SEL) == today and pa.evaluate(EXTRA)["dots"] == 0, "往下拉回月历：今天还选中着；写过的那天格子上也不标小点")
 
         # ================= 返回 =================
         pa.get_by_role("button", name="返回").first.tap(); time.sleep(0.8)

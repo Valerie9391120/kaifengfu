@@ -67,7 +67,7 @@ function vel(ss, k) {
 }
 
 // els：{ root 整页, pages 两页的那一层, cal 月历那一页, wrap 月历里跟着淡出的那一层, months 装各个月的那一格,
-//        day 这一天那一页, sc 它里面滚的那一层, peek 最底下那行小字 }
+//        day 这一天那一页, sc 它里面滚的那一层, peek 最底下那行小字（可以没有） }
 // live()：眼下的 { count 一共几个月, hasSel 选没选中一天, blocked 上面盖着别的（手帐那一层），
 //          onAt(i) 眼前换成第 i 个月了（还在动）, onMonth(i) 停在第 i 个月了,
 //          onPos(x) 每一帧眼前是第几个月（带小数，拉过头的也给）：晷盘、年月照它摆,
@@ -117,7 +117,7 @@ export function mountDeck(els, live) {
     const x = clamp(page.x, 0, 1);
     wrap.style.opacity = (1 - 0.7 * x).toFixed(3);
     wrap.style.transform = `scale(${(1 - 0.04 * x).toFixed(4)})`;
-    peek.style.visibility = x > 0.02 ? "hidden" : "visible";
+    if (peek) peek.style.visibility = x > 0.02 ? "hidden" : "visible";
   }
   // 停在哪一页：另一页碰不着、读屏不念
   function setPage(n) {

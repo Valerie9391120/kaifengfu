@@ -263,7 +263,7 @@ with sync_playwright() as p:
                  sel: sel && sel.dataset.day, key, at: page.dataset.page, dayInert: page.querySelector('.kfs-diary-day').inert, arrows: page.querySelectorAll('[aria-label="上个月"],[aria-label="下个月"]').length }; }""")
     ok(abs(cal["x"]) < 1 and abs(cal["w"] - 390) < 1 and cal["left"] > 12 and cal["right"] < 378 and cal["top"] > cal["titleTop"] + 40 and cal["bottom"] < 844,
        f"日记页完全展开，月历那一页的格子都在屏幕里、在年月底下（{cal}）")
-    ok(cal["title"] == cal["want"] and cal["titleMid"] < 120 and cal["titleTop"] < 200 and not cal["head"] and cal["arrows"] == 0,
+    ok(cal["title"] == cal["want"] and cal["titleMid"] < 120 and cal["titleTop"] < 300 and not cal["head"] and cal["arrows"] == 0,
        f"月历那一页：年月竖着写在左上（右上角是日晷），没有顶栏那行“闲笔集”，也没有左右箭头（{cal['title']}）")
     ok(cal["sel"] == cal["key"] and cal["at"] == "0" and cal["dayInert"], f"进来停在月历那一页，今天选中着，底下那一页碰不着（{cal['sel']}）")
     ok(diary_day(pa), "选中的那一天再点一下：翻到那一天的那一页")
