@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { hangWenkai } from "../ui/wenkai.js";
 import { Icon } from "../ui/Icon.jsx";
 import { safeTopPx } from "../ui/parts.jsx";
 import { newId } from "../util.js";
@@ -14,7 +15,7 @@ import { sepLabel } from "../days.js";
 import { pickRecap } from "../recap.js";
 import { roundsOf, notesOf, deskCards, boxOf } from "./parts.js";
 
-/* global __KFS_DESK__, __KFS_WENKAI_CSS__ */
+/* global __KFS_DESK__ */
 // 狐宇宙那一层：他屋里的一张书案（那一页是 tools/make_desk.py 生成的，零件见 parts.js）。
 // 南衙里点“狐宇宙”进来：盖一层全屏（层高 60，同秘戏钱匣），里面一个框装着那一页；框是这时候才建、才去下载（头一回十几兆），关上就拆了。
 // 框是隔开的（sandbox 只给 allow-scripts，来路是 null）：碰不到开封府的网页、存档、localStorage。认那一页靠暗号：
@@ -30,18 +31,7 @@ import { roundsOf, notesOf, deskCards, boxOf } from "./parts.js";
 //   recapdrop（提要丢掉重抄，回它 tip）、save（文档存到手机）、copy（那一页里复制不成，这边替它复制，回它 copied）。
 //   藏起来、弹着梦库梦廊的时候递 hold，那一页先不画（省电）
 export const DESK_URL = typeof __KFS_DESK__ !== "undefined" ? __KFS_DESK__ : "./assets/desk.html";
-// 霞鹜文楷（同那一页那一份，build.mjs 拼的）：这一层上弹出来的梦库、梦廊照屋里卡片的样子写，字也跟那一页一样。打开这一层的时候挂上，挂一回就留着
-const WENKAI_CSS = typeof __KFS_WENKAI_CSS__ !== "undefined" ? __KFS_WENKAI_CSS__ : "";
-function hangWenkai() {
-  try {
-    if (!WENKAI_CSS || document.querySelector("link[data-kfs-wenkai]")) return;
-    const l = document.createElement("link");
-    l.rel = "stylesheet";
-    l.href = WENKAI_CSS;
-    l.setAttribute("data-kfs-wenkai", "");
-    document.head.appendChild(l);
-  } catch (e) {}
-}
+// 霞鹜文楷（同那一页那一份）：这一层上弹出来的梦库、梦廊照屋里卡片的样子写，字也跟那一页一样。打开这一层的时候挂上（ui/wenkai.js）
 const WAIT_MS = 20000; // 这么久还没画出来，说一句（头一回要下十几兆）
 const REBUILD_MAX = 2; // 画布被收走，框最多重建几回
 const BG = "#1c1614"; // 那一页的底色（屋里木头的暗处）

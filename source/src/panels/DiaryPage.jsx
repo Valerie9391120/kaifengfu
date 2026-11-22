@@ -8,6 +8,7 @@ import { TyCard } from "../tongye/TyCard.jsx";
 import { NOTE_MAX } from "../jz/model.js";
 import { clip } from "../recap.js";
 import { mountDeck } from "./diaryDeck.js";
+import { hangWenkai } from "../ui/wenkai.js";
 import { Dial, NEEDLE, branchOf } from "./Dial.jsx";
 
 // 那一天的批注（同页那一本里留的、他翻日记的时候留的，都在这儿；见 tongye/host.js）：一条一条摆着，底下能再留一条；
@@ -99,8 +100,8 @@ const HEAT = [0.05, 0.12, 0.22, 0.34, 0.48];
 // 摆法（她在原型上调的；都是占整页宽、高的几成）：日晷的半径、圆心，月历左右留白
 const LAY = { r: 0.55, cx: 0.8, cy: 0.325, left: 0.06, right: 0.07 }; // cy：她拿截图改的稿子，晷盘整个往下挪（原来 0.21）
 const GAP = 7;
-// 年月、格子里的数字：西文衬线的老式数字（数字有高有低，像旧书的页码；她挑的），汉字落到宋体
-const OLDNUM = { fontFamily: "Georgia," + SERIF, fontVariantNumeric: "oldstyle-nums" };
+// 年月、格子里的数字：霞鹜文楷（狐宇宙信笺上她写的那边那款，她挑的；ui/wenkai.js 挂上，没取到之前是宋体、苹方）
+const OLDNUM = { fontFamily: "'KFS WenKai'," + SERIF };
 const DIAL_OUT = 1.1; // 晷盘最外那圈节气画到半径的几倍（格子要躲开它）
 const DIAL_GAP = 40; // 晷盘最外那圈和星期那一行之间留的白（她要两块隔开一段）
 const ROW_MIN = 34; // 格子最矮多少：屏幕矮、放不下的时候晷盘往上让（最高到 0.18）
@@ -203,6 +204,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
   const moonRefs = useRef([]);
   const deck = useRef(null);
   const probeRef = useRef(null);
+  useEffect(() => hangWenkai(), []);
   // 整页多宽多高、主屏幕底下空出来的那一条多高（摆法照它们算，见 LAY）
   const [box, setBox] = useState(() => ({ W: window.innerWidth || 390, H: window.innerHeight || 844, sb: 0 }));
   useLayoutEffect(() => {
