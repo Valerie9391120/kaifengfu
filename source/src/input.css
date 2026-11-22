@@ -47,6 +47,7 @@
   --k-red-2: 180, 84, 74;
   --k-gold: 148, 115, 58;
   --k-gold-dot: 185, 145, 76;
+  --k-moon: 255, 255, 252; /* 闲笔集晷盘上月亮亮的那一边（见 panels/Dial.jsx） */
   --k-glow-warm: 250, 232, 190;
   --k-card-glow: 255, 238, 200;
 }
@@ -101,6 +102,7 @@ html[data-kfs-theme="heiye"] {
   --k-red-2: 236, 128, 116;
   --k-gold: 232, 204, 150;
   --k-gold-dot: 226, 196, 134;
+  --k-moon: 240, 232, 205;
   --k-glow-warm: 140, 160, 215;
   --k-card-glow: 100, 125, 185;
 }

@@ -1,4 +1,5 @@
-// 闲笔集那一页的手指（见 DiaryPage.jsx）：两页上下接着，上面是月历，下面是选中的那一天；月历左右划换月。
+// 闲笔集那一页的手指（见 DiaryPage.jsx）：两页上下接着，上面是月历，下面是选中的那一天；月历左右划换月，
+// 在右上角的日晷上绕着圈拨也是换月（盘面跟着手指转），点晷盘外圈的地支跳到那个月。
 // 跟手、甩、吸住都自己一帧一帧写，不用浏览器的滚动和 CSS 动画（同藏音匣那一页的做法，见 cangyin/page.js）；
 // 只有“这一天”那一页里面照常用浏览器的滚动：滑到最顶再往下拉，才接过来翻回月历。
 // 这里只挪位置、不管内容：月历的格子、那一天的字都是 DiaryPage.jsx 画的。
@@ -11,9 +12,12 @@ export const DECK = {
   thresh: 0.2, // 划过多少才翻（占屏宽、屏高）
   vel: 0.45, // 甩多快就翻（像素/毫秒）
   edge: 0.55, // 拉过头有多重（越小越重）
+  dialDeg: 30, // 晷盘上拨多少度换一个月（一个地支一格）
 };
 
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+// 从圆心看过去的角度：从正上方起、顺时针，度
+const deg = (dx, dy) => (Math.atan2(dx, -dy) * 180) / Math.PI;
 
 class Spr {
   constructor(x, still) {
@@ -63,18 +67,17 @@ function vel(ss, k) {
 }
 
 // els：{ root 整页, pages 两页的那一层, cal 月历那一页, wrap 月历里跟着淡出的那一层, months 装各个月的那一格,
-//        day 这一天那一页, sc 它里面滚的那一层, tkY、tkM 年月里会滚的两格, peek 最底下那行小字 }
-// live()：眼下的 { count 一共几个月, hasSel 选没选中一天, yearIndex(i) 第 i 个月是第几个年份, blocked 上面盖着别的（手帐那一层），
-//          onAt(i) 眼前换成第 i 个月了（还在动）, onMonth(i) 停在第 i 个月了 }
+//        day 这一天那一页, sc 它里面滚的那一层, peek 最底下那行小字 }
+// live()：眼下的 { count 一共几个月, hasSel 选没选中一天, blocked 上面盖着别的（手帐那一层），
+//          onAt(i) 眼前换成第 i 个月了（还在动）, onMonth(i) 停在第 i 个月了,
+//          onPos(x) 每一帧眼前是第几个月（带小数，拉过头的也给）：晷盘、年月照它摆,
+//          dialAt(px, py) 手指落在晷盘上没有（落在上面给 { cx, cy } 圆心，屏幕坐标）, dialTap(px, py, x) 点的是哪个月（没点中给 null） }
 // 返回 { goPage(n), stepMonth(dir), repaint(), remeasure(), pageAt(), destroy() }
 export function mountDeck(els, live) {
-  const { root, pages, cal, wrap, months, day, sc, tkY, tkM, peek } = els;
+  const { root, pages, cal, wrap, months, day, sc, peek } = els;
   const still = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   let W = 1;
   let H = 1;
-  let wY = [];
-  let wM = [];
-  let lineH = 1;
   let at = Math.max(0, live().count - 1);
   let pageNow = 0;
   const mpos = new Spr(at, still); // 眼前是第几个月（带小数）
@@ -84,31 +87,13 @@ export function mountDeck(els, live) {
   function remeasure() {
     W = root.clientWidth || 1;
     H = root.clientHeight || 1;
-    wY = [...tkY.firstChild.children].map((e) => e.getBoundingClientRect().width);
-    wM = [...tkM.firstChild.children].map((e) => e.getBoundingClientRect().width);
-    lineH = tkM.getBoundingClientRect().height || 1;
   }
 
-  // 年月：原地不动，数字跟着手指滚（往后一个月，新的数从底下上来）；数字宽窄不一样的时候，那一格的宽跟着匀过去
-  function roll(tk, widths, pos) {
-    const max = widths.length - 1;
-    if (max < 0) return;
-    const soft = pos < 0 ? pos * 0.5 : pos > max ? max + (pos - max) * 0.5 : pos; // 拉过头的时候数字只挪一半
-    const i = clamp(Math.floor(pos), 0, max);
-    const j = Math.min(max, i + 1);
-    const f = clamp(pos - i, 0, 1);
-    tk.style.width = (widths[i] + (widths[j] - widths[i]) * f).toFixed(2) + "px";
-    tk.firstChild.style.transform = `translate3d(0,${(-soft * lineH).toFixed(2)}px,0)`;
-  }
   function paintMonths() {
     const max = maxM();
     const x = mpos.x;
-    roll(tkM, wM, x);
-    const i = clamp(Math.floor(x), 0, max);
-    const j = Math.min(max, i + 1);
     const L = live();
-    const yi = L.yearIndex(i);
-    roll(tkY, wY, yi + (L.yearIndex(j) - yi) * clamp(x - i, 0, 1));
+    if (L.onPos) L.onPos(x);
     const near = Math.round(clamp(x, 0, max));
     for (const el of months.children) {
       const d = Number(el.dataset.i) - x;
@@ -198,6 +183,14 @@ export function mountDeck(els, live) {
     if (g) endG(true);
     swallow = false;
     g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null, ox: 0, oy: 0, m0: mpos.x, p0: page.x, ss: [{ t: e.timeStamp, x: e.clientX, y: e.clientY }] };
+    // 落在晷盘上：这一下只管拨盘（绕着圆心转了多少度），不换成翻页
+    const L = live();
+    const dc = pageNow === 0 && L.dialAt ? L.dialAt(e.clientX, e.clientY) : null;
+    if (dc) {
+      g.dial = dc;
+      g.ph = deg(e.clientX - dc.cx, e.clientY - dc.cy);
+      g.raw = mpos.x;
+    }
     mpos.on = false;
     mpos.v = 0;
     page.on = false;
@@ -209,6 +202,26 @@ export function mountDeck(els, live) {
     const dy = e.clientY - g.y0;
     g.ss.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
     while (g.ss.length > 2 && e.timeStamp - g.ss[0].t > 90) g.ss.shift();
+    if (g.dial) {
+      // 绕着圆心拨：顺时针拨，盘面顺时针转，指针底下换成前一个月
+      const ph = deg(e.clientX - g.dial.cx, e.clientY - g.dial.cy);
+      let d = ph - g.ph;
+      if (d > 180) d -= 360;
+      if (d < -180) d += 360;
+      g.ph = ph;
+      g.raw -= d / DECK.dialDeg;
+      if (!g.axis) {
+        if (Math.hypot(dx, dy) < 6) return;
+        g.axis = "dial";
+        swallow = true;
+        try {
+          cal.setPointerCapture(g.id);
+        } catch (er) {}
+      }
+      mpos.x = band(clamp(g.raw, -3, maxM() + 3), 0, maxM(), W);
+      paintMonths();
+      return;
+    }
     if (!g.axis) {
       if (Math.hypot(dx, dy) < 8) return;
       g.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
@@ -234,7 +247,9 @@ export function mountDeck(els, live) {
     try {
       cal.releasePointerCapture(G.id);
     } catch (er) {}
-    if (G.axis === "x") {
+    if (G.axis === "dial") {
+      mpos.go(clamp(Math.round(mpos.x), 0, maxM()));
+    } else if (G.axis === "x") {
       const v = cancel ? 0 : vel(G.ss, "x");
       const base = Math.round(clamp(G.m0, 0, maxM()));
       const d = mpos.x - base;
@@ -253,8 +268,10 @@ export function mountDeck(els, live) {
       if (to === 1) day.inert = false;
       page.go(to, (-v * 1000) / H);
     } else {
-      // 没拖，只是点了一下（点格子那一下是格子自己的“点击”管的）：按下去的时候停住的弹簧接着走完
-      mpos.go(Math.round(clamp(mpos.x, 0, maxM())));
+      // 没拖，只是点了一下（点格子那一下是格子自己的“点击”管的）：按下去的时候停住的弹簧接着走完；
+      // 点在晷盘外圈的地支上：换到那个月
+      const to = G.dial && !cancel ? live().dialTap(G.x0, G.y0, mpos.x) : null;
+      mpos.go(to === null || to === undefined ? Math.round(clamp(mpos.x, 0, maxM())) : clamp(to, 0, maxM()));
       page.go(Math.round(clamp(page.x, 0, 1)));
     }
     kick();
