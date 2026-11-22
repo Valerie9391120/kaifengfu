@@ -78,7 +78,7 @@ with sync_playwright() as p:
            f"年月在左边，晷盘在右上、出了屏幕一截；最底下一行小字写着今天（{pa.evaluate(PEEK)}）")
         ok(pa.evaluate(CUR_BRANCH) == (td.month + 1) % 12 and abs(((w0["rot"] + (td.month + 1) % 12 * 30 - 232) + 180) % 360 - 180) < 0.5,
            f"晷盘：这个月的地支（{BR[(td.month + 1) % 12]}）亮着，转到指针底下（转了 {w0['rot']:.1f} 度）")
-        ok(w0["gb"] < H - 40 and w0["wk"] > w0["cy"] + w0["r"] * 1.09, f"格子整块在晷盘最外那圈底下、最底下那行小字上面（星期那一行 {w0['wk']:.0f}，晷盘最外 {w0['cy'] + w0['r'] * 1.09:.0f}，格子底边 {w0['gb']:.0f}）")
+        ok(w0["gb"] < H - 40 and w0["wk"] > w0["cy"] + w0["r"] * 1.1 + 40, f"格子整块在晷盘最外那圈底下、最底下那行小字上面（星期那一行 {w0['wk']:.0f}，晷盘最外 {w0['cy'] + w0['r'] * 1.09:.0f}，格子底边 {w0['gb']:.0f}）")
         if SHOTS: pa.screenshot(path=f"{SHOTS}/xianbi-1-cal.png")
 
         if many:

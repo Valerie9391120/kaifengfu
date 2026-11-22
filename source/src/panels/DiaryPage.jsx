@@ -102,6 +102,7 @@ const GAP = 7;
 const LEGEND_H = 44; // 图例那一行连上面的线
 const PEEK_H = 30; // 最底下那行小字占的（不算主屏幕底下那一条）：整块沉到底，小字贴着主屏幕底下那一条
 const DIAL_OUT = 1.1; // 晷盘最外那圈节气画到半径的几倍（格子要躲开它）
+const DIAL_GAP = 44; // 晷盘最外那圈和星期那一行之间留的白（她要两块隔开一段）
 
 // 整页两页上下接着（手指怎么走见 diaryDeck.js）：
 //   上面一页是月历，摆在背景上，没有顶栏、没有衬底的卡片：右上角一块日晷（Dial.jsx），左边竖着写年月，底下是日期的格子。
@@ -364,7 +365,7 @@ export function DiaryPage({ now, onBack, loadMonth, saveEntry, loadDays, writeHi
   const DCY = LAY.cy * H;
   // 格子整块从晷盘最外那圈底下起（11 月 22 日她截图圈出来：星期五六日压在节气那圈上）。放不下六行 1:1.25 的，
   // 先扁一点（最扁 1:1.1），再扁就整块一起缩窄、左右居中（格子宽跟着高缩，不压成扁条）
-  const calStart = Math.max(DCY + DR * DIAL_OUT + 12, 0.36 * H);
+  const calStart = Math.max(DCY + DR * DIAL_OUT + DIAL_GAP, 0.36 * H);
   const fullW = W - LAY.left * W - LAY.right * W;
   const rowFit = (H - sb - PEEK_H - LEGEND_H - 24 - calStart - 5 * GAP) / 6;
   const colFull = (fullW - 6 * GAP) / 7;
