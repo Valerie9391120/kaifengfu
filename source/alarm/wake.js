@@ -208,11 +208,9 @@ function unmasked(s) {
   const blank = (t) => t.replace(/[^\n]/g, " ");
   let out = s;
   // 心里话可能好几段（同网页 reply.js 的 splitThoughts），每一段都涂掉；只有开头没收尾的，从那儿往后都涂掉
-  out = out.replace(/<thinking>[\s\S]*?<\/thinking>/g, blank);
-  if (out.includes("<thinking>")) {
-    const i = out.indexOf("<thinking>");
-    out = out.slice(0, i) + blank(out.slice(i));
-  }
+  out = out.replace(/<(心声|thinking|inner_voice)>[\s\S]*?<\/\1>/g, blank);
+  const om = /<(心声|thinking|inner_voice)>/.exec(out);
+  if (om) out = out.slice(0, om.index) + blank(out.slice(om.index));
   const open = /^[ \t]*\[(?:DOC|Doc|doc)[:：][^\[\]\n]*\][ \t]*\r?$/gm;
   let d;
   while ((d = open.exec(out)) !== null) {

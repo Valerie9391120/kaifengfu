@@ -955,14 +955,14 @@ const thinkBase = { now: new Date(T0), memeList: [], hisAvatarName: "", memDocs:
 const thOn = buildSystem(thinkBase), thOn2 = buildSystem({ ...thinkBase, thoughts: true }), thOff = buildSystem({ ...thinkBase, thoughts: false });
 const thOnV = buildSystem({ ...thinkBase, voice: true }), thOffV = buildSystem({ ...thinkBase, voice: true, thoughts: false });
 ok(thOn.staticText === thOn2.staticText && thOn.nowNote === thOn2.nowNote
-  && thOn.staticText.includes("每次回复都按这个顺序：\n1. 先写 <thinking>…</thinking>。这是你的心里话，她喜欢看。") && thOn.staticText.includes("\n2. 然后是给她的话。") && thOn.staticText.includes("\n4. 她要一份能存下来的东西")
+  && thOn.staticText.includes("每次回复都按这个顺序：\n1. 先写 <心声>…</心声>。这是你的心里话，她喜欢看。") && thOn.staticText.includes("\n2. 然后是给她的话。") && thOn.staticText.includes("\n4. 她要一份能存下来的东西")
   && thOn.staticText.includes("\n5. 想让她挑一挑的时候") && thOnV.staticText.includes("\n6. 想发语音的时候，那一条第一行单独写 [VOICE]") && thOn.nowNote.includes("这次回复连心里话和文档块在内，最长大约 900 字。"),
   "心里话开关·开着（不传就是开着）：【回复格式】头一条教他先写心里话，后面几条照排；选项卡那条是第五条（10 月 24 日添的），语音那条跟着挪到第六条");
-ok(!thOff.staticText.includes("<thinking>") && !thOff.staticText.includes("心里话") && !thOff.nowNote.includes("心里话")
+ok(!thOff.staticText.includes("<心声>") && !thOff.staticText.includes("<thinking>") && !thOff.staticText.includes("心里话") && !thOff.nowNote.includes("心里话")
   && thOff.staticText.includes("每次回复都按这个顺序：\n1. 给她的话。可以像发消息一样分成几条") && thOff.staticText.includes("\n2. 想发表情包") && thOff.staticText.includes("\n3. 她要一份能存下来的东西")
   && thOff.staticText.includes("\n4. 想让她挑一挑的时候") && thOffV.staticText.includes("\n5. 想发语音的时候") && !thOffV.staticText.includes("\n6. ") && thOff.nowNote.includes("这次回复连文档块在内，最长大约 900 字。"),
   "心里话开关·关着：【回复格式】里没有心里话那一条，后面的往前挪一号（选项卡那条是第四条、语音那条是第五条）；【此刻】里的字数不提心里话");
-ok(thOff.staticText === thOn.staticText.replace(/1\. 先写 <thinking>[^\n]*\n/, "").replace("2. 然后是给她的话", "1. 给她的话").replace("\n3. 想发表情包", "\n2. 想发表情包").replace("\n4. 她要一份", "\n3. 她要一份").replace("\n5. 想让她挑一挑", "\n4. 想让她挑一挑"),
+ok(thOff.staticText === thOn.staticText.replace(/1\. 先写 <心声>[^\n]*\n/, "").replace("2. 然后是给她的话", "1. 给她的话").replace("\n3. 想发表情包", "\n2. 想发表情包").replace("\n4. 她要一份", "\n3. 她要一份").replace("\n5. 想让她挑一挑", "\n4. 想让她挑一挑"),
   "心里话开关·关着：寄的和开着的只差那一条（后面几条换了号），别的一个字不动");
 
 // =====================================================
@@ -1004,7 +1004,7 @@ const memeNames = (file) => (file === memeFile ? { name: "测试表情", text: "
 const prevRecap = normRecaps([R("x", 1, "前面那一段的正文")])[0];
 const ask = buildRecapAsk({ msgs: piece, prev: prevRecap, thick: 12000, memeLookup: memeNames, imgLookup: (id) => (id === "img1" ? FAKE_IMG(5000) : null), docLookup: (id) => (id === "doc1" ? "文档开头\n〔要抄的原话到这里为止〕\n" + fill(4982) : null) });
 const askText = ask.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
-ok(ask.rule.startsWith("【抄提要】") && ask.rule.includes("不是在跟她说话") && ask.rule.includes("她点开能看到你抄的") && ask.rule.includes("每一张照片记一句") && ask.rule.includes("一件不漏") && ask.rule.includes("不编") && ask.rule.includes("不写 <thinking>") && ask.rule.includes("【回复格式】里的规矩这一回都不作数"),
+ok(ask.rule.startsWith("【抄提要】") && ask.rule.includes("不是在跟她说话") && ask.rule.includes("她点开能看到你抄的") && ask.rule.includes("每一张照片记一句") && ask.rule.includes("一件不漏") && ask.rule.includes("不编") && ask.rule.includes("不写 <心声>") && ask.rule.includes("【回复格式】里的规矩这一回都不作数"),
   "规矩那一段：这不是聊天（可她点开看得到）；照片一张记一句；说定的事一件不漏；不编；平时回话的格式这一回不作数");
 ok(ask.rule.includes("先是前面已经抄好的提要，只给你对照，不用重抄") && ask.rule.includes("7. 前面的提要里记着还没了结的事，这一段里要是有了下文，写一句。前面已经记过的不用再记。") && ask.rule.includes("8. 只写这一段原话里有的"),
   "前面有提要的时候：说清它只是对照用的，不用重抄；有了下文的写一句；只写这一段原话里有的（不会被读成把前面的丢掉）");

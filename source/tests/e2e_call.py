@@ -220,7 +220,7 @@ with sync_playwright() as p:
         call_sys = sys_text(body)
         h_on, r_on, t_on = rules_of(sys_text(before))
         h_call, r_call, t_call = rules_of(call_sys)
-        ok(r_on[0].startswith("先写 <thinking>") and "<thinking>" not in call_sys and h_call == h_on and t_call == t_on
+        ok(r_on[0].startswith("先写 <心声>") and "<心声>" not in call_sys and h_call == h_on and t_call == t_on
            and r_call == [r_on[1].replace("然后是给她的话", "给她的话", 1)] + r_on[2:]
            and json.loads(pa.evaluate(KV, "kfs2:settings") or "{}").get("thoughts") is not False,
            "心里话开着的时候打电话：寄的名帖照关着拼，只少心里话那一条（后面几条往前挪一号），别的一个字不动；设置里的开关不动")
@@ -363,7 +363,7 @@ with sync_playwright() as p:
         pa.locator(".kfs-call button[aria-label='挂断']").click()
         time.sleep(0.8)
         kept = json.loads(pa.evaluate(KV, "kfs2:settings") or "{}").get("thoughts")
-        ok(flipped == "true" and kept is False and "<thinking>" not in text_off and call_off == text_off and call_off == call_sys,
+        ok(flipped == "true" and kept is False and "<心声>" not in text_off and call_off == text_off and call_off == call_sys,
            "心里话关着：打字、打电话寄的名帖一个字不差（进出电话不用重新攒缓存），和开着时电话里寄的也一样")
         ok(cap == 0, "开关底下不再写说明字（10 月 30 日她要的，只剩名字和开关）")
         flip_thoughts(pa)   # 拨回开着，后面照原样

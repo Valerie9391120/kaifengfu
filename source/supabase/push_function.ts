@@ -780,7 +780,7 @@ function plainOf(text: string): string {
 
 // ---------- 横幅上写什么 ----------
 // 和网页里拆回话的规矩（src/reply.js 的 parseReply）是同一套：她在对话里看得见哪几个气泡，就敲哪几条横幅，一个气泡一条。
-// 心里话（<thinking>）、改名字的记号不写；表情包写成 [表情包]，文档写成 [文档] 文件名，语音写成 [语音]。
+// 心里话（<心声>，旧的 <thinking>）、改名字的记号不写；表情包写成 [表情包]，文档写成 [文档] 文件名，语音写成 [语音]。
 // 横幅上摆的是平常的字（卿卿定的）：就是气泡里摆出来的那些字，不带粗细大小（见上面的 plainOf）。
 // 两边的规矩改了一边，另一边得跟着改：tests/mail.test.mjs 拿同一批回话两边各拆一遍，对不上就不过
 
@@ -1004,9 +1004,10 @@ function bubblesOf(reply: string): string[] {
 function visibleBubbles(reply: string): { lines: string[]; avatar: boolean } {
   let body = reply.length > BANNER_SOURCE ? reply.slice(0, BANNER_SOURCE) : reply;
   // 心里话一段都不写（他一回里可能写好几段，同网页 reply.js 的 splitThoughts）；只有开头没收尾的，从那儿往后都不写
-  body = body.replace(/<thinking>[\s\S]*?<\/thinking>/g, () => "");
-  const open = body.indexOf("<thinking>");
-  if (open >= 0) body = body.slice(0, open);
+  // 标签认 <心声>、旧的 <thinking>、<inner_voice>（同网页 reply.js 的 THOUGHT_TAGS），开头收尾同名才算一对
+  body = body.replace(/<(心声|thinking|inner_voice)>[\s\S]*?<\/\1>/g, () => "");
+  const om = /<(心声|thinking|inner_voice)>/.exec(body);
+  if (om) body = body.slice(0, om.index);
   body = body.trim();
   const lines: string[] = [];
   let avatar = false;

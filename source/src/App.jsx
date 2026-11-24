@@ -5397,7 +5397,7 @@ export default function App({ account = {} }) {
 这次不是聊天。这是开封府日记本（闲笔集）里属于你的那一页，日期是${label}。
 根据下面这天你们的聊天${herPart ? "和她这天的日记" : ""}，用你自己的口吻写一篇日记：第一人称，写这天发生了什么、你在想什么、你对她的感受。像真的日记，是写给自己的，不是写给她看的信，也不用讨好谁。一百到两百五十字。
 格式：第一行写「心情：」，从 开心、甜、平静、累、焦虑、难过、生气、不舒服 里挑一到两个，用顿号隔开。第二行开始写正文。
-不要写<thinking>，不要[SPLIT]、[MEME]、[AVATAR]、[NAME]、[DOC]、[VOICE]，不要动作描写的星号，不用破折号。`;
+不要写<心声>，不要[SPLIT]、[MEME]、[AVATAR]、[NAME]、[DOC]、[VOICE]，不要动作描写的星号，不用破折号。`;
     // 传话走笔记本的：走不了问她这篇走不走 API（见 claudeAsk）
     const data = await claudeAsk(
       {
@@ -5779,7 +5779,7 @@ export default function App({ account = {} }) {
           .filter((b) => b.type === "text")
           .map((b) => b.text)
           .join("")
-          .replace(/<thinking>[\s\S]*?<\/thinking>/g, "")
+          .replace(/<(心声|thinking|inner_voice)>[\s\S]*?<\/\1>/g, "")
           .trim();
         const cc = String(p.claude || "").replace(/\s*\(Claude Code\)\s*$/i, "");
         setTestNote(`连上了：笔记本上的 Claude Code${cc ? ` ${cc}` : ""}，${modelLabel(d.model || "")} 回了一个“${text.slice(0, 6) || "在"}”`);

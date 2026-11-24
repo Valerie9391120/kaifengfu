@@ -800,11 +800,11 @@ with sync_playwright() as p:
     off_text = sys_of(body)
     now_off = body["messages"][-1]["content"][-1]["text"]
     kept_off = json.loads(pb.evaluate(KV_GET, "kfs2:settings") or "{}").get("thoughts")
-    ok(was == "true" and "1. 先写 <thinking>…</thinking>。这是你的心里话" in on_text and "关着" in off_note and kept_off is False
-       and "<thinking>" not in off_text and "心里话" not in off_text and "每次回复都按这个顺序：\n1. 给她的话。" in off_text
+    ok(was == "true" and "1. 先写 <心声>…</心声>。这是你的心里话" in on_text and "关着" in off_note and kept_off is False
+       and "<心声>" not in off_text and "<thinking>" not in off_text and "心里话" not in off_text and "每次回复都按这个顺序：\n1. 给她的话。" in off_text
        and now_off.startswith("【此刻】") and "连文档块在内" in now_off and "心里话" not in now_off,
        "心里话开关：默认开着；关了（记进设置），寄过去的【回复格式】里没有心里话那一条，【此刻】的字数也不提它")
-    ok(off_text == re.sub(r"1\. 先写 <thinking>[^\n]*\n", "", on_text, count=1).replace("2. 然后是给她的话", "1. 给她的话", 1).replace("\n3. 想发表情包", "\n2. 想发表情包", 1).replace("\n4. 她要一份", "\n3. 她要一份", 1).replace("\n5. 想让她挑一挑", "\n4. 想让她挑一挑", 1).replace("\n6. 想给她打电话", "\n5. 想给她打电话", 1),
+    ok(off_text == re.sub(r"1\. 先写 <心声>[^\n]*\n", "", on_text, count=1).replace("2. 然后是给她的话", "1. 给她的话", 1).replace("\n3. 想发表情包", "\n2. 想发表情包", 1).replace("\n4. 她要一份", "\n3. 她要一份", 1).replace("\n5. 想让她挑一挑", "\n4. 想让她挑一挑", 1).replace("\n6. 想给她打电话", "\n5. 想给她打电话", 1),
        "心里话开关关着：寄的和开着的只差那一条（后面几条换了号，选项卡、打电话那两条也跟着往前挪），名帖、规矩别的一个字不动")
     was2, on_note = flip_thoughts(pb)
     back_text = sys_of(say_b("还是写吧"))

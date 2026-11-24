@@ -80,25 +80,32 @@ export function splitMarks(text) {
   return parts;
 }
 
+// 心里话的标签：现在教他写 <心声>（11 月 24 日换的：原来是 <thinking>，笔记本上的 5.2 一见“在 <thinking> 里写”就拦，
+// 报 reasoning_extraction；换个名字就过）。旧的 <thinking>、别家用的 <inner_voice> 照样认（旧聊天记录、别的模型偶尔还写旧的）。
+// 开头和收尾要是同一个名字才算一对。通知的小后端（push_function.ts）、闹钟（alarm/wake.js）、写日记、抄提要那几处照这一串认
+export const THOUGHT_TAGS = ["心声", "thinking", "inner_voice"];
+export const THOUGHT_PAIR = /<(心声|thinking|inner_voice)>([\s\S]*?)<\/\1>/g;
+export const THOUGHT_OPEN = /<(心声|thinking|inner_voice)>/;
+
 // 心里话：一回里可能写好几段（先写一段，查了东西、用了工具回来，又想写，再写一段），一段是一段，各摆一张“思考过程”，
 // 摆在他写它的那个地方（她 11 月 22 日要的：“如果你又有心里话想写 可以新开一个心里话的气泡 这样一次回复里的心里话气泡我们不设置上限”）。
 // 切成一截一截：给她的话、心里话、给她的话……；最后一段只有开头没有收尾的（写到一半断了），从那儿往后都算心里话
 export function splitThoughts(text) {
   const src = String(text || "");
   const out = [];
-  const re = /<thinking>([\s\S]*?)<\/thinking>/g;
+  const re = new RegExp(THOUGHT_PAIR.source, "g");
   let last = 0;
   let m;
   while ((m = re.exec(src)) !== null) {
     out.push({ type: "text", value: src.slice(last, m.index) });
-    out.push({ type: "think", value: m[1] });
+    out.push({ type: "think", value: m[2] });
     last = re.lastIndex;
   }
   let rest = src.slice(last);
-  const open = rest.indexOf("<thinking>");
-  if (open >= 0) {
-    out.push({ type: "text", value: rest.slice(0, open) });
-    out.push({ type: "think", value: rest.slice(open + "<thinking>".length) });
+  const om = THOUGHT_OPEN.exec(rest);
+  if (om) {
+    out.push({ type: "text", value: rest.slice(0, om.index) });
+    out.push({ type: "think", value: rest.slice(om.index + om[0].length) });
     rest = "";
   }
   out.push({ type: "text", value: rest });

@@ -507,7 +507,7 @@ export function tyArrangeAsk({ label, her = "她", quotes = [], notes = [], phot
 - 她已经动过的别碰：她藏起来的零件不会摆回来，她在页上打的字、她自己起的标题、她自己挑的版式风格，都照她的，你写的盖不掉。
 - 版式：${list("layouts")}。
 - 风格：${list("styles")}。
-只回一段 JSON，夹在单独一行的 [JZ] 和单独一行的 [/JZ] 中间，前后不要别的话，不要 <thinking>，不要 [SPLIT]、[MEME] 这些记号。样子：
+只回一段 JSON，夹在单独一行的 [JZ] 和单独一行的 [/JZ] 中间，前后不要别的话，不要 <心声>，不要 [SPLIT]、[MEME] 这些记号。样子：
 [JZ]
 {"layout":"polaroid","style":"xuan","title":"……","p1":"……","cap":"……","pen":{"text":"……[[……]]……","margin":"……"},"quotes":["q3","q7"],"photos":[{"id":"照片2","role":"hero","note":"……"},{"id":"照片1","role":"pair"},{"id":"照片3","role":"pair"}],"note":{"text":"……","b":"he"}}
 [/JZ]

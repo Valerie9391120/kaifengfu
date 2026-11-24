@@ -551,7 +551,7 @@ function fakeAnthropic(body, beta, via) {
     ? `<thinking>（测试心声）照着说</thinking>\n${echo[1].replace(/\{回\}/g, String(++echoSeq))}`
     : wish
     ? `<thinking>（测试心声）改就改</thinking>\n行，改了。\n[NAME:${wish[1]}]\n[SPLIT]\n抬头看`
-    : `<thinking>（测试心声）卿卿说：${herText}</thinking>\n收到：${herText}\n[SPLIT]\n第二条`;
+    : `<心声>（测试心声）卿卿说：${herText}</心声>\n收到：${herText}\n[SPLIT]\n第二条`;
   return {
     status: 200,
     json: {

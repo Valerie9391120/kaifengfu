@@ -532,10 +532,11 @@ export function nextRecap(due, text, msgs, { id, at, model }) {
 export function cleanRecap(text) {
   let t = String(text || "").trimStart();
   // 开头顺手写的心里话：整块不要。只有开头没有结尾的，后面全是心里话，也不要。
-  // 只认开头的：正文中间提到 <thinking> 这几个字的，原样留着
-  if (t.startsWith("<thinking>")) {
-    const close = t.indexOf("</thinking>");
-    t = close < 0 ? "" : t.slice(close + "</thinking>".length);
+  // 只认开头的：正文中间提到 <心声> 这几个字的，原样留着（旧的 <thinking>、<inner_voice> 也认，见 reply.js 的 THOUGHT_TAGS）
+  const lead = ["心声", "thinking", "inner_voice"].find((n) => t.startsWith("<" + n + ">"));
+  if (lead) {
+    const close = t.indexOf("</" + lead + ">");
+    t = close < 0 ? "" : t.slice(close + lead.length + 3);
   }
   t = t
     .split("[SPLIT]")

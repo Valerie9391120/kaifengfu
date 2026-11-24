@@ -389,7 +389,7 @@ export function buildArrangeAsk({ label, quotes = [], photos = [], diary = {}, w
 - 想在某一块旁边留一句批注的，写 note（text 是那一句，part 是贴在哪一块：hero 主照片、title 标题、quote 原话、her 她的日记、him 你的日记、food 饭、body 正文），不想留就不写。
 - 版式：${lay}。
 - 风格：${sty}。
-只回一段 JSON，夹在单独一行的 [JZ] 和单独一行的 [/JZ] 中间，前后不要别的话，不要 <thinking>，不要 [SPLIT]、[MEME] 这些记号。样子：
+只回一段 JSON，夹在单独一行的 [JZ] 和单独一行的 [/JZ] 中间，前后不要别的话，不要 <心声>，不要 [SPLIT]、[MEME] 这些记号。样子：
 [JZ]
 {"layout":"polaroid","style":"xuan","title":"……","body":"……","cap":"……","pen":{"text":"……[[……]]……","margin":"……"},"quotes":["q3","q7"],"photos":[{"id":"照片2","role":"hero","note":"……"},{"id":"照片1","role":"food"}],"stickers":["狐狸","画的心"],"note":{"text":"……","part":"hero"}}
 [/JZ]

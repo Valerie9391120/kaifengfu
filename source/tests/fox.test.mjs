@@ -63,6 +63,18 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   ok(new Set(keys).size === 2, "摆：一张一张各自开合（记开没开的不是同一个名字）");
 }
 
+// ================= 拆：心里话的标签换成 <心声>（11 月 24 日），旧的 <thinking>、<inner_voice> 照样认 =================
+{
+  const a = parseReply("<心声>想她了</心声>\n在呢\n[SPLIT]\n<心声>她笑了</心声>\n真好");
+  ok(a.thoughts && a.thoughts.map((t) => t.text).join("|") === "想她了|她笑了" && a.items.map((x) => x.text).join("|") === "在呢|真好" && !a.body.includes("心声"), "拆：<心声> 跟原来的 <thinking> 一样摘出来，一段一张");
+  const b = parseReply("<thinking>旧的</thinking>\n<心声>新的</心声>\n<inner_voice>别家的</inner_voice>\n话");
+  ok(b.thoughts && b.thoughts.length === 3 && b.items.length === 1 && b.items[0].text === "话", "拆：新旧几种混着写也都认");
+  const c = parseReply("<心声>开头和收尾不是一对</thinking>\n话");
+  ok(c.thinking === "开头和收尾不是一对</thinking>\n话" && c.items[0].text === "……", "拆：开头和收尾名字对不上的不算一对：从开头往后都当心里话（同没收尾的）");
+  const d = parseReply("在呢<心声>写到一半断了");
+  ok(d.thinking === "写到一半断了" && d.items[0].text === "在呢", "拆：<心声> 没收尾的，从那儿往后都是心里话");
+}
+
 // ================= 拆：[WAKE:…] 不显示成字，单独带出去 =================
 {
   const p = parseReply("<thinking>想她了</thinking>\n醒了，看看你\n[SPLIT]\n[MEME:a.jpg]\n[WAKE:+3h]");
@@ -766,12 +778,12 @@ const at = (h, m = 0, d = 20) => new Date(2026, 9, d, h, m, 0, 0).getTime();
   const sysText = (body) => (Array.isArray(body.system) ? body.system.map((x) => x.text || "").join("\n") : String(body.system || ""));
   cloud = cloudOf([said("醒了")]);
   await askRoom({ store: kv6(), cloud, ctx: ctxOf(), ...opts });
-  ok(lastText(cloud.bodies[0]).includes(ONE) && sysText(cloud.bodies[0]).includes("先写 <thinking>"), "醒在屋里：【醒来】里心里话那一条（11 月 17 日那一版的字：可以略过不写）");
+  ok(lastText(cloud.bodies[0]).includes(ONE) && sysText(cloud.bodies[0]).includes("先写 <心声>"), "醒在屋里：【醒来】里心里话那一条（11 月 17 日那一版的字：可以略过不写）");
   const offCtx = ctxOf();
   offCtx.settings.thoughts = false;
   cloud = cloudOf([said("醒了")]);
   await askRoom({ store: kv6(), cloud, ctx: offCtx, ...opts });
-  ok(!lastText(cloud.bodies[0]).includes("- 心里话：") && !sysText(cloud.bodies[0]).includes("先写 <thinking>"), "她关了“他写心里话”：【醒来】里不提");
+  ok(!lastText(cloud.bodies[0]).includes("- 心里话：") && !sysText(cloud.bodies[0]).includes("先写 <心声>"), "她关了“他写心里话”：【醒来】里不提");
   cloud = cloudOf([said("在吗")]);
   await askTask({ store: kv6(), cloud, ctx: ctxOf(), task: { key: "kfs2:fox:task:z", raw: "+5m", set: Date.now() }, chat: { id: "c1", title: "一段对话", msgs: [{ id: "h1", role: "her", ts: 1, text: "嗯" }] } });
   ok(!lastText(cloud.bodies[0]).includes("- 心里话：可以略过不写"), "任务到点那一回（醒在那段对话里）：不提");

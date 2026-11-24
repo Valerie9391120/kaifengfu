@@ -91,8 +91,8 @@ export function dayTranscript(msgs, memeLookup, maxChars = 9000) {
 // 光义写的日记：第一行“心情：”，后面是正文；顺手把聊天用的标记都清掉
 export function parseDiary(text) {
   let t = (text || "")
-    .replace(/<thinking>[\s\S]*?<\/thinking>/g, "")
-    .replace(/<\/?thinking>/g, "")
+    .replace(/<(心声|thinking|inner_voice)>[\s\S]*?<\/\1>/g, "")
+    .replace(/<\/?(心声|thinking|inner_voice)>/g, "")
     .replace(/\[(MEME|AVATAR)[:：][^\]]*\]/g, "")
     .replace(NAME_RE(), "")
     .replace(/^[ \t]*\[\/?(?:DOC|Doc|doc)[^\]\n]*\][ \t]*$/gm, "")

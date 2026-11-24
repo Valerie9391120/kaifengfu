@@ -73,7 +73,7 @@ function hisLines(m, memeLookup) {
 }
 
 const FORMAT = `用第一人称：“我”是你，“她”是${HER_NAME}。平实地写，不抒情，不评价。可以分小标题、用短句，不用星号。`;
-const NO_MARKS = `【回复格式】里的规矩这一回都不作数：不写 <thinking>，不拆成几条消息，不要 [SPLIT]、[MEME]、[AVATAR]、[NAME]、[DOC]、[VOICE]、[CALL] 这些记号。直接从正文写起，别的话不用说。`;
+const NO_MARKS = `【回复格式】里的规矩这一回都不作数：不写 <心声>，不拆成几条消息，不要 [SPLIT]、[MEME]、[AVATAR]、[NAME]、[DOC]、[VOICE]、[CALL] 这些记号。直接从正文写起，别的话不用说。`;
 
 // 抄一段。回 { rule, content, photos }：
 //   rule     跟在名帖后面的那段规矩
