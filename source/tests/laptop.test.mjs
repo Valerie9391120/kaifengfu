@@ -1,6 +1,7 @@
 // 传话走笔记本（src/laptop.js）：API 面板里门牌、暗记怎么收拾；errors.js 照原样说开封府自己的后端（门）说的话
 import { normDoor, normKey, laptopOn, laptopReady, lapWebOn, withLapWeb, LAP_WEB_NOTE, withLapPages, LAP_PAGE_NOTE, pagesOf, pageNote, PAGE_KEY } from "../src/laptop.js";
 import { explainError } from "../src/errors.js";
+import { errorOf } from "../alarm/bridge.js";
 
 let pass = 0, failN = 0;
 const ok = (c, m) => {
@@ -66,6 +67,18 @@ ok(pageNote(got.items[0]).includes("你做的网页《小月亮》（moon.html�
 ok(explainError(429, { type: "kaifengfu", message: "订阅的额度用完了", code: "cc_quota" }) === "订阅的额度用完了", "门说额度用完了：照原样（不说成“说得太快，Anthropic 让歇一会儿”）");
 ok(explainError(401, { type: "kaifengfu", message: "这台电脑上的 Claude Code 没登录（或者登录过期了）", code: "cc_auth" }).includes("Claude Code 没登录"), "门说 Claude Code 没登录：照原样（不说成 key 不对）");
 ok(explainError(529, { type: "overloaded_error", message: "Overloaded" }).includes("太挤"), "Anthropic 自己说的照旧翻成人话");
+
+// 笔记本那头报错：原来只取最后一行，常常就是 (Message ID: …)，原因丢了（11 月 24 日她碰上的）
+{
+  const blocked = "API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup). Please double press esc to edit your last message or start a new session for Claude Code to assist with a different task. Details: [reasoning_extraction]\n\n(Message ID: msg_011ChNRS3DLj351Kah37UPyX)";
+  const e1 = errorOf(blocked, "", 400);
+  ok(e1.message === "被 Anthropic 那头的检查拦了（reasoning_extraction），编号 msg_011ChNRS3DLj351Kah37UPyX", `被检查拦了：直说，带上拦的是哪一种、编号（${e1.message}）`);
+  const e2 = errorOf("API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy.\n(Message ID: msg_x1)", "");
+  ok(e2.message === "被 Anthropic 那头的检查拦了，编号 msg_x1", "没写 Details 的也认得出来");
+  const e3 = errorOf("API Error: 500 something broke\n(Message ID: msg_y2)", "");
+  ok(e3.message === "API Error: 500 something broke，编号 msg_y2", `别的错：原因不丢，编号挪到最后（${e3.message}）`);
+  ok(errorOf("", "").message === "Claude Code 出了岔子" && errorOf("Overloaded", "", 529).message.includes("太忙"), "空的、忙的照旧");
+}
 
 console.log(`\n通过 ${pass}  失败 ${failN}`);
 process.exit(failN ? 1 : 0);

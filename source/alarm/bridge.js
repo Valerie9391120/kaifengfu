@@ -226,15 +226,25 @@ export class BridgeError extends Error {
     this.type = type;
   }
 }
-function errorOf(text, stderr, status) {
+export function errorOf(text, stderr, status) {
   const t = `${text || ""}\n${stderr || ""}`;
+  // 被 Anthropic 那头的检查拦了（报的是“unable to respond to this request… Usage Policy… Details: [reasoning_extraction]”这样几行，
+  // 最后一行是 (Message ID: …)）：原来只取最后一行，原因就丢了，手机上只剩一串编号（11 月 24 日她碰上的）。认出来直说，带上 Details 里那个词和编号
+  const id = (t.match(/Message ID:\s*([A-Za-z0-9_]+)/) || [])[1] || "";
+  const det = (t.match(/Details:\s*\[([^\]]+)\]/) || [])[1] || "";
+  if (det || /usage policy|violate|unable to respond to this request/i.test(t)) {
+    return new BridgeError(500, `被 Anthropic 那头的检查拦了${det ? `（${det}）` : ""}${id ? `，编号 ${id}` : ""}`);
+  }
   if (/ENOENT|not recognized|找不到/.test(t)) return new BridgeError(500, "这台电脑上找不到 Claude Code");
   if (status === 401 || status === 403 || /not logged in|\/login|authentication|invalid api key|oauth/i.test(t)) return new BridgeError(401, "这台电脑上的 Claude Code 没登录（或者登录过期了）", "authentication_error");
   if (status === 429 || /rate.?limit|usage limit|limit reached|quota/i.test(t)) return new BridgeError(429, "订阅的额度用完了", "rate_limit_error");
   if (status === 529 || /overloaded/i.test(t)) return new BridgeError(529, "Anthropic 那头太忙，过一会儿再试", "overloaded_error");
   if (/No conversation found/i.test(t)) return new BridgeError(500, "Claude Code 没接上前面的对话");
-  const line = String(text || stderr || "").split("\n").map((s) => s.trim()).filter(Boolean).pop() || "Claude Code 出了岔子";
-  return new BridgeError(500, line.slice(0, 300));
+  // 别的：几行原话里去掉光是编号的那几行（编号挪到最后），剩下的接起来（原来只取最后一行，常常正好是编号）
+  const lines = String(text || stderr || "").split("\n").map((s) => s.trim()).filter(Boolean);
+  const meat = lines.filter((l) => !/^\(?\s*(Message|Request) ID:/i.test(l)).join(" ").replace(/\s*\((Message|Request) ID:[^)]*\)\s*/gi, " ").trim();
+  const line = (meat || (lines.length ? "" : "Claude Code 出了岔子")).slice(0, 300) + (id ? `${meat ? "，" : ""}编号 ${id}` : "");
+  return new BridgeError(500, line || "Claude Code 出了岔子");
 }
 
 // =====================================================
