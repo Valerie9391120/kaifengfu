@@ -65,6 +65,11 @@ const PAGE_TOOLS = ["Read", "Write", "Edit"];
 const PAGE_TAG = /^[A-Za-z0-9_-]{4,64}$/;
 export const PAGE_MAX = 1024 * 1024; // 一页最多一兆（开封府存一样东西一行，再大存不下）
 export const PAGES_AT = "{{KFS_PAGES}}";
+// 做网页的时候一笔能写多长（卿卿 11 月 24 日 23:36 要的：“在你写代码的时候开封府不限制，按照 cc 的上限来”）。
+// 一个网页整页都在一回 Write 里，照她面板里的 2048 写不完一个小游戏，写到一半就被掐。CLAUDE_CODE_MAX_OUTPUT_TOKENS 是起进程时定的，
+// 一回里分不了“写网页这一笔”和“说话这一笔”，所以带着做网页的那一条整条放到这么长；说话那一笔照旧归【此刻】里那个字数管（那个数照她面板算）。
+// 32000：Claude Code 自己的默认，眼下的几支都写得了这么长（再长的那几支 Claude Code 自己会压到它们的上限）。走笔记本用的是订阅，不按字数另算钱
+export const PAGE_OUT = 32000;
 // 没带名帖的时候名帖那个临时文件里写的（见 run）
 const NO_SYSTEM = "（这一回没有名帖。）";
 // system：字或者一串 { type: "text", text }，拼成一份
@@ -345,7 +350,7 @@ export function createBridge({ claude = "claude", cwd, configDir, mcpUrl, pagesD
     // CLAUDE_CODE_DISABLE_AUTO_MEMORY：Claude Code 给每个工作文件夹攒的那份 MEMORY.md 不读（--setting-sources "" 挡不住它：
     // 那个文件在的话，会被塞到她头一句前面，还写着“这些指示压过默认行为”）
     Object.assign(e, env, { MCP_TOOL_TIMEOUT: String(waitMs + 60000), ENABLE_PROMPT_CACHING_1H: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" });
-    if (body.max_tokens) e.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(body.max_tokens);
+    if (body.max_tokens) e.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(pageDir ? Math.max(body.max_tokens, PAGE_OUT) : body.max_tokens);
     const [cmd, argv] = /\.m?js$/.test(claude) ? [process.execPath, [claude, ...args]] : [claude, args];
     const proc = spawn(cmd, argv, { cwd: realCwd, env: e, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     spawned++;

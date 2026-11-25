@@ -1059,7 +1059,7 @@ ok(markText(START) === "通话开始" && markText(END) === "通话 13 分钟", "
   ok(calling.staticText === plain.staticText, "打电话的时候名帖一个字不动（缓存照样接得上）");
   ok(calling.nowNote.startsWith(plain.nowNote.split("\n这次回复")[0]) && calling.nowNote.endsWith("\n\n" + CALL_NOTE) && !plain.nowNote.includes("【通话】"),
     "【此刻】后面附上【通话】那一段；不打电话没有");
-  ok(calling.nowNote.includes("这次回复连文档块在内") && plain.nowNote.includes("这次回复连心里话和文档块在内"), "电话里字数那句不提心里话");
+  ok(calling.nowNote.includes("这次回复最长大约") && !calling.nowNote.includes("心声、给她的话") && plain.nowNote.includes("（心声、给她的话、文档块全算在内）"), "电话里字数那句不提心里话");
   ok(CALL_NOTE.includes("看不见") && CALL_NOTE.includes("不写心里话") && CALL_NOTE.includes("不发表情包") && CALL_NOTE.includes("不用写 [VOICE]") && !CALL_NOTE.includes("要短") && !CALL_NOTE.includes("口语"),
     "【通话】那一段只说清楚她那头看不见什么（她让拿掉了“说话要短、要口语”）");
   ok(CALL_NOTE === "【通话】你们正在打电话：你回的每一句都会用你的声音念给她听，她这会儿看着的是通话页面，只能看到你的头像和昵称，对话界面的东西看不见，所以这时候不写心里话，不发表情包、不交文档、不弹选项卡、不写星号动作；每一句本来就会念出来，不用写 [VOICE]。语气标签照用。" && !CALL_NOTE.includes("不换头像"),

@@ -356,6 +356,8 @@ try {
   let pg = (r.content || []).find((b) => b.type === "kfs_page");
   ok(pageAsk && ["Read", "Write", "Edit"].every((t) => pageAsk.tools.includes(t)) && !pageAsk.tools.includes("Bash") && JSON.stringify(pageAsk.system).includes(pageDir) && !JSON.stringify(pageAsk.system).includes("{{KFS_PAGES}}"),
      `带着做网页：给读、写、改（不给跑命令），名帖里写着那段对话的网页文件夹（${pageAsk && pageAsk.tools.filter((t) => !t.startsWith("mcp__")).join(",")}）`);
+  ok(pageAsk && pageAsk.max_tokens === 32000 && seen.slice(0, seenPage).filter((x) => x.max_tokens).every((x) => x.max_tokens <= 1024),
+     `带着做网页：一笔能写 32000（不照开封府给的 1024，网页整页在一笔里）；没带的照旧（${pageAsk && pageAsk.max_tokens}）`);
   ok(pg && pg.file === "moon.html" && pg.title === "小月亮" && pg.html.includes("🌕") && pg.edited === false && fs.existsSync(path.join(pageDir, "moon.html")) && r.content[r.content.length - 1] === pg,
      `他写了一个网页：文件留在这台电脑上，整页带回来、在回话最后（${pg && pg.file}《${pg && pg.title}》）`);
   r = await bridge.handle(body([u("做个网页"), a("结果：…"), u("改一下网页", [now("14:51")])], { kfs_pages: "tag12345", system: PAGE_SYS }));
